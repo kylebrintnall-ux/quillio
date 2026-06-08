@@ -64,6 +64,10 @@ function extractChallenge(body) {
 app.get('/', (req, res) => res.status(200).send('Quillio is running.'));
 app.get('/health', (req, res) => res.status(200).json({ ok: true }));
 
+// TEMPORARY — reachability probe. Lets us confirm the server is publicly
+// reachable independent of any Slack config. Remove once debugging is done.
+app.get('/ping', (req, res) => res.status(200).json({ status: 'ok' }));
+
 // --- Slash command: /quillio [brief] ---
 //
 // CRITICAL: Slack requires a response within 3 seconds, but the workflow takes

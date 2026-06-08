@@ -4,7 +4,7 @@
 //
 // Implements the destination contract consumed by the core workflow:
 //   createDocument({ brief, summary, writerPrompt, assetSpecs }) -> { id, url, title }
-//   generateDraft(id) -> { title, fieldCount }
+//   generateDraft(id) -> { title, fieldCount, url }
 //
 // Everything Google-Docs-specific (the Drive/Docs API calls, the batchUpdate
 // formatting, the stateless doc re-parsing) lives behind this boundary so a
@@ -221,7 +221,11 @@ async function generateDraft(id) {
     });
   }
 
-  return { title: doc.title, fieldCount: drafted.length };
+  return {
+    title: doc.title,
+    fieldCount: drafted.length,
+    url: `https://docs.google.com/document/d/${id}/edit`,
+  };
 }
 
 // The destination adapter contract.

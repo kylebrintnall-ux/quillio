@@ -14,8 +14,17 @@ const COLUMNS = {
   toneNotes: 'tone notes',
 };
 
+// Normalize an asset name for comparison. Folds case, dash variants (en/em
+// dash, minus sign → hyphen), spacing around hyphens, and runs of whitespace,
+// so "Paid Social - LinkedIn", "Paid Social – LinkedIn", and
+// "Paid Social-LinkedIn" all compare equal.
 function normalize(s) {
-  return String(s || '').trim().toLowerCase();
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[‐-―−]/g, '-') // unicode dashes / minus -> hyphen
+    .replace(/\s*-\s*/g, '-') // drop spaces around hyphens
+    .replace(/\s+/g, ' ') // collapse remaining whitespace
+    .trim();
 }
 
 // Reads the asset spec Sheet and returns an ordered list of asset groups:
@@ -79,6 +88,20 @@ async function getAssetSpecs(assetFilter = []) {
   if (Array.isArray(assetFilter) && assetFilter.length > 0) {
     const wanted = new Set(assetFilter.map(normalize));
     const filtered = result.filter((g) => wanted.has(normalize(g.assetType)));
+
+    // Diagnostic: surface exactly what was requested vs. what the Sheet has, so
+    // asset-name mismatches (dashes, spacing, casing) are easy to spot in logs.
+    const matched = filtered.map((g) => g.assetType);
+    const unmatched = assetFilter.filter(
+      (a) => !result.some((g) => normalize(g.assetType) === normalize(a))
+    );
+    console.log('[sheets] requested assets:', JSON.stringify(assetFilter));
+    console.log('[sheets] sheet asset types:', JSON.stringify(order));
+    console.log('[sheets] matched:', JSON.stringify(matched));
+    if (unmatched.length > 0) {
+      console.warn('[sheets] UNMATCHED (in brief, not found in Sheet):', JSON.stringify(unmatched));
+    }
+
     if (filtered.length > 0) result = filtered;
   }
 

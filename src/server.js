@@ -41,6 +41,26 @@ function verifySlack(req) {
   }
 }
 
+// Pulls a Slack url_verification challenge out of the request body, whether it
+// arrives as a top-level JSON body or wrapped in the form-encoded `payload`.
+// Returns the challenge string, or null if this isn't a verification request.
+function extractChallenge(body) {
+  if (body && body.type === 'url_verification' && body.challenge) {
+    return body.challenge;
+  }
+  if (body && typeof body.payload === 'string') {
+    try {
+      const parsed = JSON.parse(body.payload);
+      if (parsed.type === 'url_verification' && parsed.challenge) {
+        return parsed.challenge;
+      }
+    } catch {
+      /* not a verification payload */
+    }
+  }
+  return null;
+}
+
 app.get('/', (req, res) => res.status(200).send('Quillio is running.'));
 app.get('/health', (req, res) => res.status(200).json({ ok: true }));
 
@@ -89,6 +109,15 @@ app.post(['/slack/command', '/slack/commands'], (req, res) => {
 
 // --- Interactive button clicks (Generate First Draft / Skip) ---
 app.post('/slack/interactions', (req, res) => {
+  // URL verification handshake. Slack sends this as a top-level JSON body
+  // ({ type: 'url_verification', challenge }); some setups wrap it in `payload`.
+  // Answer it before signature checks / payload parsing so the Request URL can
+  // be saved. Echo the challenge straight back.
+  const challenge = extractChallenge(req.body);
+  if (challenge) {
+    return res.status(200).json({ challenge });
+  }
+
   if (!verifySlack(req)) {
     return res.status(401).send('Invalid signature.');
   }

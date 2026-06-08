@@ -2,7 +2,7 @@
 
 const config = require('../config');
 
-const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const API_BASE = 'https://generativelanguage.googleapis.com/v1/models';
 
 async function callGemini(body) {
   if (!config.GEMINI_API_KEY) {

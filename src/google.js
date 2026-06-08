@@ -3,6 +3,13 @@
 const { google } = require('googleapis');
 const config = require('./config');
 
+// Global per-request timeout for ALL Drive/Docs/Sheets calls. Without this the
+// googleapis (gaxios) client waits indefinitely, so a stalled Docs/Drive call
+// would hang the fire-and-forget workflow forever — leaving Slack stuck on
+// "building your doc…" / "Generating…" with no error. Overridable via
+// GOOGLE_TIMEOUT_MS.
+google.options({ timeout: Number(process.env.GOOGLE_TIMEOUT_MS) || 30000 });
+
 // Service-account scopes. Includes Drive/Docs so the service account can still
 // do writes on the no-OAuth (Shared Drive) path; Sheets is read-only.
 const SA_SCOPES = [

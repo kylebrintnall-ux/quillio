@@ -10,6 +10,7 @@ const { postResult, updateMessage } = require('./services/slack');
 async function runBriefWorkflow(brief) {
   // 1. Parse the brief into summary / writerPrompt / assets.
   const { summary, writerPrompt, assets } = await parseBrief(brief);
+  console.log('[workflow] Gemini returned assets:', JSON.stringify(assets));
 
   // 2. Read + filter the asset specs.
   const assetSpecs = await getAssetSpecs(assets);
@@ -40,13 +41,14 @@ async function runGenerateDraft(docId, responseUrl) {
     responseUrl
   );
 
-  const { title, fieldCount } = await getDestination().generateDraft(docId);
+  const { title, fieldCount, url } = await getDestination().generateDraft(docId);
 
   await updateMessage(
     `✅ First draft generated for *${title}* — ${fieldCount} field${
       fieldCount === 1 ? '' : 's'
     } filled in.`,
-    responseUrl
+    responseUrl,
+    { webViewLink: url }
   );
 }
 

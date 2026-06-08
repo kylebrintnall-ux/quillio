@@ -80,12 +80,30 @@ async function postText(text, responseUrl) {
 
 // Replaces the original interactive message in place via its response_url.
 // Used to give live feedback after a button tap (progress → final result).
+// Pass opts.webViewLink to include an "Open in Drive" button on the message.
 // Falls back to a fresh webhook post if no response_url is available.
-async function updateMessage(text, responseUrl) {
-  if (!responseUrl) {
-    return postToSlack(config.SLACK_WEBHOOK_URL, { text });
+async function updateMessage(text, responseUrl, opts = {}) {
+  const body = { text };
+  if (opts.webViewLink) {
+    body.blocks = [
+      { type: 'section', text: { type: 'mrkdwn', text } },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Open in Drive', emoji: true },
+            url: opts.webViewLink,
+            action_id: 'open_in_drive',
+          },
+        ],
+      },
+    ];
   }
-  await postToSlack(responseUrl, { replace_original: true, text });
+  if (!responseUrl) {
+    return postToSlack(config.SLACK_WEBHOOK_URL, body);
+  }
+  await postToSlack(responseUrl, { replace_original: true, ...body });
 }
 
 module.exports = { postToSlack, buildResultBlocks, postResult, postText, updateMessage };

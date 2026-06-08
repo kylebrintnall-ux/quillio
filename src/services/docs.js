@@ -23,6 +23,24 @@ function fieldLabel(field) {
   return `${field.fieldName} [${limit}]`;
 }
 
+// Transfers ownership of a file to config.DOC_OWNER_EMAIL via the Drive
+// permissions API. This is what gets the file off the service account's
+// (tiny) storage quota. For consumer Gmail accounts this creates a *pending*
+// ownership transfer that the recipient must accept by email.
+async function transferOwnership(drive, fileId) {
+  await drive.permissions.create({
+    fileId,
+    transferOwnership: true,
+    sendNotificationEmail: true,
+    supportsAllDrives: true,
+    requestBody: {
+      type: 'user',
+      role: 'owner',
+      emailAddress: config.DOC_OWNER_EMAIL,
+    },
+  });
+}
+
 // Creates the formatted Google Doc in the configured Drive folder.
 // `assetSpecs` is the grouped output of sheets.getAssetSpecs().
 // Returns { docId, webViewLink, title }.
@@ -41,6 +59,11 @@ async function createBriefDoc({ brief, summary, writerPrompt, assetSpecs }) {
   });
 
   const docId = created.data.id;
+
+  // The service account has essentially no Drive storage quota, so the doc it
+  // just created is counted against that quota. Transfer ownership to a real
+  // account to move the file off the service account's quota.
+  await transferOwnership(drive, docId);
 
   const b = new DocBuilder();
   b.title(title);

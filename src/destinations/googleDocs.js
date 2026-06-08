@@ -15,6 +15,24 @@ const { getClients } = require('../google');
 const { DocBuilder } = require('./docBuilder');
 const { generateFieldDraft } = require('../services/gemini');
 
+// How many field drafts to request from Gemini at once.
+const DRAFT_CONCURRENCY = Number(process.env.DRAFT_CONCURRENCY) || 4;
+
+// Run `fn` over `items` with at most `limit` in flight; preserves input order.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const idx = next++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
 function todayStamp() {
   const now = new Date();
   const y = now.getFullYear();
@@ -244,19 +262,35 @@ async function generateDraft(id) {
     }
   }
 
-  const drafted = [];
-  for (const { asset, field } of targets) {
-    const copy = await generateFieldDraft({
-      assetType: asset.assetType,
-      channel: asset.channel,
-      fieldName: field.fieldName,
-      charLimit: field.charLimit,
-      toneNotes: asset.toneNotes,
-      notes: '',
-      summary,
-      writerPrompt,
-    });
-    drafted.push({ insertIndex: field.insertIndex, copy });
+  // Draft fields with bounded concurrency so a many-field brief finishes in
+  // ~a minute instead of dozens of serial calls. Each field is isolated: a
+  // timeout or API error on one field is logged and skipped rather than
+  // aborting the whole run.
+  const results = await mapWithConcurrency(targets, DRAFT_CONCURRENCY, async ({ asset, field }) => {
+    try {
+      const copy = await generateFieldDraft({
+        assetType: asset.assetType,
+        channel: asset.channel,
+        fieldName: field.fieldName,
+        charLimit: field.charLimit,
+        toneNotes: asset.toneNotes,
+        notes: '',
+        summary,
+        writerPrompt,
+      });
+      return { insertIndex: field.insertIndex, copy };
+    } catch (err) {
+      console.error(
+        `[googleDocs] draft failed for ${asset.assetType} / ${field.fieldName}: ${err.message}`
+      );
+      return null;
+    }
+  });
+
+  const drafted = results.filter(Boolean);
+
+  if (targets.length > 0 && drafted.length === 0) {
+    throw new Error('All field drafts failed (Gemini timeout or error).');
   }
 
   // Insert from the bottom of the doc upward so earlier indices stay valid.

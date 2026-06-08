@@ -104,9 +104,12 @@ Railway setup.
 ## Gotchas
 
 - The service account is a separate Google identity. The Sheet must be shared
-  with its `client_email` (Viewer) and the Drive folder shared (Editor), or for
-  Shared Drives, the account added as a member. Most "permission" errors trace
-  back to this.
+  with its `client_email` (Viewer). Most "permission" errors trace back to this.
+- **The docs folder (`DRIVE_FOLDER_ID`) must be on a Shared Drive**, with the
+  service account added as a member (Content Manager). Service accounts have ~no
+  personal storage quota, so a doc the SA *owns* fails to create with
+  `storageQuotaExceeded`. Shared Drive files are owned by the drive, not the SA.
+  `drive.files.create` already passes `supportsAllDrives: true`.
 - Slack button `value` is capped (~2000 chars) — keep it to `docId` only; rely
   on doc re-parsing for everything else.
 - Do not commit `.env` or the service-account JSON (see `.gitignore`).

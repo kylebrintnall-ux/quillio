@@ -24,12 +24,11 @@ module.exports = {
   GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
 
   SHEET_ID: process.env.SHEET_ID || '1skbkkKlHMDUzeG8_bFpcSjrvweumivePuSOvr5qIfqk',
-  DRIVE_FOLDER_ID: process.env.DRIVE_FOLDER_ID || '1gdf5-R3J8IGY1I5pJJj2O-KFOju0UsqU',
 
-  // Docs are created by the service account (which has ~no Drive storage
-  // quota), so ownership is transferred to this account immediately after
-  // creation to move them off the service account's quota.
-  DOC_OWNER_EMAIL: process.env.DOC_OWNER_EMAIL || 'kyle.brintnall@gmail.com',
+  // Should be a folder on a Shared Drive. Files created in a Shared Drive are
+  // owned by the drive, not the service account, so they don't count against
+  // the service account's (essentially zero) personal storage quota.
+  DRIVE_FOLDER_ID: process.env.DRIVE_FOLDER_ID || '1gdf5-R3J8IGY1I5pJJj2O-KFOju0UsqU',
 
   // Slack incoming webhook the Block Kit result is posted to. This is a secret,
   // so it is NOT hardcoded — set it via the SLACK_WEBHOOK_URL env var.

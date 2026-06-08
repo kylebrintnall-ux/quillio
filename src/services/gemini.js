@@ -77,7 +77,13 @@ async function parseBrief(brief) {
     '- "email" used generally -> both Dynamic Email and Sales Basho.',
     '- Only include an asset when the intent is reasonably clear; do not invent assets that are not implied.',
     '',
-    'Return an object of the shape: {"summary": string, "writerPrompt": string, "assets": string[]}.',
+    '- folderId: if the brief contains a Google Drive folder URL of the form',
+    '  https://drive.google.com/drive/folders/FOLDER_ID , extract just the',
+    '  FOLDER_ID string (the path segment after /folders/). Return null if none.',
+    '- referenceLinks: an array of every URL found anywhere in the brief (Drive',
+    '  links, external links, anything starting with http or https). Return [] if none.',
+    '',
+    'Return an object of the shape: {"summary": string, "writerPrompt": string, "assets": string[], "folderId": string|null, "referenceLinks": string[]}.',
     'Respond with valid JSON only, no markdown, no backticks.',
     '',
     'CAMPAIGN BRIEF:',
@@ -104,10 +110,17 @@ async function parseBrief(brief) {
     ? parsed.assets.filter((a) => allowedSet.has(a))
     : [];
 
+  const folderId = parsed.folderId ? String(parsed.folderId).trim() : null;
+  const referenceLinks = Array.isArray(parsed.referenceLinks)
+    ? parsed.referenceLinks.map((u) => String(u).trim()).filter(Boolean)
+    : [];
+
   return {
     summary: String(parsed.summary || '').trim(),
     writerPrompt: String(parsed.writerPrompt || '').trim(),
     assets,
+    folderId,
+    referenceLinks,
   };
 }
 

@@ -3,7 +3,7 @@
 // Google Docs destination adapter.
 //
 // Implements the destination contract consumed by the core workflow:
-//   createDocument({ brief, summary, writerPrompt, assetSpecs }) -> { id, url, title }
+//   createDocument({ brief, summary, writerPrompt, assetSpecs, folderId, referenceLinks }) -> { id, url, title }
 //   generateDraft(id) -> { title, fieldCount, url }
 //
 // Everything Google-Docs-specific (the Drive/Docs API calls, the batchUpdate
@@ -23,9 +23,25 @@ function todayStamp() {
   return `${y}-${m}-${d}`;
 }
 
+// Articles / short prepositions that stay lowercase in Title Case unless they
+// are the first word.
+const SMALL_WORDS = new Set(['a', 'an', 'the', 'for', 'in', 'of', 'at', 'by']);
+
+function toTitleCase(str) {
+  return str
+    .split(/\s+/)
+    .map((word, i) => {
+      if (!word) return word;
+      if (i > 0 && SMALL_WORDS.has(word.toLowerCase())) return word.toLowerCase();
+      // Capitalize the first letter; leave the rest as-is to preserve acronyms.
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
 function makeTitle(brief) {
   const words = String(brief).trim().split(/\s+/).filter(Boolean).slice(0, 8).join(' ');
-  return `${todayStamp()} — ${words || 'Campaign'}`;
+  return `${todayStamp()} — ${toTitleCase(words || 'Campaign')}`;
 }
 
 function fieldLabel(field) {
@@ -33,10 +49,43 @@ function fieldLabel(field) {
   return `${field.fieldName} [${limit}]`;
 }
 
-// Creates the formatted Google Doc in the configured Drive folder.
-// `assetSpecs` is the grouped output of sheets.getAssetSpecs().
-// Returns the destination-agnostic shape { id, url, title }.
-async function createDocument({ brief, summary, writerPrompt, assetSpecs }) {
+// Pull a Drive/Docs file or folder id out of a Google URL, or null.
+function driveIdFromUrl(url) {
+  if (!/(?:drive|docs)\.google\.com/.test(url)) return null;
+  const m =
+    url.match(/\/(?:d|folders)\/([a-zA-Z0-9_-]+)/) || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+// Resolve a reference URL to { url, label }. For Drive links, use the file's
+// real name; otherwise (or on any failure) fall back to the raw URL.
+async function resolveLinkLabel(drive, url) {
+  const fileId = driveIdFromUrl(url);
+  if (!fileId) return { url, label: url };
+  try {
+    const res = await drive.files.get({
+      fileId,
+      fields: 'name',
+      supportsAllDrives: true,
+    });
+    return { url, label: res.data.name || url };
+  } catch {
+    return { url, label: url };
+  }
+}
+
+// Creates the formatted Google Doc in the target Drive folder.
+// `assetSpecs` is the grouped output of sheets.getAssetSpecs(). `folderId`
+// overrides the default folder when present; `referenceLinks` adds a Reference
+// Materials section. Returns the destination-agnostic shape { id, url, title }.
+async function createDocument({
+  brief,
+  summary,
+  writerPrompt,
+  assetSpecs,
+  folderId,
+  referenceLinks = [],
+}) {
   const { drive, docs } = await getClients();
   const title = makeTitle(brief);
 
@@ -44,13 +93,19 @@ async function createDocument({ brief, summary, writerPrompt, assetSpecs }) {
     requestBody: {
       name: title,
       mimeType: 'application/vnd.google-apps.document',
-      parents: [config.DRIVE_FOLDER_ID],
+      parents: [folderId || config.DRIVE_FOLDER_ID],
     },
     fields: 'id, webViewLink',
     supportsAllDrives: true,
   });
 
   const docId = created.data.id;
+
+  // Resolve reference link labels (Drive file names where possible) up front.
+  const resolvedLinks = [];
+  for (const url of referenceLinks) {
+    resolvedLinks.push(await resolveLinkLabel(drive, url));
+  }
 
   const b = new DocBuilder();
   b.title(title);
@@ -61,6 +116,13 @@ async function createDocument({ brief, summary, writerPrompt, assetSpecs }) {
 
   b.heading('Writer Direction');
   b.italic(writerPrompt || '(no direction)');
+
+  if (resolvedLinks.length > 0) {
+    b.heading('Reference Materials');
+    for (const { url, label } of resolvedLinks) {
+      b.link(label, url);
+    }
+  }
 
   b.horizontalRule();
 

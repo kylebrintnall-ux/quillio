@@ -92,7 +92,7 @@ app.post('/slack/command', (req, res) => {
   // 2. Fire-and-forget the real workflow. Errors are reported back to Slack
   //    but never block or crash the request.
   const responseUrl = req.body.response_url;
-  runBriefWorkflow(brief).catch(async (err) => {
+  runBriefWorkflow(brief, responseUrl).catch(async (err) => {
     console.error('runBriefWorkflow failed:', err);
     try {
       await postText(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);

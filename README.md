@@ -117,11 +117,16 @@ shared with it.
 
 - Open the **asset specs Sheet** → **Share** → paste the service account
   `client_email` → give it **Viewer** access.
-- Open the **Drive folder** → **Share** → paste the same email → give it
-  **Editor** access (it needs to create docs inside the folder).
+- Put `DRIVE_FOLDER_ID`'s folder on a **Shared Drive**, and add the service
+  account as a member with at least **Content Manager** access.
 
-> If the folder lives in a **Shared Drive**, add the service account as a member
-> of that Shared Drive instead.
+> **Use a Shared Drive for the docs folder — this is required, not optional.**
+> A service account has essentially no personal ("My Drive") storage quota, so
+> when it *owns* a file the create fails with `storageQuotaExceeded`. Files
+> created inside a **Shared Drive** are owned by the drive itself, not the
+> service account, so they never touch its quota. (The code already sends
+> `supportsAllDrives: true`.) A regular "My Drive" folder shared with the
+> service account will hit the quota error.
 
 ### 3. Get a Gemini API key
 

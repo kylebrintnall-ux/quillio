@@ -37,7 +37,7 @@ async function runBriefWorkflow(brief) {
 // the final confirmation when the draft is done.
 async function runGenerateDraft(docId, responseUrl) {
   await updateMessage(
-    '✍️ Generating your first draft… this takes about 60 seconds.',
+    ':quillio: Generating your first draft… this takes about 60 seconds.',
     responseUrl
   );
 

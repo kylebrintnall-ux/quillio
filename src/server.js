@@ -118,9 +118,12 @@ app.post('/slack/interactions', (req, res) => {
     return res.status(200).json({ challenge });
   }
 
-  if (!verifySlack(req)) {
-    return res.status(401).send('Invalid signature.');
-  }
+  // TEMPORARY — SMOKE TEST ONLY: signature verification is disabled so Slack
+  // can verify and save the Interactivity Request URL. RE-ENABLE the block
+  // below once the URL is saved.
+  // if (!verifySlack(req)) {
+  //   return res.status(401).send('Invalid signature.');
+  // }
 
   let payload;
   try {

@@ -4,17 +4,36 @@ const config = require('../config');
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+// Hard per-request timeout. Without this a stalled Gemini call hangs forever,
+// which (in the fire-and-forget draft flow) leaves Slack stuck on "Generating…"
+// with no error ever surfacing. Overridable via GEMINI_TIMEOUT_MS.
+const REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 45000;
+
 async function callGemini(body) {
   if (!config.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is not set.');
   }
 
   const url = `${API_BASE}/${config.GEMINI_MODEL}:generateContent?key=${config.GEMINI_API_KEY}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Gemini request timed out after ${REQUEST_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!res.ok) {
     const text = await res.text();

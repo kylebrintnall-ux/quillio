@@ -2,7 +2,7 @@
 
 const { parseBrief } = require('./services/gemini');
 const { getAssetSpecs } = require('./services/sheets');
-const { createBriefDoc, generateFirstDraft } = require('./services/docs');
+const { getDestination } = require('./destinations');
 const { postResult, postText } = require('./services/slack');
 
 // The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
@@ -14,8 +14,8 @@ async function runBriefWorkflow(brief) {
   // 2. Read + filter the asset specs.
   const assetSpecs = await getAssetSpecs(assets);
 
-  // 3. Build the formatted Google Doc.
-  const { docId, webViewLink, title } = await createBriefDoc({
+  // 3. Build the formatted document via the configured destination adapter.
+  const { id, url, title } = await getDestination().createDocument({
     brief,
     summary,
     writerPrompt,
@@ -25,15 +25,15 @@ async function runBriefWorkflow(brief) {
   // 4. Post the Block Kit result message to Slack.
   await postResult({
     title,
-    webViewLink,
+    webViewLink: url,
     assets: assetSpecs.map((a) => a.assetType),
-    docId,
+    docId: id,
   });
 }
 
 // Handles the "Generate First Draft" button.
 async function runGenerateDraft(docId, responseUrl) {
-  const { title, fieldCount } = await generateFirstDraft(docId);
+  const { title, fieldCount } = await getDestination().generateDraft(docId);
   await postText(
     `✍️ First draft generated for *${title}* — ${fieldCount} field${
       fieldCount === 1 ? '' : 's'

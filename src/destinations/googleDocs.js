@@ -1,9 +1,19 @@
 'use strict';
 
+// Google Docs destination adapter.
+//
+// Implements the destination contract consumed by the core workflow:
+//   createDocument({ brief, summary, writerPrompt, assetSpecs }) -> { id, url, title }
+//   generateDraft(id) -> { title, fieldCount }
+//
+// Everything Google-Docs-specific (the Drive/Docs API calls, the batchUpdate
+// formatting, the stateless doc re-parsing) lives behind this boundary so a
+// future Notion/OneDrive adapter can be added without touching the workflow.
+
 const config = require('../config');
 const { getClients } = require('../google');
 const { DocBuilder } = require('./docBuilder');
-const { generateFieldDraft } = require('./gemini');
+const { generateFieldDraft } = require('../services/gemini');
 
 function todayStamp() {
   const now = new Date();
@@ -25,8 +35,8 @@ function fieldLabel(field) {
 
 // Creates the formatted Google Doc in the configured Drive folder.
 // `assetSpecs` is the grouped output of sheets.getAssetSpecs().
-// Returns { docId, webViewLink, title }.
-async function createBriefDoc({ brief, summary, writerPrompt, assetSpecs }) {
+// Returns the destination-agnostic shape { id, url, title }.
+async function createDocument({ brief, summary, writerPrompt, assetSpecs }) {
   const { drive, docs } = await getClients();
   const title = makeTitle(brief);
 
@@ -69,7 +79,7 @@ async function createBriefDoc({ brief, summary, writerPrompt, assetSpecs }) {
     requestBody: { requests: b.buildRequests() },
   });
 
-  return { docId, webViewLink: created.data.webViewLink, title };
+  return { id: docId, url: created.data.webViewLink, title };
 }
 
 // --- Draft generation (stateless: re-parses the doc) ---
@@ -158,10 +168,10 @@ function parseDoc(doc) {
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateFirstDraft(docId) {
+async function generateDraft(id) {
   const { docs } = await getClients();
 
-  const doc = (await docs.documents.get({ documentId: docId })).data;
+  const doc = (await docs.documents.get({ documentId: id })).data;
   const { summary, writerPrompt, assets } = parseDoc(doc);
 
   // Collect all draft targets, then draft copy for each.
@@ -206,7 +216,7 @@ async function generateFirstDraft(docId) {
 
   if (requests.length > 0) {
     await docs.documents.batchUpdate({
-      documentId: docId,
+      documentId: id,
       requestBody: { requests },
     });
   }
@@ -214,4 +224,9 @@ async function generateFirstDraft(docId) {
   return { title: doc.title, fieldCount: drafted.length };
 }
 
-module.exports = { createBriefDoc, generateFirstDraft, makeTitle };
+// The destination adapter contract.
+module.exports = {
+  name: 'google-docs',
+  createDocument,
+  generateDraft,
+};

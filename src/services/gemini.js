@@ -29,6 +29,16 @@ async function callGemini(body) {
   return text;
 }
 
+// Defensive backstop: if the model wraps its JSON in a ```json ... ``` fence
+// despite being told not to, strip the fence so JSON.parse still succeeds.
+function stripJsonFences(text) {
+  return String(text)
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+}
+
 // Parse a free-form campaign brief into { summary, writerPrompt, assets }.
 // Assets are constrained to the allowed list regardless of how they were
 // written in the brief (bullets, numbers, or inline prose).
@@ -45,6 +55,9 @@ async function parseBrief(brief) {
       ', '
     )}. The brief may list assets as bullets, numbers, or inline prose — extract them regardless of format. Match loosely (e.g. "LinkedIn ads" -> "Paid Social - LinkedIn", "email" -> "Dynamic Email"). Only include assets that clearly map to the list. Use the exact strings from the list.`,
     '',
+    'Return an object of the shape: {"summary": string, "writerPrompt": string, "assets": string[]}.',
+    'Respond with valid JSON only, no markdown, no backticks.',
+    '',
     'CAMPAIGN BRIEF:',
     brief,
   ].join('\n');
@@ -53,22 +66,12 @@ async function parseBrief(brief) {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.3,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'object',
-        properties: {
-          summary: { type: 'string' },
-          writerPrompt: { type: 'string' },
-          assets: { type: 'array', items: { type: 'string' } },
-        },
-        required: ['summary', 'writerPrompt', 'assets'],
-      },
     },
   });
 
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(stripJsonFences(text));
   } catch (err) {
     throw new Error('Could not parse Gemini brief JSON: ' + text);
   }

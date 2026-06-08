@@ -60,7 +60,7 @@ src/
 | `GEMINI_API_KEY` | ✅ | Google Gemini API key. Create one at <https://aistudio.google.com/app/apikey>. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ✅ | The **full JSON** of a Google Cloud service-account key, as a single-line string. |
 | `PORT` | ✅ | HTTP port. Railway sets this automatically; defaults to `3000` locally. |
-| `GEMINI_MODEL` | ⬜ | Gemini model id. Defaults to `gemini-1.5-flash-latest`. |
+| `GEMINI_MODEL` | ⬜ | Gemini model id. Defaults to `gemini-2.5-flash`. |
 | `SHEET_ID` | ⬜ | Asset specs Sheet. Defaults to `1skbkkKlHMDUzeG8_bFpcSjrvweumivePuSOvr5qIfqk`. |
 | `DRIVE_FOLDER_ID` | ⬜ | Folder docs are created in. Defaults to `1gdf5-R3J8IGY1I5pJJj2O-KFOju0UsqU`. |
 | `SLACK_WEBHOOK_URL` | ✅ | Incoming webhook the Block Kit result is posted to. It's a secret, so it isn't baked into the code. |

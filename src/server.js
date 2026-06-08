@@ -64,24 +64,15 @@ function extractChallenge(body) {
 app.get('/', (req, res) => res.status(200).send('Quillio is running.'));
 app.get('/health', (req, res) => res.status(200).json({ ok: true }));
 
-// TEMPORARY — reachability probe. Lets us confirm the server is publicly
-// reachable independent of any Slack config. Remove once debugging is done.
-app.get('/ping', (req, res) => res.status(200).json({ status: 'ok' }));
-
 // --- Slash command: /quillio [brief] ---
 //
 // CRITICAL: Slack requires a response within 3 seconds, but the workflow takes
 // 7s+. We send the 200 acknowledgment FIRST, then run the workflow
 // asynchronously after the response has been flushed.
-//
-// Accepts both /slack/command and /slack/commands so a Request-URL path
-// mismatch can't be the thing that's failing during the smoke test.
-app.post(['/slack/command', '/slack/commands'], (req, res) => {
-  // TEMPORARY — SMOKE TEST ONLY: signature verification is disabled to confirm
-  // the workflow runs end to end. RE-ENABLE the block below before real use.
-  // if (!verifySlack(req)) {
-  //   return res.status(401).send('Invalid signature.');
-  // }
+app.post('/slack/command', (req, res) => {
+  if (!verifySlack(req)) {
+    return res.status(401).send('Invalid signature.');
+  }
 
   const brief = (req.body.text || '').trim();
 
@@ -122,12 +113,9 @@ app.post('/slack/interactions', (req, res) => {
     return res.status(200).json({ challenge });
   }
 
-  // TEMPORARY — SMOKE TEST ONLY: signature verification is disabled so Slack
-  // can verify and save the Interactivity Request URL. RE-ENABLE the block
-  // below once the URL is saved.
-  // if (!verifySlack(req)) {
-  //   return res.status(401).send('Invalid signature.');
-  // }
+  if (!verifySlack(req)) {
+    return res.status(401).send('Invalid signature.');
+  }
 
   let payload;
   try {

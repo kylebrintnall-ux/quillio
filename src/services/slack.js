@@ -67,8 +67,19 @@ function buildResultBlocks({ title, webViewLink, assets, docId }) {
   };
 }
 
-async function postResult(result) {
-  await postToSlack(config.SLACK_WEBHOOK_URL, buildResultBlocks(result));
+// Posts the doc-ready Block Kit message. With a slash-command response_url it
+// posts into the originating channel (replacing the "building…" ack); without
+// one it falls back to the configured webhook.
+async function postResult(result, responseUrl) {
+  const message = buildResultBlocks(result);
+  if (responseUrl) {
+    return postToSlack(responseUrl, {
+      response_type: 'in_channel',
+      replace_original: true,
+      ...message,
+    });
+  }
+  await postToSlack(config.SLACK_WEBHOOK_URL, message);
 }
 
 // Plain confirmation back to the channel via the interaction's response_url

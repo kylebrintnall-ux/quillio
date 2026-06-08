@@ -95,6 +95,18 @@ class DocBuilder {
     });
   }
 
+  // A paragraph rendered as a clickable hyperlink.
+  link(label, url) {
+    this._push(label, {
+      textStyle: {
+        link: { url },
+        underline: true,
+        foregroundColor: { color: { rgbColor: { red: 0.06, green: 0.45, blue: 0.86 } } },
+      },
+      textFields: 'link,underline,foregroundColor',
+    });
+  }
+
   blankLine() {
     this._push('');
   }

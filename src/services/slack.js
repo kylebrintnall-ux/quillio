@@ -78,4 +78,14 @@ async function postText(text, responseUrl) {
   await postToSlack(url, { response_type: 'in_channel', text });
 }
 
-module.exports = { postToSlack, buildResultBlocks, postResult, postText };
+// Replaces the original interactive message in place via its response_url.
+// Used to give live feedback after a button tap (progress → final result).
+// Falls back to a fresh webhook post if no response_url is available.
+async function updateMessage(text, responseUrl) {
+  if (!responseUrl) {
+    return postToSlack(config.SLACK_WEBHOOK_URL, { text });
+  }
+  await postToSlack(responseUrl, { replace_original: true, text });
+}
+
+module.exports = { postToSlack, buildResultBlocks, postResult, postText, updateMessage };

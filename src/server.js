@@ -5,7 +5,7 @@ const express = require('express');
 
 const config = require('./config');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
-const { postText } = require('./services/slack');
+const { postText, updateMessage } = require('./services/slack');
 
 const app = express();
 
@@ -137,7 +137,7 @@ app.post('/slack/interactions', (req, res) => {
     runGenerateDraft(docId, responseUrl).catch(async (err) => {
       console.error('runGenerateDraft failed:', err);
       try {
-        await postText(`⚠️ Draft generation failed: ${err.message}`, responseUrl);
+        await updateMessage(`⚠️ Draft generation failed: ${err.message}`, responseUrl);
       } catch (e) {
         console.error('Failed to report error to Slack:', e);
       }

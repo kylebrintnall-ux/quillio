@@ -3,7 +3,7 @@
 const { parseBrief } = require('./services/gemini');
 const { getAssetSpecs } = require('./services/sheets');
 const { getDestination } = require('./destinations');
-const { postResult, postText } = require('./services/slack');
+const { postResult, updateMessage } = require('./services/slack');
 
 // The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
 // this before the slash command's 200 response has been sent.
@@ -31,11 +31,19 @@ async function runBriefWorkflow(brief) {
   });
 }
 
-// Handles the "Generate First Draft" button.
+// Handles the "Generate First Draft" button. Updates the original message in
+// place: first an immediate "working on it" so the tap feels responsive, then
+// the final confirmation when the draft is done.
 async function runGenerateDraft(docId, responseUrl) {
+  await updateMessage(
+    '✍️ Generating your first draft… this takes about 60 seconds.',
+    responseUrl
+  );
+
   const { title, fieldCount } = await getDestination().generateDraft(docId);
-  await postText(
-    `✍️ First draft generated for *${title}* — ${fieldCount} field${
+
+  await updateMessage(
+    `✅ First draft generated for *${title}* — ${fieldCount} field${
       fieldCount === 1 ? '' : 's'
     } filled in.`,
     responseUrl

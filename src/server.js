@@ -5,7 +5,7 @@ const express = require('express');
 
 const config = require('./config');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
-const { updateMessage, updateLive, openInDriveBlocks } = require('./services/slack');
+const { updateMessage, updateLive, openInDriveBlocks, logBotIdentity } = require('./services/slack');
 
 const app = express();
 
@@ -190,6 +190,8 @@ app.post('/slack/interactions', (req, res) => {
 
 app.listen(config.PORT, () => {
   console.log(`Quillio listening on port ${config.PORT}`);
+  // Log which app/bot the SLACK_BOT_TOKEN belongs to (best-effort).
+  logBotIdentity().catch(() => {});
 });
 
 module.exports = app;

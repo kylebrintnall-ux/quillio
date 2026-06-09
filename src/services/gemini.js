@@ -304,13 +304,23 @@ function charCeiling(charLimit) {
   return nums ? Math.max(...nums.map(Number)) : null;
 }
 
-// Last-resort trim to a hard ceiling, cutting on a word boundary where possible.
+// Last-resort trim to a hard ceiling. Prefers ending on a COMPLETE sentence
+// within the limit (so copy never dangles mid-thought); falls back to a word
+// boundary only if no reasonable sentence break fits.
 function trimToCeiling(s, max) {
   if (s.length <= max) return s;
-  let t = s.slice(0, max);
-  const lastSpace = t.lastIndexOf(' ');
-  if (lastSpace > max * 0.6) t = t.slice(0, lastSpace);
-  return t.replace(/[\s.,;:!\-–—]+$/, '').trim();
+  const slice = s.slice(0, max);
+
+  // Last sentence-ending punctuation (. ! ?) within the limit.
+  const sentence = slice.match(/^[\s\S]*[.!?](?=\s|$)/);
+  if (sentence && sentence[0].trim().length >= max * 0.5) {
+    return sentence[0].trim();
+  }
+
+  // Otherwise cut at the last word boundary and strip trailing punctuation.
+  const lastSpace = slice.lastIndexOf(' ');
+  const wordCut = lastSpace > max * 0.6 ? slice.slice(0, lastSpace) : slice;
+  return wordCut.replace(/[\s.,;:!\-–—]+$/, '').trim();
 }
 
 // Generate a single piece of draft copy for one asset field, honoring the
@@ -329,10 +339,10 @@ async function generateFieldDraft({
 }) {
   const ceiling = charCeiling(charLimit);
   const limitLine = ceiling
-    ? `Hard limit: the copy MUST be ${ceiling} characters or fewer${
+    ? `Write a COMPLETE, self-contained thought that fits within ${ceiling} characters${
         /[-–—]/.test(String(charLimit)) ? ` (target range ${charLimit})` : ''
-      }.`
-    : 'Keep it concise and appropriate for the field.';
+      }. ${ceiling} is a hard MAXIMUM to compose within, not a target to fill — never run a sentence up to the limit and get cut off. Finish the thought, even if that means coming in a few characters short. The copy must read as complete, not truncated.`
+    : 'Keep it concise — a complete, self-contained thought appropriate for the field.';
 
   const prompt = [
     'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
@@ -363,7 +373,7 @@ async function generateFieldDraft({
     const retryPrompt = [
       prompt,
       '',
-      `Your previous draft was ${copy.length} characters — too long. Rewrite it to be ${ceiling} characters or fewer while preserving the meaning and tone. Return ONLY the copy.`,
+      `Your previous draft was ${copy.length} characters — too long. Rewrite it as a COMPLETE, self-contained thought that fits within ${ceiling} characters, preserving the meaning and tone. Do not end mid-sentence — finish the thought even if it comes in well under the limit. Return ONLY the copy.`,
       `Previous draft: ${copy}`,
     ].join('\n');
 
@@ -424,7 +434,10 @@ async function generateAssetDrafts({
     channel ? `Channel: ${channel}` : '',
     toneNotes ? `Tone notes: ${toneNotes}` : '',
     '',
-    'Fields (respect each hard character limit exactly):',
+    'For each field, write a COMPLETE, self-contained thought that fits within its',
+    'character limit. The limit is a hard MAXIMUM to compose within, not a target to',
+    'fill — never run up to the limit and cut off mid-sentence; finish the thought,',
+    'even a few characters short. Fields:',
     fieldLines,
     '',
     'Return a JSON object mapping each field name (exactly as written above, including any parentheses) to its copy string. Exactly one copy per field, no commentary.',

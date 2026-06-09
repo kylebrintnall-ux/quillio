@@ -79,10 +79,13 @@ async function runGenerateDraft(docId, responseUrl) {
   const { title, fieldCount, url } = await getDestination().generateDraft(docId);
   console.log('[workflow] generateDraft returned — posting completion message');
 
+  // Post the completion as a fresh message (not a replace_original): Slack
+  // won't reliably re-render a second replacement on the same response_url, so
+  // the "generating…" message stays and "✓ First draft ready" appears below it.
   await updateMessage(
     `✓ First draft ready — *${title}* (${fieldCount} field${fieldCount === 1 ? '' : 's'} drafted).`,
     responseUrl,
-    { webViewLink: url, label: 'draft-complete' }
+    { webViewLink: url, label: 'draft-complete', newMessage: true }
   );
   console.log('[workflow] runGenerateDraft DONE');
 }

@@ -57,9 +57,14 @@ function toTitleCase(str) {
     .join(' ');
 }
 
-function makeTitle(brief) {
-  const words = String(brief).trim().split(/\s+/).filter(Boolean).slice(0, 8).join(' ');
-  return `${todayStamp()} — ${toTitleCase(words || 'Campaign')}`;
+function makeTitle(brief, campaignTitle) {
+  // Prefer Gemini's campaign title; fall back to the first few words of the
+  // brief if it's empty. Either way: Title Case, with a YYYY-MM-DD prefix.
+  const base =
+    (campaignTitle && campaignTitle.trim()) ||
+    String(brief).trim().split(/\s+/).filter(Boolean).slice(0, 8).join(' ') ||
+    'Campaign';
+  return `${todayStamp()} — ${toTitleCase(base)}`;
 }
 
 function fieldLabel(field) {
@@ -98,6 +103,7 @@ async function resolveLinkLabel(drive, url) {
 // Materials section. Returns the destination-agnostic shape { id, url, title }.
 async function createDocument({
   brief,
+  campaignTitle,
   summary,
   writerPrompt,
   assetSpecs,
@@ -105,7 +111,7 @@ async function createDocument({
   referenceLinks = [],
 }) {
   const { drive, docs } = await getClients();
-  const title = makeTitle(brief);
+  const title = makeTitle(brief, campaignTitle);
 
   const created = await drive.files.create({
     requestBody: {

@@ -243,14 +243,17 @@ async function parseBrief(brief) {
     '- "social" used generally -> both Paid Social... and Organic Social, i.e. Paid Social - LinkedIn, Paid Social - Meta, Paid Social - Twitter/X, and Organic Social.',
     '- "email" used generally -> both Dynamic Email and Sales Basho.',
     '- Only include an asset when the intent is reasonably clear; do not invent assets that are not implied.',
+    '- If the brief requests an asset type that does NOT confidently map to the allowed list (e.g. TikTok, podcast ad, billboard, SMS), do NOT substitute a nearest guess. Put the original phrase in unmatchedAssets and leave it out of assets.',
     '',
     '- folderId: if the brief contains a Google Drive folder URL of the form',
     '  https://drive.google.com/drive/folders/FOLDER_ID , extract just the',
     '  FOLDER_ID string (the path segment after /folders/). Return null if none.',
     '- referenceLinks: an array of every URL found anywhere in the brief (Drive',
     '  links, external links, anything starting with http or https). Return [] if none.',
+    '- unmatchedAssets: asset types the brief asked for that do NOT map to the',
+    '  allowed list. [] if none. Never force these into assets.',
     '',
-    'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": string[], "folderId": string|null, "referenceLinks": string[]}.',
+    'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": string[], "unmatchedAssets": string[], "folderId": string|null, "referenceLinks": string[]}.',
     'Respond with valid JSON only, no markdown, no backticks.',
     '',
     'CAMPAIGN BRIEF:',
@@ -271,11 +274,20 @@ async function parseBrief(brief) {
     throw new Error('Could not parse Gemini brief JSON: ' + text);
   }
 
-  // Defensively constrain assets to the allowed list.
+  // Defensively constrain assets to the allowed list. Anything Gemini returned
+  // in `assets` that isn't allowed is treated as unmatched (so it surfaces to
+  // the user rather than being silently dropped or substituted).
   const allowedSet = new Set(allowed);
   const assets = Array.isArray(parsed.assets)
     ? parsed.assets.filter((a) => allowedSet.has(a))
     : [];
+
+  const unmatchedAssets = [
+    ...(Array.isArray(parsed.unmatchedAssets) ? parsed.unmatchedAssets : []),
+    ...(Array.isArray(parsed.assets) ? parsed.assets.filter((a) => !allowedSet.has(a)) : []),
+  ]
+    .map((a) => String(a).trim())
+    .filter(Boolean);
 
   const folderId = parsed.folderId ? String(parsed.folderId).trim() : null;
   const referenceLinks = Array.isArray(parsed.referenceLinks)
@@ -287,6 +299,7 @@ async function parseBrief(brief) {
     summary: String(parsed.summary || '').trim(),
     writerPrompt: String(parsed.writerPrompt || '').trim(),
     assets,
+    unmatchedAssets,
     folderId,
     referenceLinks,
   };

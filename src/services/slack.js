@@ -182,6 +182,61 @@ async function updateMessage(text, responseUrl, opts = {}) {
   }
 }
 
+// Build a button value carrying the brief (+ optional folderId), truncating
+// the brief if needed to stay under Slack's ~2000-char action value cap.
+function recoveryValue(obj) {
+  let v = JSON.stringify(obj);
+  if (v.length > 1900) {
+    const overhead = JSON.stringify({ ...obj, brief: '' }).length;
+    const room = Math.max(0, 1900 - overhead);
+    v = JSON.stringify({ ...obj, brief: String(obj.brief || '').slice(0, room) });
+  }
+  return v;
+}
+
+// Recoverable folder-access error: replaces the message with the SA email and
+// two buttons — Build in Default Folder, and I've Shared It — Retry. Stores the
+// brief (+ folderId) in the button values so the request can be reconstructed.
+async function postFolderAccessHelp({ email, folderId, brief, responseUrl }) {
+  const text =
+    `⚠️ I can't access that Drive folder (\`${folderId}\`).\n\n` +
+    `To use it, share it with *${email}* as **Editor**, then click ` +
+    `*I've Shared It — Retry* — or build in the default folder.`;
+
+  const message = {
+    response_type: 'in_channel',
+    replace_original: true,
+    text,
+    blocks: [
+      { type: 'section', text: { type: 'mrkdwn', text } },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Build in Default Folder', emoji: true },
+            action_id: 'build_default',
+            value: recoveryValue({ brief }),
+          },
+          {
+            type: 'button',
+            style: 'primary',
+            text: { type: 'plain_text', text: "I've Shared It — Retry", emoji: true },
+            action_id: 'retry_folder',
+            value: recoveryValue({ brief, folderId }),
+          },
+        ],
+      },
+    ],
+  };
+
+  const url = responseUrl || config.SLACK_WEBHOOK_URL;
+  console.log('[slack] postFolderAccessHelp -> ' + (responseUrl ? 'response_url' : 'webhook'));
+  const res = await postToSlack(url, message);
+  console.log('[slack] postFolderAccessHelp status ' + res.status);
+  return res;
+}
+
 module.exports = {
   postToSlack,
   buildResultBlocks,
@@ -189,4 +244,5 @@ module.exports = {
   postText,
   updateMessage,
   postChatMessage,
+  postFolderAccessHelp,
 };

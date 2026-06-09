@@ -278,6 +278,25 @@ async function updateLive(channel, ts, text, blocks) {
   return slackApi('chat.update', blocks ? { channel, ts, text, blocks } : { channel, ts, text });
 }
 
+// Diagnostic: log the bot user the SLACK_BOT_TOKEN actually belongs to. The
+// name shown on chat.postMessage/chat.update messages is this bot user — the
+// code never sets a username. If this logs "launchpen", Railway's token is the
+// wrong app's; point SLACK_BOT_TOKEN at the Quillio app's bot token.
+async function logBotIdentity() {
+  if (!config.SLACK_BOT_TOKEN) {
+    console.log('[slack] SLACK_BOT_TOKEN not set — chat.postMessage/update disabled');
+    return;
+  }
+  try {
+    const data = await slackApi('auth.test', {});
+    console.log(
+      `[slack] bot identity — user="${data.user}" bot_id=${data.bot_id || '?'} team="${data.team}"`
+    );
+  } catch (e) {
+    console.error('[slack] auth.test failed:', e.message);
+  }
+}
+
 module.exports = {
   postToSlack,
   buildResultBlocks,
@@ -287,6 +306,7 @@ module.exports = {
   updateMessage,
   postChatMessage,
   postFolderAccessHelp,
+  logBotIdentity,
   buildFolderAccessBlocks,
   postLive,
   updateLive,

@@ -89,9 +89,10 @@ app.post('/slack/command', (req, res) => {
   }
 
   // 1. Immediate acknowledgment — this must go out before any heavy work.
+  //    Leads with :quillio-scroll: to match the folder-recovery building message.
   res.status(200).json({
     response_type: 'in_channel',
-    text: 'Brief received — building your doc now.',
+    text: ':quillio-scroll: Building your document…',
   });
 
   // 2. Fire-and-forget the real workflow. Errors are reported back to Slack

@@ -16,8 +16,19 @@ const { DocBuilder } = require('./docBuilder');
 const { generateAssetDrafts } = require('../services/gemini');
 const { getAssetSpecs } = require('../services/sheets');
 
-// How many assets to draft concurrently (each asset is one batched Gemini call).
-const DRAFT_CONCURRENCY = Number(process.env.DRAFT_CONCURRENCY) || 4;
+// How many assets to draft concurrently (each asset is one batched Gemini call
+// plus possible per-field fallbacks). Capped low to bound peak memory/CPU on an
+// all-8-assets run. Tunable via DRAFT_CONCURRENCY.
+const DRAFT_CONCURRENCY = Number(process.env.DRAFT_CONCURRENCY) || 3;
+
+// Log a memory snapshot so we can see if a big run is approaching a ceiling.
+function logMemory(label) {
+  const m = process.memoryUsage();
+  const mb = (b) => Math.round(b / 1024 / 1024);
+  console.log(
+    `[mem] ${label}: rss ${mb(m.rss)}MB, heapUsed ${mb(m.heapUsed)}MB, heapTotal ${mb(m.heapTotal)}MB`
+  );
+}
 
 // Run `fn` over `items` with at most `limit` in flight; preserves input order.
 async function mapWithConcurrency(items, limit, fn) {
@@ -126,6 +137,7 @@ async function createDocument({
   folderId,
   referenceLinks = [],
 }) {
+  logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
   const { drive, docs } = await getClients();
   const title = makeTitle(brief, campaignTitle);
 
@@ -338,7 +350,11 @@ async function generateDraft(id) {
   // Draft each asset's fields together (one batched call per asset) so the copy
   // is cohesive. Assets run with bounded concurrency; one asset failing is
   // logged and skipped rather than aborting the whole run.
-  const perAsset = await mapWithConcurrency(assetTargets, DRAFT_CONCURRENCY, async (a) => {
+  const total = assetTargets.length;
+  logMemory(`generateDraft start — ${total} asset(s), concurrency ${DRAFT_CONCURRENCY}`);
+
+  const perAsset = await mapWithConcurrency(assetTargets, DRAFT_CONCURRENCY, async (a, idx) => {
+    console.log(`[googleDocs] generating asset ${idx + 1}/${total}: ${a.assetType}`);
     try {
       const drafts = await generateAssetDrafts({
         assetType: a.assetType,
@@ -349,14 +365,19 @@ async function generateDraft(id) {
         fields: a.fields,
       });
       const idxByName = new Map(a.fields.map((f) => [f.fieldName, f.insertIndex]));
-      return drafts
+      const mapped = drafts
         .map((d) => ({ insertIndex: idxByName.get(d.fieldName), copy: d.copy }))
         .filter((r) => r.insertIndex != null && r.copy);
+      console.log(`[googleDocs] asset ${idx + 1}/${total} done: ${a.assetType} (${mapped.length} fields)`);
+      return mapped;
     } catch (err) {
-      console.error(`[googleDocs] asset draft failed for ${a.assetType}: ${err.message}`);
+      console.error(
+        `[googleDocs] asset ${idx + 1}/${total} FAILED: ${a.assetType}: ${err.message}`
+      );
       return [];
     }
   });
+  logMemory(`generateDraft end — ${total} asset(s)`);
 
   const drafted = perAsset.flat();
 

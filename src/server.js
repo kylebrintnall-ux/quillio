@@ -142,8 +142,17 @@ app.post('/slack/interactions', (req, res) => {
         console.error('Failed to report error to Slack:', e);
       }
     });
+  } else if (action.action_id === 'skip') {
+    // Replace the buttons with a skipped-state confirmation (keep an Open in
+    // Drive link). The doc id is the button value.
+    const url = `https://docs.google.com/document/d/${action.value}/edit`;
+    updateMessage('✓ Draft skipped — doc is ready to write in.', responseUrl, {
+      webViewLink: url,
+    }).catch((err) => {
+      console.error('skip update failed:', err);
+    });
   }
-  // 'skip' and 'open_in_drive' require no server-side work.
+  // 'open_in_drive' is a link button — no server-side work.
 });
 
 app.listen(config.PORT, () => {

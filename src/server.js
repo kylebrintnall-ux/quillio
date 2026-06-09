@@ -5,7 +5,7 @@ const express = require('express');
 
 const config = require('./config');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
-const { postText, updateMessage } = require('./services/slack');
+const { updateMessage } = require('./services/slack');
 
 const app = express();
 
@@ -88,24 +88,37 @@ app.post('/slack/command', (req, res) => {
     });
   }
 
-  // 1. Immediate acknowledgment — this must go out before any heavy work.
-  //    Leads with :quillio-scroll: to match the folder-recovery building message.
-  res.status(200).json({
-    response_type: 'in_channel',
-    text: ':quillio-scroll: Building your document…',
-  });
+  // 1. Immediate acknowledgment — empty 200 within Slack's 3s window. We do NOT
+  //    put the "building…" text in this HTTP response: replace_original (used by
+  //    postResult) can only replace a message posted via the response_url, not
+  //    the synchronous HTTP-ack message. So the build message is posted via the
+  //    response_url below, letting postResult replace it in place when done.
+  res.status(200).end();
 
-  // 2. Fire-and-forget the real workflow. Errors are reported back to Slack
-  //    but never block or crash the request.
+  // 2. Fire-and-forget: post the build message via response_url (so it shares a
+  //    lineage with the final result), then run the workflow. Errors are
+  //    reported back to Slack but never block or crash the request.
   const responseUrl = req.body.response_url;
-  runBriefWorkflow(brief, responseUrl).catch(async (err) => {
-    console.error('runBriefWorkflow failed:', err);
+  (async () => {
     try {
-      await postText(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+      await updateMessage(':quillio-scroll: Building your document…', responseUrl, {
+        newMessage: true,
+        label: 'build-progress',
+      });
     } catch (e) {
-      console.error('Failed to report error to Slack:', e);
+      console.error('build progress post failed:', e.message);
     }
-  });
+    try {
+      await runBriefWorkflow(brief, responseUrl);
+    } catch (err) {
+      console.error('runBriefWorkflow failed:', err);
+      try {
+        await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+      } catch (e) {
+        console.error('Failed to report error to Slack:', e);
+      }
+    }
+  })();
 });
 
 // --- Interactive button clicks (Generate First Draft / Skip) ---

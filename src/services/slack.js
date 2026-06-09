@@ -122,11 +122,20 @@ async function updateMessage(text, responseUrl, opts = {}) {
   }
 
   const tag = opts.label ? `updateMessage[${opts.label}]` : 'updateMessage';
-  const target = responseUrl ? 'response_url' : 'webhook (fallback — no response_url!)';
+  const mode = opts.newMessage ? 'new message' : 'replace_original';
+  const target = responseUrl ? `response_url (${mode})` : 'webhook (fallback — no response_url!)';
   console.log(`[slack] ${tag} -> ${target}`);
 
   const url = responseUrl || config.SLACK_WEBHOOK_URL;
-  const payload = responseUrl ? { replace_original: true, ...body } : body;
+  // opts.newMessage posts a fresh in-channel message instead of replacing the
+  // original. Slack won't reliably re-render a replace_original after the same
+  // response_url has already been used (e.g. for the progress update), so the
+  // final completion is posted as a new message.
+  const payload = responseUrl
+    ? opts.newMessage
+      ? { response_type: 'in_channel', replace_original: false, ...body }
+      : { replace_original: true, ...body }
+    : body;
 
   try {
     const res = await postToSlack(url, payload);

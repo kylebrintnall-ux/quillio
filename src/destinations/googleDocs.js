@@ -57,11 +57,26 @@ function toTitleCase(str) {
     .join(' ');
 }
 
+// Cleanup pass for Gemini's campaign title: strip the junk models sometimes
+// add (labels, surrounding quotes/markdown, an accidental leading date,
+// trailing punctuation) and cap the length. Returns '' if nothing usable.
+function cleanCampaignTitle(raw) {
+  let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  t = t.replace(/^(?:campaign\s*title|title|campaign|name)\s*[:\-–—]\s*/i, ''); // leading label
+  t = t.replace(/^\d{4}-\d{2}-\d{2}\s*[-–—:]*\s*/, ''); // accidental leading date
+  t = t.replace(/^[*_"'“”‘’\s]+|[*_"'“”‘’\s]+$/g, ''); // surrounding quotes/markdown
+  t = t.replace(/[.,;:!]+$/, '').trim(); // trailing punctuation
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length > 8) t = words.slice(0, 8).join(' '); // keep it concise
+  return t;
+}
+
 function makeTitle(brief, campaignTitle) {
-  // Prefer Gemini's campaign title; fall back to the first few words of the
-  // brief if it's empty. Either way: Title Case, with a YYYY-MM-DD prefix.
+  // Prefer Gemini's (cleaned) campaign title; fall back to the first few words
+  // of the brief if it's empty. Either way: Title Case, with a YYYY-MM-DD prefix.
   const base =
-    (campaignTitle && campaignTitle.trim()) ||
+    cleanCampaignTitle(campaignTitle) ||
     String(brief).trim().split(/\s+/).filter(Boolean).slice(0, 8).join(' ') ||
     'Campaign';
   return `${todayStamp()} — ${toTitleCase(base)}`;

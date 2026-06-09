@@ -77,8 +77,13 @@ async function postResult(result, responseUrl) {
   console.log('[slack] postResult -> ' + target);
 
   const url = responseUrl || config.SLACK_WEBHOOK_URL;
+  // IMPORTANT: do NOT include response_type here. Sending response_type
+  // ('in_channel') together with replace_original makes Slack broadcast a NEW
+  // message instead of replacing the "building…" ack — leaving the ack stranded.
+  // replace_original alone replaces the ack in place and preserves its
+  // (in-channel) visibility.
   const payload = responseUrl
-    ? { response_type: 'in_channel', replace_original: true, ...message }
+    ? { replace_original: true, ...message }
     : message;
 
   try {

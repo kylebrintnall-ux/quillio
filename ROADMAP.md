@@ -15,11 +15,11 @@
 - Semantic asset matching — full variation library (LI, basho, DEM, etc.)
 - Modular destination architecture (Google Docs adapter)
 - 8-bit magic quill animated emoji
+- Slack signature verification enforced on both endpoints
+- Sheet row reorder (Offer Body / CTA pairing) — done
 
 **Pending V1 cleanup:**
 
-- Sheet row reorder (Offer Body / CTA pairing) — 2 min manual fix
-- Re-enable Slack signature verification on both endpoints
 - Upload `:quillio-scroll:` and `:quillio-victory:` emojis + wire into Claude Code
 
 -----

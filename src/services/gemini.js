@@ -1,6 +1,41 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const config = require('../config');
+
+// Brand voice guide (voice.md at the repo root), loaded once at startup and
+// injected into every draft prompt as the overall brand identity. HTML comments
+// are stripped; if only headings/comments remain (the unfilled placeholder),
+// it's treated as empty and nothing is injected.
+function loadVoiceGuide() {
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, '..', '..', 'voice.md'), 'utf8');
+    const withoutComments = raw.replace(/<!--[\s\S]*?-->/g, '');
+    const meaningful = withoutComments.replace(/^#.*$/gm, '').trim();
+    return meaningful ? withoutComments.trim() : '';
+  } catch {
+    return '';
+  }
+}
+const VOICE_GUIDE = loadVoiceGuide();
+
+// Prompt lines for the brand-voice section. Empty when no voice guide is set.
+// Frames voice.md as the overall identity and the Sheet's Tone Notes as
+// field-specific tactical direction — both to be respected.
+function brandVoiceLines() {
+  if (!VOICE_GUIDE) return [];
+  return [
+    'BRAND VOICE & WRITING PRINCIPLES — the overall brand identity and writing',
+    'principles below apply to ALL copy. (The Tone Notes provided later are',
+    'field-specific tactical direction; respect BOTH the brand voice and the',
+    'tone notes.)',
+    '"""',
+    VOICE_GUIDE,
+    '"""',
+    '',
+  ];
+}
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -194,6 +229,7 @@ async function generateFieldDraft({
   const prompt = [
     'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
     '',
+    ...brandVoiceLines(),
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
     `Asset: ${assetType}`,
@@ -273,6 +309,7 @@ async function generateAssetDrafts({
     'and voice. Where a field repeats (e.g. multiple headlines or variants), make',
     'them clearly DISTINCT, not reworded duplicates.',
     '',
+    ...brandVoiceLines(),
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
     `Asset: ${assetType}`,

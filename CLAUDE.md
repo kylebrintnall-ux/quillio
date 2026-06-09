@@ -81,6 +81,11 @@ Data flow for `/quillio [brief]`:
   paragraph with a bottom border.
 - **Allowed assets** are the single source of truth in `config.ALLOWED_ASSETS`.
   Gemini output is filtered against it defensively.
+- **Brand voice** lives in `voice.md` at the repo root, loaded once at startup
+  by `gemini.js` and injected into every draft prompt as the overall brand
+  identity (the Sheet's Tone Notes remain field-specific direction). HTML
+  comments are stripped; an unfilled placeholder (headings/comments only) injects
+  nothing. Edits take effect on restart/deploy.
 - **Errors** in async work are caught in `server.js` and reported back to Slack
   via `response_url`; they never crash the request.
 - Secrets and deployment-specific IDs live in `config.js` with env overrides —

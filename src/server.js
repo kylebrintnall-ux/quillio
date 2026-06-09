@@ -5,7 +5,7 @@ const express = require('express');
 
 const config = require('./config');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
-const { updateMessage } = require('./services/slack');
+const { updateMessage, updateLive, openInDriveBlocks } = require('./services/slack');
 
 const app = express();
 
@@ -88,37 +88,23 @@ app.post('/slack/command', (req, res) => {
     });
   }
 
-  // 1. Immediate acknowledgment — empty 200 within Slack's 3s window. We do NOT
-  //    put the "building…" text in this HTTP response: replace_original (used by
-  //    postResult) can only replace a message posted via the response_url, not
-  //    the synchronous HTTP-ack message. So the build message is posted via the
-  //    response_url below, letting postResult replace it in place when done.
+  // 1. Immediate acknowledgment — empty 200 within Slack's 3s window. The
+  //    "building…" message is posted by runBriefWorkflow via chat.postMessage
+  //    (channel_id below) so it can be edited in place into the doc-ready card.
   res.status(200).end();
 
-  // 2. Fire-and-forget: post the build message via response_url (so it shares a
-  //    lineage with the final result), then run the workflow. Errors are
-  //    reported back to Slack but never block or crash the request.
+  // 2. Fire-and-forget the real workflow. Errors are reported back to Slack but
+  //    never block or crash the request.
   const responseUrl = req.body.response_url;
-  (async () => {
+  const channelId = req.body.channel_id;
+  runBriefWorkflow(brief, responseUrl, { channelId }).catch(async (err) => {
+    console.error('runBriefWorkflow failed:', err);
     try {
-      await updateMessage(':quillio-scroll: Building your document…', responseUrl, {
-        newMessage: true,
-        label: 'build-progress',
-      });
+      await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
     } catch (e) {
-      console.error('build progress post failed:', e.message);
+      console.error('Failed to report error to Slack:', e);
     }
-    try {
-      await runBriefWorkflow(brief, responseUrl);
-    } catch (err) {
-      console.error('runBriefWorkflow failed:', err);
-      try {
-        await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
-      } catch (e) {
-        console.error('Failed to report error to Slack:', e);
-      }
-    }
-  })();
+  });
 });
 
 // --- Interactive button clicks (Generate First Draft / Skip) ---
@@ -150,11 +136,14 @@ app.post('/slack/interactions', (req, res) => {
   if (!action) return;
 
   const responseUrl = payload.response_url;
+  // The clicked message — we edit it in place via chat.update (channel + ts).
   const channelId = payload.channel && payload.channel.id;
+  const messageTs = payload.message && payload.message.ts;
+  const canLive = !!config.SLACK_BOT_TOKEN && channelId && messageTs;
 
   if (action.action_id === 'generate_first_draft') {
     const docId = action.value;
-    runGenerateDraft(docId, responseUrl, channelId).catch(async (err) => {
+    runGenerateDraft(docId, responseUrl, channelId, messageTs).catch(async (err) => {
       console.error('runGenerateDraft failed:', err);
       try {
         await updateMessage(`⚠️ Draft generation failed: ${err.message}`, responseUrl);
@@ -164,17 +153,17 @@ app.post('/slack/interactions', (req, res) => {
     });
   } else if (action.action_id === 'skip') {
     // Replace the buttons with a skipped-state confirmation (keep an Open in
-    // Drive link). The doc id is the button value.
+    // Drive link). Edit the clicked message in place when possible.
     const url = `https://docs.google.com/document/d/${action.value}/edit`;
-    updateMessage('✓ Draft skipped — doc is ready to write in.', responseUrl, {
-      webViewLink: url,
-    }).catch((err) => {
-      console.error('skip update failed:', err);
-    });
+    const text = '✓ Draft skipped — doc is ready to write in.';
+    const done = canLive
+      ? updateLive(channelId, messageTs, text, openInDriveBlocks(text, url))
+      : updateMessage(text, responseUrl, { webViewLink: url });
+    done.catch((err) => console.error('skip update failed:', err.message));
   } else if (action.action_id === 'build_default' || action.action_id === 'retry_folder') {
-    // Folder-access recovery (Issue 3): re-run the original brief. Build in
-    // Default ignores the brief's folder; Retry pins the same folder again
-    // (the user will have shared it in the meantime).
+    // Folder-access recovery (Issue 3): re-run the original brief, editing the
+    // clicked message in place (building → doc-ready). Build in Default ignores
+    // the brief's folder; Retry pins the same folder again.
     let ctx = {};
     try {
       ctx = JSON.parse(action.value || '{}');
@@ -185,29 +174,16 @@ app.post('/slack/interactions', (req, res) => {
       action.action_id === 'build_default'
         ? { forceDefaultFolder: true }
         : { folderIdOverride: ctx.folderId };
+    if (canLive) opts.live = { channel: channelId, ts: messageTs };
 
-    // Immediate progress ack FIRST (replace the buttons so the tap never sits
-    // silent), THEN do the build — postResult replaces this when the doc is
-    // ready. Sequenced so the progress lands before the build's final post.
-    (async () => {
+    runBriefWorkflow(ctx.brief || '', responseUrl, opts).catch(async (err) => {
+      console.error('folder-recovery rerun failed:', err);
       try {
-        await updateMessage(':quillio-scroll: Building your document…', responseUrl, {
-          label: 'folder-recovery-progress',
-        });
+        await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
       } catch (e) {
-        console.error('folder-recovery progress update failed:', e.message);
+        console.error('Failed to report error to Slack:', e);
       }
-      try {
-        await runBriefWorkflow(ctx.brief || '', responseUrl, opts);
-      } catch (err) {
-        console.error('folder-recovery rerun failed:', err);
-        try {
-          await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
-        } catch (e) {
-          console.error('Failed to report error to Slack:', e);
-        }
-      }
-    })();
+    });
   }
   // 'open_in_drive' is a link button — no server-side work.
 });

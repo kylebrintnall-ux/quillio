@@ -86,6 +86,19 @@ Data flow for `/quillio [brief]`:
   identity (the Sheet's Tone Notes remain field-specific direction). HTML
   comments are stripped; an unfilled placeholder (headings/comments only) injects
   nothing. Edits take effect on restart/deploy.
+  - **Editing `voice.md` — mind the structural coupling.** To save tokens,
+    `gemini.js` slices the file per asset: everything *except* the
+    `## … Writing Across Mediums` section is treated as universal craft and
+    always injected; that section's `### ` subsections are the per-medium parts,
+    and only the one matching the asset is injected. Two things the parser keys
+    off: (1) a level-2 heading whose text contains **"Writing Across Mediums"**,
+    and (2) its `### ` subsection titles, matched by keyword in
+    `mediumKeywordsForAsset` (`paid social`, `organic social`, `google display`,
+    `email`, `sales`, `confirmation`). If you rename that heading or those
+    subsections, update `mediumKeywordsForAsset` too — otherwise it safely falls
+    back to injecting the whole file (more tokens, no lost guidance). Keep the
+    CTA library and banned-words list *outside* the mediums section so they stay
+    universal.
 - **Errors** in async work are caught in `server.js` and reported back to Slack
   via `response_url`; they never crash the request.
 - Secrets and deployment-specific IDs live in `config.js` with env overrides —

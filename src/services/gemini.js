@@ -149,8 +149,30 @@ async function parseBrief(brief) {
   };
 }
 
+// Strip wrapping quotes / stray markdown from a single line of model output.
+function cleanDraft(text) {
+  return String(text).trim().replace(/^[*_"'“”‘’\s]+|[*_"'“”‘’\s]+$/g, '').trim();
+}
+
+// The hard character ceiling implied by a charLimit cell. Handles "50",
+// "50-75" (→75), and "150 recommended (600 max)" (→600). Null = no numeric cap.
+function charCeiling(charLimit) {
+  const nums = String(charLimit || '').match(/\d+/g);
+  return nums ? Math.max(...nums.map(Number)) : null;
+}
+
+// Last-resort trim to a hard ceiling, cutting on a word boundary where possible.
+function trimToCeiling(s, max) {
+  if (s.length <= max) return s;
+  let t = s.slice(0, max);
+  const lastSpace = t.lastIndexOf(' ');
+  if (lastSpace > max * 0.6) t = t.slice(0, lastSpace);
+  return t.replace(/[\s.,;:!\-–—]+$/, '').trim();
+}
+
 // Generate a single piece of draft copy for one asset field, honoring the
-// character limit and creative direction.
+// character limit and creative direction. Enforces the limit: if the draft is
+// over, it gets one corrective rewrite, then a hard trim as a last resort.
 async function generateFieldDraft({
   assetType,
   channel,
@@ -158,35 +180,60 @@ async function generateFieldDraft({
   charLimit,
   toneNotes,
   notes,
+  funnelStage,
   summary,
   writerPrompt,
 }) {
-  const limitLine =
-    charLimit && /\d/.test(String(charLimit))
-      ? `Keep it within ${charLimit} characters.`
-      : 'Keep it concise and appropriate for the field.';
+  const ceiling = charCeiling(charLimit);
+  const limitLine = ceiling
+    ? `Hard limit: the copy MUST be ${ceiling} characters or fewer${
+        /[-–—]/.test(String(charLimit)) ? ` (target range ${charLimit})` : ''
+      }.`
+    : 'Keep it concise and appropriate for the field.';
 
   const prompt = [
-    'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, or commentary.',
+    'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
     '',
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
     `Asset: ${assetType}`,
     channel ? `Channel: ${channel}` : '',
     `Field: ${fieldName}`,
+    funnelStage ? `Funnel stage: ${funnelStage}` : '',
     toneNotes ? `Tone notes: ${toneNotes}` : '',
-    notes ? `Field notes: ${notes}` : '',
+    notes ? `Field guidance: ${notes}` : '',
     limitLine,
   ]
     .filter(Boolean)
     .join('\n');
 
-  const text = await callGemini({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.8 },
-  });
+  let copy = cleanDraft(
+    await callGemini({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.8 },
+    })
+  );
 
-  return text.trim().replace(/^["']|["']$/g, '');
+  // Enforce the hard ceiling: one corrective rewrite, then a hard trim.
+  if (ceiling && copy.length > ceiling) {
+    const retryPrompt = [
+      prompt,
+      '',
+      `Your previous draft was ${copy.length} characters — too long. Rewrite it to be ${ceiling} characters or fewer while preserving the meaning and tone. Return ONLY the copy.`,
+      `Previous draft: ${copy}`,
+    ].join('\n');
+
+    copy = cleanDraft(
+      await callGemini({
+        contents: [{ role: 'user', parts: [{ text: retryPrompt }] }],
+        generationConfig: { temperature: 0.5 },
+      })
+    );
+
+    if (copy.length > ceiling) copy = trimToCeiling(copy, ceiling);
+  }
+
+  return copy;
 }
 
 module.exports = { parseBrief, generateFieldDraft };

@@ -14,6 +14,7 @@ const config = require('../config');
 const { getClients } = require('../google');
 const { DocBuilder } = require('./docBuilder');
 const { generateFieldDraft } = require('../services/gemini');
+const { getAssetSpecs } = require('../services/sheets');
 
 // How many field drafts to request from Gemini at once.
 const DRAFT_CONCURRENCY = Number(process.env.DRAFT_CONCURRENCY) || 4;
@@ -267,6 +268,35 @@ function parseDoc(doc) {
   return { summary: summary.value, writerPrompt: writer.value, assets };
 }
 
+// Lookup key for matching a doc field back to its Sheet row.
+function ctxKey(assetType, fieldName) {
+  return `${String(assetType).trim().toLowerCase()}|${String(fieldName).trim().toLowerCase()}`;
+}
+
+// Reads the spec Sheet and returns a Map of ctxKey -> { channel, toneNotes,
+// notes, funnelStage, charLimit } so drafting can recover the per-field
+// guidance the doc doesn't carry. Best-effort: returns an empty Map on failure.
+async function loadSheetContext() {
+  const map = new Map();
+  try {
+    const specs = await getAssetSpecs();
+    for (const group of specs) {
+      for (const f of group.fields) {
+        map.set(ctxKey(group.assetType, f.fieldName), {
+          channel: group.channel,
+          toneNotes: group.toneNotes,
+          notes: f.notes,
+          funnelStage: f.funnelStage,
+          charLimit: f.charLimit,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[googleDocs] could not load Sheet context for drafting:', err.message);
+  }
+  return map;
+}
+
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
 async function generateDraft(id) {
@@ -274,6 +304,13 @@ async function generateDraft(id) {
 
   const doc = (await docs.documents.get({ documentId: id })).data;
   const { summary, writerPrompt, assets } = parseDoc(doc);
+
+  // The doc only carries asset/channel/tone/field-label — the Sheet's per-field
+  // Notes and Funnel Stage never made it in. Re-read the Sheet and match by
+  // asset + field name to restore that context for the drafter. (The doc is
+  // still the source of truth for *positions*.) Best-effort: if the Sheet read
+  // fails, drafting proceeds with just the doc-derived context.
+  const sheetCtx = await loadSheetContext();
 
   // Collect all draft targets, then draft copy for each.
   const targets = [];
@@ -289,13 +326,15 @@ async function generateDraft(id) {
   // aborting the whole run.
   const results = await mapWithConcurrency(targets, DRAFT_CONCURRENCY, async ({ asset, field }) => {
     try {
+      const ctx = sheetCtx.get(ctxKey(asset.assetType, field.fieldName)) || {};
       const copy = await generateFieldDraft({
         assetType: asset.assetType,
-        channel: asset.channel,
+        channel: ctx.channel || asset.channel,
         fieldName: field.fieldName,
-        charLimit: field.charLimit,
-        toneNotes: asset.toneNotes,
-        notes: '',
+        charLimit: field.charLimit || ctx.charLimit,
+        toneNotes: ctx.toneNotes || asset.toneNotes,
+        notes: ctx.notes || '',
+        funnelStage: ctx.funnelStage || '',
         summary,
         writerPrompt,
       });

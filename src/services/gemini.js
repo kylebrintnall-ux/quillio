@@ -21,18 +21,34 @@ function loadVoiceGuide() {
 const VOICE_GUIDE = loadVoiceGuide();
 
 // Prompt lines for the brand-voice section. Empty when no voice guide is set.
-// Frames voice.md as the overall identity and the Sheet's Tone Notes as
-// field-specific tactical direction — both to be respected.
+// Frames the layering: voice.md = how to write; Sheet Tone Notes = field-
+// specific direction; character limits = hard constraints that always win.
+//
+// FUTURE OPTIMIZATION: this injects the WHOLE voice.md into every asset's batch
+// call, which costs tokens. A later version could inject only the relevant
+// medium's section (selected by asset type, e.g. paid social / email / Google
+// Display) plus the universal principles and the CTA library, instead of the
+// entire file.
 function brandVoiceLines() {
   if (!VOICE_GUIDE) return [];
   return [
-    'BRAND VOICE & WRITING PRINCIPLES — the overall brand identity and writing',
-    'principles below apply to ALL copy. (The Tone Notes provided later are',
-    'field-specific tactical direction; respect BOTH the brand voice and the',
-    'tone notes.)',
+    'BRAND VOICE & COPY PLAYBOOK — this is HOW to write: the overall brand voice',
+    'and copywriting craft (tone, banned words, headline/body/CTA principles, the',
+    'approved CTA library, and medium-specific guidance). Apply it to ALL copy.',
     '"""',
     VOICE_GUIDE,
     '"""',
+    '',
+    'PROMPT HIERARCHY — what governs what:',
+    '1. The Brand Voice & Copy Playbook above = HOW to write (voice + craft).',
+    "2. Each field's Tone Notes / guidance = field-specific tactical direction.",
+    '3. Character limits = HARD constraints that ALWAYS win.',
+    "When the playbook and a field's Tone Note conflict, the field's Tone Note",
+    'wins for that field — but the overall voice (tone, banned words, CTA style)',
+    'always applies, and a field\'s character limit is never exceeded.',
+    'For CTA fields: prefer an option from the playbook\'s approved CTA library',
+    "that matches the asset's destination / funnel stage, rather than inventing a",
+    'new CTA phrasing.',
     '',
   ];
 }

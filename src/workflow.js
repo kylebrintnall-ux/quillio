@@ -70,6 +70,61 @@ async function fetchDriveReferenceContent(links) {
   return out;
 }
 
+// Phase 2 Slice 2 — read the text of non-Drive external web pages linked in the
+// brief, for enrichment context. Best-effort: any URL that can't be fetched
+// (timeout, non-200, network error, non-text) is skipped silently.
+const EXTERNAL_CONTENT_MAX = 2000; // web pages are noisier, so a tighter cap
+const EXTERNAL_FETCH_TIMEOUT_MS = 5000;
+// Skip Google Drive/Docs (handled separately) and non-readable URL patterns.
+const SKIP_EXTERNAL_RE = /drive\.google\.com|docs\.google\.com|slack\.com|^mailto:|^tel:|localhost|127\.0\.0\.1/i;
+
+async function fetchExternalURLContent(links) {
+  if (!Array.isArray(links) || links.length === 0) return [];
+  const out = [];
+
+  for (const raw of links) {
+    const url = String(raw);
+    if (SKIP_EXTERNAL_RE.test(url) || !/^https?:\/\//i.test(url)) continue;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), EXTERNAL_FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Quillio/1.0 (brief-ingestion-bot)' },
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const ct = res.headers.get('content-type') || '';
+      if (/^(image|video|audio)\/|application\/(pdf|octet-stream|zip|gzip)/i.test(ct)) {
+        throw new Error(`non-text content-type: ${ct}`);
+      }
+
+      const html = await res.text();
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      let title = titleMatch ? titleMatch[1].trim() : '';
+      if (!title) {
+        try {
+          title = new URL(url).hostname;
+        } catch {
+          title = url;
+        }
+      }
+      const content = html
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, EXTERNAL_CONTENT_MAX);
+
+      out.push({ url, title, content });
+    } catch (err) {
+      console.error(`[Quillio] Could not fetch external URL ${url}: ${err.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return out;
+}
+
 // Did this error come from an inaccessible (brief-provided) Drive folder?
 function isFolderAccessError(err, folderId) {
   if (!folderId) return false;
@@ -152,19 +207,25 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         ? opts.folderIdOverride
         : folderId;
 
-    // Phase 2 (additive): read linked Drive files and enrich the summary /
-    // writer direction with their content. Fully isolated — any failure leaves
-    // the parsed brief unchanged and the rest of the pipeline untouched.
+    // Phase 2 (additive): read linked Drive files AND external web pages, and
+    // enrich the summary / writer direction with their content. Fully isolated —
+    // any failure leaves the parsed brief unchanged and the pipeline untouched.
     try {
-      const refDocs = await fetchDriveReferenceContent(referenceLinks);
-      if (refDocs.length > 0) {
-        const referenceContext = refDocs
+      const [refDocs, refExternal] = await Promise.all([
+        fetchDriveReferenceContent(referenceLinks),
+        fetchExternalURLContent(referenceLinks),
+      ]);
+      const refs = [...refDocs, ...refExternal];
+      if (refs.length > 0) {
+        const referenceContext = refs
           .map((r) => `\n\n--- Reference: ${r.title} ---\n${r.content}`)
           .join('');
         const enriched = await enrichWithReferences({ summary, writerPrompt }, referenceContext);
         summary = enriched.summary;
         writerPrompt = enriched.writerPrompt;
-        console.log(`[Quillio] enriched brief from ${refDocs.length} reference file(s)`);
+        console.log(
+          `[Quillio] enriched brief from ${refDocs.length} Drive + ${refExternal.length} external reference(s)`
+        );
       }
     } catch (err) {
       console.error('[Quillio] reference enrichment skipped:', err.message);

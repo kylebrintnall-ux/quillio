@@ -20,23 +20,115 @@ function loadVoiceGuide() {
 }
 const VOICE_GUIDE = loadVoiceGuide();
 
-// Prompt lines for the brand-voice section. Empty when no voice guide is set.
-// Frames the layering: voice.md = how to write; Sheet Tone Notes = field-
-// specific direction; character limits = hard constraints that always win.
-//
-// FUTURE OPTIMIZATION: this injects the WHOLE voice.md into every asset's batch
-// call, which costs tokens. A later version could inject only the relevant
-// medium's section (selected by asset type, e.g. paid social / email / Google
-// Display) plus the universal principles and the CTA library, instead of the
-// entire file.
-function brandVoiceLines() {
-  if (!VOICE_GUIDE) return [];
+// Split the guide once into the universal parts (always injected) and the
+// per-medium subsections of "## … Writing Across Mediums" (injected only for
+// the relevant medium — see buildVoiceContext). This is the token optimization:
+// instead of shipping the whole file on every asset call, we ship the universal
+// craft + CTA library + banned words + just the one relevant medium section.
+function parseVoice(guide) {
+  if (!guide) return null;
+  const lines = guide.split('\n');
+
+  let mediumsStart = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i]) && /writing across mediums/i.test(lines[i])) {
+      mediumsStart = i;
+      break;
+    }
+  }
+  // No recognizable mediums section → can't slice; fall back to the whole file.
+  if (mediumsStart === -1) return { sliceable: false };
+
+  let mediumsEnd = lines.length;
+  for (let i = mediumsStart + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) {
+      mediumsEnd = i;
+      break;
+    }
+  }
+
+  const block = lines.slice(mediumsStart, mediumsEnd);
+  let firstSub = block.length;
+  for (let i = 0; i < block.length; i++) {
+    if (/^###\s/.test(block[i])) {
+      firstSub = i;
+      break;
+    }
+  }
+
+  const subs = [];
+  let cur = null;
+  for (let i = firstSub; i < block.length; i++) {
+    if (/^###\s/.test(block[i])) {
+      if (cur) subs.push(cur);
+      cur = { title: block[i].replace(/^###\s*/, '').trim(), lines: [block[i]] };
+    } else if (cur) {
+      cur.lines.push(block[i]);
+    }
+  }
+  if (cur) subs.push(cur);
+
+  return {
+    sliceable: true,
+    preMedium: lines.slice(0, mediumsStart).join('\n').trim(),
+    mediumsIntro: block.slice(0, firstSub).join('\n').trim(),
+    subs: subs.map((s) => ({ title: s.title, text: s.lines.join('\n').trim() })),
+    postMedium: lines.slice(mediumsEnd).join('\n').trim(),
+  };
+}
+const VOICE_PARSED = parseVoice(VOICE_GUIDE);
+
+// Which "Writing Across Mediums" subsection(s) apply to an asset type. Matched
+// as case-insensitive substrings of the ### headings. Null = unknown medium →
+// include them all (safe fallback).
+function mediumKeywordsForAsset(assetType) {
+  const a = String(assetType).toLowerCase();
+  if (a.includes('paid social') || /\b(linkedin|meta|facebook|instagram|twitter)\b/.test(a)) {
+    return ['paid social'];
+  }
+  if (a.includes('organic')) return ['organic social'];
+  if (a.includes('display') || a.includes('banner')) return ['google display'];
+  if (a.includes('basho') || a.includes('sales') || a.includes('outbound')) return ['sales'];
+  if (a.includes('email')) return ['email'];
+  if (a.includes('form') || a.includes('confirm') || a.includes('thank')) return ['confirmation'];
+  return null;
+}
+
+// The voice context to inject for a given asset: universal craft (incl. CTA
+// library + banned words) plus only the relevant medium subsection.
+function buildVoiceContext(assetType) {
+  if (!VOICE_PARSED) return '';
+  if (!VOICE_PARSED.sliceable) return VOICE_GUIDE;
+
+  const keywords = mediumKeywordsForAsset(assetType);
+  let chosen = keywords
+    ? VOICE_PARSED.subs.filter((s) => keywords.some((k) => s.title.toLowerCase().includes(k)))
+    : VOICE_PARSED.subs;
+  if (chosen.length === 0) chosen = VOICE_PARSED.subs; // no match → don't drop guidance
+
+  return [
+    VOICE_PARSED.preMedium,
+    VOICE_PARSED.mediumsIntro,
+    ...chosen.map((s) => s.text),
+    VOICE_PARSED.postMedium,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+// Prompt lines for the brand-voice section, scoped to the asset's medium.
+// Empty when no voice guide is set. Frames the layering: voice.md = how to
+// write; Sheet Tone Notes = field-specific direction; character limits = hard
+// constraints that always win.
+function brandVoiceLines(assetType) {
+  const voice = buildVoiceContext(assetType);
+  if (!voice) return [];
   return [
     'BRAND VOICE & COPY PLAYBOOK — this is HOW to write: the overall brand voice',
     'and copywriting craft (tone, banned words, headline/body/CTA principles, the',
-    'approved CTA library, and medium-specific guidance). Apply it to ALL copy.',
+    'approved CTA library, and guidance for THIS asset\'s medium). Apply it to ALL copy.',
     '"""',
-    VOICE_GUIDE,
+    voice,
     '"""',
     '',
     'PROMPT HIERARCHY — what governs what:',
@@ -245,7 +337,7 @@ async function generateFieldDraft({
   const prompt = [
     'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
     '',
-    ...brandVoiceLines(),
+    ...brandVoiceLines(assetType),
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
     `Asset: ${assetType}`,
@@ -325,7 +417,7 @@ async function generateAssetDrafts({
     'and voice. Where a field repeats (e.g. multiple headlines or variants), make',
     'them clearly DISTINCT, not reworded duplicates.',
     '',
-    ...brandVoiceLines(),
+    ...brandVoiceLines(assetType),
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
     `Asset: ${assetType}`,

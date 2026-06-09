@@ -12,10 +12,11 @@ async function postToSlack(url, payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+  const body = await res.text();
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Slack post failed ${res.status}: ${text}`);
+    throw new Error(`Slack post failed ${res.status}: ${body}`);
   }
+  return { status: res.status, body };
 }
 
 // Block Kit message posted after the doc is built: title, asset list, and
@@ -72,14 +73,22 @@ function buildResultBlocks({ title, webViewLink, assets, docId }) {
 // one it falls back to the configured webhook.
 async function postResult(result, responseUrl) {
   const message = buildResultBlocks(result);
-  if (responseUrl) {
-    return postToSlack(responseUrl, {
-      response_type: 'in_channel',
-      replace_original: true,
-      ...message,
-    });
+  const target = responseUrl ? 'response_url' : 'webhook (fallback — no response_url!)';
+  console.log('[slack] postResult -> ' + target);
+
+  const url = responseUrl || config.SLACK_WEBHOOK_URL;
+  const payload = responseUrl
+    ? { response_type: 'in_channel', replace_original: true, ...message }
+    : message;
+
+  try {
+    const res = await postToSlack(url, payload);
+    console.log('[slack] postResult OK — Slack status ' + res.status + ', body: ' + res.body);
+    return res;
+  } catch (err) {
+    console.error('[slack] postResult FAILED: ' + err.message);
+    throw err;
   }
-  await postToSlack(config.SLACK_WEBHOOK_URL, message);
 }
 
 // Plain confirmation back to the channel via the interaction's response_url

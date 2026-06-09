@@ -130,4 +130,75 @@ Railway setup.
 - Slack button `value` is capped (~2000 chars) — keep it to the doc id only;
   rely on doc re-parsing for everything else.
 - Do not commit `.env` or the service-account JSON (see `.gitignore`).
-```
+
+## Vision
+
+Quillio turns a one-line campaign brief into ready-to-use, spec-correct marketing
+copy without leaving Slack. The long-term goal (see Phase 7) is to become the
+industry source of truth for platform copy specs — so a marketer never again
+ships copy that's the wrong length for the channel.
+
+## Product roadmap
+
+### Shipped — V1
+- Slack `/quillio` command → Gemini brief parsing → Google Doc creation → Slack notification
+- Generate First Draft with `:quillio:` custom emoji
+- Dynamic folder detection from a Drive link in the brief
+- Reference links extracted and included in the doc
+- Title Case doc titles
+- Response posts to the originating channel (via slash-command `response_url`)
+- Semantic asset matching with a full informal-variation library
+- Modular destination architecture (`src/destinations/`)
+
+### Phase 2 — Smart Context Ingestion
+- Channel history reading — `/quillio` with no text reads the last 10 messages in the channel
+- Slack Canvas ingestion — read full Canvas content from linked URLs (`canvases:read` scope)
+- PDF text extraction via `pdf-parse`
+- External URL fetching and text extraction
+- Second Gemini synthesis pass to enrich `summary` and `writerPrompt` from all reference context
+
+### Phase 3 — Review Loop
+- Manager and designer notifications
+- Comment / feedback loop in the Slack thread
+
+### Phase 4 — Surgical Updates
+- `/quillio update [doc-link] field: new copy` — swaps a single field without rebuilding the doc
+
+### Phase 5 — Design Sync
+- Approved copy pushes to Figma / Canva text layers
+- Human approval gate before any design push
+
+### Phase 6 — Web App + Multi-Tenant
+- OAuth Google Drive connection per customer
+- Asset-library configuration via UI, import (paste a spec doc → Gemini parses it), or default templates
+- Default templates based on actual platform specs
+- Notion and OneDrive destination adapters
+- Stripe billing
+
+### Phase 7 — LiveSpecs
+- Automated spec-monitoring service polling official platform pages
+- Push confirmed spec changes to all affected templates
+- Slack notifications to affected teams when specs change
+- Goal: become the source of truth for platform copy specs across the marketing industry
+
+## Platform specs baseline (June 2026)
+
+Reference character limits. Treat these as the defaults that ship with templates
+(Phase 6) and that LiveSpecs (Phase 7) keeps current. `(xN)` = number of
+variants the platform accepts for that field.
+
+| Platform | Field | Limit |
+| --- | --- | --- |
+| LinkedIn | Intro text | 150 recommended (600 max) |
+| LinkedIn | Headline | 70 |
+| LinkedIn | Description | 100 |
+| Meta | Primary text | 125 visible (2200 max) |
+| Meta | Headline | 40 |
+| Meta | Description | 30 |
+| Twitter/X | Post copy | 280 (links use 23 chars → 257 effective) |
+| Google Display RDA | Short headline | 30 (x5) |
+| Google Display RDA | Long headline | 90 |
+| Google Display RDA | Description | 90 (x5) |
+| Google Search RSA | Headline | 30 (x15) |
+| Google Search RSA | Description | 90 (x4) |
+

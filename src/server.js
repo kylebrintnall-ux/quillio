@@ -171,14 +171,29 @@ app.post('/slack/interactions', (req, res) => {
       action.action_id === 'build_default'
         ? { forceDefaultFolder: true }
         : { folderIdOverride: ctx.folderId };
-    runBriefWorkflow(ctx.brief || '', responseUrl, opts).catch(async (err) => {
-      console.error('folder-recovery rerun failed:', err);
+
+    // Immediate progress ack FIRST (replace the buttons so the tap never sits
+    // silent), THEN do the build — postResult replaces this when the doc is
+    // ready. Sequenced so the progress lands before the build's final post.
+    (async () => {
       try {
-        await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+        await updateMessage(':quillio-scroll: Building your document…', responseUrl, {
+          label: 'folder-recovery-progress',
+        });
       } catch (e) {
-        console.error('Failed to report error to Slack:', e);
+        console.error('folder-recovery progress update failed:', e.message);
       }
-    });
+      try {
+        await runBriefWorkflow(ctx.brief || '', responseUrl, opts);
+      } catch (err) {
+        console.error('folder-recovery rerun failed:', err);
+        try {
+          await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+        } catch (e) {
+          console.error('Failed to report error to Slack:', e);
+        }
+      }
+    })();
   }
   // 'open_in_drive' is a link button — no server-side work.
 });

@@ -5,7 +5,19 @@ const { getClients } = require('./google');
 const { parseBrief, enrichWithReferences } = require('./services/gemini');
 const { getAssetSpecs } = require('./services/sheets');
 const { getDestination } = require('./destinations');
-const { postResult, updateMessage, postChatMessage, postFolderAccessHelp } = require('./services/slack');
+const {
+  postResult,
+  updateMessage,
+  postChatMessage,
+  postFolderAccessHelp,
+  buildFolderAccessBlocks,
+  buildResultBlocks,
+  openInDriveBlocks,
+  postLive,
+  updateLive,
+} = require('./services/slack');
+
+const BUILDING_TEXT = ':quillio-scroll: Building your document…';
 
 // Matches a Google Drive *file* link and captures its file id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/document\/d\/)([a-zA-Z0-9_-]+)/;
@@ -82,6 +94,32 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   // Confirms the pipeline is actually invoked after the ack (before any I/O).
   console.log('[workflow] runBriefWorkflow START — brief chars:', (brief || '').length);
 
+  // Establish a single "live" message we transform in place (chat.update is the
+  // only reliable way to do this). opts.live = {channel, ts} edits an existing
+  // message (recovery buttons); opts.channelId posts a fresh building message.
+  // If neither works (no bot token), fall back to response_url posts.
+  let live = opts.live || null;
+  const canLive = !!config.SLACK_BOT_TOKEN;
+  try {
+    if (live && canLive) {
+      await updateLive(live.channel, live.ts, BUILDING_TEXT);
+    } else if (opts.channelId && canLive) {
+      live = await postLive(opts.channelId, BUILDING_TEXT);
+    } else if (responseUrl) {
+      await updateMessage(BUILDING_TEXT, responseUrl, { newMessage: true, label: 'build-progress' });
+      live = null;
+    }
+  } catch (e) {
+    console.error('[workflow] building message failed:', e.message);
+  }
+
+  // Emit a final/early message: edit the live message in place when we have one,
+  // otherwise fall back to a response_url post.
+  const emit = async (text, blocks, fallback) => {
+    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks);
+    return fallback();
+  };
+
   try {
     // 1. Parse the brief into title / summary / writerPrompt / assets (+ folder & links).
     const parsedBrief = await parseBrief(brief);
@@ -97,12 +135,11 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // no assets at all still falls through to "all assets".)
     if (assets.length === 0 && unmatchedAssets.length > 0) {
       console.log('[workflow] no assets matched the library — surfacing unmatched list');
-      await updateMessage(
-        `Couldn't match these to your asset library: ${unmatchedAssets.join(
-          ', '
-        )}. Add them to your library or try different asset names.`,
-        responseUrl,
-        { label: 'unmatched-assets' }
+      const unmatchedText = `Couldn't match these to your asset library: ${unmatchedAssets.join(
+        ', '
+      )}. Add them to your library or try different asset names.`;
+      await emit(unmatchedText, undefined, () =>
+        updateMessage(unmatchedText, responseUrl, { label: 'unmatched-assets' })
       );
       return;
     }
@@ -162,28 +199,35 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       if (isFolderAccessError(err, effectiveFolderId)) {
         console.log('[workflow] folder access error — offering recovery for', effectiveFolderId);
         const { serviceAccountEmail } = await getClients();
-        await postFolderAccessHelp({
+        const help = buildFolderAccessBlocks({
           email: serviceAccountEmail,
           folderId: effectiveFolderId,
           brief,
-          responseUrl,
         });
+        await emit(help.text, help.blocks, () =>
+          postFolderAccessHelp({
+            email: serviceAccountEmail,
+            folderId: effectiveFolderId,
+            brief,
+            responseUrl,
+          })
+        );
         return;
       }
       throw err;
     }
     console.log('[workflow] doc created:', doc.id);
 
-    // 4. Post the Block Kit result back to the channel the command came from
-    //    (via response_url), falling back to the configured webhook.
-    await postResult(
-      {
-        title: doc.title,
-        webViewLink: doc.url,
-        assets: assetSpecs.map((a) => a.assetType),
-        docId: doc.id,
-      },
-      responseUrl
+    // 4. Show the doc-ready card — editing the build message in place when we
+    //    have a live message, else posting via response_url.
+    const result = {
+      title: doc.title,
+      webViewLink: doc.url,
+      assets: assetSpecs.map((a) => a.assetType),
+      docId: doc.id,
+    };
+    await emit(`:quillio-doc-done: Your doc is ready — ${doc.title}`, buildResultBlocks(result).blocks, () =>
+      postResult(result, responseUrl)
     );
     console.log('[workflow] runBriefWorkflow DONE — doc', doc.id);
   } catch (err) {
@@ -192,46 +236,38 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   }
 }
 
-// Handles the "Generate First Draft" button. Updates the original message in
-// place: first an immediate "working on it" so the tap feels responsive, then
-// the final confirmation when the draft is done.
-async function runGenerateDraft(docId, responseUrl, channelId) {
-  console.log(
-    '[workflow] runGenerateDraft START — response_url present:',
-    !!responseUrl,
-    '| channel:',
-    channelId || '(none)'
-  );
+// Handles the "Generate First Draft" button. Transforms the clicked card in
+// place via chat.update: generating → first-draft-ready (single message, no
+// stray posts). Falls back to response_url progress + chat.postMessage
+// completion if the bot token / message ts isn't available.
+async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
+  const canLive = !!config.SLACK_BOT_TOKEN && channel && messageTs;
+  console.log('[workflow] runGenerateDraft START — canLive:', canLive, '| channel:', channel || '(none)');
 
-  // Progress: fire immediately on the response_url (well within its window).
-  await updateMessage(
-    ':quillio: Generating your first draft… this takes about 60 seconds.',
-    responseUrl,
-    { label: 'draft-progress' }
-  );
+  const progressText = ':quillio: Generating your first draft… this takes about 60 seconds.';
+  if (canLive) await updateLive(channel, messageTs, progressText);
+  else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 
   const { title, fieldCount, url } = await getDestination().generateDraft(docId);
-  console.log('[workflow] generateDraft returned — posting completion message');
+  console.log('[workflow] generateDraft returned — posting completion');
 
   const completionText = `:quillio-copy-done: First draft ready — *${title}* (${fieldCount} field${
     fieldCount === 1 ? '' : 's'
   } drafted).`;
 
-  // Completion: post via chat.postMessage (no expiry) so it lands even after a
-  // long (multi-asset) generation outlives the response_url. Fall back to a
-  // fresh response_url message if the bot token / channel isn't available.
-  try {
-    await postChatMessage({ channel: channelId, text: completionText, webViewLink: url });
-  } catch (err) {
-    console.error(
-      '[workflow] chat.postMessage completion failed, falling back to response_url:',
-      err.message
-    );
-    await updateMessage(completionText, responseUrl, {
-      webViewLink: url,
-      label: 'draft-complete',
-      newMessage: true,
-    });
+  if (canLive) {
+    await updateLive(channel, messageTs, completionText, openInDriveBlocks(completionText, url));
+  } else {
+    try {
+      await postChatMessage({ channel, text: completionText, webViewLink: url });
+    } catch (err) {
+      console.error('[workflow] completion fallback to response_url:', err.message);
+      await updateMessage(completionText, responseUrl, {
+        webViewLink: url,
+        label: 'draft-complete',
+        newMessage: true,
+      });
+    }
   }
   console.log('[workflow] runGenerateDraft DONE');
 }

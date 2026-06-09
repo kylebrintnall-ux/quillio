@@ -199,55 +199,95 @@ function recoveryValue(obj) {
   return v;
 }
 
-// Recoverable folder-access error: replaces the message with the SA email and
-// two buttons — Build in Default Folder, and I've Shared It — Retry. Stores the
-// brief (+ folderId) in the button values so the request can be reconstructed.
-async function postFolderAccessHelp({ email, folderId, brief, responseUrl }) {
+// Text + blocks for the recoverable folder-access error: the SA email and two
+// buttons (Build in Default Folder, I've Shared It — Retry). The button values
+// carry the brief (+ folderId) so the request can be reconstructed.
+function buildFolderAccessBlocks({ email, folderId, brief }) {
   const text =
     `⚠️ I can't access that Drive folder (\`${folderId}\`).\n\n` +
     `To use it, share it with *${email}* as **Editor**, then click ` +
     `*I've Shared It — Retry* — or build in the default folder.`;
+  const blocks = [
+    { type: 'section', text: { type: 'mrkdwn', text } },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Build in Default Folder', emoji: true },
+          action_id: 'build_default',
+          value: recoveryValue({ brief }),
+        },
+        {
+          type: 'button',
+          style: 'primary',
+          text: { type: 'plain_text', text: "I've Shared It — Retry", emoji: true },
+          action_id: 'retry_folder',
+          value: recoveryValue({ brief, folderId }),
+        },
+      ],
+    },
+  ];
+  return { text, blocks };
+}
 
-  const message = {
-    response_type: 'in_channel',
-    replace_original: true,
-    text,
-    blocks: [
-      { type: 'section', text: { type: 'mrkdwn', text } },
-      {
-        type: 'actions',
-        elements: [
-          {
-            type: 'button',
-            text: { type: 'plain_text', text: 'Build in Default Folder', emoji: true },
-            action_id: 'build_default',
-            value: recoveryValue({ brief }),
-          },
-          {
-            type: 'button',
-            style: 'primary',
-            text: { type: 'plain_text', text: "I've Shared It — Retry", emoji: true },
-            action_id: 'retry_folder',
-            value: recoveryValue({ brief, folderId }),
-          },
-        ],
-      },
-    ],
-  };
-
+// Recoverable folder-access error via response_url (fallback when there's no
+// live chat message to edit).
+async function postFolderAccessHelp({ email, folderId, brief, responseUrl }) {
+  const { text, blocks } = buildFolderAccessBlocks({ email, folderId, brief });
   const url = responseUrl || config.SLACK_WEBHOOK_URL;
   console.log('[slack] postFolderAccessHelp -> ' + (responseUrl ? 'response_url' : 'webhook'));
-  const res = await postToSlack(url, message);
+  const res = await postToSlack(url, { replace_original: true, text, blocks });
   console.log('[slack] postFolderAccessHelp status ' + res.status);
   return res;
+}
+
+// --- Slack Web API helpers (chat.postMessage / chat.update) ---
+// These post/edit a real message by ts, the only reliable way to transform a
+// status message into its result in place (response_url replace_original can't
+// edit the slash HTTP-ack message or a previously-posted response_url message).
+
+async function slackApi(method, payload) {
+  if (!config.SLACK_BOT_TOKEN) throw new Error('SLACK_BOT_TOKEN is not set.');
+  const res = await fetch('https://slack.com/api/' + method, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  console.log(
+    `[slack] ${method} ok=${data.ok}${data.error ? ' error=' + data.error : ''}${
+      data.ts ? ' ts=' + data.ts : ''
+    }`
+  );
+  if (!data.ok) throw new Error(`${method} failed: ${data.error}`);
+  return data;
+}
+
+// Post a "live" (editable) message; returns { channel, ts }.
+async function postLive(channel, text, blocks) {
+  const data = await slackApi('chat.postMessage', blocks ? { channel, text, blocks } : { channel, text });
+  return { channel: data.channel, ts: data.ts };
+}
+
+// Edit a live message in place by ts.
+async function updateLive(channel, ts, text, blocks) {
+  return slackApi('chat.update', blocks ? { channel, ts, text, blocks } : { channel, ts, text });
 }
 
 module.exports = {
   postToSlack,
   buildResultBlocks,
+  openInDriveBlocks,
   postResult,
   postText,
   updateMessage,
   postChatMessage,
   postFolderAccessHelp,
+  buildFolderAccessBlocks,
+  postLive,
+  updateLive,
 };

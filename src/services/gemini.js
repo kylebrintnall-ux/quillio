@@ -68,6 +68,11 @@ async function parseBrief(brief) {
     'You are a marketing operations assistant. Read the campaign brief below and extract structured data.',
     '',
     'Return:',
+    '- campaignTitle: a concise, descriptive campaign title of 3-7 words based on',
+    '  what the campaign ACTUALLY is — the event name, product, or theme — read',
+    '  from the whole brief, NOT just the opening words. E.g. a brief about promos',
+    '  for a speed dating event called Holy Flirtation -> "Holy Flirtation Speed',
+    '  Dating Event", not "Promos For A". No date, no quotes, no trailing punctuation.',
     '- summary: 2-3 sentences summarizing the campaign.',
     '- writerPrompt: ONE sentence of creative direction for a copywriter.',
     `- assets: an array of asset types requested in the brief. Each value MUST be one of these exact strings: ${allowed.join(
@@ -102,7 +107,7 @@ async function parseBrief(brief) {
     '- referenceLinks: an array of every URL found anywhere in the brief (Drive',
     '  links, external links, anything starting with http or https). Return [] if none.',
     '',
-    'Return an object of the shape: {"summary": string, "writerPrompt": string, "assets": string[], "folderId": string|null, "referenceLinks": string[]}.',
+    'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": string[], "folderId": string|null, "referenceLinks": string[]}.',
     'Respond with valid JSON only, no markdown, no backticks.',
     '',
     'CAMPAIGN BRIEF:',
@@ -135,6 +140,7 @@ async function parseBrief(brief) {
     : [];
 
   return {
+    campaignTitle: String(parsed.campaignTitle || '').trim(),
     summary: String(parsed.summary || '').trim(),
     writerPrompt: String(parsed.writerPrompt || '').trim(),
     assets,

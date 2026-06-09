@@ -16,9 +16,14 @@ const rawBodySaver = (req, res, buf) => {
 app.use(express.urlencoded({ extended: true, verify: rawBodySaver }));
 app.use(express.json({ verify: rawBodySaver }));
 
-// Optional Slack signature verification. No-op if SLACK_SIGNING_SECRET unset.
+// Slack request signature verification (enforced). Fails CLOSED: if no signing
+// secret is configured we can't verify, so we reject rather than silently
+// letting requests through. Requires SLACK_SIGNING_SECRET to be set.
 function verifySlack(req) {
-  if (!config.SLACK_SIGNING_SECRET) return true;
+  if (!config.SLACK_SIGNING_SECRET) {
+    console.error('SLACK_SIGNING_SECRET is not set — rejecting unverifiable Slack request.');
+    return false;
+  }
 
   const timestamp = req.headers['x-slack-request-timestamp'];
   const signature = req.headers['x-slack-signature'];

@@ -2,10 +2,61 @@
 
 const config = require('./config');
 const { getClients } = require('./google');
-const { parseBrief } = require('./services/gemini');
+const { parseBrief, enrichWithReferences } = require('./services/gemini');
 const { getAssetSpecs } = require('./services/sheets');
 const { getDestination } = require('./destinations');
 const { postResult, updateMessage, postChatMessage, postFolderAccessHelp } = require('./services/slack');
+
+// Matches a Google Drive *file* link and captures its file id.
+const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/document\/d\/)([a-zA-Z0-9_-]+)/;
+const REF_CONTENT_MAX = 3000; // per-file char cap, protects the context window
+
+// Phase 2 — read the plain-text content of Drive file links in the brief so the
+// enrichment pass has real source material. Best-effort: any file that can't be
+// read (permissions, unsupported type, network) is skipped silently. Uses the
+// same Drive client as doc creation (OAuth user when configured, else the SA).
+// Returns [{ url, fileId, title, content }].
+async function fetchDriveReferenceContent(links) {
+  if (!Array.isArray(links) || links.length === 0) return [];
+  const { drive } = await getClients();
+  const out = [];
+
+  for (const url of links) {
+    const m = String(url).match(DRIVE_FILE_RE);
+    if (!m) continue; // not a Drive file link — leave for the Reference Materials section
+    const fileId = m[1];
+    let title = url;
+    try {
+      const meta = await drive.files.get({
+        fileId,
+        fields: 'name, mimeType',
+        supportsAllDrives: true,
+      });
+      title = meta.data.name || url;
+      const mimeType = meta.data.mimeType || '';
+
+      let content;
+      if (mimeType === 'text/plain' || mimeType === 'application/json') {
+        const res = await drive.files.get(
+          { fileId, alt: 'media', supportsAllDrives: true },
+          { responseType: 'text' }
+        );
+        content = String(res.data || '');
+      } else {
+        const res = await drive.files.export(
+          { fileId, mimeType: 'text/plain' },
+          { responseType: 'text' }
+        );
+        content = String(res.data || '');
+      }
+
+      out.push({ url, fileId, title, content: content.slice(0, REF_CONTENT_MAX) });
+    } catch (err) {
+      console.error(`[Quillio] Could not read reference file ${fileId}: ${err.message}`);
+    }
+  }
+  return out;
+}
 
 // Did this error come from an inaccessible (brief-provided) Drive folder?
 function isFolderAccessError(err, folderId) {
@@ -33,8 +84,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 
   try {
     // 1. Parse the brief into title / summary / writerPrompt / assets (+ folder & links).
-    const { campaignTitle, summary, writerPrompt, assets, unmatchedAssets, folderId, referenceLinks } =
-      await parseBrief(brief);
+    const parsedBrief = await parseBrief(brief);
+    const { campaignTitle, assets, unmatchedAssets, folderId, referenceLinks } = parsedBrief;
+    let { summary, writerPrompt } = parsedBrief; // may be enriched below
     console.log('[workflow] Gemini parse OK — assets:', JSON.stringify(assets));
     console.log('[workflow] campaignTitle:', JSON.stringify(campaignTitle));
     console.log('[workflow] unmatchedAssets:', JSON.stringify(unmatchedAssets));
@@ -62,6 +114,24 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       : opts.folderIdOverride !== undefined
         ? opts.folderIdOverride
         : folderId;
+
+    // Phase 2 (additive): read linked Drive files and enrich the summary /
+    // writer direction with their content. Fully isolated — any failure leaves
+    // the parsed brief unchanged and the rest of the pipeline untouched.
+    try {
+      const refDocs = await fetchDriveReferenceContent(referenceLinks);
+      if (refDocs.length > 0) {
+        const referenceContext = refDocs
+          .map((r) => `\n\n--- Reference: ${r.title} ---\n${r.content}`)
+          .join('');
+        const enriched = await enrichWithReferences({ summary, writerPrompt }, referenceContext);
+        summary = enriched.summary;
+        writerPrompt = enriched.writerPrompt;
+        console.log(`[Quillio] enriched brief from ${refDocs.length} reference file(s)`);
+      }
+    } catch (err) {
+      console.error('[Quillio] reference enrichment skipped:', err.message);
+    }
 
     // 2. Read + filter the asset specs. Log the Sheet ID so a permission/403 on
     //    the v2 Sheet is obvious in the logs.

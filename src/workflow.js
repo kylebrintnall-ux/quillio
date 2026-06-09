@@ -213,7 +213,7 @@ async function runGenerateDraft(docId, responseUrl, channelId) {
   const { title, fieldCount, url } = await getDestination().generateDraft(docId);
   console.log('[workflow] generateDraft returned — posting completion message');
 
-  const completionText = `✓ First draft ready — *${title}* (${fieldCount} field${
+  const completionText = `:quillio-copy-done: First draft ready — *${title}* (${fieldCount} field${
     fieldCount === 1 ? '' : 's'
   } drafted).`;
 

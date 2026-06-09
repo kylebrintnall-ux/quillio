@@ -98,6 +98,54 @@ async function postText(text, responseUrl) {
   await postToSlack(url, { response_type: 'in_channel', text });
 }
 
+// Block Kit for a confirmation: a section + an "Open in Drive" link button.
+function openInDriveBlocks(text, webViewLink) {
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text } },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Open in Drive', emoji: true },
+          url: webViewLink,
+          action_id: 'open_in_drive',
+        },
+      ],
+    },
+  ];
+}
+
+// Posts a message via the Slack Web API (chat.postMessage) using the bot token.
+// Unlike a response_url, this has no expiry/use limit — so it delivers even when
+// a long generation finishes after the interaction's response_url has lapsed.
+// Requires SLACK_BOT_TOKEN (chat:write); the bot must be able to post to the
+// channel (member, or chat:write.public). Returns Slack's JSON response.
+async function postChatMessage({ channel, text, webViewLink }) {
+  if (!config.SLACK_BOT_TOKEN) throw new Error('SLACK_BOT_TOKEN is not set.');
+  if (!channel) throw new Error('No channel id for chat.postMessage.');
+
+  const message = { channel, text };
+  if (webViewLink) message.blocks = openInDriveBlocks(text, webViewLink);
+
+  const res = await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+    },
+    body: JSON.stringify(message),
+  });
+  const data = await res.json();
+  console.log(
+    `[slack] chat.postMessage ok=${data.ok}${data.error ? ' error=' + data.error : ''}${
+      data.ts ? ' ts=' + data.ts : ''
+    }`
+  );
+  if (!data.ok) throw new Error('chat.postMessage failed: ' + data.error);
+  return data;
+}
+
 // Replaces the original interactive message in place via its response_url.
 // Used to give live feedback after a button tap (progress → final result).
 // Pass opts.webViewLink to include an "Open in Drive" button on the message.
@@ -105,20 +153,7 @@ async function postText(text, responseUrl) {
 async function updateMessage(text, responseUrl, opts = {}) {
   const body = { text };
   if (opts.webViewLink) {
-    body.blocks = [
-      { type: 'section', text: { type: 'mrkdwn', text } },
-      {
-        type: 'actions',
-        elements: [
-          {
-            type: 'button',
-            text: { type: 'plain_text', text: 'Open in Drive', emoji: true },
-            url: opts.webViewLink,
-            action_id: 'open_in_drive',
-          },
-        ],
-      },
-    ];
+    body.blocks = openInDriveBlocks(text, opts.webViewLink);
   }
 
   const tag = opts.label ? `updateMessage[${opts.label}]` : 'updateMessage';
@@ -147,4 +182,11 @@ async function updateMessage(text, responseUrl, opts = {}) {
   }
 }
 
-module.exports = { postToSlack, buildResultBlocks, postResult, postText, updateMessage };
+module.exports = {
+  postToSlack,
+  buildResultBlocks,
+  postResult,
+  postText,
+  updateMessage,
+  postChatMessage,
+};

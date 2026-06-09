@@ -236,4 +236,97 @@ async function generateFieldDraft({
   return copy;
 }
 
-module.exports = { parseBrief, generateFieldDraft };
+// Draft ALL fields of a single asset in one call so the copy is cohesive — the
+// headline, body, and CTA reinforce the same offer/voice, and multi-variant
+// fields (e.g. several headlines) come out distinct rather than repetitive.
+// `fields` is [{ fieldName, charLimit, notes, funnelStage }]. Returns
+// [{ fieldName, copy }] with each field's hard character limit enforced.
+async function generateAssetDrafts({
+  assetType,
+  channel,
+  toneNotes,
+  summary,
+  writerPrompt,
+  fields,
+}) {
+  if (!fields || fields.length === 0) return [];
+
+  const fieldLines = fields
+    .map((f) => {
+      const ceiling = charCeiling(f.charLimit);
+      const limit = ceiling
+        ? `MAX ${ceiling} chars${/[-–—]/.test(String(f.charLimit)) ? ` (target ${f.charLimit})` : ''}`
+        : 'concise';
+      const extra = [
+        f.funnelStage ? `funnel: ${f.funnelStage}` : '',
+        f.notes ? `guidance: ${f.notes}` : '',
+      ]
+        .filter(Boolean)
+        .join('; ');
+      return `- "${f.fieldName}" — ${limit}${extra ? `; ${extra}` : ''}`;
+    })
+    .join('\n');
+
+  const prompt = [
+    'Write the copy for ALL fields of one marketing asset as a COHESIVE SET: the',
+    'fields must work together — headline, body, and CTA reinforce the same offer',
+    'and voice. Where a field repeats (e.g. multiple headlines or variants), make',
+    'them clearly DISTINCT, not reworded duplicates.',
+    '',
+    `Campaign summary: ${summary}`,
+    `Creative direction: ${writerPrompt}`,
+    `Asset: ${assetType}`,
+    channel ? `Channel: ${channel}` : '',
+    toneNotes ? `Tone notes: ${toneNotes}` : '',
+    '',
+    'Fields (respect each hard character limit exactly):',
+    fieldLines,
+    '',
+    'Return a JSON object mapping each field name (exactly as written above, including any parentheses) to its copy string. Exactly one copy per field, no commentary.',
+    'Respond with valid JSON only, no markdown, no backticks.',
+  ].join('\n');
+
+  let parsed = {};
+  try {
+    const text = await callGemini({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.8 },
+    });
+    parsed = JSON.parse(stripJsonFences(text));
+  } catch (err) {
+    console.warn(`[gemini] asset batch draft parse failed for ${assetType}: ${err.message}`);
+    parsed = {};
+  }
+
+  const byKey = new Map(
+    Object.entries(parsed).map(([k, v]) => [
+      k.trim().toLowerCase(),
+      typeof v === 'string' ? v : (v && v.copy) || '',
+    ])
+  );
+
+  const out = [];
+  for (const f of fields) {
+    let copy = cleanDraft(byKey.get(f.fieldName.trim().toLowerCase()) || '');
+    const ceiling = charCeiling(f.charLimit);
+    // Missing from the batch, or over its limit → fall back to the robust
+    // single-field generator (which rewrites and, if needed, hard-trims).
+    if (!copy || (ceiling && copy.length > ceiling)) {
+      copy = await generateFieldDraft({
+        assetType,
+        channel,
+        fieldName: f.fieldName,
+        charLimit: f.charLimit,
+        toneNotes,
+        notes: f.notes,
+        funnelStage: f.funnelStage,
+        summary,
+        writerPrompt,
+      });
+    }
+    out.push({ fieldName: f.fieldName, copy });
+  }
+  return out;
+}
+
+module.exports = { parseBrief, generateFieldDraft, generateAssetDrafts };

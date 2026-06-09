@@ -13,10 +13,10 @@
 const config = require('../config');
 const { getClients } = require('../google');
 const { DocBuilder } = require('./docBuilder');
-const { generateFieldDraft } = require('../services/gemini');
+const { generateAssetDrafts } = require('../services/gemini');
 const { getAssetSpecs } = require('../services/sheets');
 
-// How many field drafts to request from Gemini at once.
+// How many assets to draft concurrently (each asset is one batched Gemini call).
 const DRAFT_CONCURRENCY = Number(process.env.DRAFT_CONCURRENCY) || 4;
 
 // Run `fn` over `items` with at most `limit` in flight; preserves input order.
@@ -312,44 +312,56 @@ async function generateDraft(id) {
   // fails, drafting proceeds with just the doc-derived context.
   const sheetCtx = await loadSheetContext();
 
-  // Collect all draft targets, then draft copy for each.
-  const targets = [];
-  for (const asset of assets) {
-    for (const field of asset.fields) {
-      targets.push({ asset, field });
-    }
-  }
-
-  // Draft fields with bounded concurrency so a many-field brief finishes in
-  // ~a minute instead of dozens of serial calls. Each field is isolated: a
-  // timeout or API error on one field is logged and skipped rather than
-  // aborting the whole run.
-  const results = await mapWithConcurrency(targets, DRAFT_CONCURRENCY, async ({ asset, field }) => {
-    try {
-      const ctx = sheetCtx.get(ctxKey(asset.assetType, field.fieldName)) || {};
-      const copy = await generateFieldDraft({
+  // Build per-asset draft targets, enriching each field with Sheet context.
+  const assetTargets = assets
+    .filter((asset) => asset.fields.length > 0)
+    .map((asset) => {
+      const fields = asset.fields.map((field) => {
+        const ctx = sheetCtx.get(ctxKey(asset.assetType, field.fieldName)) || {};
+        return {
+          fieldName: field.fieldName,
+          charLimit: field.charLimit || ctx.charLimit,
+          notes: ctx.notes || '',
+          funnelStage: ctx.funnelStage || '',
+          insertIndex: field.insertIndex,
+        };
+      });
+      const ctx0 = sheetCtx.get(ctxKey(asset.assetType, asset.fields[0].fieldName)) || {};
+      return {
         assetType: asset.assetType,
-        channel: ctx.channel || asset.channel,
-        fieldName: field.fieldName,
-        charLimit: field.charLimit || ctx.charLimit,
-        toneNotes: ctx.toneNotes || asset.toneNotes,
-        notes: ctx.notes || '',
-        funnelStage: ctx.funnelStage || '',
+        channel: ctx0.channel || asset.channel,
+        toneNotes: ctx0.toneNotes || asset.toneNotes,
+        fields,
+      };
+    });
+
+  // Draft each asset's fields together (one batched call per asset) so the copy
+  // is cohesive. Assets run with bounded concurrency; one asset failing is
+  // logged and skipped rather than aborting the whole run.
+  const perAsset = await mapWithConcurrency(assetTargets, DRAFT_CONCURRENCY, async (a) => {
+    try {
+      const drafts = await generateAssetDrafts({
+        assetType: a.assetType,
+        channel: a.channel,
+        toneNotes: a.toneNotes,
         summary,
         writerPrompt,
+        fields: a.fields,
       });
-      return { insertIndex: field.insertIndex, copy };
+      const idxByName = new Map(a.fields.map((f) => [f.fieldName, f.insertIndex]));
+      return drafts
+        .map((d) => ({ insertIndex: idxByName.get(d.fieldName), copy: d.copy }))
+        .filter((r) => r.insertIndex != null && r.copy);
     } catch (err) {
-      console.error(
-        `[googleDocs] draft failed for ${asset.assetType} / ${field.fieldName}: ${err.message}`
-      );
-      return null;
+      console.error(`[googleDocs] asset draft failed for ${a.assetType}: ${err.message}`);
+      return [];
     }
   });
 
-  const drafted = results.filter(Boolean);
+  const drafted = perAsset.flat();
 
-  if (targets.length > 0 && drafted.length === 0) {
+  const totalFields = assetTargets.reduce((n, a) => n + a.fields.length, 0);
+  if (totalFields > 0 && drafted.length === 0) {
     throw new Error('All field drafts failed (Gemini timeout or error).');
   }
 

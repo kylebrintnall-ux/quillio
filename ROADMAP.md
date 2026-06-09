@@ -179,6 +179,51 @@ Once teams rely on Quillio as their spec source of truth, switching cost is high
 
 -----
 
+## 🔜 Phase 2.5 — Variants & Multi-Version Generation
+
+*A capability, not just more asset types. Marketing teams rarely make ONE version of anything — this is core to how they actually work.*
+
+Three distinct layers, increasing in complexity:
+
+### Layer 1 — More asset types (easy, just Sheet rows)
+
+The current 8 don't cover the real format spread. Obvious additions:
+
+- **DV360 / programmatic display** (distinct from standard Google Display)
+- **Carousels** — LinkedIn, Meta (repeating fields: card 1 headline, card 2 headline… — the Dynamic Email offer structure already models repeating fields)
+- **Third-party / sponsored email** (different specs from owned Dynamic Email)
+- **Video by length** — 15s, 30s, 60s (different copy discipline each)
+- **Podcast ad** — host-read script vs. produced spot
+- **Print / OOH** — billboard, one-pager, sell sheet
+- **SMS, push notification, landing page** (hero/subhead/body/CTA)
+
+These are straightforward to add as rows. The "couldn't match" message (Issue 2) handles the genuine long tail beyond what's stocked.
+
+### Layer 2 — Variants / A/B/C/D testing (structurally new)
+
+This is the high-value one and it's genuinely different from adding types. "Three versions of this LinkedIn ad, each highlighting a different benefit" or "same offer to two different audiences" isn't a new asset — it's multiple *instances* of one asset, varying along an axis:
+
+- different **benefit** highlighted
+- different **audience**
+- different **hook / angle**
+- different **tone**
+
+This requires a new dimension the current schema lacks. It touches:
+
+- **Parsing** — detect "3 versions varying X" in the brief
+- **Generation** — Gemini writes N genuinely distinct takes (not rewordings), each committing to its variation axis
+- **Doc layout** — variants organized so a writer can compare them side by side
+
+Maps directly to how teams actually work (they never make just one version). High priority for post-V1.
+
+### Layer 3 — Matrix composition (the product-vision part)
+
+A real campaign can be combinatorial: 1 offer × 3 benefits × 2 audiences × 3 platforms × 2 video lengths. That's not a pre-definable list — it's a *matrix the user specifies per campaign*. No fixed library can enumerate it. The eventual product must let users compose requests dynamically — pick the axes and values, and Quillio generates the full grid. This is the web-app product vision, not a Sheet feature.
+
+**Sequencing:** Layer 1 is a quick win (add rows anytime). Layer 2 deserves its own design pass — almost a standalone feature — because it changes parsing, generation, and layout. Layer 3 is the multi-tenant web app. Don't bolt Layer 2 onto V1; spec it deliberately.
+
+-----
+
 ## ⭐ Guiding Principle — Setup Must Become Frictionless
 
 *The single most important product insight from building V1.*

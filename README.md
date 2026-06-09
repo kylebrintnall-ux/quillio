@@ -13,7 +13,7 @@ copy.
 ```
 /quillio [brief]
    │
-   ├─▶ (≤3s) "Brief received — building your doc now."   ◀── immediate ack
+   ├─▶ (≤3s) ":quillio-scroll: Building your document…"   ◀── immediate ack
    │
    └─▶ (async, ~7s+)
          1. Gemini parses the brief → { summary, writerPrompt, assets }

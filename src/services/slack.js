@@ -30,7 +30,7 @@ function buildResultBlocks({ title, webViewLink, assets, docId }) {
     blocks: [
       {
         type: 'header',
-        text: { type: 'plain_text', text: '📄 Your doc is ready', emoji: true },
+        text: { type: 'plain_text', text: ':quillio-doc-done: Your doc is ready', emoji: true },
       },
       {
         type: 'section',

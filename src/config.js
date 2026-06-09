@@ -52,5 +52,11 @@ module.exports = {
 
   SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET,
 
+  // Bot token (xoxb-…) for Slack Web API calls (chat.postMessage). Used for the
+  // draft-complete message, which can finish after the interaction response_url
+  // has expired/been used up. Needs the chat:write scope (and chat:write.public
+  // to post in channels the bot isn't a member of).
+  SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
+
   ALLOWED_ASSETS,
 };

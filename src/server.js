@@ -136,10 +136,11 @@ app.post('/slack/interactions', (req, res) => {
   if (!action) return;
 
   const responseUrl = payload.response_url;
+  const channelId = payload.channel && payload.channel.id;
 
   if (action.action_id === 'generate_first_draft') {
     const docId = action.value;
-    runGenerateDraft(docId, responseUrl).catch(async (err) => {
+    runGenerateDraft(docId, responseUrl, channelId).catch(async (err) => {
       console.error('runGenerateDraft failed:', err);
       try {
         await updateMessage(`⚠️ Draft generation failed: ${err.message}`, responseUrl);

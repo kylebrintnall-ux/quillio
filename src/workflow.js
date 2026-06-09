@@ -4,7 +4,7 @@ const config = require('./config');
 const { parseBrief } = require('./services/gemini');
 const { getAssetSpecs } = require('./services/sheets');
 const { getDestination } = require('./destinations');
-const { postResult, updateMessage } = require('./services/slack');
+const { postResult, updateMessage, postChatMessage } = require('./services/slack');
 
 // The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
 // this before the slash command's 200 response has been sent. The entire body
@@ -67,9 +67,15 @@ async function runBriefWorkflow(brief, responseUrl) {
 // Handles the "Generate First Draft" button. Updates the original message in
 // place: first an immediate "working on it" so the tap feels responsive, then
 // the final confirmation when the draft is done.
-async function runGenerateDraft(docId, responseUrl) {
-  console.log('[workflow] runGenerateDraft START — response_url present:', !!responseUrl);
+async function runGenerateDraft(docId, responseUrl, channelId) {
+  console.log(
+    '[workflow] runGenerateDraft START — response_url present:',
+    !!responseUrl,
+    '| channel:',
+    channelId || '(none)'
+  );
 
+  // Progress: fire immediately on the response_url (well within its window).
   await updateMessage(
     ':quillio: Generating your first draft… this takes about 60 seconds.',
     responseUrl,
@@ -79,14 +85,26 @@ async function runGenerateDraft(docId, responseUrl) {
   const { title, fieldCount, url } = await getDestination().generateDraft(docId);
   console.log('[workflow] generateDraft returned — posting completion message');
 
-  // Post the completion as a fresh message (not a replace_original): Slack
-  // won't reliably re-render a second replacement on the same response_url, so
-  // the "generating…" message stays and "✓ First draft ready" appears below it.
-  await updateMessage(
-    `✓ First draft ready — *${title}* (${fieldCount} field${fieldCount === 1 ? '' : 's'} drafted).`,
-    responseUrl,
-    { webViewLink: url, label: 'draft-complete', newMessage: true }
-  );
+  const completionText = `✓ First draft ready — *${title}* (${fieldCount} field${
+    fieldCount === 1 ? '' : 's'
+  } drafted).`;
+
+  // Completion: post via chat.postMessage (no expiry) so it lands even after a
+  // long (multi-asset) generation outlives the response_url. Fall back to a
+  // fresh response_url message if the bot token / channel isn't available.
+  try {
+    await postChatMessage({ channel: channelId, text: completionText, webViewLink: url });
+  } catch (err) {
+    console.error(
+      '[workflow] chat.postMessage completion failed, falling back to response_url:',
+      err.message
+    );
+    await updateMessage(completionText, responseUrl, {
+      webViewLink: url,
+      label: 'draft-complete',
+      newMessage: true,
+    });
+  }
   console.log('[workflow] runGenerateDraft DONE');
 }
 

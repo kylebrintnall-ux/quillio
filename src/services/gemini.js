@@ -305,6 +305,46 @@ async function parseBrief(brief) {
   };
 }
 
+// Phase 2 — second pass: enrich the Campaign Summary and Writer Direction using
+// text pulled from the brief's linked reference docs. Additive and safe: if
+// there's no context, or the call/parse fails, the original parsedBrief is
+// returned unchanged (never breaks the pipeline). The assets list is never
+// touched. Returns a (possibly) updated copy of parsedBrief.
+async function enrichWithReferences(parsedBrief, referenceContext) {
+  if (!referenceContext || !String(referenceContext).trim()) return parsedBrief;
+
+  const prompt = [
+    'You previously parsed a creative brief. Here is additional context from',
+    'reference documents the requester linked. Use this context to write a more',
+    'specific, detailed Campaign Summary and Writer Direction. Do not change the',
+    'assets list. Return only the updated summary and writerPrompt fields as JSON:',
+    '{ "summary": string, "writerPrompt": string }',
+    'Respond with valid JSON only, no markdown, no backticks.',
+    '',
+    `Current Campaign Summary: ${parsedBrief.summary || ''}`,
+    `Current Writer Direction: ${parsedBrief.writerPrompt || ''}`,
+    '',
+    'REFERENCE CONTEXT:',
+    String(referenceContext),
+  ].join('\n');
+
+  try {
+    const text = await callGemini({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.3 },
+    });
+    const parsed = JSON.parse(stripJsonFences(text));
+    return {
+      ...parsedBrief,
+      summary: String(parsed.summary || '').trim() || parsedBrief.summary,
+      writerPrompt: String(parsed.writerPrompt || '').trim() || parsedBrief.writerPrompt,
+    };
+  } catch (err) {
+    console.error('[Quillio] enrichWithReferences failed, using original brief:', err.message);
+    return parsedBrief;
+  }
+}
+
 // Strip wrapping quotes / stray markdown from a single line of model output.
 function cleanDraft(text) {
   return String(text).trim().replace(/^[*_"'“”‘’\s]+|[*_"'“”‘’\s]+$/g, '').trim();
@@ -500,4 +540,4 @@ async function generateAssetDrafts({
   return out;
 }
 
-module.exports = { parseBrief, generateFieldDraft, generateAssetDrafts };
+module.exports = { parseBrief, enrichWithReferences, generateFieldDraft, generateAssetDrafts };

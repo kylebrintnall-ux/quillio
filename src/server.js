@@ -157,6 +157,28 @@ app.post('/slack/interactions', (req, res) => {
     }).catch((err) => {
       console.error('skip update failed:', err);
     });
+  } else if (action.action_id === 'build_default' || action.action_id === 'retry_folder') {
+    // Folder-access recovery (Issue 3): re-run the original brief. Build in
+    // Default ignores the brief's folder; Retry pins the same folder again
+    // (the user will have shared it in the meantime).
+    let ctx = {};
+    try {
+      ctx = JSON.parse(action.value || '{}');
+    } catch {
+      /* fall through with empty context */
+    }
+    const opts =
+      action.action_id === 'build_default'
+        ? { forceDefaultFolder: true }
+        : { folderIdOverride: ctx.folderId };
+    runBriefWorkflow(ctx.brief || '', responseUrl, opts).catch(async (err) => {
+      console.error('folder-recovery rerun failed:', err);
+      try {
+        await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+      } catch (e) {
+        console.error('Failed to report error to Slack:', e);
+      }
+    });
   }
   // 'open_in_drive' is a link button — no server-side work.
 });

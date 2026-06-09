@@ -68,20 +68,23 @@ async function runBriefWorkflow(brief, responseUrl) {
 // place: first an immediate "working on it" so the tap feels responsive, then
 // the final confirmation when the draft is done.
 async function runGenerateDraft(docId, responseUrl) {
+  console.log('[workflow] runGenerateDraft START — response_url present:', !!responseUrl);
+
   await updateMessage(
     ':quillio: Generating your first draft… this takes about 60 seconds.',
-    responseUrl
+    responseUrl,
+    { label: 'draft-progress' }
   );
 
   const { title, fieldCount, url } = await getDestination().generateDraft(docId);
+  console.log('[workflow] generateDraft returned — posting completion message');
 
   await updateMessage(
-    `✅ First draft generated for *${title}* — ${fieldCount} field${
-      fieldCount === 1 ? '' : 's'
-    } filled in.`,
+    `✓ First draft ready — *${title}* (${fieldCount} field${fieldCount === 1 ? '' : 's'} drafted).`,
     responseUrl,
-    { webViewLink: url }
+    { webViewLink: url, label: 'draft-complete' }
   );
+  console.log('[workflow] runGenerateDraft DONE');
 }
 
 module.exports = { runBriefWorkflow, runGenerateDraft };

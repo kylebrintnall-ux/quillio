@@ -131,6 +131,24 @@ Railway setup.
   rely on doc re-parsing for everything else.
 - Do not commit `.env` or the service-account JSON (see `.gitignore`).
 
+## Asset spec Sheet
+
+Live Sheet (`SHEET_ID` default): `1sdYw1NQ27OYeCaVCHRN50xVVbQoTnDvn5cZXag34Aw4`
+(the "Agentforce Copy System — Asset & Prompt Library", v2). The old v1 Sheet
+`1skbkkKlHMDUzeG8_bFpcSjrvweumivePuSOvr5qIfqk` is retired.
+
+Fields are read **dynamically** from the Sheet — `sheets.getAssetSpecs` groups
+rows by `Asset Type` in row order, draft copy is generated per field by name,
+and `parseDoc` recovers fields from the doc via the bold-label-ending-in-
+`[limit]` pattern. **Nothing hardcodes field names or field counts**, so adding,
+renaming, or reordering fields in the Sheet needs no code change — just edit the
+Sheet (it's read live on every `/quillio`).
+
+The Dynamic Email block (v2) is ordered: Subject Line 1, Subject Line 2,
+Pre-header, Headline (Offer 1) [50], Offer Body 1, CTA Text (Offer 1),
+Headline (Offer 2) [50], Offer Body 2, CTA Text (Offer 2). (v1's single
+"Headline" was split into per-offer "Headline (Offer 1)" / "Headline (Offer 2)".)
+
 ## Vision
 
 Quillio turns a one-line campaign brief into ready-to-use, spec-correct marketing

@@ -337,31 +337,24 @@ Use the reference content to pull the campaign theme/name, the most compelling e
 
 Return ONLY valid JSON with exactly these three fields — no preamble, no markdown, no explanation:
 
-summary: a specific, detailed Campaign Summary in plain prose. Include the most compelling exact figures from the reference — never generalize a number (if the reference says "40% reduction in handle time," use that exact figure).
+summary: maximum 3 sentences. Campaign theme, target audience, and core message only. No backstory, no history, no context paragraphs.
 
-writerPrompt: write as plain prose with clear labeled sections. No markdown asterisks, no bullet symbol characters — use plain text labels followed by a colon and a line break instead. Target 250–300 words. Include all of the following:
+writerPrompt: use this exact compact format, plain text, no markdown, no asterisks, each label on the same line as its content:
 
-Audience: one sentence naming the primary persona, company size, and industries.
+Audience: [one line — persona title, company size, industries]
+Pain Points: [3 items, each 8 words or less, separated by the pipe character |]
+Voice: [two sentences max — tone and angle]
+Competitive Framing: [one sentence max]
+Do Not Use: [comma-separated inline list]
 
-Pain Points: three to five specific pain points this persona carries — budget pressure, CSAT ownership, board reporting, skepticism from prior AI failures, headcount justification. Write each as a plain sentence, one per line.
-
-Voice Direction: two to three sentences on tone and angle — what to emphasize, what emotional note to hit, how to open the conversation.
-
-Competitive Framing: one to two sentences on how to position against the category (legacy chatbots, standalone AI tools) without naming specific competitors.
-
-Do Not Use: comma-separated list of banned words extracted from the reference content, plus always append: seamless, frictionless, transform, revolutionize, reimagine, unlock, AI-powered, chatbot, bot, virtual assistant, co-pilot.
-
-No markdown. No asterisks. No JSON structure. Plain readable text only.
-
-referenceInsights: for each reference document that was successfully read, return an object with:
+referenceInsights: compress each source to this format:
 {
-  source: the document title or hostname,
+  source: document title or hostname,
   type: 'drive', 'external', or 'pdf',
-  stats: array of exact verbatim statistics or metrics found — only include figures that appear explicitly in the source, never infer or generate numbers,
-  persona: one sentence summarizing audience or persona details found in the source, or null if none,
-  keyMessages: array of up to four core message phrases extracted verbatim or near-verbatim from the source,
-  bannedWords: array of any words or phrases the source explicitly flags as do-not-use, or []
+  stats: array of max 3 items, each under 10 words, verbatim from source only — no inferred or generated stats, empty array if none,
+  keyMessages: array of max 2 items, each under 12 words
 }
+Omit persona and bannedWords fields entirely — removed from spec.
 Return as array — one object per source read. If no references were read, return [].
 
 INPUTS:

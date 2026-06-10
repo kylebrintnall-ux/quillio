@@ -180,7 +180,26 @@ async function createDocument({
   b.italic(stripMarkdown(summary) || '(no summary)');
 
   b.heading('Writer Direction');
-  b.italic(stripMarkdown(writerPrompt) || '(no direction)');
+  const wdLines = (stripMarkdown(writerPrompt) || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (wdLines.length === 0) {
+    b.italic('(no direction)');
+  } else {
+    for (const line of wdLines) {
+      // Pain Points renders as a label line + a disc bullet per pipe-separated
+      // item. Every other field stays a plain prose line.
+      const pp = line.match(/^pain points\s*:\s*(.*)$/i);
+      if (pp) {
+        b.italic('Pain Points:');
+        const points = pp[1].split('|').map((p) => p.trim()).filter(Boolean);
+        for (const p of points) b.bullet(p);
+      } else {
+        b.italic(line);
+      }
+    }
+  }
 
   // Reference Insights — what was extracted per source. Omitted when empty.
   if (Array.isArray(referenceInsights) && referenceInsights.length > 0) {
@@ -191,16 +210,16 @@ async function createDocument({
       b.italic(type ? `From: ${source} (${type})` : `From: ${source}`);
 
       const stats = Array.isArray(ins && ins.stats) ? ins.stats.filter(Boolean) : [];
-      b.italic(stats.length ? `Stats found: ${stats.join(' / ')}` : 'Stats found: none in source');
-
-      const persona = ins && ins.persona ? String(ins.persona).trim() : '';
-      if (persona) b.italic(`Persona: ${persona}`);
+      if (stats.length) {
+        b.italic('Stats:');
+        for (const s of stats) b.bullet(String(s).trim());
+      }
 
       const keyMessages = Array.isArray(ins && ins.keyMessages) ? ins.keyMessages.filter(Boolean) : [];
-      if (keyMessages.length) b.italic(`Key messages: ${keyMessages.join(' / ')}`);
-
-      const bannedWords = Array.isArray(ins && ins.bannedWords) ? ins.bannedWords.filter(Boolean) : [];
-      if (bannedWords.length) b.italic(`Do Not Use: ${bannedWords.join(', ')}`);
+      if (keyMessages.length) {
+        b.italic('Key messages:');
+        for (const m of keyMessages) b.bullet(String(m).trim());
+      }
 
       b.blankLine();
     }

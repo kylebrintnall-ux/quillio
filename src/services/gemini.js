@@ -350,7 +350,7 @@ Do Not Use: [comma-separated inline list]
 referenceInsights: compress each source to this format:
 {
   source: document title or hostname,
-  type: 'drive', 'external', or 'pdf',
+  type: 'drive', 'external', 'pdf', or 'canvas',
   stats: array of max 3 items, each under 10 words, verbatim from source only — no inferred or generated stats, empty array if none,
   keyMessages: array of max 2 items, each under 12 words
 }

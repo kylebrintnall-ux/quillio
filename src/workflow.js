@@ -91,6 +91,8 @@ const EXTERNAL_CONTENT_MAX = 2000; // web pages are noisier, so a tighter cap
 const EXTERNAL_FETCH_TIMEOUT_MS = 5000;
 // Skip Google Drive/Docs (handled separately) and non-readable URL patterns.
 const SKIP_EXTERNAL_RE = /drive\.google\.com|docs\.google\.com|slack\.com|^mailto:|^tel:|localhost|127\.0\.0\.1/i;
+// Matches a Slack Canvas link (canvases.read handled by fetchSlackCanvasContent).
+const SLACK_CANVAS_RE = /\.slack\.com\/(?:canvas|docs)\//i;
 
 // Turn a URL-path filename into a readable title: drop the .pdf extension,
 // swap hyphens/underscores for spaces, and Title Case the words. So
@@ -122,8 +124,15 @@ async function fetchExternalURLContent(links) {
 
   for (const raw of links) {
     const url = String(raw);
-    // Skip .pdf URLs — fetchPDFContent handles those (avoid double-fetching).
-    if (SKIP_EXTERNAL_RE.test(url) || !/^https?:\/\//i.test(url) || urlPathEndsPdf(url)) continue;
+    // Skip .pdf URLs (fetchPDFContent handles those) and Slack Canvas links
+    // (fetchSlackCanvasContent handles those) to avoid double-fetching.
+    if (
+      SKIP_EXTERNAL_RE.test(url) ||
+      SLACK_CANVAS_RE.test(url) ||
+      !/^https?:\/\//i.test(url) ||
+      urlPathEndsPdf(url)
+    )
+      continue;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), EXTERNAL_FETCH_TIMEOUT_MS);
@@ -261,6 +270,80 @@ async function fetchPDFContent(links) {
   return out;
 }
 
+// Phase 2 Slice 4 — read the text of Slack Canvas links in the brief via the
+// Slack API (canvases.sections.lookup) so the enrichment pass can use them.
+// Best-effort: any canvas that can't be fetched/parsed is skipped silently.
+// Requires SLACK_BOT_TOKEN with the canvases:read scope. Returns
+// [{ url, canvasId, title, content, type: 'canvas' }].
+const CANVAS_CONTENT_MAX = 3000;
+
+// Strip the markdown that Slack returns in canvas section content so the
+// enrichment context is clean plain text.
+function stripCanvasMarkdown(text) {
+  return String(text || '')
+    .replace(/^#{1,6}\s*/gm, '') // ##/###/#### headers -> keep text
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // **bold** -> bold
+    .replace(/\*([^*]+)\*/g, '$1') // *italic* -> italic
+    .replace(/^\s*[-*]\s+/gm, '') // leading bullet chars
+    .trim();
+}
+
+async function fetchSlackCanvasContent(links) {
+  if (!Array.isArray(links) || links.length === 0) return [];
+  if (!config.SLACK_BOT_TOKEN) return [];
+  const out = [];
+
+  for (const raw of links) {
+    const url = String(raw);
+    if (!SLACK_CANVAS_RE.test(url)) continue;
+
+    // Extract the canvas id: the path segment right after /canvas/ or /docs/,
+    // with any query/fragment or trailing slash stripped.
+    const m = url.match(/\.slack\.com\/(?:canvas|docs)\/([^/?#]+)/i);
+    const canvasId = m ? m[1].replace(/\/+$/, '') : '';
+    if (!canvasId) continue;
+
+    try {
+      const res = await fetch('https://slack.com/api/canvases.sections.lookup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+        },
+        body: JSON.stringify({
+          canvas_id: canvasId,
+          criteria: { section_types: ['any_header', 'paragraph'] },
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        console.error(`[Quillio] Could not fetch canvas ${canvasId}: ${data.error}`);
+        continue;
+      }
+
+      const sections = Array.isArray(data.sections) ? data.sections : [];
+      const joined = sections
+        .map((s) => String((s && s.document_content) || '').trim())
+        .filter(Boolean)
+        .join('\n');
+      const content = stripCanvasMarkdown(joined).slice(0, CANVAS_CONTENT_MAX);
+
+      // Title: first non-empty line if it's short enough, else the canvas id.
+      let title = canvasId;
+      const firstLine = content
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)[0];
+      if (firstLine && firstLine.length < 80) title = firstLine;
+
+      out.push({ url, canvasId, title, content, type: 'canvas' });
+    } catch (err) {
+      console.error(`[Quillio] Could not fetch Slack canvas ${canvasId}: ${err.message}`);
+    }
+  }
+  return out;
+}
+
 // Did this error come from an inaccessible (brief-provided) Drive folder?
 function isFolderAccessError(err, folderId) {
   if (!folderId) return false;
@@ -348,12 +431,13 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // enrich the summary / writer direction with their content. Fully isolated —
     // any failure leaves the parsed brief unchanged and the pipeline untouched.
     try {
-      const [refDocs, refExternal, refPdf] = await Promise.all([
+      const [refDocs, refExternal, refPdf, refCanvas] = await Promise.all([
         fetchDriveReferenceContent(referenceLinks),
         fetchExternalURLContent(referenceLinks),
         fetchPDFContent(referenceLinks),
+        fetchSlackCanvasContent(referenceLinks),
       ]);
-      const refs = [...refDocs, ...refExternal, ...refPdf];
+      const refs = [...refDocs, ...refExternal, ...refPdf, ...refCanvas];
       if (refs.length > 0) {
         const referenceContext = refs
           .map((r) => `\n\n--- Reference: ${r.title} ---\n${sanitizeText(r.content)}`)
@@ -363,7 +447,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         writerPrompt = enriched.writerPrompt;
         referenceInsights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
         console.log(
-          `[Quillio] enriched brief from ${refDocs.length} Drive + ${refExternal.length} external + ${refPdf.length} PDF reference(s)`
+          `[Quillio] enriched brief from ${refDocs.length} Drive + ${refExternal.length} external + ${refPdf.length} PDF + ${refCanvas.length} canvas reference(s)`
         );
       }
     } catch (err) {

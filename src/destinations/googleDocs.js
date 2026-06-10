@@ -99,6 +99,18 @@ function fieldLabel(field) {
   return `${field.fieldName} [${limit}]`;
 }
 
+// Strip the bits of markdown that render as literal characters in a Google Doc:
+// **bold** / *italic* markers, leading # heading markers, and leading bullet
+// symbols. Returns clean plain text. Applied at doc-write time only.
+function stripMarkdown(text) {
+  return String(text || '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // **bold** -> bold
+    .replace(/\*([^*]+)\*/g, '$1') // *italic* -> italic
+    .replace(/^#{1,6}\s*/gm, '') // # heading markers
+    .replace(/^\s*[-*•]\s+/gm, ' ') // leading bullet -> space
+    .trim();
+}
+
 // Pull a Drive/Docs file or folder id out of a Google URL, or null.
 function driveIdFromUrl(url) {
   if (!/(?:drive|docs)\.google\.com/.test(url)) return null;
@@ -136,6 +148,7 @@ async function createDocument({
   assetSpecs,
   folderId,
   referenceLinks = [],
+  proofPoints = [],
 }) {
   logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
   const { drive, docs } = await getClients();
@@ -164,10 +177,22 @@ async function createDocument({
   b.horizontalRule();
 
   b.heading('Campaign Summary');
-  b.italic(summary || '(no summary)');
+  b.italic(stripMarkdown(summary) || '(no summary)');
+
+  // Proof Points — between Campaign Summary and Writer Direction. Omitted when
+  // there are none.
+  if (Array.isArray(proofPoints) && proofPoints.length > 0) {
+    b.heading('Proof Points');
+    for (const p of proofPoints) {
+      const stat = String((p && p.stat) || '').trim();
+      if (!stat) continue;
+      const source = String((p && p.source) || '').trim();
+      b.italic(source ? `• ${stat} — ${source}` : `• ${stat}`);
+    }
+  }
 
   b.heading('Writer Direction');
-  b.italic(writerPrompt || '(no direction)');
+  b.italic(stripMarkdown(writerPrompt) || '(no direction)');
 
   if (resolvedLinks.length > 0) {
     b.heading('Reference Materials');

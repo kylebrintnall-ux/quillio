@@ -78,13 +78,23 @@ const EXTERNAL_FETCH_TIMEOUT_MS = 5000;
 // Skip Google Drive/Docs (handled separately) and non-readable URL patterns.
 const SKIP_EXTERNAL_RE = /drive\.google\.com|docs\.google\.com|slack\.com|^mailto:|^tel:|localhost|127\.0\.0\.1/i;
 
+// True if the URL's path ends in .pdf (ignoring any query/fragment).
+function urlPathEndsPdf(url) {
+  try {
+    return /\.pdf$/i.test(new URL(url).pathname);
+  } catch {
+    return /\.pdf(?:[?#]|$)/i.test(String(url));
+  }
+}
+
 async function fetchExternalURLContent(links) {
   if (!Array.isArray(links) || links.length === 0) return [];
   const out = [];
 
   for (const raw of links) {
     const url = String(raw);
-    if (SKIP_EXTERNAL_RE.test(url) || !/^https?:\/\//i.test(url)) continue;
+    // Skip .pdf URLs — fetchPDFContent handles those (avoid double-fetching).
+    if (SKIP_EXTERNAL_RE.test(url) || !/^https?:\/\//i.test(url) || urlPathEndsPdf(url)) continue;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), EXTERNAL_FETCH_TIMEOUT_MS);
@@ -118,6 +128,89 @@ async function fetchExternalURLContent(links) {
       out.push({ url, title, content });
     } catch (err) {
       console.error(`[Quillio] Could not fetch external URL ${url}: ${err.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return out;
+}
+
+// Phase 2 Slice 3 — fetch and extract text from PDFs linked in the brief.
+// Best-effort: anything that can't be fetched/parsed is skipped silently.
+const PDF_CONTENT_MAX = 4000; // PDFs are higher signal than web pages
+const PDF_FETCH_TIMEOUT_MS = 10000; // PDFs are larger — 10s not 5s
+const PDF_HEAD_TIMEOUT_MS = 5000;
+
+async function fetchPDFContent(links) {
+  if (!Array.isArray(links) || links.length === 0) return [];
+  const out = [];
+
+  for (const raw of links) {
+    const url = String(raw);
+    if (SKIP_EXTERNAL_RE.test(url) || !/^https?:\/\//i.test(url)) continue;
+
+    // PDF if the path ends in .pdf; otherwise HEAD-check the content-type.
+    let isPdf = urlPathEndsPdf(url);
+    if (!isPdf) {
+      const headCtrl = new AbortController();
+      const headTimer = setTimeout(() => headCtrl.abort(), PDF_HEAD_TIMEOUT_MS);
+      try {
+        const head = await fetch(url, {
+          method: 'HEAD',
+          signal: headCtrl.signal,
+          headers: { 'User-Agent': 'Quillio/1.0 (brief-ingestion-bot)' },
+        });
+        isPdf = (head.headers.get('content-type') || '').toLowerCase().includes('application/pdf');
+      } catch {
+        isPdf = false;
+      } finally {
+        clearTimeout(headTimer);
+      }
+    }
+    if (!isPdf) continue;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PDF_FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Quillio/1.0 (brief-ingestion-bot)' },
+      });
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (!ct.includes('application/pdf') && !ct.includes('octet-stream')) {
+        console.error(`[Quillio] URL did not return PDF content: ${url}`);
+        continue;
+      }
+
+      const buffer = Buffer.from(await res.arrayBuffer());
+      // pdf-parse reads a bundled test file on require in some setups; suppress
+      // the related warning and require lazily so it never runs at startup.
+      process.env.SUPPRESS_NO_CONFIG_WARNING = true;
+      const pdfParse = require('pdf-parse');
+      const parsed = await pdfParse(buffer);
+
+      const content = String(parsed.text || '').slice(0, PDF_CONTENT_MAX);
+
+      let title = parsed.info && parsed.info.Title ? String(parsed.info.Title).trim() : '';
+      if (!title) {
+        try {
+          const last = new URL(url).pathname.split('/').filter(Boolean).pop() || '';
+          title = last.replace(/\.pdf$/i, '');
+        } catch {
+          /* fall through to hostname */
+        }
+      }
+      if (!title) {
+        try {
+          title = new URL(url).hostname;
+        } catch {
+          title = url;
+        }
+      }
+
+      out.push({ url, title, content, type: 'pdf' });
+    } catch (err) {
+      console.error(`[Quillio] Could not parse PDF ${url}: ${err.message}`);
     } finally {
       clearTimeout(timer);
     }
@@ -212,11 +305,12 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // enrich the summary / writer direction with their content. Fully isolated —
     // any failure leaves the parsed brief unchanged and the pipeline untouched.
     try {
-      const [refDocs, refExternal] = await Promise.all([
+      const [refDocs, refExternal, refPdf] = await Promise.all([
         fetchDriveReferenceContent(referenceLinks),
         fetchExternalURLContent(referenceLinks),
+        fetchPDFContent(referenceLinks),
       ]);
-      const refs = [...refDocs, ...refExternal];
+      const refs = [...refDocs, ...refExternal, ...refPdf];
       if (refs.length > 0) {
         const referenceContext = refs
           .map((r) => `\n\n--- Reference: ${r.title} ---\n${r.content}`)
@@ -226,7 +320,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         writerPrompt = enriched.writerPrompt;
         referenceInsights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
         console.log(
-          `[Quillio] enriched brief from ${refDocs.length} Drive + ${refExternal.length} external reference(s)`
+          `[Quillio] enriched brief from ${refDocs.length} Drive + ${refExternal.length} external + ${refPdf.length} PDF reference(s)`
         );
       }
     } catch (err) {

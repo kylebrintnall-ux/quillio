@@ -356,7 +356,7 @@ No markdown. No asterisks. No JSON structure. Plain readable text only.
 referenceInsights: for each reference document that was successfully read, return an object with:
 {
   source: the document title or hostname,
-  type: 'drive' or 'external',
+  type: 'drive', 'external', or 'pdf',
   stats: array of exact verbatim statistics or metrics found — only include figures that appear explicitly in the source, never infer or generate numbers,
   persona: one sentence summarizing audience or persona details found in the source, or null if none,
   keyMessages: array of up to four core message phrases extracted verbatim or near-verbatim from the source,

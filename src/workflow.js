@@ -23,6 +23,20 @@ const BUILDING_TEXT = ':quillio-scroll: Building your document…';
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/document\/d\/)([a-zA-Z0-9_-]+)/;
 const REF_CONTENT_MAX = 3000; // per-file char cap, protects the context window
 
+// Strips control characters (form feeds, NULs, other non-printables below 0x20
+// except \n/\t, and DEL) and normalizes whitespace. Reference content fetched
+// from Drive/external/PDF sources can carry these, and they corrupt Gemini's
+// JSON response when passed through in the enrichment context. Applied to each
+// reference's content when building the concatenated referenceContext.
+function sanitizeText(text) {
+  return text
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\s{3,}/g, '  ')
+    .trim();
+}
+
 // Phase 2 — read the plain-text content of Drive file links in the brief so the
 // enrichment pass has real source material. Best-effort: any file that can't be
 // read (permissions, unsupported type, network) is skipped silently. Uses the
@@ -313,7 +327,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       const refs = [...refDocs, ...refExternal, ...refPdf];
       if (refs.length > 0) {
         const referenceContext = refs
-          .map((r) => `\n\n--- Reference: ${r.title} ---\n${r.content}`)
+          .map((r) => `\n\n--- Reference: ${r.title} ---\n${sanitizeText(r.content)}`)
           .join('');
         const enriched = await enrichWithReferences({ summary, writerPrompt }, referenceContext);
         summary = enriched.summary;

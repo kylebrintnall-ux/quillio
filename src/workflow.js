@@ -306,17 +306,13 @@ async function fetchSlackCanvasContent(links) {
     console.log('[Quillio] canvas ID extracted:', canvasId);
 
     try {
-      const res = await fetch('https://slack.com/api/canvases.sections.lookup', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-          Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
-        },
-        body: JSON.stringify({
-          canvas_id: canvasId,
-          criteria: { section_types: ['h1', 'p', 'h2'] },
-        }),
-      });
+      const res = await fetch(
+        `https://slack.com/api/canvases.info?canvas_id=${encodeURIComponent(canvasId)}`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` },
+        }
+      );
       const data = await res.json();
       console.log('[Quillio] canvas API response:', JSON.stringify(data).slice(0, 300));
       if (!data.ok) {
@@ -324,13 +320,11 @@ async function fetchSlackCanvasContent(links) {
         console.error(`[Quillio] Could not fetch canvas ${canvasId}: ${data.error}`);
         continue;
       }
+      console.log('[Quillio] canvas info keys:', Object.keys(data.canvas || {}));
 
-      const sections = Array.isArray(data.sections) ? data.sections : [];
-      const joined = sections
-        .map((s) => String((s && s.document_content) || '').trim())
-        .filter(Boolean)
-        .join('\n');
-      const content = stripCanvasMarkdown(joined).slice(0, CANVAS_CONTENT_MAX);
+      const canvas = data.canvas || {};
+      const raw = canvas.content || canvas.document_content || '';
+      const content = stripCanvasMarkdown(String(raw)).slice(0, CANVAS_CONTENT_MAX);
 
       // Title: first non-empty line if it's short enough, else the canvas id.
       let title = canvasId;

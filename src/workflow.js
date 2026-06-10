@@ -333,10 +333,9 @@ async function fetchSlackCanvasContent(links, channelId) {
     if (!canvasId) continue;
     console.log('[Quillio] canvas ID extracted:', canvasId);
 
-    // DIAGNOSTIC: canvases.sections.lookup caps section_types at a few enum
-    // values. The canvas body is paragraph text, so probe the long-form names
-    // "paragraph" and "text" to find which enum the API accepts; combine
-    // whatever sections come back.
+    // DIAGNOSTIC: access now works (user token), so probe the valid header
+    // enums "any_header" and "h1" and dump the FULL response of each to see
+    // whether a found section object carries readable content or only an id.
     const lookupSections = async (sectionTypes) => {
       const r = await fetch('https://slack.com/api/canvases.sections.lookup', {
         method: 'POST',
@@ -353,21 +352,11 @@ async function fetchSlackCanvasContent(links, channelId) {
     };
 
     try {
-      const sections = [];
+      const anyHeader = await lookupSections(['any_header']);
+      console.log('[Quillio] any_header response:', JSON.stringify(anyHeader).slice(0, 1500));
 
-      const paragraph = await lookupSections(['paragraph']);
-      console.log('[Quillio] paragraph sections:', paragraph.ok ? (paragraph.sections || []).length : 'error ' + paragraph.error);
-      if (paragraph.ok && Array.isArray(paragraph.sections)) sections.push(...paragraph.sections);
-
-      const text = await lookupSections(['text']);
-      console.log('[Quillio] text sections:', text.ok ? (text.sections || []).length : 'error ' + text.error);
-      if (text.ok && Array.isArray(text.sections)) sections.push(...text.sections);
-
-      const combined = sections
-        .map((s) => String((s && s.document_content) || '').trim())
-        .filter(Boolean)
-        .join('\n');
-      console.log('[Quillio] combined canvas content:', JSON.stringify(combined).slice(0, 1000));
+      const h1 = await lookupSections(['h1']);
+      console.log('[Quillio] h1 response:', JSON.stringify(h1).slice(0, 1500));
     } catch (err) {
       console.error(`[Quillio] canvas sections diagnostic failed for ${canvasId}: ${err.message}`);
     }

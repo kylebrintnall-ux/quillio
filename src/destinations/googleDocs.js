@@ -148,7 +148,6 @@ async function createDocument({
   assetSpecs,
   folderId,
   referenceLinks = [],
-  proofPoints = [],
   referenceInsights = [],
 }) {
   logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
@@ -179,18 +178,6 @@ async function createDocument({
 
   b.heading('Campaign Summary');
   b.italic(stripMarkdown(summary) || '(no summary)');
-
-  // Proof Points — between Campaign Summary and Writer Direction. Omitted when
-  // there are none.
-  if (Array.isArray(proofPoints) && proofPoints.length > 0) {
-    b.heading('Proof Points');
-    for (const p of proofPoints) {
-      const stat = String((p && p.stat) || '').trim();
-      if (!stat) continue;
-      const source = String((p && p.source) || '').trim();
-      b.italic(source ? `• ${stat} — ${source}` : `• ${stat}`);
-    }
-  }
 
   b.heading('Writer Direction');
   b.italic(stripMarkdown(writerPrompt) || '(no direction)');

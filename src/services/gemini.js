@@ -335,7 +335,7 @@ async function enrichWithReferences(parsedBrief, referenceContext) {
 
 Use the reference content to pull the campaign theme/name, the most compelling exact statistics, the primary persona and their pain points, and any competitor-category framing.
 
-Return ONLY valid JSON with exactly these four fields — no preamble, no markdown, no explanation:
+Return ONLY valid JSON with exactly these three fields — no preamble, no markdown, no explanation:
 
 summary: a specific, detailed Campaign Summary in plain prose. Include the most compelling exact figures from the reference — never generalize a number (if the reference says "40% reduction in handle time," use that exact figure).
 
@@ -352,8 +352,6 @@ Competitive Framing: one to two sentences on how to position against the categor
 Do Not Use: comma-separated list of banned words extracted from the reference content, plus always append: seamless, frictionless, transform, revolutionize, reimagine, unlock, AI-powered, chatbot, bot, virtual assistant, co-pilot.
 
 No markdown. No asterisks. No JSON structure. Plain readable text only.
-
-proofPoints: extract every specific statistic, metric, or concrete proof point from the reference content. Return as an array of objects: [{ stat: 'the exact figure or claim', source: 'the document title or hostname it came from' }]. Maximum 8 items. If no stats found, return []. Examples: { stat: '40% reduction in handle time', source: 'Q3 Campaign Brief' }, { stat: '68% Tier-1 case resolution', source: 'Q3 Campaign Brief' }
 
 referenceInsights: for each reference document that was successfully read, return an object with:
 {
@@ -387,7 +385,6 @@ ${referenceContext}`;
       ...parsedBrief,
       summary: toReadableText(parsed.summary).trim() || parsedBrief.summary,
       writerPrompt: toReadableText(parsed.writerPrompt).trim() || parsedBrief.writerPrompt,
-      proofPoints: Array.isArray(parsed.proofPoints) ? parsed.proofPoints : [],
       referenceInsights: Array.isArray(parsed.referenceInsights) ? parsed.referenceInsights : [],
     };
   } catch (err) {

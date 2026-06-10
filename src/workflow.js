@@ -180,7 +180,6 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     const parsedBrief = await parseBrief(brief);
     const { campaignTitle, assets, unmatchedAssets, folderId, referenceLinks } = parsedBrief;
     let { summary, writerPrompt } = parsedBrief; // may be enriched below
-    let proofPoints = []; // populated by enrichment, rendered in the doc
     let referenceInsights = []; // populated by enrichment, rendered in the doc
     console.log('[workflow] Gemini parse OK — assets:', JSON.stringify(assets));
     console.log('[workflow] campaignTitle:', JSON.stringify(campaignTitle));
@@ -225,7 +224,6 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         const enriched = await enrichWithReferences({ summary, writerPrompt }, referenceContext);
         summary = enriched.summary;
         writerPrompt = enriched.writerPrompt;
-        proofPoints = Array.isArray(enriched.proofPoints) ? enriched.proofPoints : [];
         referenceInsights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
         console.log(
           `[Quillio] enriched brief from ${refDocs.length} Drive + ${refExternal.length} external reference(s)`
@@ -259,7 +257,6 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         assetSpecs,
         folderId: effectiveFolderId,
         referenceLinks,
-        proofPoints,
         referenceInsights,
       });
     } catch (err) {

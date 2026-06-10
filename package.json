@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "googleapis": "^144.0.0"
+    "googleapis": "^144.0.0",
+    "pdf-parse": "^1.1.1"
   },
   "license": "MIT"
 }

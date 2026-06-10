@@ -333,32 +333,18 @@ async function fetchSlackCanvasContent(links, channelId) {
     if (!canvasId) continue;
     console.log('[Quillio] canvas ID extracted:', canvasId);
 
-    // DIAGNOSTIC: access now works (user token), so probe the valid header
-    // enums "any_header" and "h1" and dump the FULL response of each to see
-    // whether a found section object carries readable content or only an id.
-    const lookupSections = async (sectionTypes) => {
-      const r = await fetch('https://slack.com/api/canvases.sections.lookup', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          canvas_id: canvasId,
-          criteria: { section_types: sectionTypes },
-        }),
-      });
-      return r.json();
-    };
-
+    // DIAGNOSTIC: sections.lookup can't return a header-less canvas's body, so
+    // read the canvas as a file instead. Dump the full files.info file object
+    // to find the content / download field (url_private_download).
     try {
-      const anyHeader = await lookupSections(['any_header']);
-      console.log('[Quillio] any_header response:', JSON.stringify(anyHeader).slice(0, 1500));
-
-      const h1 = await lookupSections(['h1']);
-      console.log('[Quillio] h1 response:', JSON.stringify(h1).slice(0, 1500));
+      const fRes = await fetch(
+        `https://slack.com/api/files.info?file=${encodeURIComponent(canvasId)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const fData = await fRes.json();
+      console.log('[Quillio] files.info full:', JSON.stringify(fData).slice(0, 1800));
     } catch (err) {
-      console.error(`[Quillio] canvas sections diagnostic failed for ${canvasId}: ${err.message}`);
+      console.error(`[Quillio] files.info diagnostic failed for ${canvasId}: ${err.message}`);
     }
     return [];
   }

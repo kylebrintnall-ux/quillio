@@ -270,12 +270,16 @@ async function fetchPDFContent(links) {
   return out;
 }
 
-// Phase 2 Slice 4 — read the text of Slack Canvas links in the brief via the
-// Slack API (canvases.sections.lookup) so the enrichment pass can use them.
-// Best-effort: any canvas that can't be fetched/parsed is skipped silently.
-// Requires SLACK_BOT_TOKEN with the canvases:read scope. Returns
-// [{ url, canvasId, title, content, type: 'canvas' }].
+// Phase 2 Slice 4 — read the text of Slack Canvas links in the brief so the
+// enrichment pass can use them. A canvas is a file: files.info gives its title
+// and a private download URL, which we fetch (with the token) for the content.
+// canvases.sections.lookup is no use here — it only finds header-delimited
+// sections, so it returns nothing for a header-less canvas. Best-effort: any
+// canvas that can't be read is skipped silently. Prefers SLACK_USER_TOKEN
+// (with files:read + canvases:read) since the bot identity gets `not_visible`
+// on user-owned canvases. Returns [{ url, canvasId, title, content, type }].
 const CANVAS_CONTENT_MAX = 3000;
+const CANVAS_FETCH_TIMEOUT_MS = 10000;
 
 // Strip the markdown that Slack returns in canvas section content so the
 // enrichment context is clean plain text.
@@ -288,65 +292,74 @@ function stripCanvasMarkdown(text) {
     .trim();
 }
 
-async function fetchSlackCanvasContent(links, channelId) {
+async function fetchSlackCanvasContent(links) {
   if (!Array.isArray(links) || links.length === 0) return [];
-  if (!config.SLACK_BOT_TOKEN) return [];
-  const out = [];
-
-  // Prefer a user token (reads what the authorizing user can see — including
-  // standalone canvases the bot identity gets `not_visible` on); fall back to
-  // the bot token when no user token is configured.
+  // Prefer the user token (reads what the authorizing user can see, including
+  // user-owned canvases); fall back to the bot token when none is configured.
   const token = process.env.SLACK_USER_TOKEN || process.env.SLACK_BOT_TOKEN;
-
-  // TEMPORARY DIAGNOSTIC: resolve the channel's own canvas file id so we can
-  // compare it against the canvas id parsed from the brief URL. If they differ,
-  // the URL points at a standalone canvas the bot can't see (canvas_not_found),
-  // and we should read the channel canvas by this id instead.
-  if (channelId) {
-    try {
-      const chRes = await fetch(
-        `https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      const chData = await chRes.json();
-      const fileId =
-        chData && chData.channel && chData.channel.properties && chData.channel.properties.canvas
-          ? chData.channel.properties.canvas.file_id
-          : undefined;
-      console.log('[Quillio] channel canvas file_id:', fileId, '| ok:', chData && chData.ok, '| error:', chData && chData.error);
-    } catch (err) {
-      console.error(`[Quillio] conversations.info diagnostic failed for ${channelId}: ${err.message}`);
-    }
-  } else {
-    console.log('[Quillio] channel canvas diagnostic skipped — no channelId');
-  }
+  if (!token) return [];
+  const out = [];
 
   for (const raw of links) {
     const url = String(raw);
     if (!SLACK_CANVAS_RE.test(url)) continue;
 
-    // Extract the canvas id: the LAST path segment after /canvas/ or /docs/.
-    // Handles /canvas/CANVAS_ID and /docs/TEAM_ID/CANVAS_ID alike — the canvas
-    // id is always the final segment (the team id, when present, comes first).
+    // Canvas id = the LAST path segment after /canvas/ or /docs/. A /docs/ URL
+    // is /docs/TEAM_ID/CANVAS_ID, so the canvas id is always the final segment.
     const after = url.replace(/^.*\.slack\.com\/(?:canvas|docs)\//i, '');
     const canvasId = after.split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
     if (!canvasId) continue;
-    console.log('[Quillio] canvas ID extracted:', canvasId);
 
-    // DIAGNOSTIC: sections.lookup can't return a header-less canvas's body, so
-    // read the canvas as a file instead. Dump the full files.info file object
-    // to find the content / download field (url_private_download).
     try {
-      const fRes = await fetch(
+      // files.info → title + private download URL.
+      const infoRes = await fetch(
         `https://slack.com/api/files.info?file=${encodeURIComponent(canvasId)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const fData = await fRes.json();
-      console.log('[Quillio] files.info full:', JSON.stringify(fData).slice(0, 1800));
+      const info = await infoRes.json();
+      if (!info.ok || !info.file) {
+        console.error(`[Quillio] canvas files.info failed for ${canvasId}: ${info.error}`);
+        continue;
+      }
+      const file = info.file;
+      const downloadUrl = file.url_private_download || file.url_private;
+      if (!downloadUrl) {
+        console.error(`[Quillio] canvas ${canvasId} has no download URL`);
+        continue;
+      }
+
+      // Fetch the canvas body (authorized download).
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), CANVAS_FETCH_TIMEOUT_MS);
+      let body;
+      try {
+        const dlRes = await fetch(downloadUrl, {
+          signal: ctrl.signal,
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!dlRes.ok) throw new Error(`download status ${dlRes.status}`);
+        body = await dlRes.text();
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // Canvas downloads come back as HTML or markdown — strip both to plain text.
+      const content = stripCanvasMarkdown(String(body || '').replace(/<[^>]+>/g, ' '))
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+        .slice(0, CANVAS_CONTENT_MAX);
+      if (!content) {
+        console.error(`[Quillio] canvas ${canvasId} download empty after cleaning`);
+        continue;
+      }
+
+      const title = String(file.title || file.name || canvasId).trim();
+      console.log(`[Quillio] canvas read OK — ${canvasId} "${title}" (${content.length} chars)`);
+      out.push({ url, canvasId, title, content, type: 'canvas' });
     } catch (err) {
-      console.error(`[Quillio] files.info diagnostic failed for ${canvasId}: ${err.message}`);
+      console.error(`[Quillio] Could not fetch Slack canvas ${canvasId}: ${err.message}`);
     }
-    return [];
   }
   return out;
 }
@@ -442,7 +455,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         fetchDriveReferenceContent(referenceLinks),
         fetchExternalURLContent(referenceLinks),
         fetchPDFContent(referenceLinks),
-        fetchSlackCanvasContent(referenceLinks, opts.channelId),
+        fetchSlackCanvasContent(referenceLinks),
       ]);
       const refs = [...refDocs, ...refExternal, ...refPdf, ...refCanvas];
       if (refs.length > 0) {

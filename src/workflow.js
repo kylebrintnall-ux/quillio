@@ -288,10 +288,33 @@ function stripCanvasMarkdown(text) {
     .trim();
 }
 
-async function fetchSlackCanvasContent(links) {
+async function fetchSlackCanvasContent(links, channelId) {
   if (!Array.isArray(links) || links.length === 0) return [];
   if (!config.SLACK_BOT_TOKEN) return [];
   const out = [];
+
+  // TEMPORARY DIAGNOSTIC: resolve the channel's own canvas file id so we can
+  // compare it against the canvas id parsed from the brief URL. If they differ,
+  // the URL points at a standalone canvas the bot can't see (canvas_not_found),
+  // and we should read the channel canvas by this id instead.
+  if (channelId) {
+    try {
+      const chRes = await fetch(
+        `https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}`,
+        { headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` } }
+      );
+      const chData = await chRes.json();
+      const fileId =
+        chData && chData.channel && chData.channel.properties && chData.channel.properties.canvas
+          ? chData.channel.properties.canvas.file_id
+          : undefined;
+      console.log('[Quillio] channel canvas file_id:', fileId, '| ok:', chData && chData.ok, '| error:', chData && chData.error);
+    } catch (err) {
+      console.error(`[Quillio] conversations.info diagnostic failed for ${channelId}: ${err.message}`);
+    }
+  } else {
+    console.log('[Quillio] channel canvas diagnostic skipped — no channelId');
+  }
 
   for (const raw of links) {
     const url = String(raw);
@@ -421,7 +444,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         fetchDriveReferenceContent(referenceLinks),
         fetchExternalURLContent(referenceLinks),
         fetchPDFContent(referenceLinks),
-        fetchSlackCanvasContent(referenceLinks),
+        fetchSlackCanvasContent(referenceLinks, opts.channelId),
       ]);
       const refs = [...refDocs, ...refExternal, ...refPdf, ...refCanvas];
       if (refs.length > 0) {

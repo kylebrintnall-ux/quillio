@@ -333,11 +333,12 @@ async function fetchSlackCanvasContent(links, channelId) {
     if (!canvasId) continue;
     console.log('[Quillio] canvas ID extracted:', canvasId);
 
-    // TEMPORARY DIAGNOSTIC: probe canvases.sections.lookup with a single known
-    // section type ("h1") and dump the response, then return [] without using
-    // it downstream.
-    try {
-      const testRes = await fetch('https://slack.com/api/canvases.sections.lookup', {
+    // DIAGNOSTIC: canvases.sections.lookup caps section_types at a few enum
+    // values. The canvas body is paragraph text but "p" was rejected, so probe
+    // the known-valid heading types (h1, h2) plus a single "any" catch-all in
+    // separate calls and combine whatever sections come back.
+    const lookupSections = async (sectionTypes) => {
+      const r = await fetch('https://slack.com/api/canvases.sections.lookup', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -345,33 +346,34 @@ async function fetchSlackCanvasContent(links, channelId) {
         },
         body: JSON.stringify({
           canvas_id: canvasId,
-          criteria: { section_types: ['h1'] },
+          criteria: { section_types: sectionTypes },
         }),
       });
-      const testData = await testRes.json();
-      console.log('[Quillio] canvas h1 response:', JSON.stringify(testData).slice(0, 1000));
-    } catch (err) {
-      console.error(`[Quillio] canvas h1 diagnostic failed for ${canvasId}: ${err.message}`);
-    }
+      return r.json();
+    };
 
-    // TEMPORARY DIAGNOSTIC: a canvas is a file, so probe files.info on the same
-    // id. This distinguishes "wrong id / not a real file" from "bot can't see
-    // it" from "files scope missing", and reveals the file's filetype.
     try {
-      const fRes = await fetch(
-        `https://slack.com/api/files.info?file=${encodeURIComponent(canvasId)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      const fData = await fRes.json();
-      const f = fData && fData.file;
-      console.log(
-        '[Quillio] files.info:',
-        'ok=' + (fData && fData.ok),
-        'error=' + (fData && fData.error),
-        f ? `filetype=${f.filetype} mimetype=${f.mimetype} name=${JSON.stringify(f.name)}` : '(no file)'
-      );
+      const sections = [];
+
+      const h1 = await lookupSections(['h1']);
+      console.log('[Quillio] h1 sections:', h1.ok ? (h1.sections || []).length : 'error ' + h1.error);
+      if (h1.ok && Array.isArray(h1.sections)) sections.push(...h1.sections);
+
+      const h2 = await lookupSections(['h2']);
+      console.log('[Quillio] h2 sections:', h2.ok ? (h2.sections || []).length : 'error ' + h2.error);
+      if (h2.ok && Array.isArray(h2.sections)) sections.push(...h2.sections);
+
+      const any = await lookupSections(['any']);
+      console.log('[Quillio] any sections:', any.ok ? (any.sections || []).length : 'error ' + any.error);
+      if (any.ok && Array.isArray(any.sections)) sections.push(...any.sections);
+
+      const combined = sections
+        .map((s) => String((s && s.document_content) || '').trim())
+        .filter(Boolean)
+        .join('\n');
+      console.log('[Quillio] combined canvas content:', JSON.stringify(combined).slice(0, 1000));
     } catch (err) {
-      console.error(`[Quillio] files.info diagnostic failed for ${canvasId}: ${err.message}`);
+      console.error(`[Quillio] canvas sections diagnostic failed for ${canvasId}: ${err.message}`);
     }
     return [];
   }

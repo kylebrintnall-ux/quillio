@@ -297,11 +297,13 @@ async function fetchSlackCanvasContent(links) {
     const url = String(raw);
     if (!SLACK_CANVAS_RE.test(url)) continue;
 
-    // Extract the canvas id: the path segment right after /canvas/ or /docs/,
-    // with any query/fragment or trailing slash stripped.
-    const m = url.match(/\.slack\.com\/(?:canvas|docs)\/([^/?#]+)/i);
-    const canvasId = m ? m[1].replace(/\/+$/, '') : '';
+    // Extract the canvas id: the LAST path segment after /canvas/ or /docs/.
+    // Handles /canvas/CANVAS_ID and /docs/TEAM_ID/CANVAS_ID alike — the canvas
+    // id is always the final segment (the team id, when present, comes first).
+    const after = url.replace(/^.*\.slack\.com\/(?:canvas|docs)\//i, '');
+    const canvasId = after.split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
     if (!canvasId) continue;
+    console.log('[Quillio] canvas ID extracted:', canvasId);
 
     try {
       const res = await fetch('https://slack.com/api/canvases.sections.lookup', {

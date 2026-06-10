@@ -333,16 +333,19 @@ async function enrichWithReferences(parsedBrief, referenceContext) {
 
   const prompt = `You are a senior B2B copywriter briefing a creative team. You have received a parsed creative brief and additional context from reference documents the requester linked. Your job is to rewrite the Campaign Summary and Writer Direction so they are as specific and actionable as possible for a copywriter who has not read the reference documents.
 
-RULES:
-1. Extract every specific statistic, proof point, or metric from the reference content and include the most compelling ones in the Campaign Summary. Never generalize a number — if the reference says "40% reduction in handle time," use that exact figure.
-2. Extract explicit tone instructions from the reference content — words to avoid, words that work, voice guidance — and list them verbatim in the Writer Direction under a "Voice & Language" subheading.
-3. Extract the campaign theme or name if present and use it.
-4. Extract the primary persona's specific pain points (budget pressure, board reporting, CSAT ownership, etc.) and include them in the Writer Direction so the copywriter knows exactly what nerve to hit.
-5. If the reference content names competitor categories (not individual competitors), include that framing in the Writer Direction.
-6. The Writer Direction must end with a "Do Not Use" list — pull prohibited words/phrases directly from the reference if present, otherwise infer from tone guidance.
-7. Never use the words: seamless, frictionless, transform, revolutionize, reimagine, unlock, AI-powered, chatbot, bot, virtual assistant.
-8. Return only valid JSON: { "summary": "...", "writerPrompt": "..." }
-   No preamble, no markdown, no explanation.
+Use the reference content to pull the campaign theme/name, the most compelling exact statistics, the primary persona and their pain points, and any competitor-category framing.
+
+Return ONLY valid JSON with exactly these three fields — no preamble, no markdown, no explanation:
+
+summary: a specific, detailed Campaign Summary in plain prose. Include the most compelling exact figures from the reference — never generalize a number (if the reference says "40% reduction in handle time," use that exact figure).
+
+writerPrompt: write as plain prose paragraphs, no markdown, no asterisks, no bullet symbols. Maximum 150 words. Include only:
+1. One sentence naming the primary persona and their single biggest pain point.
+2. Two to three sentences of voice direction — what to emphasize, what angle to take.
+3. Do Not Use: [comma-separated list of banned words extracted from the reference, plus always include: seamless, frictionless, transform, revolutionize, reimagine, unlock, AI-powered, chatbot, bot, virtual assistant, co-pilot]
+No subheadings. No JSON structure. Plain readable text only.
+
+proofPoints: extract every specific statistic, metric, or concrete proof point from the reference content. Return as an array of objects: [{ stat: 'the exact figure or claim', source: 'the document title or hostname it came from' }]. Maximum 8 items. If no stats found, return []. Examples: { stat: '40% reduction in handle time', source: 'Q3 Campaign Brief' }, { stat: '68% Tier-1 case resolution', source: 'Q3 Campaign Brief' }
 
 INPUTS:
 
@@ -365,6 +368,7 @@ ${referenceContext}`;
       ...parsedBrief,
       summary: toReadableText(parsed.summary).trim() || parsedBrief.summary,
       writerPrompt: toReadableText(parsed.writerPrompt).trim() || parsedBrief.writerPrompt,
+      proofPoints: Array.isArray(parsed.proofPoints) ? parsed.proofPoints : [],
     };
   } catch (err) {
     console.error('[Quillio] enrichWithReferences failed, using original brief:', err.message);

@@ -234,7 +234,7 @@ async function parseBrief(brief) {
     '  Dating Event", not "Promos For A". No date, no quotes, no trailing punctuation.',
     '- summary: 2-3 sentences summarizing the campaign.',
     '- writerPrompt: ONE sentence of creative direction for a copywriter.',
-    `- assets: an array of asset types requested in the brief. Each value MUST be one of these exact strings: ${allowed.join(
+    `- assets: return ONLY the asset types explicitly mentioned or clearly implied by the brief. If the brief says 'LinkedIn carousel ad and event landing page', return exactly those two. Do not infer or add asset types that are not mentioned. If no specific assets are mentioned, return the 3 most common types for the campaign goal described. Maximum 5 assets unless the brief explicitly requests more. Each value MUST be one of these exact strings: ${allowed.join(
       ', '
     )}.`,
     '',

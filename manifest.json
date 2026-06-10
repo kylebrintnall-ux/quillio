@@ -1,0 +1,41 @@
+{
+  "display_information": {
+    "name": "Quillio",
+    "description": "Turn a one-line campaign brief into spec-correct copy in a Google Doc, without leaving Slack.",
+    "background_color": "#1a1a2e"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Quillio",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/quillio",
+        "url": "https://<your-railway-domain>/slack/command",
+        "description": "Turn a campaign brief into a formatted Google Doc",
+        "usage_hint": "[campaign brief]",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "incoming-webhook",
+        "canvases:read"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://<your-railway-domain>/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

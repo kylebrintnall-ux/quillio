@@ -293,6 +293,11 @@ async function fetchSlackCanvasContent(links, channelId) {
   if (!config.SLACK_BOT_TOKEN) return [];
   const out = [];
 
+  // Prefer a user token (reads what the authorizing user can see — including
+  // standalone canvases the bot identity gets `not_visible` on); fall back to
+  // the bot token when no user token is configured.
+  const token = process.env.SLACK_USER_TOKEN || process.env.SLACK_BOT_TOKEN;
+
   // TEMPORARY DIAGNOSTIC: resolve the channel's own canvas file id so we can
   // compare it against the canvas id parsed from the brief URL. If they differ,
   // the URL points at a standalone canvas the bot can't see (canvas_not_found),
@@ -301,7 +306,7 @@ async function fetchSlackCanvasContent(links, channelId) {
     try {
       const chRes = await fetch(
         `https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}`,
-        { headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` } }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       const chData = await chRes.json();
       const fileId =
@@ -335,7 +340,7 @@ async function fetchSlackCanvasContent(links, channelId) {
       const testRes = await fetch('https://slack.com/api/canvases.sections.lookup', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -355,7 +360,7 @@ async function fetchSlackCanvasContent(links, channelId) {
     try {
       const fRes = await fetch(
         `https://slack.com/api/files.info?file=${encodeURIComponent(canvasId)}`,
-        { headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` } }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       const fData = await fRes.json();
       const f = fData && fData.file;

@@ -22,6 +22,7 @@ class DocBuilder {
     this.text = '';
     this.paragraphRequests = [];
     this.textRequests = [];
+    this.bulletRequests = [];
   }
 
   // Append a paragraph (text + trailing newline) and record its styling.
@@ -111,12 +112,25 @@ class DocBuilder {
     this._push('');
   }
 
+  // A disc-bullet list item. Records a createParagraphBullets request over the
+  // paragraph's range using the BULLET_DISC_CIRCLE_SQUARE preset (disc at the
+  // top level). The bullet text carries no leading tabs, so the operation adds
+  // no nesting and removes no characters — absolute indices stay stable, so it
+  // can be applied after the text is inserted without shifting other ranges.
+  bullet(text) {
+    const range = this._push(text);
+    this.bulletRequests.push({
+      createParagraphBullets: { range, bulletPreset: 'BULLET_DISC_CIRCLE_SQUARE' },
+    });
+  }
+
   // Returns the full ordered batchUpdate requests array.
   buildRequests() {
     return [
       { insertText: { location: { index: 1 }, text: this.text } },
       ...this.paragraphRequests,
       ...this.textRequests,
+      ...this.bulletRequests,
     ];
   }
 }

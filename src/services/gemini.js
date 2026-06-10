@@ -264,7 +264,7 @@ async function parseBrief(brief) {
     '- folderId: if the brief contains a Google Drive folder URL of the form',
     '  https://drive.google.com/drive/folders/FOLDER_ID , extract just the',
     '  FOLDER_ID string (the path segment after /folders/). Return null if none.',
-    "- referenceLinks: extract every URL from the brief text that begins with http:// or https://. Include ALL URLs regardless of domain — Google Drive, Google Docs, Salesforce, external pages, everything. Return as a plain array of strings. If the brief text contains any string starting with http, include it. Do not filter, do not validate, do not deduplicate. If no URLs found, return [].",
+    "- referenceLinks: extract every URL from the brief text that begins with http:// or https://. Include ALL URLs — Google Drive, Google Docs, Salesforce, external pages, AND Slack Canvas or Docs URLs (containing slack.com/canvas/ or slack.com/docs/). Return as a plain array of strings. If no URLs found, return [].",
     "  Example: ['https://docs.google.com/...', 'https://www.salesforce.com/...']",
     '- unmatchedAssets: asset types the brief asked for that do NOT map to the',
     '  allowed list. [] if none. Never force these into assets.',

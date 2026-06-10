@@ -334,9 +334,9 @@ async function fetchSlackCanvasContent(links, channelId) {
     console.log('[Quillio] canvas ID extracted:', canvasId);
 
     // DIAGNOSTIC: canvases.sections.lookup caps section_types at a few enum
-    // values. The canvas body is paragraph text but "p" was rejected, so probe
-    // the known-valid heading types (h1, h2) plus a single "any" catch-all in
-    // separate calls and combine whatever sections come back.
+    // values. The canvas body is paragraph text, so probe the long-form names
+    // "paragraph" and "text" to find which enum the API accepts; combine
+    // whatever sections come back.
     const lookupSections = async (sectionTypes) => {
       const r = await fetch('https://slack.com/api/canvases.sections.lookup', {
         method: 'POST',
@@ -355,17 +355,13 @@ async function fetchSlackCanvasContent(links, channelId) {
     try {
       const sections = [];
 
-      const h1 = await lookupSections(['h1']);
-      console.log('[Quillio] h1 sections:', h1.ok ? (h1.sections || []).length : 'error ' + h1.error);
-      if (h1.ok && Array.isArray(h1.sections)) sections.push(...h1.sections);
+      const paragraph = await lookupSections(['paragraph']);
+      console.log('[Quillio] paragraph sections:', paragraph.ok ? (paragraph.sections || []).length : 'error ' + paragraph.error);
+      if (paragraph.ok && Array.isArray(paragraph.sections)) sections.push(...paragraph.sections);
 
-      const h2 = await lookupSections(['h2']);
-      console.log('[Quillio] h2 sections:', h2.ok ? (h2.sections || []).length : 'error ' + h2.error);
-      if (h2.ok && Array.isArray(h2.sections)) sections.push(...h2.sections);
-
-      const any = await lookupSections(['any']);
-      console.log('[Quillio] any sections:', any.ok ? (any.sections || []).length : 'error ' + any.error);
-      if (any.ok && Array.isArray(any.sections)) sections.push(...any.sections);
+      const text = await lookupSections(['text']);
+      console.log('[Quillio] text sections:', text.ok ? (text.sections || []).length : 'error ' + text.error);
+      if (text.ok && Array.isArray(text.sections)) sections.push(...text.sections);
 
       const combined = sections
         .map((s) => String((s && s.document_content) || '').trim())

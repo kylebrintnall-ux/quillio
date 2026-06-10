@@ -248,8 +248,8 @@ async function parseBrief(brief) {
     '- folderId: if the brief contains a Google Drive folder URL of the form',
     '  https://drive.google.com/drive/folders/FOLDER_ID , extract just the',
     '  FOLDER_ID string (the path segment after /folders/). Return null if none.',
-    '- referenceLinks: an array of every URL found anywhere in the brief (Drive',
-    '  links, external links, anything starting with http or https). Return [] if none.',
+    "- referenceLinks: extract every URL from the brief text that begins with http:// or https://. Include ALL URLs regardless of domain — Google Drive, Google Docs, Salesforce, external pages, everything. Return as a plain array of strings. If the brief text contains any string starting with http, include it. Do not filter, do not validate, do not deduplicate. If no URLs found, return [].",
+    "  Example: ['https://docs.google.com/...', 'https://www.salesforce.com/...']",
     '- unmatchedAssets: asset types the brief asked for that do NOT map to the',
     '  allowed list. [] if none. Never force these into assets.',
     '',
@@ -273,6 +273,8 @@ async function parseBrief(brief) {
   } catch (err) {
     throw new Error('Could not parse Gemini brief JSON: ' + text);
   }
+
+  console.log('[gemini] raw referenceLinks from parse:', JSON.stringify(parsed.referenceLinks));
 
   // Defensively constrain assets to the allowed list. Anything Gemini returned
   // in `assets` that isn't allowed is treated as unmatched (so it surfaces to

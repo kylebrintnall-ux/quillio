@@ -221,40 +221,9 @@ function toReadableText(v) {
 // Assets are constrained to the allowed list regardless of how they were
 // written in the brief (bullets, numbers, or inline prose).
 async function parseBrief(brief) {
-  // Valid asset types (exact names from the Sheet). Used both in the prompt and
-  // as the defensive filter below, so Gemini's output is constrained to these.
-  const allowed = [
-    'LinkedIn Single Image Ad',
-    'LinkedIn Carousel Ad',
-    'LinkedIn Single Image Ad — Variant A',
-    'LinkedIn Single Image Ad — Variant B',
-    'LinkedIn Single Image Ad — Variant C',
-    'LinkedIn Single Image Ad — Variant D',
-    'Meta Single Image Ad',
-    'Meta Carousel Ad',
-    'Twitter/X Ad',
-    'Display Banner — Standard',
-    'Google DV360 / Responsive Display',
-    'Demand Gen Nurture Email',
-    'Event Invitation Email',
-    'Event Reminder Email',
-    'Event Follow-Up / Recap Email',
-    'Sales Basho Email',
-    'Event Landing Page',
-    'On-Site Signage — General',
-    'On-Site Signage — Session Title Card',
-    'On-Site Signage — Directional',
-    'Campaign Landing Page',
-    'Form Confirm Page',
-    'Organic Social — LinkedIn',
-    'Organic Social — Instagram',
-    'Organic Social — Twitter/X',
-    'Direct Mail — Box / Mailer',
-    'Direct Mail — Note Card / Rep Letter',
-    'Direct Mail — Insert',
-    'One-Pager',
-    'Battle Card',
-  ];
+  // Valid asset types (exact Sheet names) — single source of truth lives in
+  // config.ALLOWED_ASSETS. Used both in the prompt and the defensive filter.
+  const allowed = config.ALLOWED_ASSETS;
 
   const prompt = [
     'You are a marketing operations assistant. Read the campaign brief below and extract structured data.',
@@ -277,21 +246,32 @@ async function parseBrief(brief) {
     'numbers, or inline prose — extract them regardless of format. The lists below',
     'are illustrative, not exhaustive; treat obvious variants, plurals, and',
     'casing the same way:',
-    '- "Paid Social - LinkedIn": LinkedIn, LI, li, linked in, LinkedIn ad, LinkedIn paid, paid LinkedIn, LinkedIn sponsored, sponsored content, LinkedIn social, social LinkedIn, B2B social, LI ad, LinkedIn campaign, LinkedIn post',
-    '- "Paid Social - Meta": Meta, Facebook, FB, Instagram, IG, Meta ad, Facebook ad, FB ad, IG ad, Instagram ad, paid Meta, paid Facebook, paid Instagram, Meta social, Facebook social, Instagram social, social Meta, paid social Meta',
-    '- "Paid Social - Twitter/X": Twitter, X, tweet, X ad, Twitter ad, paid Twitter, paid X, Twitter social, X social, Twitter campaign, X campaign',
-    '- "Display Banner": display, banner, GDN, Google Display, display ad, banner ad, display banner, Google banner, programmatic, digital display, web banner, HTML banner, rich media',
-    '- "Dynamic Email": email, DEM, dynamic email, nurture email, nurture, email campaign, marketing email, bulk email, batch email, demand email, email blast, EDM, triggered email, automated email',
-    '- "Sales Basho": Basho, basho, sales email, outbound email, outbound, 1:1 email, one to one email, SDR email, BDR email, prospecting email, cold email, sales outreach, rep email, AE email, direct email, personalized email',
-    '- "Organic Social": organic, organic social, social post, organic post, social media, social media post, earned social, unpaid social, owned social, social content',
-    '- "Form Confirm Page": form confirm, confirmation page, thank you page, form confirmation, TY page, post-form, form landing page, confirmation, form page, submission confirmation, form complete',
+    '- "linkedin ad" or "linkedin" → LinkedIn Single Image Ad',
+    '- "linkedin carousel" → LinkedIn Carousel Ad',
+    '- "linkedin variants" or "ab test" or "variant" → LinkedIn Single Image Ad — Variant A, LinkedIn Single Image Ad — Variant B',
+    '- "meta ad" or "facebook ad" → Meta Single Image Ad',
+    '- "meta carousel" → Meta Carousel Ad',
+    '- "twitter" or "x ad" → Twitter/X Ad',
+    '- "display" or "banner" → Display Banner — Standard',
+    '- "dv360" or "programmatic" → Google DV360 / Responsive Display',
+    '- "email" or "nurture" → Demand Gen Nurture Email',
+    '- "event email" or "invite" → Event Invitation Email',
+    '- "reminder email" → Event Reminder Email',
+    '- "follow up" or "recap email" → Event Follow-Up / Recap Email',
+    '- "basho" or "sales email" → Sales Basho Email',
+    '- "landing page" or "event page" → Event Landing Page',
+    '- "signage" or "on-site" → On-Site Signage — General',
+    '- "campaign page" → Campaign Landing Page',
+    '- "confirm page" or "form confirm" → Form Confirm Page',
+    '- "organic social" or "organic" → Organic Social — LinkedIn',
+    '- "instagram" → Organic Social — Instagram',
+    '- "direct mail" or "mailer" → Direct Mail — Box / Mailer',
+    '- "rep letter" or "note card" → Direct Mail — Note Card / Rep Letter',
+    '- "one pager" or "one-pager" → One-Pager',
+    '- "battle card" → Battle Card',
     '',
-    'Category / fallback rules:',
-    '- "all assets", "full campaign", "everything", or "all channels" -> return ALL 8 asset types.',
-    '- "paid social" without a named platform -> all three Paid Social variants (LinkedIn, Meta, Twitter/X).',
-    '- "social" used generally -> both Paid Social... and Organic Social, i.e. Paid Social - LinkedIn, Paid Social - Meta, Paid Social - Twitter/X, and Organic Social.',
-    '- "email" used generally -> both Dynamic Email and Sales Basho.',
-    '- Only include an asset when the intent is reasonably clear; do not invent assets that are not implied.',
+    'Rules:',
+    '- Only include an asset when the intent is reasonably clear; do not invent assets that are not implied. Never return all asset types for a vague brief.',
     '- If the brief requests an asset type that does NOT confidently map to the allowed list (e.g. TikTok, podcast ad, billboard, SMS), do NOT substitute a nearest guess. Put the original phrase in unmatchedAssets and leave it out of assets.',
     '',
     '- folderId: if the brief contains a Google Drive folder URL of the form',
@@ -325,17 +305,33 @@ async function parseBrief(brief) {
 
   console.log('[gemini] raw referenceLinks from parse:', JSON.stringify(parsed.referenceLinks));
 
-  // Defensively constrain assets to the allowed list. Anything Gemini returned
-  // in `assets` that isn't allowed is treated as unmatched (so it surfaces to
-  // the user rather than being silently dropped or substituted).
-  const allowedSet = new Set(allowed);
-  const assets = Array.isArray(parsed.assets)
-    ? parsed.assets.filter((a) => allowedSet.has(a))
-    : [];
+  // Defensively constrain assets to the allowed list. Match case- and
+  // dash-insensitively (Gemini may emit a hyphen where the canonical name uses
+  // an em dash), then map back to the canonical name. Anything that doesn't map
+  // is treated as unmatched (surfaced to the user, not silently dropped).
+  const normalize = (s) =>
+    String(s)
+      .toLowerCase()
+      .replace(/[—–\-]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const canonicalByNorm = new Map(allowed.map((a) => [normalize(a), a]));
+
+  const rawAssets = Array.isArray(parsed.assets) ? parsed.assets : [];
+  const assets = [];
+  const unmatchedFromAssets = [];
+  for (const a of rawAssets) {
+    const canonical = canonicalByNorm.get(normalize(a));
+    if (canonical) {
+      if (!assets.includes(canonical)) assets.push(canonical);
+    } else {
+      unmatchedFromAssets.push(a);
+    }
+  }
 
   const unmatchedAssets = [
     ...(Array.isArray(parsed.unmatchedAssets) ? parsed.unmatchedAssets : []),
-    ...(Array.isArray(parsed.assets) ? parsed.assets.filter((a) => !allowedSet.has(a)) : []),
+    ...unmatchedFromAssets,
   ]
     .map((a) => String(a).trim())
     .filter(Boolean);

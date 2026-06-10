@@ -81,6 +81,8 @@ env var. No workflow changes required.
 | `SHEET_ID` | ⬜ | Asset specs Sheet. Defaults to `1sdYw1NQ27OYeCaVCHRN50xVVbQoTnDvn5cZXag34Aw4`. |
 | `DRIVE_FOLDER_ID` | ⬜ | Folder docs are created in. Defaults to `1gdf5-R3J8IGY1I5pJJj2O-KFOju0UsqU`. |
 | `SLACK_SIGNING_SECRET` | ⬜ | If set, every incoming Slack request is signature-verified. |
+| `SLACK_BOT_TOKEN` | ⬜ | Bot token (`xoxb-…`). Enables posting/editing the status message in place via `chat.postMessage` / `chat.update` (the live "Building…" → result flow). |
+| `SLACK_USER_TOKEN` | ⬜ | User token (`xoxp-…`). **Required to ingest Slack Canvas links** in a brief — canvas reads happen as the authorizing user, not the bot (a bot identity gets `not_visible` on user-owned canvases). Needs the `canvases:read` + `files:read` **User** Token Scopes. Canvas calls prefer this token and fall back to `SLACK_BOT_TOKEN`. |
 
 See `.env.example` for a copy-paste template.
 
@@ -200,6 +202,22 @@ Create one at <https://aistudio.google.com/app/apikey> and set `GEMINI_API_KEY`.
    `SLACK_WEBHOOK_URL`.
 5. (Optional) Copy the app's **Signing Secret** into `SLACK_SIGNING_SECRET` to
    enable request verification.
+6. (Optional) **Bot Token Scopes** (OAuth & Permissions): add `chat:write` and
+   install the app to get the **Bot User OAuth Token** (`xoxb-…`); set it as
+   `SLACK_BOT_TOKEN` to enable the in-place status-message flow.
+7. (Optional, for Slack Canvas ingestion) **User Token Scopes**: add
+   `canvases:read` and `files:read`, then install/authorize to get the **User
+   OAuth Token** (`xoxp-…`); set it as `SLACK_USER_TOKEN`.
+
+> **Scope/reinstall gotcha (this will bite you).** Adding a scope does **not**
+> upgrade a token you've already issued. After you add or change scopes, you
+> must **reinstall / re-authorize** the app, which mints a **brand-new token
+> string**, and then paste that new value into the corresponding env var
+> (`SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN`) in Railway. If a Slack call returns
+> `missing_scope`, check the `provided:` list in the error — if your new scope
+> isn't in it, the deployed token is stale and needs replacing. Also make sure
+> `SLACK_USER_TOKEN` holds the `xoxp-` (User) token, not the `xoxb-` (Bot) one;
+> reading a user's canvas only works with the `xoxp-` token.
 
 ## Run locally
 

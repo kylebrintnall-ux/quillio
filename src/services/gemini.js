@@ -201,6 +201,22 @@ function stripJsonFences(text) {
     .trim();
 }
 
+// Coerce a Gemini field to a readable string. If the model returns a nested
+// object (e.g. a structured writerPrompt), pretty-print it instead of letting
+// String() turn it into "[object Object]".
+function toReadableText(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
 // Parse a free-form campaign brief into { summary, writerPrompt, assets }.
 // Assets are constrained to the allowed list regardless of how they were
 // written in the brief (bullets, numbers, or inline prose).
@@ -298,8 +314,8 @@ async function parseBrief(brief) {
 
   return {
     campaignTitle: String(parsed.campaignTitle || '').trim(),
-    summary: String(parsed.summary || '').trim(),
-    writerPrompt: String(parsed.writerPrompt || '').trim(),
+    summary: toReadableText(parsed.summary).trim(),
+    writerPrompt: toReadableText(parsed.writerPrompt).trim(),
     assets,
     unmatchedAssets,
     folderId,
@@ -347,8 +363,8 @@ ${referenceContext}`;
     const parsed = JSON.parse(stripJsonFences(text));
     return {
       ...parsedBrief,
-      summary: String(parsed.summary || '').trim() || parsedBrief.summary,
-      writerPrompt: String(parsed.writerPrompt || '').trim() || parsedBrief.writerPrompt,
+      summary: toReadableText(parsed.summary).trim() || parsedBrief.summary,
+      writerPrompt: toReadableText(parsed.writerPrompt).trim() || parsedBrief.writerPrompt,
     };
   } catch (err) {
     console.error('[Quillio] enrichWithReferences failed, using original brief:', err.message);

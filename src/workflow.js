@@ -305,39 +305,19 @@ async function fetchSlackCanvasContent(links) {
     if (!canvasId) continue;
     console.log('[Quillio] canvas ID extracted:', canvasId);
 
+    // TEMPORARY DIAGNOSTIC: hit canvases.info and dump the raw response so we
+    // can see the real shape, then return [] without using it downstream.
     try {
-      const res = await fetch(
-        `https://slack.com/api/canvases.info?canvas_id=${encodeURIComponent(canvasId)}`,
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` },
-        }
+      const infoRes = await fetch(
+        `https://slack.com/api/canvases.info?canvas_id=${canvasId}`,
+        { headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` } }
       );
-      const data = await res.json();
-      console.log('[Quillio] canvas API response:', JSON.stringify(data).slice(0, 300));
-      if (!data.ok) {
-        console.log('[Quillio] canvas API error:', data.error);
-        console.error(`[Quillio] Could not fetch canvas ${canvasId}: ${data.error}`);
-        continue;
-      }
-      console.log('[Quillio] canvas info keys:', Object.keys(data.canvas || {}));
-
-      const canvas = data.canvas || {};
-      const raw = canvas.content || canvas.document_content || '';
-      const content = stripCanvasMarkdown(String(raw)).slice(0, CANVAS_CONTENT_MAX);
-
-      // Title: first non-empty line if it's short enough, else the canvas id.
-      let title = canvasId;
-      const firstLine = content
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean)[0];
-      if (firstLine && firstLine.length < 80) title = firstLine;
-
-      out.push({ url, canvasId, title, content, type: 'canvas' });
+      const infoData = await infoRes.json();
+      console.log('[Quillio] canvas.info full response:', JSON.stringify(infoData).slice(0, 1000));
     } catch (err) {
-      console.error(`[Quillio] Could not fetch Slack canvas ${canvasId}: ${err.message}`);
+      console.error(`[Quillio] canvas.info diagnostic failed for ${canvasId}: ${err.message}`);
     }
+    return [];
   }
   return out;
 }

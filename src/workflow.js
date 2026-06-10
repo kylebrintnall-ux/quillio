@@ -314,7 +314,7 @@ async function fetchSlackCanvasContent(links) {
         },
         body: JSON.stringify({
           canvas_id: canvasId,
-          criteria: { section_types: ['h1', 'h2', 'h3', 'p'] },
+          criteria: { section_types: ['h1', 'p', 'h2'] },
         }),
       });
       const data = await res.json();

@@ -28,7 +28,7 @@ function normalize(s) {
 }
 
 // Reads the asset spec Sheet and returns an ordered list of asset groups:
-//   [{ assetType, channel, toneNotes, fields: [{ fieldName, charLimit, notes, funnelStage }] }]
+//   [{ assetType, channel, toneNotes, fields: [{ fieldName, charMin, charMax, notes, funnelStage }] }]
 // Filtered to `assetFilter` (the assets Gemini returned). If the filter is
 // empty or matches nothing, all assets are returned.
 async function getAssetSpecs(assetFilter = []) {
@@ -77,7 +77,8 @@ async function getAssetSpecs(assetFilter = []) {
     if (!group.toneNotes) group.toneNotes = cell(row, 'toneNotes');
     group.fields.push({
       fieldName,
-      charLimit: cell(row, 'charLimit'),
+      charMin: parseInt(row[3], 10) || 0,
+      charMax: parseInt(row[4], 10) || 0,
       notes: cell(row, 'notes'),
       funnelStage: cell(row, 'funnelStage'),
     });

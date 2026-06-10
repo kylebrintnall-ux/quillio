@@ -95,8 +95,11 @@ function makeTitle(brief, campaignTitle) {
 }
 
 function fieldLabel(field) {
-  const limit = field.charLimit && /\d/.test(String(field.charLimit)) ? field.charLimit : 'no limit';
-  return `${field.fieldName} [${limit}]`;
+  const min = Number(field.charMin) || 0;
+  const max = Number(field.charMax) || 0;
+  if (min > 0 && max > 0) return `${field.fieldName} [${min}-${max}]`;
+  if (max > 0) return `${field.fieldName} [${max}]`;
+  return field.fieldName; // charMax === 0 → no bracket
 }
 
 // Strip the bits of markdown that render as literal characters in a Google Doc:
@@ -321,11 +324,23 @@ function parseDoc(doc) {
       continue;
     }
 
-    const m = text.match(/^(.*?)\s*\[([^\]]*)\]\s*$/);
-    if (current && bold && m) {
+    // A field label is a bold paragraph, optionally ending in a [min-max] /
+    // [max] bracket (no bracket when charMax was 0). Recover charMin/charMax.
+    if (current && bold && text) {
+      const m = text.match(/^(.*?)\s*\[([^\]]*)\]\s*$/);
+      const fieldName = m ? m[1].trim() : text;
+      const nums = (m ? m[2] : '').match(/\d+/g);
+      let charMin = 0;
+      let charMax = 0;
+      if (nums) {
+        const vals = nums.map(Number);
+        charMax = Math.max(...vals);
+        if (vals.length >= 2) charMin = Math.min(...vals);
+      }
       current.fields.push({
-        fieldName: m[1].trim(),
-        charLimit: m[2].trim(),
+        fieldName,
+        charMin,
+        charMax,
         // The blank paragraph immediately after the label starts where this
         // label paragraph ends; that's our draft insertion point.
         insertIndex: item.endIndex,
@@ -342,7 +357,7 @@ function ctxKey(assetType, fieldName) {
 }
 
 // Reads the spec Sheet and returns a Map of ctxKey -> { channel, toneNotes,
-// notes, funnelStage, charLimit } so drafting can recover the per-field
+// notes, funnelStage, charMin, charMax } so drafting can recover the per-field
 // guidance the doc doesn't carry. Best-effort: returns an empty Map on failure.
 async function loadSheetContext() {
   const map = new Map();
@@ -355,7 +370,8 @@ async function loadSheetContext() {
           toneNotes: group.toneNotes,
           notes: f.notes,
           funnelStage: f.funnelStage,
-          charLimit: f.charLimit,
+          charMin: f.charMin,
+          charMax: f.charMax,
         });
       }
     }
@@ -388,7 +404,7 @@ async function generateDraft(id) {
         const ctx = sheetCtx.get(ctxKey(asset.assetType, field.fieldName)) || {};
         return {
           fieldName: field.fieldName,
-          charLimit: field.charLimit || ctx.charLimit,
+          charMax: field.charMax || ctx.charMax || 0,
           notes: ctx.notes || '',
           funnelStage: ctx.funnelStage || '',
           insertIndex: field.insertIndex,

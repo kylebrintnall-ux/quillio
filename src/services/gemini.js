@@ -234,7 +234,7 @@ async function parseBrief(brief) {
     '  Dating Event", not "Promos For A". No date, no quotes, no trailing punctuation.',
     '- summary: 2-3 sentences summarizing the campaign.',
     '- writerPrompt: ONE sentence of creative direction for a copywriter.',
-    `- assets: return ONLY the asset types explicitly mentioned or clearly implied by the brief. If the brief says 'LinkedIn carousel ad and event landing page', return exactly those two. Do not infer or add asset types that are not mentioned. If no specific assets are mentioned, return the 3 most common types for the campaign goal described. Maximum 5 assets unless the brief explicitly requests more. Each value MUST be one of these exact strings: ${allowed.join(
+    `- assets: return ONLY the asset types explicitly mentioned or clearly implied by the brief. Do not infer or add asset types not mentioned. If no specific assets are mentioned, return the 3 most common types for the campaign goal described. Maximum 5 assets unless the brief explicitly requests more. Each value MUST be one of these exact strings: ${allowed.join(
       ', '
     )}.`,
     '',
@@ -424,18 +424,16 @@ async function generateFieldDraft({
   assetType,
   channel,
   fieldName,
-  charLimit,
+  charMax,
   toneNotes,
   notes,
   funnelStage,
   summary,
   writerPrompt,
 }) {
-  const ceiling = charCeiling(charLimit);
+  const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
   const limitLine = ceiling
-    ? `Write a COMPLETE, self-contained thought that fits within ${ceiling} characters${
-        /[-–—]/.test(String(charLimit)) ? ` (target range ${charLimit})` : ''
-      }. ${ceiling} is a hard MAXIMUM to compose within, not a target to fill — never run a sentence up to the limit and get cut off. Finish the thought, even if that means coming in a few characters short. The copy must read as complete, not truncated.`
+    ? `Character limit: ${ceiling}. Stay within this limit — write a COMPLETE, self-contained thought and finish it, even a few characters short; never run up to the limit and get cut off mid-sentence.`
     : 'Keep it concise — a complete, self-contained thought appropriate for the field.';
 
   const prompt = [
@@ -487,7 +485,7 @@ async function generateFieldDraft({
 // Draft ALL fields of a single asset in one call so the copy is cohesive — the
 // headline, body, and CTA reinforce the same offer/voice, and multi-variant
 // fields (e.g. several headlines) come out distinct rather than repetitive.
-// `fields` is [{ fieldName, charLimit, notes, funnelStage }]. Returns
+// `fields` is [{ fieldName, charMax, notes, funnelStage }]. Returns
 // [{ fieldName, copy }] with each field's hard character limit enforced.
 async function generateAssetDrafts({
   assetType,
@@ -501,9 +499,9 @@ async function generateAssetDrafts({
 
   const fieldLines = fields
     .map((f) => {
-      const ceiling = charCeiling(f.charLimit);
+      const ceiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
       const limit = ceiling
-        ? `MAX ${ceiling} chars${/[-–—]/.test(String(f.charLimit)) ? ` (target ${f.charLimit})` : ''}`
+        ? `character limit ${ceiling} — stay within this limit`
         : 'concise';
       const extra = [
         f.funnelStage ? `funnel: ${f.funnelStage}` : '',
@@ -560,7 +558,7 @@ async function generateAssetDrafts({
   const out = [];
   for (const f of fields) {
     let copy = cleanDraft(byKey.get(f.fieldName.trim().toLowerCase()) || '');
-    const ceiling = charCeiling(f.charLimit);
+    const ceiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
     // Missing from the batch, or over its limit → fall back to the robust
     // single-field generator (which rewrites and, if needed, hard-trims).
     if (!copy || (ceiling && copy.length > ceiling)) {
@@ -568,7 +566,7 @@ async function generateAssetDrafts({
         assetType,
         channel,
         fieldName: f.fieldName,
-        charLimit: f.charLimit,
+        charMax: f.charMax,
         toneNotes,
         notes: f.notes,
         funnelStage: f.funnelStage,

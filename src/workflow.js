@@ -567,7 +567,7 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
   const canLive = !!config.SLACK_BOT_TOKEN && channel && messageTs;
   console.log('[workflow] runGenerateDraft START — canLive:', canLive, '| channel:', channel || '(none)');
 
-  const progressText = ':quillio: Still generating — this takes 1–2 minutes for a few assets, up to 5 minutes for larger briefs. Hang tight.';
+  const progressText = ':quillio: Still generating — 1–2 minutes for a few assets, up to 5 minutes for larger briefs. Hang tight.';
   if (canLive) await updateLive(channel, messageTs, progressText);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 

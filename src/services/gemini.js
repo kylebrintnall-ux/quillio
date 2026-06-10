@@ -313,20 +313,29 @@ async function parseBrief(brief) {
 async function enrichWithReferences(parsedBrief, referenceContext) {
   if (!referenceContext || !String(referenceContext).trim()) return parsedBrief;
 
-  const prompt = [
-    'You previously parsed a creative brief. Here is additional context from',
-    'reference documents the requester linked. Use this context to write a more',
-    'specific, detailed Campaign Summary and Writer Direction. Do not change the',
-    'assets list. Return only the updated summary and writerPrompt fields as JSON:',
-    '{ "summary": string, "writerPrompt": string }',
-    'Respond with valid JSON only, no markdown, no backticks.',
-    '',
-    `Current Campaign Summary: ${parsedBrief.summary || ''}`,
-    `Current Writer Direction: ${parsedBrief.writerPrompt || ''}`,
-    '',
-    'REFERENCE CONTEXT:',
-    String(referenceContext),
-  ].join('\n');
+  const prompt = `You are a senior B2B copywriter briefing a creative team. You have received a parsed creative brief and additional context from reference documents the requester linked. Your job is to rewrite the Campaign Summary and Writer Direction so they are as specific and actionable as possible for a copywriter who has not read the reference documents.
+
+RULES:
+1. Extract every specific statistic, proof point, or metric from the reference content and include the most compelling ones in the Campaign Summary. Never generalize a number — if the reference says "40% reduction in handle time," use that exact figure.
+2. Extract explicit tone instructions from the reference content — words to avoid, words that work, voice guidance — and list them verbatim in the Writer Direction under a "Voice & Language" subheading.
+3. Extract the campaign theme or name if present and use it.
+4. Extract the primary persona's specific pain points (budget pressure, board reporting, CSAT ownership, etc.) and include them in the Writer Direction so the copywriter knows exactly what nerve to hit.
+5. If the reference content names competitor categories (not individual competitors), include that framing in the Writer Direction.
+6. The Writer Direction must end with a "Do Not Use" list — pull prohibited words/phrases directly from the reference if present, otherwise infer from tone guidance.
+7. Never use the words: seamless, frictionless, transform, revolutionize, reimagine, unlock, AI-powered, chatbot, bot, virtual assistant.
+8. Return only valid JSON: { "summary": "...", "writerPrompt": "..." }
+   No preamble, no markdown, no explanation.
+
+INPUTS:
+
+Original Campaign Summary:
+${parsedBrief.summary}
+
+Original Writer Direction:
+${parsedBrief.writerPrompt}
+
+Reference Document Content:
+${referenceContext}`;
 
   try {
     const text = await callGemini({

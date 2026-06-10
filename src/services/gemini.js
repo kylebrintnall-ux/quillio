@@ -221,7 +221,40 @@ function toReadableText(v) {
 // Assets are constrained to the allowed list regardless of how they were
 // written in the brief (bullets, numbers, or inline prose).
 async function parseBrief(brief) {
-  const allowed = config.ALLOWED_ASSETS;
+  // Valid asset types (exact names from the Sheet). Used both in the prompt and
+  // as the defensive filter below, so Gemini's output is constrained to these.
+  const allowed = [
+    'LinkedIn Single Image Ad',
+    'LinkedIn Carousel Ad',
+    'LinkedIn Single Image Ad — Variant A',
+    'LinkedIn Single Image Ad — Variant B',
+    'LinkedIn Single Image Ad — Variant C',
+    'LinkedIn Single Image Ad — Variant D',
+    'Meta Single Image Ad',
+    'Meta Carousel Ad',
+    'Twitter/X Ad',
+    'Display Banner — Standard',
+    'Google DV360 / Responsive Display',
+    'Demand Gen Nurture Email',
+    'Event Invitation Email',
+    'Event Reminder Email',
+    'Event Follow-Up / Recap Email',
+    'Sales Basho Email',
+    'Event Landing Page',
+    'On-Site Signage — General',
+    'On-Site Signage — Session Title Card',
+    'On-Site Signage — Directional',
+    'Campaign Landing Page',
+    'Form Confirm Page',
+    'Organic Social — LinkedIn',
+    'Organic Social — Instagram',
+    'Organic Social — Twitter/X',
+    'Direct Mail — Box / Mailer',
+    'Direct Mail — Note Card / Rep Letter',
+    'Direct Mail — Insert',
+    'One-Pager',
+    'Battle Card',
+  ];
 
   const prompt = [
     'You are a marketing operations assistant. Read the campaign brief below and extract structured data.',
@@ -234,9 +267,9 @@ async function parseBrief(brief) {
     '  Dating Event", not "Promos For A". No date, no quotes, no trailing punctuation.',
     '- summary: 2-3 sentences summarizing the campaign.',
     '- writerPrompt: ONE sentence of creative direction for a copywriter.',
-    `- assets: return ONLY the asset types explicitly mentioned or clearly implied by the brief. Do not infer or add asset types not mentioned. If no specific assets are mentioned, return the 3 most common types for the campaign goal described. Maximum 5 assets unless the brief explicitly requests more. Each value MUST be one of these exact strings: ${allowed.join(
-      ', '
-    )}.`,
+    `- assets: return ONLY asset types explicitly mentioned or clearly implied by the brief. You MUST use exact names from this list:\n\n${allowed.join(
+      '\n'
+    )}\n\nReturn only names from this list. Maximum 5 unless the brief explicitly requests more. If no specific assets are mentioned, return the 3 most relevant for the campaign goal described.`,
     '',
     'INTERPRET INTENT SEMANTICALLY, do not match exact strings. Briefs use',
     'informal, abbreviated, or platform-specific language. Map what the writer',

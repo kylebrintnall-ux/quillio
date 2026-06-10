@@ -580,7 +580,19 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
     console.warn('[workflow] asset count for progress message failed:', err.message);
   }
 
-  const progressText = `:quillio: Drafting ${assetCount} assets — usually 2–3 minutes. Almost there.`;
+  const count = assetCount;
+  let progressMsg;
+  if (count <= 3) {
+    progressMsg = `Drafting ${count} asset${count === 1 ? '' : 's'} — back in a minute.`;
+  } else if (count <= 8) {
+    progressMsg = `Drafting ${count} assets — usually 2–3 minutes. Hang tight.`;
+  } else if (count <= 20) {
+    progressMsg = `Drafting ${count} assets — this one's a big brief, give it 4–5 minutes.`;
+  } else {
+    progressMsg = `Drafting ${count} assets — full brief, grab a coffee. Back in ~5 minutes.`;
+  }
+
+  const progressText = `:quillio: ${progressMsg}`;
   if (canLive) await updateLive(channel, messageTs, progressText);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 

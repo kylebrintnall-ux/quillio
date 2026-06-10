@@ -149,6 +149,7 @@ async function createDocument({
   folderId,
   referenceLinks = [],
   proofPoints = [],
+  referenceInsights = [],
 }) {
   logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
   const { drive, docs } = await getClients();
@@ -193,6 +194,30 @@ async function createDocument({
 
   b.heading('Writer Direction');
   b.italic(stripMarkdown(writerPrompt) || '(no direction)');
+
+  // Reference Insights — what was extracted per source. Omitted when empty.
+  if (Array.isArray(referenceInsights) && referenceInsights.length > 0) {
+    b.heading('Reference Insights');
+    for (const ins of referenceInsights) {
+      const source = String((ins && ins.source) || '').trim() || 'Unknown source';
+      const type = String((ins && ins.type) || '').trim();
+      b.italic(type ? `From: ${source} (${type})` : `From: ${source}`);
+
+      const stats = Array.isArray(ins && ins.stats) ? ins.stats.filter(Boolean) : [];
+      b.italic(stats.length ? `Stats found: ${stats.join(' / ')}` : 'Stats found: none in source');
+
+      const persona = ins && ins.persona ? String(ins.persona).trim() : '';
+      if (persona) b.italic(`Persona: ${persona}`);
+
+      const keyMessages = Array.isArray(ins && ins.keyMessages) ? ins.keyMessages.filter(Boolean) : [];
+      if (keyMessages.length) b.italic(`Key messages: ${keyMessages.join(' / ')}`);
+
+      const bannedWords = Array.isArray(ins && ins.bannedWords) ? ins.bannedWords.filter(Boolean) : [];
+      if (bannedWords.length) b.italic(`Do Not Use: ${bannedWords.join(', ')}`);
+
+      b.blankLine();
+    }
+  }
 
   if (resolvedLinks.length > 0) {
     b.heading('Reference Materials');

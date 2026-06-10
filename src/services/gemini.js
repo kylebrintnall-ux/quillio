@@ -335,17 +335,36 @@ async function enrichWithReferences(parsedBrief, referenceContext) {
 
 Use the reference content to pull the campaign theme/name, the most compelling exact statistics, the primary persona and their pain points, and any competitor-category framing.
 
-Return ONLY valid JSON with exactly these three fields — no preamble, no markdown, no explanation:
+Return ONLY valid JSON with exactly these four fields — no preamble, no markdown, no explanation:
 
 summary: a specific, detailed Campaign Summary in plain prose. Include the most compelling exact figures from the reference — never generalize a number (if the reference says "40% reduction in handle time," use that exact figure).
 
-writerPrompt: write as plain prose paragraphs, no markdown, no asterisks, no bullet symbols. Maximum 150 words. Include only:
-1. One sentence naming the primary persona and their single biggest pain point.
-2. Two to three sentences of voice direction — what to emphasize, what angle to take.
-3. Do Not Use: [comma-separated list of banned words extracted from the reference, plus always include: seamless, frictionless, transform, revolutionize, reimagine, unlock, AI-powered, chatbot, bot, virtual assistant, co-pilot]
-No subheadings. No JSON structure. Plain readable text only.
+writerPrompt: write as plain prose with clear labeled sections. No markdown asterisks, no bullet symbol characters — use plain text labels followed by a colon and a line break instead. Target 250–300 words. Include all of the following:
+
+Audience: one sentence naming the primary persona, company size, and industries.
+
+Pain Points: three to five specific pain points this persona carries — budget pressure, CSAT ownership, board reporting, skepticism from prior AI failures, headcount justification. Write each as a plain sentence, one per line.
+
+Voice Direction: two to three sentences on tone and angle — what to emphasize, what emotional note to hit, how to open the conversation.
+
+Competitive Framing: one to two sentences on how to position against the category (legacy chatbots, standalone AI tools) without naming specific competitors.
+
+Do Not Use: comma-separated list of banned words extracted from the reference content, plus always append: seamless, frictionless, transform, revolutionize, reimagine, unlock, AI-powered, chatbot, bot, virtual assistant, co-pilot.
+
+No markdown. No asterisks. No JSON structure. Plain readable text only.
 
 proofPoints: extract every specific statistic, metric, or concrete proof point from the reference content. Return as an array of objects: [{ stat: 'the exact figure or claim', source: 'the document title or hostname it came from' }]. Maximum 8 items. If no stats found, return []. Examples: { stat: '40% reduction in handle time', source: 'Q3 Campaign Brief' }, { stat: '68% Tier-1 case resolution', source: 'Q3 Campaign Brief' }
+
+referenceInsights: for each reference document that was successfully read, return an object with:
+{
+  source: the document title or hostname,
+  type: 'drive' or 'external',
+  stats: array of exact verbatim statistics or metrics found — only include figures that appear explicitly in the source, never infer or generate numbers,
+  persona: one sentence summarizing audience or persona details found in the source, or null if none,
+  keyMessages: array of up to four core message phrases extracted verbatim or near-verbatim from the source,
+  bannedWords: array of any words or phrases the source explicitly flags as do-not-use, or []
+}
+Return as array — one object per source read. If no references were read, return [].
 
 INPUTS:
 
@@ -369,6 +388,7 @@ ${referenceContext}`;
       summary: toReadableText(parsed.summary).trim() || parsedBrief.summary,
       writerPrompt: toReadableText(parsed.writerPrompt).trim() || parsedBrief.writerPrompt,
       proofPoints: Array.isArray(parsed.proofPoints) ? parsed.proofPoints : [],
+      referenceInsights: Array.isArray(parsed.referenceInsights) ? parsed.referenceInsights : [],
     };
   } catch (err) {
     console.error('[Quillio] enrichWithReferences failed, using original brief:', err.message);

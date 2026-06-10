@@ -64,7 +64,7 @@ When a brief links reference documents, Quillio reads them and feeds their conte
 | Slice 1 | Google Drive link ingestion | 91a23d0 |
 | Slice 2 | External URL fetching | 0afe748 |
 | Slice 3 | PDF ingestion via pdf-parse@1.1.1 | 772546d |
-| Slice 4 | Slack Canvas via user token + files.info | confirmed |
+| Slice 4 | Slack Canvas via user token + files.info | 56c90e4 |
 
 **Supporting fixes shipped:**
 
@@ -79,7 +79,7 @@ When a brief links reference documents, Quillio reads them and feeds their conte
 | Drive truncation | Increased 3000 → 6000 chars | 02ba1c8 |
 | PDF title extraction | Three-source fallback with cleanFilenameTitle() | ad4b253 |
 | Gemini parse fix | referenceLinks extracts all URLs including Slack | 7b3f59c |
-| Canvas type labeling | Per-source type stamped by fetcher, not Gemini | confirmed |
+| Canvas type labeling | Per-source type stamped by fetcher, not Gemini | 9eb003c |
 
 **Doc output structure (current):**
 
@@ -534,7 +534,7 @@ Configurable per tenant — post to `#copy-ready` channel, or DM the requestor, 
 
 Bot token scopes:
 
-- `chat:write`, `chat:write.public`, `commands`
+- `chat:write`, `chat:write.public`, `commands`, `incoming-webhook`
 
 User token scopes:
 

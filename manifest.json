@@ -24,9 +24,11 @@
       "bot": [
         "commands",
         "chat:write",
-        "incoming-webhook",
+        "chat:write.public",
+        "incoming-webhook"
+      ],
+      "user": [
         "canvases:read",
-        "channels:read",
         "files:read"
       ]
     }

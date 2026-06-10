@@ -312,7 +312,10 @@ async function fetchSlackCanvasContent(links) {
           'Content-Type': 'application/json; charset=utf-8',
           Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
         },
-        body: JSON.stringify({ canvas_id: canvasId }),
+        body: JSON.stringify({
+          canvas_id: canvasId,
+          criteria: { section_types: ['h1', 'h2', 'h3', 'p'] },
+        }),
       });
       const data = await res.json();
       console.log('[Quillio] canvas API response:', JSON.stringify(data).slice(0, 300));

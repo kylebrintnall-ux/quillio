@@ -457,15 +457,33 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         fetchPDFContent(referenceLinks),
         fetchSlackCanvasContent(referenceLinks),
       ]);
-      const refs = [...refDocs, ...refExternal, ...refPdf, ...refCanvas];
+      // Tag each reference with its true source type (the fetcher knows it;
+      // Gemini only guesses). pdf/canvas already carry a type.
+      const refs = [
+        ...refDocs.map((r) => ({ ...r, type: 'drive' })),
+        ...refExternal.map((r) => ({ ...r, type: 'external' })),
+        ...refPdf,
+        ...refCanvas,
+      ];
       if (refs.length > 0) {
         const referenceContext = refs
-          .map((r) => `\n\n--- Reference: ${r.title} ---\n${sanitizeText(r.content)}`)
+          .map((r) => `\n\n--- Reference (${r.type}): ${r.title} ---\n${sanitizeText(r.content)}`)
           .join('');
         const enriched = await enrichWithReferences({ summary, writerPrompt }, referenceContext);
         summary = enriched.summary;
         writerPrompt = enriched.writerPrompt;
-        referenceInsights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
+        const insights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
+        // Stamp the real source type onto each insight by matching it back to
+        // its reference (by title), instead of trusting Gemini's guessed type.
+        const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        referenceInsights = insights.map((ins) => {
+          const src = norm(ins && ins.source);
+          const match =
+            refs.find((r) => norm(r.title) === src) ||
+            (src && refs.find((r) => norm(r.title).includes(src) || src.includes(norm(r.title)))) ||
+            (refs.length === 1 ? refs[0] : null);
+          return match ? { ...ins, type: match.type } : ins;
+        });
         console.log(
           `[Quillio] enriched brief from ${refDocs.length} Drive + ${refExternal.length} external + ${refPdf.length} PDF + ${refCanvas.length} canvas reference(s)`
         );

@@ -151,7 +151,7 @@ Railway setup.
 
 ## Asset spec Sheet
 
-Live Sheet (`ASSET_SHEET_ID` default): `1BqaJICc9eyfxMtBw2cCM3ftioennXDf4F-BLg9oAeag`
+Live Sheet (`ASSET_SHEET_ID` default): `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`
 (the "Agentforce Copy System — Asset & Prompt Library", v2). The old v1 Sheet
 `1skbkkKlHMDUzeG8_bFpcSjrvweumivePuSOvr5qIfqk` is retired.
 

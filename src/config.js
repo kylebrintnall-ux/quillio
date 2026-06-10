@@ -35,12 +35,12 @@ module.exports = {
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
 
-  SHEET_ID: process.env.ASSET_SHEET_ID || '1BqaJICc9eyfxMtBw2cCM3ftioennXDf4F-BLg9oAeag',
+  SHEET_ID: process.env.ASSET_SHEET_ID || '1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU',
 
   // Target folder for created docs. With OAuth2 this is a normal My Drive
   // folder owned by the OAuth user. With the service account (no OAuth2), this
   // should be a Shared Drive folder (service accounts have no personal quota).
-  DRIVE_FOLDER_ID: process.env.DRIVE_FOLDER_ID || '1gdf5-R3J8IGY1I5pJJj2O-KFOju0UsqU',
+  DRIVE_FOLDER_ID: process.env.DRIVE_FOLDER_ID || '1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U',
 
   // Output destination adapter (src/destinations/). Google Docs today; Notion,
   // OneDrive, etc. can be added and selected here later.

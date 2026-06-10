@@ -21,7 +21,7 @@ const BUILDING_TEXT = ':quillio-scroll: Building your document…';
 
 // Matches a Google Drive *file* link and captures its file id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/document\/d\/)([a-zA-Z0-9_-]+)/;
-const REF_CONTENT_MAX = 3000; // per-file char cap, protects the context window
+const REF_CONTENT_MAX = 6000; // per-file char cap, protects the context window
 
 // Strips control characters (form feeds, NULs, other non-printables below 0x20
 // except \n/\t, and DEL) and normalizes whitespace. Reference content fetched

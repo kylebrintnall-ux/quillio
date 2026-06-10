@@ -567,7 +567,20 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
   const canLive = !!config.SLACK_BOT_TOKEN && channel && messageTs;
   console.log('[workflow] runGenerateDraft START — canLive:', canLive, '| channel:', channel || '(none)');
 
-  const progressText = ':quillio: Still generating — 1–2 minutes for a few assets, up to 5 minutes for larger briefs. Hang tight.';
+  // Count the assets in the doc (one HEADING_3 heading per asset) so the
+  // progress message can name how many are being drafted.
+  let assetCount = 0;
+  try {
+    const { docs } = await getClients();
+    const doc = (await docs.documents.get({ documentId: docId })).data;
+    assetCount = (doc.body.content || []).filter(
+      (it) => it.paragraph?.paragraphStyle?.namedStyleType === 'HEADING_3'
+    ).length;
+  } catch (err) {
+    console.warn('[workflow] asset count for progress message failed:', err.message);
+  }
+
+  const progressText = `:quillio: Drafting ${assetCount} assets — usually 2–3 minutes. Almost there.`;
   if (canLive) await updateLive(channel, messageTs, progressText);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 

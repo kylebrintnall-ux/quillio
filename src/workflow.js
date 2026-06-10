@@ -305,17 +305,25 @@ async function fetchSlackCanvasContent(links) {
     if (!canvasId) continue;
     console.log('[Quillio] canvas ID extracted:', canvasId);
 
-    // TEMPORARY DIAGNOSTIC: hit canvases.info and dump the raw response so we
-    // can see the real shape, then return [] without using it downstream.
+    // TEMPORARY DIAGNOSTIC: probe canvases.sections.lookup with a single known
+    // section type ("h1") and dump the response, then return [] without using
+    // it downstream.
     try {
-      const infoRes = await fetch(
-        `https://slack.com/api/canvases.info?canvas_id=${canvasId}`,
-        { headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` } }
-      );
-      const infoData = await infoRes.json();
-      console.log('[Quillio] canvas.info full response:', JSON.stringify(infoData).slice(0, 1000));
+      const testRes = await fetch('https://slack.com/api/canvases.sections.lookup', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          canvas_id: canvasId,
+          criteria: { section_types: ['h1'] },
+        }),
+      });
+      const testData = await testRes.json();
+      console.log('[Quillio] canvas h1 response:', JSON.stringify(testData).slice(0, 1000));
     } catch (err) {
-      console.error(`[Quillio] canvas.info diagnostic failed for ${canvasId}: ${err.message}`);
+      console.error(`[Quillio] canvas h1 diagnostic failed for ${canvasId}: ${err.message}`);
     }
     return [];
   }

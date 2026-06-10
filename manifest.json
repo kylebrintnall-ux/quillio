@@ -25,7 +25,9 @@
         "commands",
         "chat:write",
         "incoming-webhook",
-        "canvases:read"
+        "canvases:read",
+        "channels:read",
+        "files:read"
       ]
     }
   },

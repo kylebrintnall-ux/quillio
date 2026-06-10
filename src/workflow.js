@@ -348,6 +348,26 @@ async function fetchSlackCanvasContent(links, channelId) {
     } catch (err) {
       console.error(`[Quillio] canvas h1 diagnostic failed for ${canvasId}: ${err.message}`);
     }
+
+    // TEMPORARY DIAGNOSTIC: a canvas is a file, so probe files.info on the same
+    // id. This distinguishes "wrong id / not a real file" from "bot can't see
+    // it" from "files scope missing", and reveals the file's filetype.
+    try {
+      const fRes = await fetch(
+        `https://slack.com/api/files.info?file=${encodeURIComponent(canvasId)}`,
+        { headers: { Authorization: `Bearer ${config.SLACK_BOT_TOKEN}` } }
+      );
+      const fData = await fRes.json();
+      const f = fData && fData.file;
+      console.log(
+        '[Quillio] files.info:',
+        'ok=' + (fData && fData.ok),
+        'error=' + (fData && fData.error),
+        f ? `filetype=${f.filetype} mimetype=${f.mimetype} name=${JSON.stringify(f.name)}` : '(no file)'
+      );
+    } catch (err) {
+      console.error(`[Quillio] files.info diagnostic failed for ${canvasId}: ${err.message}`);
+    }
     return [];
   }
   return out;

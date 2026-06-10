@@ -92,6 +92,21 @@ const EXTERNAL_FETCH_TIMEOUT_MS = 5000;
 // Skip Google Drive/Docs (handled separately) and non-readable URL patterns.
 const SKIP_EXTERNAL_RE = /drive\.google\.com|docs\.google\.com|slack\.com|^mailto:|^tel:|localhost|127\.0\.0\.1/i;
 
+// Turn a URL-path filename into a readable title: drop the .pdf extension,
+// swap hyphens/underscores for spaces, and Title Case the words. So
+// "fIeld-service-guide-4th-edition" becomes "Field Service Guide 4th Edition".
+function cleanFilenameTitle(name) {
+  return String(name || '')
+    .replace(/\.pdf$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
 // True if the URL's path ends in .pdf (ignoring any query/fragment).
 function urlPathEndsPdf(url) {
   try {
@@ -127,8 +142,12 @@ async function fetchExternalURLContent(links) {
       const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
       let title = titleMatch ? titleMatch[1].trim() : '';
       if (!title) {
+        // No <title> tag: a hostname is fine as-is, but if the path carries a
+        // filename, clean it up the same way the PDF fallback does.
         try {
-          title = new URL(url).hostname;
+          const u = new URL(url);
+          const last = u.pathname.split('/').filter(Boolean).pop() || '';
+          title = last ? cleanFilenameTitle(last) : u.hostname;
         } catch {
           title = url;
         }
@@ -205,11 +224,21 @@ async function fetchPDFContent(links) {
 
       const content = String(parsed.text || '').slice(0, PDF_CONTENT_MAX);
 
+      // Title, in order of preference: (1) the PDF's own Title metadata,
+      // (2) the first meaningful line of extracted text, (3) a cleaned-up
+      // filename from the URL path, (4) the hostname.
       let title = parsed.info && parsed.info.Title ? String(parsed.info.Title).trim() : '';
+      if (!title) {
+        const firstLine = String(parsed.text || '')
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l.length >= 4)[0];
+        if (firstLine) title = firstLine.slice(0, 60).trim();
+      }
       if (!title) {
         try {
           const last = new URL(url).pathname.split('/').filter(Boolean).pop() || '';
-          title = last.replace(/\.pdf$/i, '');
+          title = cleanFilenameTitle(last);
         } catch {
           /* fall through to hostname */
         }

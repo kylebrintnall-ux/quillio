@@ -547,7 +547,7 @@ User token scopes:
 - Prompt Library Sheet: `1zviNQmy0lbY5voOu-yEpsRAASJevHFlKw4MfvvGy7TM`
 - Persona Bank Sheet: `17yfGrvBBuqSSLA6vweubEJJMp3aJ0GJM2oYuqHuMhxE`
 - Drive campaign folder: `1gdf5-R3J8IGY1I5pJJj2O-KFOju0UsqU`
-- V2 Asset Sheet: `1E735OxS5LDgQYrCW61AqHNXShCgDk-FXLa98CoYigNU`
+- V2 Asset Sheet: `1BqaJICc9eyfxMtBw2cCM3ftioennXDf4F-BLg9oAeag`
 - Sample campaign brief doc: `1JQBT6pPFGN6OcZqU4r_DdCyhKojqRXSXdRd7Nopm8pE`
 
 **Phase 3 stack additions:**

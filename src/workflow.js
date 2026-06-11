@@ -407,6 +407,11 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     console.error('[workflow] building message failed:', e.message);
   }
 
+  // Give Slack ~500ms to render the "Building…" message before the pipeline
+  // starts updating it in place — a fast pipeline (or a slow Slack API
+  // response) can otherwise overwrite it before it visibly appears.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
   // Emit a final/early message: edit the live message in place when we have one,
   // otherwise fall back to a response_url post.
   const emit = async (text, blocks, fallback) => {

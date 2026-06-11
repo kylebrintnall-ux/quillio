@@ -21,6 +21,8 @@ const BUILDING_TEXT = ':quillio-scroll: Building your document…';
 
 // Matches a Google Drive *file* link and captures its file id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/document\/d\/)([a-zA-Z0-9_-]+)/;
+// Matches a Google Drive *folder* link (folders/ID or open?id=ID) and captures its id.
+const DRIVE_FOLDER_RE = /drive\.google\.com\/(?:drive\/folders\/|open\?id=)([a-zA-Z0-9_-]+)/;
 const REF_CONTENT_MAX = 6000; // per-file char cap, protects the context window
 
 // Strips control characters (form feeds, NULs, other non-printables below 0x20
@@ -48,6 +50,8 @@ async function fetchDriveReferenceContent(links) {
   const out = [];
 
   for (const url of links) {
+    // Skip Drive *folder* URLs — only file URLs are fetchable as references.
+    if (DRIVE_FOLDER_RE.test(String(url))) continue;
     const m = String(url).match(DRIVE_FILE_RE);
     if (!m) continue; // not a Drive file link — leave for the Reference Materials section
     const fileId = m[1];
@@ -444,13 +448,25 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       return;
     }
 
+    // Extract a Drive folder URL straight from the brief text (deterministic
+    // regex). If present, the doc is created there; otherwise the default folder.
+    const briefFolderMatch = String(brief || '').match(DRIVE_FOLDER_RE);
+    const briefFolderId = briefFolderMatch ? briefFolderMatch[1] : null;
+    if (briefFolderId) {
+      console.log('[workflow] folderId from brief:', briefFolderId);
+    } else {
+      console.log('[workflow] folderId: default (none in brief)');
+    }
+
     // Decide the target folder: forced default, explicit override, or the
-    // brief's folder.
+    // brief's folder (null → createDocument uses the default DRIVE_FOLDER_ID).
     const effectiveFolderId = opts.forceDefaultFolder
       ? null
       : opts.folderIdOverride !== undefined
         ? opts.folderIdOverride
-        : folderId;
+        : briefFolderId;
+    // Whether we're using a folder the brief linked (for the confirmation line).
+    const folderFromBrief = !!effectiveFolderId && effectiveFolderId === briefFolderId;
 
     // Phase 2 (additive): read linked Drive files AND external web pages, and
     // enrich the summary / writer direction with their content. Fully isolated —
@@ -554,7 +570,27 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       assets: assetSpecs.map((a) => a.assetType),
       docId: doc.id,
     };
-    await emit(`:quillio-doc-done: Your doc is ready — ${doc.title}`, buildResultBlocks(result).blocks, () =>
+    const resultBlocks = buildResultBlocks(result).blocks;
+    // If the doc went to a brief-linked folder, note it below the doc card.
+    if (folderFromBrief) {
+      let folderName = 'your linked folder';
+      try {
+        const { drive } = await getClients();
+        const meta = await drive.files.get({
+          fileId: effectiveFolderId,
+          fields: 'name',
+          supportsAllDrives: true,
+        });
+        if (meta.data && meta.data.name) folderName = meta.data.name;
+      } catch (err) {
+        console.warn('[workflow] folder name fetch failed:', err.message);
+      }
+      resultBlocks.push({
+        type: 'section',
+        text: { type: 'mrkdwn', text: `📁 Saved to ${folderName}` },
+      });
+    }
+    await emit(`:quillio-doc-done: Your doc is ready — ${doc.title}`, resultBlocks, () =>
       postResult(result, responseUrl)
     );
     console.log('[workflow] runBriefWorkflow DONE — doc', doc.id);

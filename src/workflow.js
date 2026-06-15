@@ -498,6 +498,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // enrich the summary / writer direction with their content. Fully isolated —
     // any failure leaves the parsed brief unchanged and the pipeline untouched.
     try {
+      // Snapshot links before fetching: fetchDriveReferenceContent may append
+      // URLs harvested from a Slides deck, which we second-pass fetch below.
+      const originalLinks = [...referenceLinks];
       const [refDocs, refExternal, refPdf, refCanvas] = await Promise.all([
         fetchDriveReferenceContent(referenceLinks),
         fetchExternalURLContent(referenceLinks),
@@ -512,6 +515,20 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         ...refPdf,
         ...refCanvas,
       ];
+
+      // Second pass: fetchDriveReferenceContent may have harvested URLs from a
+      // Slides deck and appended them to referenceLinks. Fetch only those new
+      // ones (external + PDF; harvested deck URLs need no Drive fetch).
+      const harvested = referenceLinks.filter((u) => !originalLinks.includes(u));
+      if (harvested.length > 0) {
+        console.log(`[Quillio] second-pass fetch: ${harvested.length} harvested URLs from Slides deck`);
+        const [moreExternal, morePdf] = await Promise.all([
+          fetchExternalURLContent(harvested),
+          fetchPDFContent(harvested),
+        ]);
+        refs.push(...moreExternal.map((r) => ({ ...r, type: 'external' })), ...morePdf);
+      }
+
       if (refs.length > 0) {
         const referenceContext = refs
           .map((r) => `\n\n--- Reference (${r.type}): ${r.title} ---\n${sanitizeText(r.content)}`)

@@ -19,8 +19,8 @@ const {
 
 const BUILDING_TEXT = ':quillio-scroll: Building your document…';
 
-// Matches a Google Drive *file* link and captures its file id.
-const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/document\/d\/)([a-zA-Z0-9_-]+)/;
+// Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
+const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
 // Matches a Google Drive *folder* link (folders/ID or open?id=ID) and captures its id.
 const DRIVE_FOLDER_RE = /drive\.google\.com\/(?:drive\/folders\/|open\?id=)([a-zA-Z0-9_-]+)/;
 const REF_CONTENT_MAX = 6000; // per-file char cap, protects the context window
@@ -43,7 +43,7 @@ function sanitizeText(text) {
 // enrichment pass has real source material. Best-effort: any file that can't be
 // read (permissions, unsupported type, network) is skipped silently. Uses the
 // same Drive client as doc creation (OAuth user when configured, else the SA).
-// Returns [{ url, fileId, title, content }].
+// Returns [{ url, fileId, title, content, type }] (type 'slides' or 'drive').
 async function fetchDriveReferenceContent(links) {
   if (!Array.isArray(links) || links.length === 0) return [];
   const { drive } = await getClients();
@@ -64,6 +64,7 @@ async function fetchDriveReferenceContent(links) {
       });
       title = meta.data.name || url;
       const mimeType = meta.data.mimeType || '';
+      const isSlides = mimeType === 'application/vnd.google-apps.presentation';
 
       let content;
       if (mimeType === 'text/plain' || mimeType === 'application/json') {
@@ -73,6 +74,8 @@ async function fetchDriveReferenceContent(links) {
         );
         content = String(res.data || '');
       } else {
+        // Docs and Slides both export to text/plain (Slides → all slide titles,
+        // body text, and speaker notes concatenated).
         const res = await drive.files.export(
           { fileId, mimeType: 'text/plain' },
           { responseType: 'text' }
@@ -80,7 +83,30 @@ async function fetchDriveReferenceContent(links) {
         content = String(res.data || '');
       }
 
-      out.push({ url, fileId, title, content: content.slice(0, REF_CONTENT_MAX) });
+      if (isSlides) {
+        console.log(`[Quillio] read Slides deck: ${title} (${content.length} chars)`);
+        // Harvest URLs embedded in the deck (raw content, before sanitizing) and
+        // add any new ones to the shared links array so the existing pipeline
+        // fetches them as additional reference sources. Dedupe against links.
+        const found = content.match(/https?:\/\/[^\s)>\]"'<]+/g) || [];
+        let added = 0;
+        for (const raw of found) {
+          const clean = raw.replace(/[).,;]+$/, '').trim();
+          if (clean && !links.includes(clean)) {
+            links.push(clean);
+            added++;
+          }
+        }
+        console.log(`[Quillio] extracted ${added} URLs from Slides deck: ${title}`);
+      }
+
+      out.push({
+        url,
+        fileId,
+        title,
+        content: content.slice(0, REF_CONTENT_MAX),
+        type: isSlides ? 'slides' : 'drive',
+      });
     } catch (err) {
       console.error(`[Quillio] Could not read reference file ${fileId}: ${err.message}`);
     }
@@ -481,7 +507,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       // Tag each reference with its true source type (the fetcher knows it;
       // Gemini only guesses). pdf/canvas already carry a type.
       const refs = [
-        ...refDocs.map((r) => ({ ...r, type: 'drive' })),
+        ...refDocs.map((r) => ({ ...r, type: r.type || 'drive' })),
         ...refExternal.map((r) => ({ ...r, type: 'external' })),
         ...refPdf,
         ...refCanvas,

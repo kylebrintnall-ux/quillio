@@ -567,6 +567,40 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       JSON.stringify(assetSpecs.map((a) => a.assetType))
     );
 
+    // 2.5 Create the project folder (named after the campaign) inside the
+    //     target folder, with an empty Assets subfolder. The copy doc then goes
+    //     inside the project folder rather than the bare target folder.
+    let docFolderId = effectiveFolderId;
+    let projectFolderUrl = null;
+    try {
+      const { drive } = await getClients();
+      const parent = effectiveFolderId || config.DRIVE_FOLDER_ID;
+      const folder = await drive.files.create({
+        requestBody: {
+          name: campaignTitle || 'Untitled Campaign',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [parent],
+        },
+        fields: 'id, webViewLink',
+        supportsAllDrives: true,
+      });
+      docFolderId = folder.data.id;
+      projectFolderUrl = folder.data.webViewLink;
+      console.log('[Quillio] project folder created:', docFolderId);
+      // Empty Assets subfolder, ready for exports.
+      await drive.files.create({
+        requestBody: {
+          name: 'Assets',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [docFolderId],
+        },
+        supportsAllDrives: true,
+      });
+    } catch (err) {
+      console.error('[Quillio] project folder creation failed:', err.message);
+      docFolderId = effectiveFolderId; // fall back to the bare target folder
+    }
+
     // 3. Build the formatted document. If a brief-provided folder is
     //    inaccessible, surface the recoverable folder-access flow (Issue 3)
     //    instead of a dead-end error.
@@ -578,7 +612,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         summary,
         writerPrompt,
         assetSpecs,
-        folderId: effectiveFolderId,
+        folderId: docFolderId,
         referenceLinks,
         referenceInsights,
       });
@@ -636,6 +670,24 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     await emit(`:quillio-doc-done: Your doc is ready — ${doc.title}`, resultBlocks, () =>
       postResult(result, responseUrl)
     );
+
+    // Post the project-folder confirmation as a fresh (non-ephemeral) channel
+    // message. Best-effort: needs a bot token + channel + a folder that was
+    // actually created.
+    const projectChannel = (live && live.channel) || opts.channelId;
+    if (config.SLACK_BOT_TOKEN && projectChannel && projectFolderUrl) {
+      const folderMsg =
+        `:quillio: Project folder created — ${campaignTitle}\n\n` +
+        `📁 Campaign folder → ${projectFolderUrl}\n` +
+        `📄 Copy doc → ${doc.url}\n\n` +
+        `Copy has begun.`;
+      try {
+        await postChatMessage({ channel: projectChannel, text: folderMsg });
+      } catch (e) {
+        console.error('[Quillio] project folder message failed:', e.message);
+      }
+    }
+
     console.log('[workflow] runBriefWorkflow DONE — doc', doc.id);
   } catch (err) {
     console.error('[workflow] runBriefWorkflow FAILED:', err && err.stack ? err.stack : err);

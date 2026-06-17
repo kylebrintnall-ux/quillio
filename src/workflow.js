@@ -13,6 +13,7 @@ const {
   buildFolderAccessBlocks,
   buildResultBlocks,
   openInDriveBlocks,
+  copyCompleteBlocks,
   postLive,
   updateLive,
 } = require('./services/slack');
@@ -740,7 +741,7 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
   } drafted).`;
 
   if (canLive) {
-    await updateLive(channel, messageTs, completionText, openInDriveBlocks(completionText, url));
+    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId));
   } else {
     try {
       await postChatMessage({ channel, text: completionText, webViewLink: url });

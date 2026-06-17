@@ -121,8 +121,66 @@ function openInDriveBlocks(text, webViewLink) {
   ];
 }
 
-// Posts a message via the Slack Web API (chat.postMessage) using the bot token.
-// Unlike a response_url, this has no expiry/use limit — so it delivers even when
+// --- Submit for Review / approval flow blocks (Phase 3) ---
+
+// Copy-complete card with Open in Drive + Submit for Review.
+function copyCompleteBlocks(text, webViewLink, docId) {
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text } },
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', text: { type: 'plain_text', text: 'Open in Drive', emoji: true }, url: webViewLink, action_id: 'open_in_drive' },
+        { type: 'button', text: { type: 'plain_text', text: 'Submit for Review', emoji: true }, action_id: 'submit_for_review', value: docId },
+      ],
+    },
+  ];
+}
+
+// Reviewer DM: Review Copy (link) + Approve + Request Changes (action buttons).
+function reviewRequestBlocks({ campaignTitle, assetList, docUrl, projectRef }) {
+  const line = assetList ? `*${campaignTitle}* — ${assetList}` : `*${campaignTitle}*`;
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: `:quillio: Copy ready for your review\n\n${line}` } },
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', text: { type: 'plain_text', text: 'Review Copy', emoji: true }, url: docUrl, action_id: 'review_copy' },
+        { type: 'button', style: 'primary', text: { type: 'plain_text', text: 'Approve', emoji: true }, action_id: 'approve', value: projectRef },
+        { type: 'button', style: 'danger', text: { type: 'plain_text', text: 'Request Changes', emoji: true }, action_id: 'request_changes', value: projectRef },
+      ],
+    },
+  ];
+}
+
+// Designer DM after approval: View Doc (link) + Populate Figma.
+function designerHandoffBlocks({ docUrl, projectRef }) {
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: ':quillio: Copy approved — ready for handoff' } },
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', text: { type: 'plain_text', text: 'View Doc', emoji: true }, url: docUrl, action_id: 'open_in_drive' },
+        { type: 'button', style: 'primary', text: { type: 'plain_text', text: 'Populate Figma', emoji: true }, action_id: 'populate_figma', value: projectRef },
+      ],
+    },
+  ];
+}
+
+// Copywriter DM after a change request: Open Doc (link) + Resubmit when ready.
+function changesRequestedBlocks({ reviewerName, docUrl, projectRef }) {
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: `:quillio: Changes requested — ${reviewerName} left feedback in the doc.` } },
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', text: { type: 'plain_text', text: 'Open Doc', emoji: true }, url: docUrl, action_id: 'open_in_drive' },
+        { type: 'button', text: { type: 'plain_text', text: 'Resubmit when ready', emoji: true }, action_id: 'resubmit', value: projectRef },
+      ],
+    },
+  ];
+}
+
 // a long generation finishes after the interaction's response_url has lapsed.
 // Requires SLACK_BOT_TOKEN (chat:write); the bot must be able to post to the
 // channel (member, or chat:write.public). Returns Slack's JSON response.
@@ -310,4 +368,8 @@ module.exports = {
   buildFolderAccessBlocks,
   postLive,
   updateLive,
+  copyCompleteBlocks,
+  reviewRequestBlocks,
+  designerHandoffBlocks,
+  changesRequestedBlocks,
 };

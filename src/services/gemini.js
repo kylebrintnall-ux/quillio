@@ -608,4 +608,32 @@ async function generateAssetDrafts({
   return out;
 }
 
-module.exports = { parseBrief, enrichWithReferences, generateFieldDraft, generateAssetDrafts };
+// Generate a brand voice guide (markdown) from the onboarding questionnaire
+// answers. Returns the raw markdown string.
+async function generateVoiceGuide(answers = {}) {
+  const list = (v) => (Array.isArray(v) ? v.filter(Boolean).join(', ') : String(v || ''));
+  const prompt = [
+    'You are a brand strategist. Generate a voice guide markdown file from these answers. Structure it with sections: Brand Personality, Tone, Words That Work, Do Not Use, Audience Language, Tone Reference. Be specific and actionable.',
+    '',
+    `Brand Personality: ${String(answers.brandPersonality || '')}`,
+    `Tone Guidance: ${list(answers.toneGuidance)}`,
+    `Words That Work: ${list(answers.wordsToUse)}`,
+    `Do Not Use: ${list(answers.wordsToAvoid)}`,
+    `Audience Language: ${String(answers.audienceLanguage || '')}`,
+    `Tone Reference: ${String(answers.toneReference || '')}`,
+    '',
+    'Return ONLY the markdown, no preamble and no surrounding code fences.',
+  ].join('\n');
+
+  const text = await callGemini({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.4 },
+  });
+  // Strip any stray markdown/code fences the model wraps around the output.
+  return String(text)
+    .replace(/^```(?:markdown|md)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+}
+
+module.exports = { parseBrief, enrichWithReferences, generateFieldDraft, generateAssetDrafts, generateVoiceGuide };

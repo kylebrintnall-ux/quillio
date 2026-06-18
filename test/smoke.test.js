@@ -140,3 +140,26 @@ test('config.ALLOWED_ASSETS is the 30-name v3 taxonomy', () => {
   assert.ok(ALLOWED_ASSETS.includes('Battle Card'));
   assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad'));
 });
+
+test('extractCanvasId returns the final path segment (handles /docs/TEAM/ID)', () => {
+  const { extractCanvasId } = require('../src/core/pipeline');
+  assert.strictEqual(extractCanvasId('https://acme.slack.com/canvas/F0ABC123'), 'F0ABC123');
+  assert.strictEqual(extractCanvasId('https://acme.slack.com/docs/T123/F0XYZ789'), 'F0XYZ789');
+  assert.strictEqual(extractCanvasId('https://acme.slack.com/canvas/F0DEF456?foo=bar#x'), 'F0DEF456');
+  assert.strictEqual(extractCanvasId('https://acme.slack.com/docs/T123/F0AAA111/'), 'F0AAA111');
+});
+
+test('asset-name normalize folds case, dash variants, and spacing', () => {
+  const { normalize } = require('../src/services/sheets');
+  const base = normalize('Paid Social - LinkedIn');
+  assert.strictEqual(normalize('Paid Social – LinkedIn'), base, 'en dash matches'); // en dash
+  assert.strictEqual(normalize('paid social-linkedin'), base, 'case + spacing match');
+  assert.notStrictEqual(normalize('Paid Social - Meta'), base, 'different name differs');
+});
+
+test('fieldLabel renders char-limit brackets per min/max', () => {
+  const { fieldLabel } = require('../src/destinations/googleDocs');
+  assert.strictEqual(fieldLabel({ fieldName: 'Headline', charMin: 50, charMax: 75 }), 'Headline [50-75]');
+  assert.strictEqual(fieldLabel({ fieldName: 'Body', charMin: 0, charMax: 500 }), 'Body [500]');
+  assert.strictEqual(fieldLabel({ fieldName: 'CTA', charMin: 0, charMax: 0 }), 'CTA');
+});

@@ -109,4 +109,4 @@ async function getAssetSpecs(assetFilter = []) {
   return result;
 }
 
-module.exports = { getAssetSpecs };
+module.exports = { getAssetSpecs, normalize };

@@ -1,0 +1,20 @@
+name: CI
+
+# Run the test suite on every push and pull request so wiring/regression
+# breaks are caught before they reach Railway. No secrets needed — the smoke
+# tests don't touch Gemini/Google/Slack.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test

@@ -316,6 +316,14 @@ function stripCanvasMarkdown(text) {
     .trim();
 }
 
+// Canvas id = the LAST path segment after /canvas/ or /docs/. A /docs/ URL is
+// /docs/TEAM_ID/CANVAS_ID, so the canvas id is always the final segment.
+// Query/fragment are stripped. Returns '' if nothing usable.
+function extractCanvasId(url) {
+  const after = String(url).replace(/^.*\.slack\.com\/(?:canvas|docs)\//i, '');
+  return after.split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
+}
+
 async function fetchSlackCanvasContent(links) {
   if (!Array.isArray(links) || links.length === 0) return [];
   // Prefer the user token (reads what the authorizing user can see, including
@@ -328,10 +336,7 @@ async function fetchSlackCanvasContent(links) {
     const url = String(raw);
     if (!SLACK_CANVAS_RE.test(url)) continue;
 
-    // Canvas id = the LAST path segment after /canvas/ or /docs/. A /docs/ URL
-    // is /docs/TEAM_ID/CANVAS_ID, so the canvas id is always the final segment.
-    const after = url.replace(/^.*\.slack\.com\/(?:canvas|docs)\//i, '');
-    const canvasId = after.split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
+    const canvasId = extractCanvasId(url);
     if (!canvasId) continue;
 
     try {
@@ -606,6 +611,7 @@ module.exports = {
   countDocAssets,
   getFolderName,
   extractBriefFolderId,
+  extractCanvasId,
   isFolderAccessError,
   getServiceAccountEmail,
 };

@@ -494,4 +494,7 @@ module.exports = {
   name: 'google-docs',
   createDocument,
   generateDraft,
+  // Exposed for unit tests (char-limit bracket rendering). Not part of the
+  // destination interface used by the registry.
+  fieldLabel,
 };

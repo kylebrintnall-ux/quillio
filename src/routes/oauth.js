@@ -12,25 +12,37 @@ const { createTenantIfMissing, saveTenantToken } = require('../db');
 
 const router = express.Router();
 
-const STATE_COOKIE = 'quillio_oauth_state';
 const BOT_SCOPES = 'commands,chat:write,chat:write.public,channels:history,users:read,im:write';
 const USER_SCOPES = 'canvases:read,files:read';
-const STATE_COOKIE_BASE = `${STATE_COOKIE}=`;
 
-// Read a named cookie from the request (avoids a cookie-parser dependency).
-function readCookie(req, name) {
-  const header = req.headers.cookie || '';
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) {
-      return decodeURIComponent(part.slice(eq + 1).trim());
-    }
+// CSRF state store. Cookies don't survive the cross-site OAuth redirect in
+// Safari/iPad (ITP), so we keep issued state values in-process with a short TTL
+// instead. (Single-process scope — fine for the demo; the durable version would
+// store this in Postgres/Redis once we're multi-instance.)
+const STATE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const pendingStates = new Map(); // state -> created timestamp (ms)
+
+// Remember a freshly-issued state, pruning anything expired so the Map can't
+// grow unbounded.
+function rememberState(state) {
+  const now = Date.now();
+  for (const [s, ts] of pendingStates) {
+    if (now - ts > STATE_TTL_MS) pendingStates.delete(s);
   }
-  return null;
+  pendingStates.set(state, now);
 }
 
-// Step 1 — start the install: set a CSRF state cookie, redirect to Slack.
+// Validate + consume a state on callback: it must be one we issued, unexpired,
+// and is deleted after this single use. Returns true only if valid.
+function consumeState(state) {
+  if (!state) return false;
+  const ts = pendingStates.get(state);
+  if (ts === undefined) return false;
+  pendingStates.delete(state); // one-time use
+  return Date.now() - ts <= STATE_TTL_MS;
+}
+
+// Step 1 — start the install: issue a CSRF state, store it, redirect to Slack.
 router.get('/oauth/slack', (req, res) => {
   if (!config.SLACK_CLIENT_ID || !config.SLACK_REDIRECT_URI) {
     console.error('[oauth] SLACK_CLIENT_ID / SLACK_REDIRECT_URI not configured');
@@ -38,10 +50,7 @@ router.get('/oauth/slack', (req, res) => {
   }
 
   const state = crypto.randomBytes(16).toString('hex');
-  res.setHeader(
-    'Set-Cookie',
-    `${STATE_COOKIE_BASE}${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`
-  );
+  rememberState(state);
 
   const url = new URL('https://slack.com/oauth/v2/authorize');
   url.searchParams.set('client_id', config.SLACK_CLIENT_ID);
@@ -61,17 +70,11 @@ router.get('/oauth/slack/callback', async (req, res) => {
       return res.redirect('/welcome?error=access_denied');
     }
 
-    // CSRF: the state in the URL must match the cookie we set in step 1.
-    const cookieState = readCookie(req, STATE_COOKIE);
-    if (!req.query.state || !cookieState || req.query.state !== cookieState) {
-      console.error('[oauth] state mismatch — possible CSRF; aborting install');
+    // CSRF: the state in the URL must be one we issued, unexpired, unused.
+    if (!consumeState(req.query.state)) {
+      console.error('[oauth] state missing/expired/mismatch — aborting install');
       return res.redirect('/welcome?error=install_failed');
     }
-    // One-time use: clear the state cookie now that it's been consumed.
-    res.setHeader(
-      'Set-Cookie',
-      `${STATE_COOKIE_BASE}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
-    );
 
     const code = req.query.code;
     if (!code) {

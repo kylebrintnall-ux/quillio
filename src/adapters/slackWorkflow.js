@@ -175,7 +175,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     const projectChannel = (live && live.channel) || opts.channelId;
     if (config.SLACK_BOT_TOKEN && projectChannel && projectFolderUrl) {
       const folderMsg =
-        `:quillio: Project folder created — ${campaignTitle}\n\n` +
+        `:quillio-folder: Project folder created — ${campaignTitle}\n\n` +
         `📁 Campaign folder → ${projectFolderUrl}\n` +
         `📄 Copy doc → ${doc.url}\n\n` +
         `Copy has begun.`;

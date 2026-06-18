@@ -86,7 +86,8 @@ async function fetchDriveReferenceContent(links) {
         let added = 0;
         for (const raw of found) {
           const clean = raw.replace(/[).,;]+$/, '').trim();
-          if (clean && !links.includes(clean)) {
+          // Skip Drive folder URLs — they're destinations, not references.
+          if (clean && !DRIVE_FOLDER_RE.test(clean) && !links.includes(clean)) {
             links.push(clean);
             added++;
           }
@@ -411,7 +412,15 @@ function isFolderAccessError(err, folderId) {
 // Parse a free-form brief into structured data (campaignTitle, summary,
 // writerPrompt, assets, unmatchedAssets, folderId, referenceLinks).
 async function parseBrief(briefText) {
-  return geminiParseBrief(briefText);
+  const parsed = await geminiParseBrief(briefText);
+  // A Drive folder URL is a destination (folder routing), not a reference
+  // document — strip it from referenceLinks so it's never ingested or listed
+  // in the doc's Reference Materials. Folder routing reads the brief text
+  // directly (extractBriefFolderId), so this doesn't affect where the doc lands.
+  if (Array.isArray(parsed.referenceLinks)) {
+    parsed.referenceLinks = parsed.referenceLinks.filter((u) => !DRIVE_FOLDER_RE.test(String(u)));
+  }
+  return parsed;
 }
 
 // Fetch every linked reference (Drive/Docs/Slides, external URLs, PDFs, Slack

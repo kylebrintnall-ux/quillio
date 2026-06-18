@@ -19,6 +19,7 @@ const {
   designerHandoffBlocks,
   changesRequestedBlocks,
 } = require('../services/slack');
+const { emoji } = require('../emoji');
 
 // --- Postgres (Phase 3) — lazy, guarded, self-contained ---
 let pool = null;
@@ -87,7 +88,7 @@ async function handleSubmitForReview(payload) {
 
   // Reflect the submitted state on the clicked message (no DB needed).
   if (channelId && ts) {
-    await updateLive(channelId, ts, ':quillio: Submitted for review.').catch((e) =>
+    await updateLive(channelId, ts, `${emoji('quillio')} Submitted for review.`).catch((e) =>
       console.error('[approval] submit status update failed:', e.message)
     );
   }
@@ -155,7 +156,7 @@ async function handleRequestChanges(payload) {
   const project = await getProjectById(value);
   if (!project) {
     console.warn('[approval] request_changes: no project found (Phase 3 DB not set up)');
-    if (channelId && ts) await updateLive(channelId, ts, `:quillio: Changes requested by ${userName}.`).catch(() => {});
+    if (channelId && ts) await updateLive(channelId, ts, `${emoji('quillio')} Changes requested by ${userName}.`).catch(() => {});
     return;
   }
   await setStatus(project.id, 'changes_requested');
@@ -170,7 +171,7 @@ async function handleRequestChanges(payload) {
   }
 
   if (channelId && ts) {
-    await updateLive(channelId, ts, `:quillio: Changes requested by ${userName}.`).catch(() => {});
+    await updateLive(channelId, ts, `${emoji('quillio')} Changes requested by ${userName}.`).catch(() => {});
   }
 }
 

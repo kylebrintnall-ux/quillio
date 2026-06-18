@@ -1,6 +1,7 @@
 'use strict';
 
 const config = require('../config');
+const { emoji } = require('../emoji');
 
 // Posts a JSON payload to a Slack URL (incoming webhook or response_url).
 async function postToSlack(url, payload) {
@@ -30,7 +31,7 @@ function buildResultBlocks({ title, webViewLink, assets, docId }) {
     blocks: [
       {
         type: 'header',
-        text: { type: 'plain_text', text: ':quillio-doc-done: Your doc is ready', emoji: true },
+        text: { type: 'plain_text', text: `${emoji('quillio-doc-done')} Your doc is ready`, emoji: true },
       },
       {
         type: 'section',
@@ -141,7 +142,7 @@ function copyCompleteBlocks(text, webViewLink, docId) {
 function reviewRequestBlocks({ campaignTitle, assetList, docUrl, projectRef }) {
   const line = assetList ? `*${campaignTitle}* — ${assetList}` : `*${campaignTitle}*`;
   return [
-    { type: 'section', text: { type: 'mrkdwn', text: `:quillio: Copy ready for your review\n\n${line}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `${emoji('quillio')} Copy ready for your review\n\n${line}` } },
     {
       type: 'actions',
       elements: [
@@ -156,7 +157,7 @@ function reviewRequestBlocks({ campaignTitle, assetList, docUrl, projectRef }) {
 // Designer DM after approval: View Doc (link) + Populate Figma.
 function designerHandoffBlocks({ docUrl, projectRef }) {
   return [
-    { type: 'section', text: { type: 'mrkdwn', text: ':quillio: Copy approved — ready for handoff' } },
+    { type: 'section', text: { type: 'mrkdwn', text: `${emoji('quillio')} Copy approved — ready for handoff` } },
     {
       type: 'actions',
       elements: [
@@ -170,7 +171,7 @@ function designerHandoffBlocks({ docUrl, projectRef }) {
 // Copywriter DM after a change request: Open Doc (link) + Resubmit when ready.
 function changesRequestedBlocks({ reviewerName, docUrl, projectRef }) {
   return [
-    { type: 'section', text: { type: 'mrkdwn', text: `:quillio: Changes requested — ${reviewerName} left feedback in the doc.` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `${emoji('quillio')} Changes requested — ${reviewerName} left feedback in the doc.` } },
     {
       type: 'actions',
       elements: [

@@ -17,25 +17,7 @@ const {
   postLive,
   updateLive,
 } = require('../services/slack');
-
-// --- Emoji (custom Quillio emoji with standard fallbacks) ---
-// USE_CUSTOM_EMOJI is hardcoded true for now (existing behavior). When false,
-// messages render standard Slack emoji instead of the workspace's custom
-// :quillio-*: emoji — so a workspace that hasn't uploaded the custom set still
-// looks right. Wire this to the tenant's custom_emoji column in a later step.
-const USE_CUSTOM_EMOJI = true;
-const EMOJI = {
-  'quillio-scroll': '📜',
-  'quillio-doc-done': '📄',
-  'quillio-folder': '📁',
-  'quillio-copy-done': '🪶',
-  quillio: '🪶',
-};
-// Return the emoji string for a message: the custom :name: form when custom
-// emoji are enabled, else the standard fallback.
-function emoji(name) {
-  return USE_CUSTOM_EMOJI ? `:${name}:` : EMOJI[name] || '';
-}
+const { emoji } = require('../emoji');
 
 const BUILDING_TEXT = `${emoji('quillio-scroll')} Building your document…`;
 
@@ -264,5 +246,4 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
   console.log('[workflow] runGenerateDraft DONE');
 }
 
-// emoji / EMOJI / USE_CUSTOM_EMOJI exported for unit tests.
-module.exports = { runBriefWorkflow, runGenerateDraft, emoji, EMOJI, USE_CUSTOM_EMOJI };
+module.exports = { runBriefWorkflow, runGenerateDraft };

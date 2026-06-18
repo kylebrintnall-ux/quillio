@@ -45,7 +45,7 @@ test('adapters/slackWorkflow exposes the two entry points', () => {
 });
 
 test('emoji config maps custom emoji to standard fallbacks', () => {
-  const { emoji, EMOJI, USE_CUSTOM_EMOJI } = require('../src/adapters/slackWorkflow');
+  const { emoji, EMOJI, USE_CUSTOM_EMOJI } = require('../src/emoji');
   // Existing behavior unchanged: custom emoji on, so emoji() yields :name:.
   assert.strictEqual(USE_CUSTOM_EMOJI, true);
   assert.strictEqual(emoji('quillio-scroll'), ':quillio-scroll:');

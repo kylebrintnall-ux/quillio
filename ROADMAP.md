@@ -1,432 +1,829 @@
 # Quillio Product Roadmap
 
-**Last updated:** June 10, 2026
+**Last updated:** June 15, 2026
 **Author:** Kyle Brintnall
 **Status:** Phase 2 complete — Phase 3 planning
 
----
+-----
 
 ## What Quillio Is
 
-Quillio is a creative operations platform that eliminates manual setup time in the copy production workflow. It takes a freeform brief, parses it with AI, reads linked reference documents, generates a fully structured copy document, and — when copy is approved — populates the designer's Figma or Canva file automatically across every size variant.
+Quillio is a creative operations platform that connects the entire creative production chain — from brief to live ads — automatically. It eliminates the manual handoffs that lose information, create version confusion, and slow every campaign down.
 
-**The full pipeline vision:**
+**Core value proposition:** Quillio doesn't write your copy. It makes sure you're set up to write it better than you ever have.
+
+**What Quillio owns:** The copy document. A purpose-built copy production format with fields not paragraphs, character counts built in, approval states per field, and version history. Like Figma owns the design file, Quillio owns the copy file.
+
+**The chain today (manual, broken):**
 
 ```
-Brief in
-    ↓
-Quillio parses brief + reads references
-    ↓                        ↓
-Copy doc generated      Figma/Canva file created
-(Google Doc/Notion)     from brand template + design.md
-    ↓                        ↓
-Copy approved           Designer refines layouts
-    ↓                        ↓
-        Copy populates design file automatically
-                    ↓
-        Final review — copy + design together
-                    ↓
-        Export + zip — production-ready files
-                    ↓
-        /quillio-launch → ads go live in platform
+PM writes brief in Slack
+    ↓ copywriter manually reads and interprets
+Copywriter sets up copy doc from scratch
+    ↓ copywriter manually pastes reference content
+Copy written in doc
+    ↓ copywriter pings manager in Slack
+Manager reviews, leaves comments in doc
+    ↓ copywriter pings designer in Slack
+Designer manually copies fields into Figma
+    ↓ designer manually exports each size
+Files dumped in a shared Drive folder
+    ↓ someone manually uploads to ad platform
+Ads go live
 ```
 
-**Core value proposition:** Brief to market in one connected pipeline. Nothing like this exists today.
+**The chain with Quillio (automated):**
 
-**Target audience:** Copywriters — agency, in-house, freelance, and enterprise. Any creative team that produces copy for designed assets. Not exclusively B2B.
+```
+Brief submitted (Slack / Teams / web app)
+    ↓ automated
+Project folder created in Drive
+Copy doc + deck skeleton generated in parallel
+    ↓ automated notification to channel
+Copy written — Quillio available for feedback
+    ↓ writer-initiated
+@Quillio in doc or /quillio-feedback for ACD review
+    ↓ automated notification
+Manager approves in Slack
+    ↓ automated — copy populates Figma + deck
+Designer refines and exports
+    ↓ automated packaging
+Assets exported and zipped
+    ↓ automated
+Ads launched to platform
+```
 
----
+**The stakeholder value:** The deck and project folder exist from day one. Stakeholders see the shape and scope of work immediately and watch it fill in as the team executes. No status meetings. No surprise scope gaps. No manual handoffs losing information.
+
+**Target audience:** Copywriters, creative teams, product marketers, and campaign managers. Any team that produces copy for designed assets. Not exclusively B2B.
+
+-----
 
 ## Current State — June 2026
 
-### V1 — Complete and demo-ready
-
-Full Slack-native pipeline working end to end:
+### V1 — Complete and demo-ready ✅
 
 - `/quillio` slash command in Slack
 - Gemini 2.5-flash parses freeform brief text
-- Matches assets to a structured Asset & Field Library
-- Generates a fully formatted Google Doc with all copy fields
+- Matches assets to Asset & Field Library (30 asset types)
+- Generates fully formatted Google Doc with all copy fields
 - Single message lifecycle (chat.update architecture)
 - Custom emoji set: scroll, doc-done, quill, copy-done
 - Smart title generation, voice.md, concurrency caps
 - Signature verification, graceful error handling
-- Correct Quillio bot identity confirmed
+- Dynamic progress message tiered by asset count
+- Folder routing from brief text
+- Docs land in Quillio Campaigns folder
 
 ### Phase 2 — Reference Ingestion — Complete ✅
-
-When a brief links reference documents, Quillio reads them and feeds their content to a second Gemini pass that writes a richer Campaign Summary, Writer Direction, and Reference Insights section.
 
 **All slices shipped:**
 
 | Slice | Description | Commit |
 |-------|-------------|--------|
-| Slice 1 | Google Drive link ingestion | 91a23d0 |
+| Slice 1 | Google Drive / Docs ingestion | 91a23d0 |
 | Slice 2 | External URL fetching | 0afe748 |
 | Slice 3 | PDF ingestion via pdf-parse@1.1.1 | 772546d |
-| Slice 4 | Slack Canvas via user token + files.info | 56c90e4 |
+| Slice 4 | Slack Canvas via user token + files.info | confirmed |
+| Slice 5 | Google Slides ingestion + nested URL extraction + second-pass fetch | 86e0add |
 
 **Supporting fixes shipped:**
 
-| Fix | Description | Commit |
-|-----|-------------|--------|
-| Enrichment prompt tuning | Senior B2B copywriter persona, 8 extraction rules | 32aac99 |
-| JSON coercion fix | toReadableText() for structured writerPrompt | 045c389 |
-| Reference Insights section | Per-source stats, key messages, source labeling | d31b970 |
-| Proof Points removed | Consolidated into Reference Insights | 24f38b8 |
-| Doc compression + bullets | Compact headers, BULLET_DISC rendering | 1bcafa0 |
-| sanitizeText() | Strips PDF control characters from referenceContext | d001008 |
-| Drive truncation | Increased 3000 → 6000 chars | 02ba1c8 |
-| PDF title extraction | Three-source fallback with cleanFilenameTitle() | ad4b253 |
-| Gemini parse fix | referenceLinks extracts all URLs including Slack | 7b3f59c |
-| Canvas type labeling | Per-source type stamped by fetcher, not Gemini | 9eb003c |
+| Fix | Commit |
+|-----|--------|
+| Enrichment prompt tuning — 8 extraction rules | 32aac99 |
+| Reference Insights section | d31b970 |
+| Doc compression + bullet formatting | 1bcafa0 |
+| sanitizeText() — strips PDF control characters | d001008 |
+| Drive truncation 3000 → 6000 chars | 02ba1c8 |
+| Asset library v3 — 30 asset types | confirmed |
+| Character count parsing — integers to Gemini + doc | ac8cfe6 |
+| Dynamic progress message tiered by asset count | b67a35e |
+| Asset matching — exact names, single source of truth | dface01 |
+| Folder routing from brief text | 4af01c1 |
+| Quillio Campaigns folder as canonical location | 084d647 |
+| Slides deck — nested URL extraction + second-pass fetch | confirmed |
 
 **Doc output structure (current):**
 
-1. Campaign Summary — 3 sentences max, theme + audience + core message
-2. Writer Direction — Audience / Pain Points (bullets) / Voice / Competitive Framing / Do Not Use
+1. Campaign Summary — 3 sentences
+2. Writer Direction — Audience / Pain Points / Voice / Competitive Framing / Do Not Use
 3. Reference Insights — per-source stats and key messages with source type labels
 4. Reference Materials — extracted links
 5. Asset sections — all copy fields with character counts
 
-**Hard-won lessons from Canvas ingestion:**
+**Canvas ingestion — hard-won lessons:**
 
-1. `canvases.sections.lookup` only finds header-delimited sections — useless for paragraph-only canvases. No valid `section_type` enum exists for body text. Dead end.
-2. Bot token cannot read user-owned canvases regardless of channel sharing. Not a permissions issue — a fundamental identity issue.
-3. **The fix:** user token (`xoxp-`). Canvas calls ride the user's permissions, not the bot's. Same pattern as enterprise assistants.
-4. **The right read path:** `files.info` on the canvas ID returns title + private download URL. Fetching that URL (authorized) returns full canvas content.
-5. **Critical scope gotcha:** adding a scope does NOT upgrade an already-issued token. After adding `canvases:read` + `files:read` to User Token Scopes, you must reinstall the app AND paste the freshly-minted `xoxp-` token into `SLACK_USER_TOKEN` in Railway.
+1. `canvases.sections.lookup` only finds header-delimited sections — useless for paragraph-only canvases
+2. Bot token cannot read user-owned canvases — fundamental identity issue
+3. Fix: user token (`xoxp-`) — canvas calls ride user's permissions
+4. Right read path: `files.info` → private download URL → full content
+5. Critical: adding a scope does NOT upgrade existing token. Must reinstall AND paste new `xoxp-` token
 
-**Required env vars (current, single-tenant):**
+**Asset & Field Library v3:**
+
+- 30 asset types: Paid Social, Display, Email, Events, Web, Direct Mail, Organic Social, Sales Enablement
+- Sheet ID: `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`
+- Quillio Campaigns folder: `1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U`
+
+**Current env vars (single-tenant):**
 
 ```
 SLACK_BOT_TOKEN          — bot token (xoxb-)
-SLACK_USER_TOKEN         — user token (xoxp-) — required for canvas
+SLACK_USER_TOKEN         — user token (xoxp-) — canvas
 SLACK_SIGNING_SECRET
+SLACK_CLIENT_ID          — Phase 3 OAuth
+SLACK_CLIENT_SECRET      — Phase 3 OAuth
 GEMINI_API_KEY
 GOOGLE_REFRESH_TOKEN
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
+ASSET_SHEET_ID
+DRIVE_FOLDER_ID
+DATABASE_URL             — Phase 3 Postgres
 ```
 
----
+-----
+
+## August 2026 Demo Plan
+
+**What to have ready:**
+
+| Item | Status |
+|------|--------|
+| V1 + Phase 2 pipeline demo | ✅ Ready |
+| 30 asset types confirmed working | ✅ Ready |
+| Canvas + Slides ingestion confirmed | ✅ Ready |
+| Folder routing confirmed | ✅ Ready |
+| Quillio website | ⬜ In design |
+| Demo video — 90 seconds | ⬜ To record |
+| Positioning one-pager | ⬜ To write |
+| Demo script | ⬜ To write |
+| Terms of service + privacy policy | ⬜ Required |
+
+**Three conversations to have in August:**
+
+1. **ACD:** "Would you actually use this? What's missing?"
+2. **Designer:** "Can we agree on a Figma layer naming convention?"
+3. **Skip-level:** "Is this worth pursuing internally at Salesforce?"
+
+**The 30-second story:**
+
+> "During recovery leave I built a creative operations platform that automates the copy production chain. Brief comes in via Slack, Quillio reads your reference docs — Drive files, PDFs, Slack canvases, strategy decks — and generates a structured copy doc in under 30 seconds. When copy is approved, one command populates the designer's Figma file automatically. Brief to live. One connected chain."
+
+**The stakeholder version:**
+
+> "The brief comes in, the copy doc and project folder are created in parallel. Stakeholders see the shape and scope of work immediately and watch it fill in as the team executes. No status meetings. No surprise scope gaps. No manual handoffs."
+
+-----
 
 ## Phase 3 — Platform Foundation
 
-### OAuth + Multi-Tenant Architecture + Database
+### OAuth + Multi-Tenant + Database + Web App
 
-**Why this is the gate for everything else:**
+**Why this is the gate for everything:**
+Current architecture uses hardcoded env vars. Single tenant, single workspace. Phase 3 makes Quillio installable by anyone, anywhere, on any platform combination.
 
-Every integration beyond what exists today — Figma, Notion, OneDrive, multi-workspace Slack, Canva — requires per-customer credentials granted via OAuth. The current architecture uses hardcoded env vars (single-tenant). That works for a personal demo tool but cannot ship as a product.
+### 3a — Database (Railway Postgres)
 
-The canvas debugging made this concrete: add a scope → reinstall → hand-paste a token into Railway. A real customer cannot do that. OAuth at install makes it one click.
-
-Phase 3 is the foundation. Everything in Phase 4 and beyond is built on top of it.
-
-### Database — Replace Google Sheets with Railway Postgres
-
-**Why Postgres over Sheets:**
-Sheets works for a single-tenant personal tool. It breaks as soon as a second person installs Quillio — everyone reads and writes the same Sheet. Postgres is already on Railway (one-click add), multi-tenant by design, and stays with the app through every phase.
+Replace three Google Sheets with Postgres. One-click add in Railway dashboard.
 
 **Core schema:**
 
 ```sql
--- One row per workspace install
 tenants (
   id, workspace_id, workspace_name,
-  plan, installed_at, updated_at
+  plan, installed_at, onboarding_complete,
+  default_folder_id, default_doc_platform,
+  default_design_platform
 )
 
--- All OAuth tokens, per tenant, per service
 tenant_tokens (
-  tenant_id, service,        -- service: slack_bot | slack_user | google | figma | notion | onedrive
-  access_token, refresh_token, expires_at, updated_at
+  tenant_id, service,
+  -- slack_bot | slack_user | google | figma |
+  -- notion | onedrive | canva | teams
+  access_token, refresh_token, expires_at
 )
 
--- Asset types — replaces Asset & Field Library Sheet
 asset_types (
-  id, tenant_id, name, description,
+  id, tenant_id, name, group,
   is_active, sort_order
 )
 
--- Copy fields per asset type — replaces field columns in Sheet
 copy_fields (
   id, asset_type_id, field_name,
   char_min, char_max, field_type, sort_order
 )
 
--- Prompts per field — replaces Prompt Library Sheet
 prompt_templates (
-  id, tenant_id, asset_type_id, field_name,
-  prompt_text, updated_at
+  id, tenant_id, asset_type_id,
+  field_name, prompt_text
 )
 
--- Personas — replaces Persona Bank Sheet
 personas (
-  id, tenant_id, name, role, industry,
-  pain_points, voice_notes, is_active
+  id, tenant_id, name, role,
+  industry, pain_points, voice_notes
 )
 
--- Projects — the connective tissue for everything
+voice_guide (
+  tenant_id, brand_personality,
+  tone_guidance, words_to_use,
+  words_to_avoid, audience_language,
+  tone_reference, raw_markdown
+)
+
 projects (
-  id, tenant_id, name, drive_folder_id,
-  notion_page_id, slack_channel_id,
-  figma_file_key, status, created_at, updated_at
+  id, tenant_id, name,
+  drive_folder_id, drive_folder_url,
+  copy_doc_id, copy_doc_url,
+  deck_id, deck_url,
+  figma_file_key, notion_page_id,
+  slack_channel_id, slack_thread_ts,
+  status, version, created_at
 )
 
--- Assets within a project
 project_assets (
   id, project_id, asset_type_id,
-  copy_doc_id, copy_doc_url,
-  figma_frame_prefix, status,
-  assigned_to, approved_at, version
+  copy_doc_id, figma_frame_prefix,
+  status, assigned_to, approved_at, version
 )
 
--- Figma/Canva frame mappings
+workflow_roles (
+  tenant_id, role,
+  -- reviewer | designer | copy_channel | design_channel
+  slack_user_id, slack_channel_id
+)
+
 design_mappings (
-  id, tenant_id, tool,           -- tool: figma | canva | adobe_express
+  id, tenant_id, tool,
   asset_type_id, frame_prefix,
   field_name, layer_name
+)
+
+deck_templates (
+  id, tenant_id, deck_type,
+  slides_template_id, layout_map
 )
 ```
 
 **What moves from env vars to database:**
 
-| Current env var | Replaced by |
-|-----------------|-------------|
-| `SLACK_BOT_TOKEN` | `tenant_tokens` row, service='slack_bot' |
-| `SLACK_USER_TOKEN` | `tenant_tokens` row, service='slack_user' |
-| `GOOGLE_REFRESH_TOKEN` | `tenant_tokens` row, service='google' |
-| `SLACK_SIGNING_SECRET` | Stays as env var — app-level, not per-tenant |
-| `GEMINI_API_KEY` | Stays as env var — developer-owned |
-| `GOOGLE_CLIENT_ID/SECRET` | Stays as env var — developer-owned OAuth credentials |
+| Env var | Replaced by |
+|---------|-------------|
+| `SLACK_BOT_TOKEN` | tenant_tokens, service='slack_bot' |
+| `SLACK_USER_TOKEN` | tenant_tokens, service='slack_user' |
+| `GOOGLE_REFRESH_TOKEN` | tenant_tokens, service='google' |
+| `ASSET_SHEET_ID` | asset_types table per tenant |
+| `DRIVE_FOLDER_ID` | tenants.default_folder_id |
 
-### OAuth Flows
+**Developer-owned — stay as env vars forever:**
 
-**Slack OAuth (install flow):**
+```
+SLACK_SIGNING_SECRET, SLACK_CLIENT_ID/SECRET
+GOOGLE_CLIENT_ID/SECRET
+FIGMA_CLIENT_ID/SECRET
+GEMINI_API_KEY
+DATABASE_URL
+```
 
-- `/oauth/slack/callback` endpoint
-- Exchanges code for bot token + user token in one install
-- User token grants `canvases:read`, `files:read`, `channels:history`
-- Stores both tokens in `tenant_tokens`
-- "Add to Slack" button on Quillio website triggers this
-- Eliminates: manual token pasting, reinstall-to-upgrade friction
+### 3b — Architecture Refactor
+
+```
+/core
+  pipeline.js — parse, enrich, generate (no platform code)
+
+/adapters
+  slack.js — existing, refactored to call pipeline
+  web.js — new, Phase 3
+  teams.js — Phase 6
+
+/integrations
+  google.js — Drive, Docs, Sheets
+  figma.js — Phase 4
+  notion.js — Phase 5
+  canva.js — Phase 5
+
+/db
+  tenants.js, tokens.js, assets.js, projects.js
+```
+
+**Feature flag during migration:**
+
+```javascript
+if (tenant exists in Postgres) {
+  use tenant config from database
+} else {
+  fall back to Sheets + env vars
+}
+```
+
+Demo never breaks during migration.
+
+### 3c — OAuth Flows
+
+**Slack OAuth:**
+
+- "Add to Slack" → quillio.app/oauth/slack/callback
+- Returns bot + user token in one install
+- User token grants canvases:read, files:read, channels:history
+- Both stored in tenant_tokens
 
 **Google OAuth:**
 
-- `/oauth/google/callback` endpoint
-- Exchanges code for access + refresh tokens
-- Replaces `GOOGLE_REFRESH_TOKEN` env var
-- Retires service account for Sheet reads — same OAuth identity handles everything
-- Eliminates: "share the Sheet/folder with the service account" requirement
+- "Connect Google" → quillio.app/oauth/google/callback
+- Replaces GOOGLE_REFRESH_TOKEN env var
+- Retires service account — same identity handles everything
+- Token refresh handled automatically
 
-**Figma OAuth:**
+**Figma OAuth:** Phase 4
+**Notion, Canva, OneDrive:** Phase 5+
+**Microsoft (Teams):** Phase 6
 
-- `/oauth/figma/callback` endpoint
-- Required before Figma read/write per tenant
-
-**Notion, OneDrive, Canva:**
-
-- Same pattern — OAuth callback, store in `tenant_tokens`
-
-### Stupid-Simple Install Flow
-
-The entire onboarding should be five clicks:
-
-1. Go to quillio.app
-2. Click **Add to Slack**
-3. Authorize Slack OAuth — grants bot + user token, all scopes, in one step
-4. Click **Connect Google** — grants Drive/Docs access
-5. Choose: use default asset library or import your own
-
-**Done.** `/quillio` works in your workspace. No JSON. No env vars. No service accounts. No Sheet sharing.
-
-### Asset Library — Three Setup Tiers
-
-**Tier 1 — Default template**
-Install Quillio, get a pre-loaded set of standard asset types: LinkedIn ad, Meta ad, Display banner, Email, etc. with sensible default field definitions and prompts. Works immediately with zero configuration.
-
-**Tier 2 — Import existing**
-Upload an existing copy doc or Sheet. Quillio reads the structure, infers asset types and field names, seeds the tenant's database rows from it. Meets teams where they already are.
-
-**Tier 3 — Web app configuration**
-Full UI at quillio.app/settings to add/edit/remove asset types, customize field definitions, edit prompts, manage personas. Changes save to Postgres, take effect immediately.
-
-### The Project Object
-
-Everything in Phase 4 and beyond — folder routing, versioning, approval, status tracking, team assignment — needs a shared concept of a **Project**.
-
-A Project is: a campaign name + a destination folder + a set of assets + a status + a team. When `/quillio` runs and confirms the folder, it creates or joins a Project. All docs, design files, and exports for that campaign live under it.
-
-This is the concept that makes the web app worth using — the Project status board is the home screen.
-
-### Folder Destination Routing
-
-How Quillio knows where to put the doc — four sources in priority order:
-
-1. **Explicit folder link in the brief** — always wins
-2. **Channel context inference** — scan back N messages for a Drive folder URL posted by a PM or strategist; confirm before generating
-3. **Confirmation step** — Quillio posts before generating:
-
-   > *📁 Dropping this in: Campaign Assets > Q3 Always On > Copy*
-   > *[Looks right] [Change folder] [Use my Drive]*
-
-4. **Default fallback** — tenant's configured default folder; never dumps to root Drive
-
-Channel history scan requires `channels:history` scope — same scope that unlocks channel brief inference. One scope addition, two features.
-
----
-
-## Phase 4 — Design Handoff
-
-### 4a — Copy → Design File Population
-
-**The use case:** Copy is approved. Designer has the layout in Figma or Canva. One command populates every text layer across every size variant automatically.
-
-**Slash command:** `/quillio-handoff [doc-link] [figma-link]`
-Or triggered via "Send to Design" button on the copy-complete Slack message.
-
-**Layer naming convention (the design system agreement):**
-
-Text layers:
-
-- `[Headline]` → headline field
-- `[Body]` → body copy field
-- `[CTA]` → CTA text field
-- `[Subheadline]` → subheadline field
-- `[Preheader]` → preheader (email)
-- `[Subject]` → subject line (email)
-
-Frame names (asset type + size):
-
-- `LinkedIn_1200x627`
-- `Meta_1080x1080`
-- `Display_300x250`
-- `Display_728x90`
-
-This convention becomes part of the Quillio design system. Teams configure their own naming in the web app — the `design_mappings` table stores per-tenant conventions.
-
-**Multi-size variant matching:**
-The `design_mappings` table maps asset types to frame prefixes. Quillio finds every frame starting with `Display_` and applies display copy to all of them — one asset type, all sizes, one operation.
-
-**Handoff flow:**
-
-1. Parse approved copy doc — extract field values by asset type
-2. Read design file — traverse frame tree, identify text layer node IDs
-3. Build copy map: `{ nodeId: copyValue }` for every matched layer
-4. Write copy to design file
-5. Post confirmation to Slack: "Populated 6 frames across 3 asset types"
-
-### 4b — Approval Workflow
-
-Copy needs to be locked before Figma handoff runs. Options:
-
-- "Mark as approved" button in the copy-complete Slack message
-- Specific comment trigger in the Google Doc
-- Web app approval UI with field-by-field sign-off
-
-**Legal/compliance flagging:** If copy contains a percentage or specific metric, add a flag to the doc and a warning in Slack — "This claim requires source citation before legal review."
-
----
-
-## Phase 5 — Parallel Design File Generation
-
-### design.md alongside voice.md
-
-voice.md defines the brand's copy rules. design.md defines the brand's visual system — color tokens, typography, component library, spacing rules, logo usage, approved imagery style.
-
-When `/quillio` runs, **in parallel with the copy doc** it creates a design file with:
-
-- Frames for every requested asset type at every standard size — from the asset size database
-- Brand colors, fonts, and spacing applied from design.md
-- Placeholder copy in the correct text layers
-- File saved to the same project folder as the copy doc
-
-The copy doc and design file are created simultaneously. When copy is approved, handoff populates the already-structured design file.
-
-### Design Tool Support
-
-Same adapter pattern — one core handoff interface, per-tool adapters:
+### 3d — Stupid-Simple Install — 4 Clicks
 
 ```
-core handoff interface
+1. quillio.app → "Add to Slack"
+2. Authorize Slack OAuth
+3. "Connect Google"
+4. Choose asset library
+Done — /quillio works in your workspace
+```
+
+No JSON. No env vars. No service accounts. No Sheet sharing.
+
+### 3e — Web App
+
+**Two surfaces:**
+
+**quillio.app — Homepage + install**
+
+- Product story, feature overview
+- "Add to Slack" button
+- "Sign up for web" option
+- Pricing
+
+**quillio.app/app — Brief input + doc editor**
+
+Mode A — Export to Drive:
+Brief → Quillio generates doc → saves to Drive/Notion/OneDrive
+
+Mode B — Native doc editor:
+Brief → Quillio generates doc → opens inline in Quillio
+Writer works in the app
+When done: export to Drive, Notion, OneDrive, or download DOCX
+
+The native editor is where @Quillio feedback and `/quillio-check` live most naturally — no switching between Slack and Google Docs.
+
+**quillio.app/settings — Admin panel:**
+
+- Asset Library — add/edit/remove asset types and fields
+- Prompt Library — customize per-field prompts
+- Personas — manage audience personas
+- Voice Guide — edit or regenerate voice guide
+- Integrations — connected services + connect new
+- Team — members, roles, reviewer, designer assignments
+- Billing — plan, usage, invoices
+- Danger Zone — delete account + data export
+
+### 3f — Voice Guide Onboarding Flow
+
+Instead of uploading a flat file, onboarding walks through building it:
+
+```
+Step 1 — Brand personality
+"How would you describe your brand voice in three words?"
+
+Step 2 — Tone guidance
+"What tone should copy always have?"
+[confident / empathetic / direct / playful /
+ authoritative — multi-select + custom]
+
+Step 3 — Do Not Use
+"Words or phrases your brand never uses?"
+[tag input]
+
+Step 4 — Words that work
+"Words or phrases that feel distinctly on-brand?"
+[tag input]
+
+Step 5 — Audience language
+"How does your audience describe their problems?"
+
+Step 6 — Tone reference
+"Name a publication, brand, or person whose tone
+you admire."
+
+Step 7 — Review + save
+Full editable preview of generated voice guide
+Always editable in settings after
+Always exportable as markdown
+```
+
+### 3g — Project Folder Creation
+
+When a brief comes in, Quillio creates the full project structure:
+
+```
+/Quillio Campaigns
+  /Q3 Always On — Agentforce Service
+    📄 Q3 Always On — Copy Doc
+    📄 Q3 Always On — Promo Deck (skeleton)
+    📁 Assets (empty, ready for exports)
+```
+
+Folder named after the campaign. Copy doc inside it. Deck skeleton inside it. Assets folder ready for exports.
+
+After creation, Quillio posts in the Slack channel:
+
+```
+:quillio: Project folder created — Q3 Always On
+
+📁 Campaign folder → [link]
+📄 Copy doc → [link]
+📄 Deck skeleton → [link]
+
+Copy has begun.
+```
+
+**Configuration:**
+
+- Set default parent folder once in web app settings, OR
+- Include folder link in brief text (already built), OR
+- `/quillio` creates subfolder inside the specified parent automatically
+
+### 3h — Approval Workflow
+
+```
+Copywriter clicks "Submit for Review"
     ↓
-┌─────────┬─────────┬──────────────┬──────────────┬─────────┐
-│  Figma  │  Canva  │ Adobe Express│  Adobe CC    │ Penpot  │
-│ adapter │ adapter │   adapter    │   adapter    │ adapter │
-└─────────┴─────────┴──────────────┴──────────────┴─────────┘
+Manager receives DM:
+":quillio: Copy ready for your review
+[campaign] — [assets]
+[Review Copy]"  ← opens copy doc
+    ↓
+Manager reviews, leaves comments, returns to Slack
+Taps [Approve] or [Request Changes]
+    ↓
+IF APPROVED:
+→ Copywriter DM: ":doc-done: Copy approved"
+→ Designer DM: "Copy approved — ready for handoff
+  [View Doc] [Populate Figma]"
+→ Copy auto-populates into deck
+→ Project status → "copy_approved"
+
+IF REQUEST CHANGES:
+→ Copywriter DM: "Changes requested —
+  [manager] left feedback in the doc
+  [Open Doc] [Resubmit when ready]"
+→ Version increments: v1 → v2 → v3
+→ Loop repeats
 ```
 
-**Figma** — power-user tool, Figma REST API, full read/write
-**Canva** — broadest user base, already connected in Claude, template-based creation maps perfectly to asset size database
-**Adobe Express** — Adobe's enterprise footprint, API available
-**Adobe Creative Cloud** — InDesign for print/long-form, Photoshop/Illustrator for production
-**Penpot** — open source, growing fast, self-hosted option for enterprise
+### 3i — Slack App Configuration for Phase 3
 
-Tenant connects whichever tools they use in web app settings. Quillio routes to the right adapter automatically.
+Required changes in api.slack.com/apps:
 
----
+- Enable public distribution
+- Add OAuth redirect: `https://quillio.app/oauth/slack/callback`
+- Add bot scopes: `channels:history`, `users:read`, `im:write`
+- Configure event subscriptions URL
+- Update slash command URL to quillio.app
+- Add privacy policy, ToS, support URLs
+- Upload app icon and screenshots
 
-## Phase 6 — Export and Packaging
+### 3j — Phase 3 Build Order
 
-**The use case:** Design is final, copy is locked. One command produces a production-ready asset package.
+**Week 1:** Railway Postgres + schema
+**Week 2:** Extract core pipeline — verify demo still works
+**Week 3:** Tenant resolver + seed default tenant from env vars
+**Week 4:** Slack OAuth — new workspaces can install
+**Week 5:** Google OAuth — new tenants connect their own Google
+**Week 6:** Web app install page + basic brief input form
+**Week 7:** Voice guide onboarding flow
+**Week 8:** Web app settings panel
+**Week 9:** Project folder creation
+**Week 10:** Approval workflow
 
-Quillio calls the design tool's export API for every frame, downloads files, zips them into a structured package organized by asset type and size, and posts to Slack or saves to the project folder.
+### 3k — Sign Up and Onboarding
 
-**Export structure:**
+**Sign up:** Slack-first. Slack OAuth IS the account. No separate form.
+Web-first option: "Continue with Google" for Teams users and freelancers.
+
+**Onboarding steps (4 clicks):**
+
+1. Slack workspace confirmed
+2. Connect Google Drive
+3. Asset library — default (30 types) or import Sheet
+4. Team setup (optional) — add reviewer, add designer
+   Done — /quillio works
+
+-----
+
+## Phase 4 — Design Handoff + Deck Generation
+
+### 4a — Figma Reference Ingestion
+
+When a brief links a Figma file, Quillio reads the frame names, layer names, and existing text content and feeds it into enrichment. Quillio understands what assets the designer is building and writes copy that fits them.
+
+Reference Insights shows:
 
 ```
-Q3_Always_On_Export/
-  LinkedIn/
-    LinkedIn_1200x627.png
-    LinkedIn_1200x627@2x.png
-  Meta/
-    Meta_1080x1080.png
-    Meta_1080x1920.png
-  Display/
-    Display_300x250.png
-    Display_728x90.png
-    Display_160x600.png
-    Display_320x50.png
-  Email/
-    Email_header.png
+From: Q3 Always On Campaign (figma)
+Frames: LinkedIn_1200x628 / Meta_1080x1080 / Display_300x250
+Text layers: [Headline] / [Body] / [CTA]
+Existing copy: "Resolve cases end-to-end" / "Get a Demo"
 ```
 
-**Slash command:** `/quillio-export [figma-link]`
-Or triggered via "Export Assets" button in Slack after approval.
+Requires: `FIGMA_ACCESS_TOKEN` env var (personal access token for single-tenant demo, Figma OAuth for Phase 3+)
 
----
+### 4b — Figma Layer Naming Convention
 
-## Phase 7 — Launch
+**Text layers:**
 
-**The use case:** Assets are exported and approved. One command pushes them live to ad platforms.
+```
+[Headline] [Body] [CTA] [Subheadline] [Preheader]
+[Subject-A] [Subject-B] [Design Zone]
+```
 
-Quillio reads the approved copy doc, takes the exported creative files, and pushes them to the ad platform via API. Campaign structure, targeting, and budget are either pulled from the brief or confirmed via a Slack modal before launch.
+**Frame naming:**
 
-**Platform APIs:**
+```
+LinkedIn_1200x628    Meta_1080x1080      Display_300x250
+Email-Nurture_       LP-Event_1440x900   LI-Carousel_1080x1080
+```
 
-- **Meta Marketing API** — campaigns, ad sets, ads, creative upload (first priority)
-- **Google Ads API** — display and search campaign creation
-- **LinkedIn Campaign Manager API** — sponsored content
+Configured per-tenant in `design_mappings` table via web app frame mapper.
 
-**Slash command:** `/quillio-launch`
+### 4c — Figma Master Template
 
-This turns Quillio from a production tool into a deployment tool. The gap between "assets ready" and "ads live" collapses to one command.
+One Quillio master Figma template file with all 30 asset types, all sizes, all text layers named correctly.
 
----
+**All 30 frames with verified 2026 specs:**
 
-## Phase 8 — Integration Expansion
+PAID SOCIAL:
 
-Building on Phase 3 OAuth, each follows the same fetch → sanitize → enrich pattern from Phase 2.
+- LinkedIn_1200x628 — 1200×628px
+- LinkedIn_1200x1200 — 1200×1200px
+- LinkedIn-Carousel_1080x1080 — 1080×1080px
+- Meta_1080x1080 — 1080×1080px
+- Meta_1080x1350 — 1080×1350px
+- Meta-Stories_1080x1920 — 1080×1920px
+- Meta-Carousel_1080x1080 — 1080×1080px
+- Twitter_1600x900 — 1600×900px
 
-### Storage / Output Destinations
+DISPLAY:
 
-The output destination is pluggable — tenant configures in web app settings:
+- Display_300x250 — 300×250px
+- Display_728x90 — 728×90px
+- Display_160x600 — 160×600px
+- Display_320x50 — 320×50px
+- Display_300x600 — 300×600px
+
+EMAIL:
+
+- Email-Nurture_600x800 — 600×800px
+- Email-Event-Invite_600x800 — 600×800px
+- Email-Event-Reminder_600x600 — 600×600px
+- Email-Event-Followup_600x800 — 600×800px
+- Email-Basho_600x400 — 600×400px
+
+EVENTS:
+
+- LP-Event_1440x900 — 1440×900px
+- LP-Event_390x844 — 390×844px (mobile)
+- Signage-General_2160x3840 — 2160×3840px
+- Signage-Session_1920x1080 — 1920×1080px
+- Signage-Directional_2160x1080 — 2160×1080px
+
+WEB:
+
+- LP-Campaign_1440x900 — 1440×900px
+- LP-Campaign_390x844 — 390×844px (mobile)
+- LP-Confirm_1440x900 — 1440×900px
+
+DIRECT MAIL:
+
+- DM-Box-Front_2400x1800 — 2400×1800px
+- DM-Box-Back_2400x1800 — 2400×1800px
+- DM-Letter_2550x3300 — 2550×3300px
+- DM-Insert_2550x1650 — 2550×1650px
+
+SALES ENABLEMENT:
+
+- Sales-OnePager_2550x3300 — 2550×3300px
+- Sales-BattleCard_2550x1650 — 2550×1650px
+
+ORGANIC SOCIAL:
+
+- Organic-LinkedIn_1200x628 — 1200×628px
+- Organic-Instagram_1080x1080 — 1080×1080px
+- Organic-Twitter_1600x900 — 1600×900px
+
+**Template approach:** Quillio duplicates the master template and removes irrelevant frames per brief. Designer opens a perfectly scaffolded file with exactly the right frames already set up.
+
+### 4d — Copy → Figma Population
+
+`/quillio-handoff` — run in the original brief channel.
+
+Flow:
+
+1. Looks up Project by channel + thread_ts
+2. Reads approved copy doc — extracts field values by asset type
+3. Reads Figma file — traverses frames, finds text layers by naming convention
+4. Builds copy map: `{ nodeId: copyValue }`
+5. Writes to Figma
+6. Posts in original thread (visible to all):
+
+```
+:doc-done: Copy populated in Figma — Q3 Always On
+• LinkedIn_1200x628 — 3 fields
+• Email-Nurture_ — 9 fields
+• LP-Event_ — 12 fields
+[Open Figma File]
+```
+
+**Multi-size:** frame prefix match applies copy to all sizes. `LinkedIn_*` frames all receive LinkedIn copy.
+
+**Slash command visibility:** Slash command ack is ephemeral (visible to typist only). Completion message is `chat.postMessage` — visible to whole channel. Posts in original brief thread via `thread_ts`.
+
+### 4e — Deck Generation (Living Artifact)
+
+The deck exists from day one and fills itself in as the chain progresses.
+
+**Stage 1 — Brief submitted (instant):**
+Deck skeleton with placeholder zones per asset.
+Copy zone: [Copy pending] / Design zone: [Design pending]
+
+**Stage 2 — Copy approved:**
+Copy zones auto-populate from approved doc.
+
+**Stage 3 — Figma complete:**
+Design zones auto-populate from Figma frames.
+Deck routes for final promo approval.
+
+**Deck types:**
+
+- Promo Approval Deck — one slide per asset, copy + design
+- Event Deck — Dreamforce/Connections overview
+- Campaign Overview Deck — strategy + assets + timeline
+- Brainstorm / Working Deck — territories + open questions
+
+**Asset-aware layouts:**
+
+| Asset type | Layout |
+|------------|--------|
+| Email, Landing Page, One-Pager | Copy left/top, design right/bottom |
+| LinkedIn/Meta Single Image | Graphic dominant, copy as caption |
+| Carousel | Grid — each card shows graphic + headline |
+| Battle Card, Basho Email | Text only, two-column |
+| Direct Mail | Split — front/back/flap |
+| On-Site Signage | Large type treatment |
+
+**Slash commands:**
+
+```
+/quillio-deck [brief] — standalone deck generation
+/quillio-figma [brief] — designer generates Figma template
+/quillio-export — exports frames, places in deck, packages files
+```
+
+**Stakeholder value:** The deck is the contract between requester and creative team. Scope misalignment surfaces day one. Status is self-serve — open the deck.
+
+### 4f — Quillio Feedback (ACD on demand)
+
+**Two modes — both writer-initiated, never passive:**
+
+**Mode 1 — `/quillio-feedback` (full doc ACD pass)**
+Writer submits when ready. Quillio reads entire doc, checks every field against:
+
+- voice.md rules and Do Not Use list
+- Brief Writer Direction (audience, tone, key messages)
+- Asset character count specs
+- Available proof points from Reference Insights
+
+Posts inline comments in the Google Doc at three levels:
+
+```
+🚫 VIOLATION — must fix
+"'Transform' is on the Do Not Use list."
+
+⚠️ WARNING — should review
+"This claim needs a stat. Available from brief:
+40% handle time reduction."
+
+💡 WORKING WELL — keep this
+"Strong opening. VP skepticism angle lands well."
+```
+
+**Mode 2 — `/quillio-check` (focused question)**
+Writer asks about one specific field or copy block.
+Quillio gives a direct opinion with reasoning.
+Slack reply only — fast and conversational.
+Like asking a colleague for a quick read.
+
+**Note:** Real-time as-you-write checking (Mode 3) deliberately excluded — interrupts flow, treats writer like they need supervision. Senior writers write freely, then check.
+
+**@Quillio in Google Doc:**
+Writer can @mention Quillio directly in a Google Doc comment:
+
+Scenario 1 — with selected text:
+
+> *Writer highlights headline, comments: "@Quillio is this on brief?"*
+> Quillio reads the selected range, evaluates against all context, replies in that comment thread with specific feedback.
+
+Scenario 2 — no selection:
+
+> *Writer comments: "@Quillio review everything"*
+> Quillio reads full doc, posts individual inline comments throughout.
+
+Because Quillio has the full campaign context — brief, reference docs, Writer Direction, voice guide, proof points — feedback is specific to this campaign, not generic. The writer doesn't re-explain context. They just ask.
+
+**Technical path:**
+Google Docs API `comments.list` + Google Drive webhooks for @mention detection. Quillio responds via `comments.insert` on the same thread.
+
+**Comment adapter — platform-agnostic:**
+
+```
+Quillio evaluates copy (identical regardless of platform)
+    ↓
+Comment formatter
+    ↓
+┌─────────────┬──────────────┬─────────────┐
+│ Google Docs │    Notion    │  Word/Graph │
+│  adapter    │   adapter    │   adapter   │
+└─────────────┴──────────────┴─────────────┘
+```
+
+Any trigger (Slack/Teams/web) works with any doc platform. Combinations: Slack + Notion, Teams + Google Docs, web + OneDrive — all valid.
+
+### 4g — Creative Intelligence Features
+
+Features that make writers more capable, not more supervised:
+
+**Brief Interrogator**
+After parsing, Quillio surfaces questions the brief didn't answer:
+
+> *"This brief doesn't specify a primary CTA goal — demo request or content download? That affects the headline angle significantly."*
+
+**Territory Generator**
+Before copy is written, generates 3 creative territory options — not copy, just angles:
+
+```
+Territory A — The Skeptic's Reframe
+Lead with acknowledging the AI disappointment cycle.
+
+Territory B — The Operator's Math
+Lead with the business case. 40% handle time reduction.
+
+Territory C — The Human Angle
+Lead with agent burnout and what it costs teams.
+```
+
+Writer picks a territory or rejects all three. Creative decision stays with the writer.
+
+**Voice Mirror**
+After copy is written, flags violations — not corrections:
+
+> *"'Seamlessly' appears in Offer Body 1 — on Do Not Use list."*
+> *"Subject Line 1 is 72 chars — 12 over 60-char mobile optimal."*
+> Writer fixes it. Quillio never rewrites for them.
+
+**Proof Point Prompt**
+When Quillio detects a vague claim, surfaces available stats:
+
+> *"You wrote 'resolve cases faster.' Available stats: '40% handle time reduction' or '68% Tier-1 resolution.' Either would make this specific."*
+
+**Brief-to-Copy Traceability**
+Every copy field links to the specific brief element that informed it. Hover over the LinkedIn headline:
+
+> *"This angle comes from: 'Agentforce resolves cases — they don't just deflect them' (Q3 Strategy Deck, Slide 4)"*
+
+-----
+
+## Phase 5 — Integration Expansion + Generative Deck
+
+### Generative Deck
+
+`/quillio-brainstorm [brief]`
+
+```
+→ Slide 1: Campaign brief summary
+→ Slide 2: Audience + pain points
+→ Slide 3-5: Creative territories with sample headlines
+→ Slide 6: Reference/inspiration
+→ Slide 7: Open questions for the team
+```
+
+Teams walk into the brainstorm with a starting point instead of a blank page.
+
+### Output Destination Integrations
+
+Pluggable output adapter — tenant configures in settings:
 
 - ✅ Google Drive / Google Docs (current)
-- ⬜ Notion — same API as reference reading
-- ⬜ OneDrive / SharePoint — Microsoft Graph API
-- ⬜ Download as DOCX — no integration required, always available as fallback
+- ⬜ Notion page
+- ⬜ OneDrive / Word doc
+- ⬜ Download as DOCX (always available as fallback)
 
 ### Reference Source Integrations
 
@@ -434,137 +831,203 @@ The output destination is pluggable — tenant configures in web app settings:
 - ✅ External URLs (Phase 2)
 - ✅ PDFs (Phase 2)
 - ✅ Slack Canvas (Phase 2)
-- ⬜ Notion pages — public integration OAuth, well documented
-- ⬜ Confluence — REST API, common in enterprise
-- ⬜ OneDrive / SharePoint — Microsoft Graph API
-- ⬜ Channel history brief inference — scan channel for brief content, generate without typing
+- ✅ Google Slides (Phase 2)
+- ⬜ Notion pages
+- ⬜ Confluence
+- ⬜ OneDrive / SharePoint
+- ⬜ Channel history brief inference
 
----
+### Design Tool Integrations
+
+```
+/core/handoff-interface.js
+    ↓
+┌─────────┬─────────┬──────────────┬──────────────┬─────────┐
+│  Figma  │  Canva  │ Adobe Express│  Adobe CC    │ Penpot  │
+└─────────┴─────────┴──────────────┴──────────────┴─────────┘
+```
+
+-----
+
+## Phase 6 — Export, Launch, Platform Expansion
+
+### Export and Packaging
+
+`/quillio-export` — exports all Figma frames, zips by asset type:
+
+```
+Q3_Always_On_Export/
+  LinkedIn/ — 1200x628.png, @2x
+  Meta/ — 1080x1080.png, 1080x1920.png
+  Display/ — 300x250.png, 728x90.png
+  Email/ — header.png
+```
+
+### Ad Platform Launch
+
+`/quillio-launch` — pushes approved assets live:
+
+- Meta Marketing API (first priority)
+- Google Ads API
+- LinkedIn Campaign Manager API
+
+Campaign structure, targeting, budget confirmed via Slack modal before launch.
+
+### Platform Adapters
+
+**Microsoft Teams:**
+
+- Microsoft Bot Framework
+- Adaptive Cards (Block Kit equivalent)
+- Azure Bot registration
+- Microsoft identity platform OAuth
+- 320M daily active users
+
+**Google Chat:**
+
+- Lowest effort — Google OAuth already built
+- New message format only
+- Same Drive/Docs integration carries over
+
+**Webex:** Phase 7 — healthcare, finance, government
+
+**Platform adapter note:**
+The doc feedback feature requires a comment adapter per doc platform. The Slack/Teams trigger layer and the doc comment layer are independent. Any trigger works with any doc platform. Tenant settings record which combinations are connected.
+
+-----
 
 ## Standalone Web App
 
-Once Phase 3 exists, the standalone app is another front door to the same core pipeline.
-
-**Architecture:**
-
 ```
-shared core (parse / enrich / build)
+/core/pipeline.js (shared)
     ↓
 ┌─────────────────┬──────────────────┐
 │  Slack adapter  │   Web adapter    │
-│  (existing)     │   (new)          │
 └─────────────────┴──────────────────┘
          ↓
-  shared tenant token store (Postgres)
+  shared Postgres database
 ```
 
-**Web app surfaces:**
+**Web app vs Slack app:**
 
-- Brief input form (replaces slash command)
-- Reference link management
-- Doc preview before committing to Drive
-- Integration connection panel
-- Asset library configuration
-- Project status board — all campaigns, asset status, approvals
-- Copy approval workflow
-- Figma frame mapper — connect a file, assign frames to asset types
-- Analytics — briefs processed, time to approval, most-used assets
+|                 | Slack | Web |
+|-----------------|-------|-----|
+| Brief input | `/quillio` | Text field + drag/drop refs |
+| Doc preview | No | Yes — before saving |
+| Native doc editor | No | Yes |
+| Project dashboard | No | Yes |
+| @Quillio feedback | Via Google Doc | Native in editor |
+| Settings | quillio.app/settings | Built in |
+| Best for | Speed, flow | Visibility, control |
 
----
+-----
+
+## Business Model
+
+**Pricing:**
+
+| Tier | Target | Price |
+|------|--------|-------|
+| Free | Individual copywriters | 10 briefs/month |
+| Pro | Small teams, agencies | $29/month unlimited |
+| Team | In-house creative teams | $99/month up to 10 seats |
+| Enterprise | Large orgs | Custom, SSO, admin controls |
+
+**Distribution:**
+
+- Slack App Directory listing
+- quillio.app — "Add to Slack" + web sign up
+- Microsoft Teams App Store (Phase 6)
+
+**Missing before any revenue:**
+
+- Terms of service + privacy policy
+- Stripe integration
+- Usage tracking and plan limits
+- Account deletion + data export (GDPR)
+- Support infrastructure
+
+-----
 
 ## Missing Features — Honest Audit
 
-Features not yet in the roadmap that belong there:
+**Copy versioning** — v1/v2/v3 per asset linked in Slack thread
+**Brief templates** — recurring campaign types as reusable starting points
+**Analytics** — briefs processed, time to approval, most-used asset types
+**Notification routing** — configurable per tenant
+**Email notifications** — for users not in Slack
+**Multi-workspace** — one account, multiple Slack workspaces
+**Admin vs member roles** — settings access control
+**Token encryption at rest** — tokens in Postgres cannot be plaintext
+**Automated testing** — smoke/wiring suite + CI in place; grow pure-logic + integration coverage
+**Job queue** — BullMQ for pipeline resilience under load
+**Demo video** — 90-second screen recording, most important sales asset
 
-**Copy versioning**
-Track v1, v2, v3 per asset — linked in the Slack thread. Figma handoff always pulls from the approved version. Without this, someone can accidentally push draft copy to Figma.
+-----
 
-**Team collaboration**
-Brief reviewed by ACD before copy generates. Two copywriters split assets on the same campaign. Basic assignment: "Kyle owns email, Sarah owns paid social." Lives in the Project object.
+## Website
 
-**Brief templates**
-Recurring campaign types — demand gen, event, product launch — have predictable structures. Pick a template, fill variables, submit. Quillio gets cleaner input, output is more consistent.
+**Brand system:**
 
-**Asset status tracking**
-Status board per campaign: LinkedIn done, Meta in review, email in draft. Especially valuable for larger teams. Lives in the web app.
+- Star Crush — all display headlines, buttons, nav
+- IBM Plex Sans — body copy and UI labels only
+- Sky blue `#4DD9D9` — primary accent
+- Warm gold `#C9A84C` — CTAs
+- Pixel sky — ambient background, lazy cloud animation
+- White/glass — all UI mockups and cards
+- Pixel art GIFs — quill, scroll, folder as section illustrations
 
-**Analytics**
-Briefs processed, average time to approved copy, most-used asset types, which reference source types produce the best enrichment. Table stakes for enterprise procurement conversations.
+**Homepage sections:**
 
-**Notification routing**
-Configurable per tenant — post to `#copy-ready` channel, or DM the requestor, or the channel where the brief was submitted.
+1. Hero — dark, "No more blank pages. No more bad briefs."
+2. Slack UI — animated, white/glass Slack window
+3. How It Works — 4 steps with animated Slack moments + GIFs
+4. Integrations — animated Figma handoff + pixel art logo grid
+5. Pricing — three white/glass cards
+6. Bottom CTA
 
----
+**Integration grid:**
 
-## August 2026 Demo Target
+- Live: Slack, Google Drive, Google Docs, Figma
+- Coming soon: Canva, Notion, Microsoft Teams, OneDrive, Adobe Express, Google Chat
 
-**What to have ready when returning to work:**
-
-| Item | Status |
-|------|--------|
-| V1 pipeline demo | ✅ Ready now |
-| Phase 2 reference ingestion demo | ✅ Ready now |
-| Canvas ingestion demo | ✅ Ready now |
-| Phase 3 OAuth + database spec | ✅ Documented |
-| Phase 4 Figma handoff spec | ✅ Documented |
-| Phase 5-7 vision spec | ✅ Documented |
-| Quillio website | ⬜ To build |
-| Demo script | ⬜ To write |
-| Positioning one-pager | ⬜ To write |
-
-**The 30-second demo story:**
-
-> "I built a creative operations platform that eliminates manual setup time in copy production. You drop a brief in Slack, it reads your reference docs — Drive files, PDFs, Slack canvases — and generates a fully structured copy doc in under 30 seconds. When copy is approved, one command populates the designer's Figma file across every size variant automatically. I built it to solve a problem our team has every single campaign."
-
-**The extended story (skip-level version):**
-
-> "The vision is brief to market in one pipeline. The brief comes in, Quillio generates the copy doc and the Figma file in parallel. Copy gets written and approved. One command populates the design. Another exports production-ready files. And when you're ready, one more command launches the ads directly into Meta, Google, and LinkedIn. Nothing like this exists as a connected pipeline. I've built the copy and reference ingestion layers. The design handoff and launch layers are specced and ready to build."
-
----
+-----
 
 ## Technical Reference
 
 **Stack:** Node/Express, Railway, GitHub (kylebrintnall-ux/quillio), Gemini 2.5-flash
-
-**Slack app:** ID `A0B8LQLMMKM`, workspace "Quillio Inc." (formerly LaunchPen demo)
-**Channels:** `#copy-requests`, `#copy-ready`
-**Slash command:** `/quillio`
-
-**Required scopes:**
-
-Bot token scopes:
-
-- `chat:write`, `chat:write.public`, `commands`, `incoming-webhook`
-
-User token scopes:
-
-- `canvases:read`, `files:read`
-- Future: `channels:history` (folder inference + channel brief)
+**Slack app:** ID `A0B8LQLMMKM`, workspace "Quillio Inc."
 
 **Key asset IDs:**
 
-- Asset & Field Library Sheet: `1skbkkKlHMDUzeG8_bFpcSjrvweumivePuSOvr5qIfqk`
-- Prompt Library Sheet: `1zviNQmy0lbY5voOu-yEpsRAASJevHFlKw4MfvvGy7TM`
-- Persona Bank Sheet: `17yfGrvBBuqSSLA6vweubEJJMp3aJ0GJM2oYuqHuMhxE`
-- Drive campaign folder: `1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U`
-- V2 Asset Sheet: `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`
+- Asset & Field Library v3: `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`
+- Quillio Campaigns folder: `1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U`
 - Sample campaign brief doc: `1JQBT6pPFGN6OcZqU4r_DdCyhKojqRXSXdRd7Nopm8pE`
+- Sample strategy deck (PPTX): Agentforce-Q3-Strategy-Deck-Quillio-Test.pptx
 
 **Phase 3 stack additions:**
 
-- Railway Postgres (one-click add in Railway dashboard)
+- Railway Postgres
 - express-session + connect-pg-simple
-- Raw fetch for OAuth token exchange (no abstraction library)
+- Raw fetch for OAuth token exchange
 
----
+-----
 
 ## Open Decisions
 
-| Decision | Options | Recommendation |
-|----------|---------|----------------|
-| Phase 3 start date | Now vs August return | August — finish recovery first |
-| Figma handoff trigger | Slack button vs slash command | Slack button on copy-complete message |
-| Design tool priority | Figma vs Canva first | Canva — broader user base, already connected |
-| Standalone app timing | Before vs after Figma handoff | After Phase 4 — same OAuth foundation |
-| Brief template format | Doc upload vs web UI builder | Doc upload first, UI builder Phase 3 |
-| Ad platform launch order | Meta vs Google vs LinkedIn first | Meta first — best API documentation |
+| Decision | Recommendation |
+|----------|----------------|
+| Phase 3 start | August return |
+| Database | Railway Postgres |
+| Web framework | Plain HTML + Express for install page |
+| Figma handoff trigger | Button on copy-complete message |
+| Design tool priority | Figma first, then Canva |
+| Standalone app timing | After Phase 4 |
+| Teams adapter | Phase 6 |
+| Native Quillio doc | Explore in Phase 4 |
+| Ad platform launch order | Meta first |
+| quillio.app domain | Secure before August |
+| Brief template format | Sheet import first, web UI later |
+| @Quillio in doc | Phase 4 alongside feedback feature |
+| Territory Generator | Phase 4 — buildable on existing Gemini pipeline |
+| Voice guide onboarding | Phase 3 — part of web app onboarding flow |

@@ -18,7 +18,26 @@ const {
   updateLive,
 } = require('../services/slack');
 
-const BUILDING_TEXT = ':quillio-scroll: Building your document…';
+// --- Emoji (custom Quillio emoji with standard fallbacks) ---
+// USE_CUSTOM_EMOJI is hardcoded true for now (existing behavior). When false,
+// messages render standard Slack emoji instead of the workspace's custom
+// :quillio-*: emoji — so a workspace that hasn't uploaded the custom set still
+// looks right. Wire this to the tenant's custom_emoji column in a later step.
+const USE_CUSTOM_EMOJI = true;
+const EMOJI = {
+  'quillio-scroll': '📜',
+  'quillio-doc-done': '📄',
+  'quillio-folder': '📁',
+  'quillio-copy-done': '🪶',
+  quillio: '🪶',
+};
+// Return the emoji string for a message: the custom :name: form when custom
+// emoji are enabled, else the standard fallback.
+function emoji(name) {
+  return USE_CUSTOM_EMOJI ? `:${name}:` : EMOJI[name] || '';
+}
+
+const BUILDING_TEXT = `${emoji('quillio-scroll')} Building your document…`;
 
 // The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
 // this before the slash command's 200 response has been sent. The entire body
@@ -165,7 +184,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         text: { type: 'mrkdwn', text: `📁 Saved to ${folderName}` },
       });
     }
-    await emit(`:quillio-doc-done: Your doc is ready — ${doc.title}`, resultBlocks, () =>
+    await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
       postResult(result, responseUrl)
     );
 
@@ -175,7 +194,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     const projectChannel = (live && live.channel) || opts.channelId;
     if (config.SLACK_BOT_TOKEN && projectChannel && projectFolderUrl) {
       const folderMsg =
-        `:quillio-folder: Project folder created — ${campaignTitle}\n\n` +
+        `${emoji('quillio-folder')} Project folder created — ${campaignTitle}\n\n` +
         `📁 Campaign folder → ${projectFolderUrl}\n` +
         `📄 Copy doc → ${doc.url}\n\n` +
         `Copy has begun.`;
@@ -217,14 +236,14 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
     progressMsg = `Drafting ${count} assets — full brief, grab a coffee. Back in ~5 minutes.`;
   }
 
-  const progressText = `:quillio: ${progressMsg}`;
+  const progressText = `${emoji('quillio')} ${progressMsg}`;
   if (canLive) await updateLive(channel, messageTs, progressText);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 
   const { title, fieldCount, url } = await pipeline.generateDraft(docId);
   console.log('[workflow] generateDraft returned — posting completion');
 
-  const completionText = `:quillio-copy-done: First draft ready — *${title}* (${fieldCount} field${
+  const completionText = `${emoji('quillio-copy-done')} First draft ready — *${title}* (${fieldCount} field${
     fieldCount === 1 ? '' : 's'
   } drafted).`;
 
@@ -245,4 +264,5 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
   console.log('[workflow] runGenerateDraft DONE');
 }
 
-module.exports = { runBriefWorkflow, runGenerateDraft };
+// emoji / EMOJI / USE_CUSTOM_EMOJI exported for unit tests.
+module.exports = { runBriefWorkflow, runGenerateDraft, emoji, EMOJI, USE_CUSTOM_EMOJI };

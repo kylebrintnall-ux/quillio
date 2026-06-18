@@ -44,6 +44,22 @@ test('adapters/slackWorkflow exposes the two entry points', () => {
   assert.strictEqual(typeof a.runGenerateDraft, 'function');
 });
 
+test('emoji config maps custom emoji to standard fallbacks', () => {
+  const { emoji, EMOJI, USE_CUSTOM_EMOJI } = require('../src/adapters/slackWorkflow');
+  // Existing behavior unchanged: custom emoji on, so emoji() yields :name:.
+  assert.strictEqual(USE_CUSTOM_EMOJI, true);
+  assert.strictEqual(emoji('quillio-scroll'), ':quillio-scroll:');
+  assert.strictEqual(emoji('quillio-folder'), ':quillio-folder:');
+  // Fallback map is complete and correct (used when USE_CUSTOM_EMOJI is false).
+  assert.deepStrictEqual(EMOJI, {
+    'quillio-scroll': '📜',
+    'quillio-doc-done': '📄',
+    'quillio-folder': '📁',
+    'quillio-copy-done': '🪶',
+    quillio: '🪶',
+  });
+});
+
 test('workflow.js shim re-exports the entry points', () => {
   const w = require('../src/workflow');
   assert.strictEqual(typeof w.runBriefWorkflow, 'function');

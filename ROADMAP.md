@@ -4,6 +4,10 @@
 **Author:** Kyle Brintnall
 **Status:** Phase 2 complete — Phase 3 planning
 
+> **Phase 3 execution plan:** the authoritative, week-by-week Phase 3 build plan
+> lives in [`docs/PHASE3.md`](docs/PHASE3.md). The Phase 3 section below is the
+> high-level overview; `docs/PHASE3.md` is the source of truth for the build.
+
 -----
 
 ## What Quillio Is
@@ -178,6 +182,8 @@ DATABASE_URL             — Phase 3 Postgres
 -----
 
 ## Phase 3 — Platform Foundation
+
+> Authoritative week-by-week plan: [`docs/PHASE3.md`](docs/PHASE3.md).
 
 ### OAuth + Multi-Tenant + Database + Web App
 

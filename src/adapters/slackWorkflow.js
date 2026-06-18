@@ -1,0 +1,248 @@
+'use strict';
+
+// Slack adapter: owns the Slack message lifecycle and orchestrates the core
+// pipeline. All platform-agnostic work lives in core/pipeline.js; this file is
+// the only place that talks to Slack (via ../services/slack).
+
+const config = require('../config');
+const pipeline = require('../core/pipeline');
+const {
+  postResult,
+  updateMessage,
+  postChatMessage,
+  postFolderAccessHelp,
+  buildFolderAccessBlocks,
+  buildResultBlocks,
+  copyCompleteBlocks,
+  postLive,
+  updateLive,
+} = require('../services/slack');
+
+const BUILDING_TEXT = ':quillio-scroll: Building your document…';
+
+// The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
+// this before the slash command's 200 response has been sent. The entire body
+// is wrapped so any failure surfaces in the logs with a full stack trace
+// instead of dying silently; it re-throws so the caller can notify Slack.
+//
+// opts.forceDefaultFolder ignores the brief's folder (used by "Build in Default
+// Folder"); opts.folderIdOverride pins a specific folder (used by "Retry").
+async function runBriefWorkflow(brief, responseUrl, opts = {}) {
+  // Confirms the pipeline is actually invoked after the ack (before any I/O).
+  console.log('[workflow] runBriefWorkflow START — brief chars:', (brief || '').length);
+
+  // Establish a single "live" message we transform in place (chat.update is the
+  // only reliable way to do this). opts.live = {channel, ts} edits an existing
+  // message (recovery buttons); opts.channelId posts a fresh building message.
+  // If neither works (no bot token), fall back to response_url posts.
+  let live = opts.live || null;
+  const canLive = !!config.SLACK_BOT_TOKEN;
+  try {
+    if (live && canLive) {
+      await updateLive(live.channel, live.ts, BUILDING_TEXT);
+    } else if (opts.channelId && canLive) {
+      live = await postLive(opts.channelId, BUILDING_TEXT);
+    } else if (responseUrl) {
+      await updateMessage(BUILDING_TEXT, responseUrl, { newMessage: true, label: 'build-progress' });
+      live = null;
+    }
+  } catch (e) {
+    console.error('[workflow] building message failed:', e.message);
+  }
+
+  // Give Slack ~500ms to render the "Building…" message before the pipeline
+  // starts updating it in place — a fast pipeline (or a slow Slack API
+  // response) can otherwise overwrite it before it visibly appears.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  // Emit a final/early message: edit the live message in place when we have one,
+  // otherwise fall back to a response_url post.
+  const emit = async (text, blocks, fallback) => {
+    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks);
+    return fallback();
+  };
+
+  try {
+    // 1. Parse the brief into title / summary / writerPrompt / assets (+ folder & links).
+    const parsedBrief = await pipeline.parseBrief(brief);
+    const { campaignTitle, assets, unmatchedAssets, folderId, referenceLinks } = parsedBrief;
+    let { summary, writerPrompt } = parsedBrief; // may be enriched below
+    let referenceInsights = []; // populated by enrichment, rendered in the doc
+    console.log('[workflow] Gemini parse OK — assets:', JSON.stringify(assets));
+    console.log('[workflow] campaignTitle:', JSON.stringify(campaignTitle));
+    console.log('[workflow] unmatchedAssets:', JSON.stringify(unmatchedAssets));
+    console.log('[workflow] folderId:', folderId, '| referenceLinks:', JSON.stringify(referenceLinks));
+
+    // Issue 2: all requested assets are unknown — don't substitute a nearest
+    // guess; tell the user exactly what couldn't be matched. (A vague brief with
+    // no assets at all still falls through to "all assets".)
+    if (assets.length === 0 && unmatchedAssets.length > 0) {
+      console.log('[workflow] no assets matched the library — surfacing unmatched list');
+      const unmatchedText = `Couldn't match these to your asset library: ${unmatchedAssets.join(
+        ', '
+      )}. Add them to your library or try different asset names.`;
+      await emit(unmatchedText, undefined, () =>
+        updateMessage(unmatchedText, responseUrl, { label: 'unmatched-assets' })
+      );
+      return;
+    }
+
+    // Extract a Drive folder URL straight from the brief text (deterministic
+    // regex). If present, the doc is created there; otherwise the default folder.
+    const briefFolderId = pipeline.extractBriefFolderId(brief);
+    if (briefFolderId) {
+      console.log('[workflow] folderId from brief:', briefFolderId);
+    } else {
+      console.log('[workflow] folderId: default (none in brief)');
+    }
+
+    // Decide the target folder: forced default, explicit override, or the
+    // brief's folder (null → createDocument uses the default DRIVE_FOLDER_ID).
+    const effectiveFolderId = opts.forceDefaultFolder
+      ? null
+      : opts.folderIdOverride !== undefined
+        ? opts.folderIdOverride
+        : briefFolderId;
+    // Whether we're using a folder the brief linked (for the confirmation line).
+    const folderFromBrief = !!effectiveFolderId && effectiveFolderId === briefFolderId;
+
+    // Phase 2 (additive): read linked references and enrich the summary / writer
+    // direction with their content. Fully isolated — any failure leaves the
+    // parsed brief unchanged and the pipeline untouched.
+    try {
+      const { refs, counts } = await pipeline.fetchAllReferences(referenceLinks);
+      if (refs.length > 0) {
+        const enriched = await pipeline.enrichWithReferences({ summary, writerPrompt }, refs);
+        summary = enriched.summary;
+        writerPrompt = enriched.writerPrompt;
+        referenceInsights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
+        console.log(
+          `[Quillio] enriched brief from ${counts.drive} Drive + ${counts.external} external + ${counts.pdf} PDF + ${counts.canvas} canvas reference(s)`
+        );
+      }
+    } catch (err) {
+      console.error('[Quillio] reference enrichment skipped:', err.message);
+    }
+
+    // 2-3. Read specs, create the project folder, and build the document. If a
+    //      brief-provided folder is inaccessible, surface the recoverable
+    //      folder-access flow (Issue 3) instead of a dead-end error.
+    let docResult;
+    try {
+      docResult = await pipeline.generateDoc(
+        { brief, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
+        effectiveFolderId
+      );
+    } catch (err) {
+      if (pipeline.isFolderAccessError(err, effectiveFolderId)) {
+        console.log('[workflow] folder access error — offering recovery for', effectiveFolderId);
+        const email = await pipeline.getServiceAccountEmail();
+        const help = buildFolderAccessBlocks({ email, folderId: effectiveFolderId, brief });
+        await emit(help.text, help.blocks, () =>
+          postFolderAccessHelp({ email, folderId: effectiveFolderId, brief, responseUrl })
+        );
+        return;
+      }
+      throw err;
+    }
+    const { doc, assetSpecs, projectFolderUrl } = docResult;
+    console.log('[workflow] doc created:', doc.id);
+
+    // 4. Show the doc-ready card — editing the build message in place when we
+    //    have a live message, else posting via response_url.
+    const result = {
+      title: doc.title,
+      webViewLink: doc.url,
+      assets: assetSpecs.map((a) => a.assetType),
+      docId: doc.id,
+    };
+    const resultBlocks = buildResultBlocks(result).blocks;
+    // If the doc went to a brief-linked folder, note it below the doc card.
+    if (folderFromBrief) {
+      const folderName = (await pipeline.getFolderName(effectiveFolderId)) || 'your linked folder';
+      resultBlocks.push({
+        type: 'section',
+        text: { type: 'mrkdwn', text: `📁 Saved to ${folderName}` },
+      });
+    }
+    await emit(`:quillio-doc-done: Your doc is ready — ${doc.title}`, resultBlocks, () =>
+      postResult(result, responseUrl)
+    );
+
+    // Post the project-folder confirmation as a fresh (non-ephemeral) channel
+    // message. Best-effort: needs a bot token + channel + a folder that was
+    // actually created.
+    const projectChannel = (live && live.channel) || opts.channelId;
+    if (config.SLACK_BOT_TOKEN && projectChannel && projectFolderUrl) {
+      const folderMsg =
+        `:quillio: Project folder created — ${campaignTitle}\n\n` +
+        `📁 Campaign folder → ${projectFolderUrl}\n` +
+        `📄 Copy doc → ${doc.url}\n\n` +
+        `Copy has begun.`;
+      try {
+        await postChatMessage({ channel: projectChannel, text: folderMsg });
+      } catch (e) {
+        console.error('[Quillio] project folder message failed:', e.message);
+      }
+    }
+
+    console.log('[workflow] runBriefWorkflow DONE — doc', doc.id);
+  } catch (err) {
+    console.error('[workflow] runBriefWorkflow FAILED:', err && err.stack ? err.stack : err);
+    throw err;
+  }
+}
+
+// Handles the "Generate First Draft" button. Transforms the clicked card in
+// place via chat.update: generating → first-draft-ready (single message, no
+// stray posts). Falls back to response_url progress + chat.postMessage
+// completion if the bot token / message ts isn't available.
+async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
+  const canLive = !!config.SLACK_BOT_TOKEN && channel && messageTs;
+  console.log('[workflow] runGenerateDraft START — canLive:', canLive, '| channel:', channel || '(none)');
+
+  // Count the assets in the doc (one HEADING_3 heading per asset) so the
+  // progress message can name how many are being drafted.
+  const assetCount = await pipeline.countDocAssets(docId);
+
+  const count = assetCount;
+  let progressMsg;
+  if (count <= 3) {
+    progressMsg = `Drafting ${count} asset${count === 1 ? '' : 's'} — back in a minute.`;
+  } else if (count <= 8) {
+    progressMsg = `Drafting ${count} assets — usually 2–3 minutes. Hang tight.`;
+  } else if (count <= 20) {
+    progressMsg = `Drafting ${count} assets — this one's a big brief, give it 4–5 minutes.`;
+  } else {
+    progressMsg = `Drafting ${count} assets — full brief, grab a coffee. Back in ~5 minutes.`;
+  }
+
+  const progressText = `:quillio: ${progressMsg}`;
+  if (canLive) await updateLive(channel, messageTs, progressText);
+  else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
+
+  const { title, fieldCount, url } = await pipeline.generateDraft(docId);
+  console.log('[workflow] generateDraft returned — posting completion');
+
+  const completionText = `:quillio-copy-done: First draft ready — *${title}* (${fieldCount} field${
+    fieldCount === 1 ? '' : 's'
+  } drafted).`;
+
+  if (canLive) {
+    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId));
+  } else {
+    try {
+      await postChatMessage({ channel, text: completionText, webViewLink: url });
+    } catch (err) {
+      console.error('[workflow] completion fallback to response_url:', err.message);
+      await updateMessage(completionText, responseUrl, {
+        webViewLink: url,
+        label: 'draft-complete',
+        newMessage: true,
+      });
+    }
+  }
+  console.log('[workflow] runGenerateDraft DONE');
+}
+
+module.exports = { runBriefWorkflow, runGenerateDraft };

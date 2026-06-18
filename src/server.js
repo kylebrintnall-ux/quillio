@@ -8,6 +8,7 @@ const { getClients } = require('./google');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
 const { generateVoiceGuide } = require('./services/gemini');
 const { saveVoiceGuide } = require('./db');
+const oauthRoutes = require('./routes/oauth');
 const { updateMessage, updateLive, openInDriveBlocks, logBotIdentity } = require('./services/slack');
 
 const app = express();
@@ -18,6 +19,10 @@ const rawBodySaver = (req, res, buf) => {
 };
 app.use(express.urlencoded({ extended: true, verify: rawBodySaver }));
 app.use(express.json({ verify: rawBodySaver }));
+
+// Slack OAuth install flow (/oauth/slack, /oauth/slack/callback, /welcome).
+// Separate from the slash-command/interactions handlers below.
+app.use(oauthRoutes);
 
 // Slack request signature verification (enforced). Fails CLOSED: if no signing
 // secret is configured we can't verify, so we reject rather than silently

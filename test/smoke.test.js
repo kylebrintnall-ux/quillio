@@ -164,11 +164,33 @@ test('fieldLabel renders char-limit brackets per min/max', () => {
   assert.strictEqual(fieldLabel({ fieldName: 'CTA', charMin: 0, charMax: 0 }), 'CTA');
 });
 
-test('db exposes the tenant resolver API', () => {
+test('db exposes the tenant resolver + install-write API', () => {
   const db = require('../src/db');
-  for (const fn of ['getTenantByWorkspace', 'getTenantToken', 'resolveTenant']) {
+  for (const fn of [
+    'getTenantByWorkspace',
+    'getTenantToken',
+    'resolveTenant',
+    'createTenantIfMissing',
+    'saveTenantToken',
+  ]) {
     assert.strictEqual(typeof db[fn], 'function', `db.${fn} should be a function`);
   }
+});
+
+test('install writes degrade gracefully with no database', async () => {
+  const { createTenantIfMissing, saveTenantToken } = require('../src/db');
+  assert.strictEqual(await createTenantIfMissing('T123', 'Acme'), false);
+  assert.strictEqual(await saveTenantToken('T123', 'slack_bot', 'xoxb-x'), false);
+});
+
+test('oauth router mounts and exposes its routes', () => {
+  const router = require('../src/routes/oauth');
+  assert.strictEqual(typeof router, 'function', 'router is an express middleware fn');
+  const paths = router.stack
+    .filter((layer) => layer.route)
+    .map((layer) => layer.route.path)
+    .sort();
+  assert.deepStrictEqual(paths, ['/oauth/slack', '/oauth/slack/callback', '/welcome']);
 });
 
 test('getTenantByWorkspace returns null with no database', async () => {

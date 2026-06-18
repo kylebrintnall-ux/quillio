@@ -99,9 +99,48 @@ async function resolveTenant(workspaceId) {
   return { tenant, tokens, source: 'db' };
 }
 
+// --- Install-flow writes (Phase 3 Slack OAuth) ---
+
+// Create a tenant row if one doesn't already exist. Matches the seed convention
+// (id = workspace id). Returns true if the write ran, false if there's no DB.
+async function createTenantIfMissing(workspaceId, workspaceName) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping createTenantIfMissing');
+    return false;
+  }
+  await p.query(
+    `INSERT INTO tenants (id, workspace_id, workspace_name, plan, onboarding_complete)
+       VALUES ($1, $1, $2, 'demo', false)
+     ON CONFLICT (id) DO NOTHING`,
+    [workspaceId, workspaceName || null]
+  );
+  return true;
+}
+
+// Upsert one of a tenant's service tokens. Returns true if the write ran, false
+// if there's no DB.
+async function saveTenantToken(tenantId, service, accessToken) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping saveTenantToken');
+    return false;
+  }
+  await p.query(
+    `INSERT INTO tenant_tokens (tenant_id, service, access_token, updated_at)
+       VALUES ($1, $2, $3, now())
+     ON CONFLICT (tenant_id, service) DO UPDATE
+       SET access_token = EXCLUDED.access_token, updated_at = now()`,
+    [tenantId, service, accessToken]
+  );
+  return true;
+}
+
 module.exports = {
   saveVoiceGuide,
   getTenantByWorkspace,
   getTenantToken,
   resolveTenant,
+  createTenantIfMissing,
+  saveTenantToken,
 };

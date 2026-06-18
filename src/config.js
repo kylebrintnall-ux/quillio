@@ -80,5 +80,11 @@ module.exports = {
   // to post in channels the bot isn't a member of).
   SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
 
+  // Slack OAuth (Phase 3 install flow). Client id/secret identify the Quillio
+  // app; redirect URI must match the one registered in the Slack app config.
+  SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID,
+  SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET,
+  SLACK_REDIRECT_URI: process.env.SLACK_REDIRECT_URI,
+
   ALLOWED_ASSETS,
 };

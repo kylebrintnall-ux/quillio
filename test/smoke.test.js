@@ -163,3 +163,29 @@ test('fieldLabel renders char-limit brackets per min/max', () => {
   assert.strictEqual(fieldLabel({ fieldName: 'Body', charMin: 0, charMax: 500 }), 'Body [500]');
   assert.strictEqual(fieldLabel({ fieldName: 'CTA', charMin: 0, charMax: 0 }), 'CTA');
 });
+
+test('db exposes the tenant resolver API', () => {
+  const db = require('../src/db');
+  for (const fn of ['getTenantByWorkspace', 'getTenantToken', 'resolveTenant']) {
+    assert.strictEqual(typeof db[fn], 'function', `db.${fn} should be a function`);
+  }
+});
+
+test('getTenantByWorkspace returns null with no database', async () => {
+  // No DATABASE_URL in the test env → graceful null, not a throw.
+  const { getTenantByWorkspace } = require('../src/db');
+  assert.strictEqual(await getTenantByWorkspace('T0B8LPRDKHR'), null);
+});
+
+test('resolveTenant falls back to a consistent env-var shape with no DB', async () => {
+  const { resolveTenant } = require('../src/db');
+  const r = await resolveTenant('T0B8LPRDKHR');
+  assert.strictEqual(r.source, 'env');
+  // tenant shape
+  assert.strictEqual(r.tenant.workspace_id, 'T0B8LPRDKHR');
+  for (const k of ['id', 'workspace_id', 'workspace_name', 'plan', 'onboarding_complete', 'default_folder_id']) {
+    assert.ok(k in r.tenant, `tenant.${k} present`);
+  }
+  // tokens shape — keys always present (values may be null without env set)
+  assert.deepStrictEqual(Object.keys(r.tokens).sort(), ['google', 'slack_bot', 'slack_user']);
+});

@@ -4,8 +4,8 @@
 // pipeline. All platform-agnostic work lives in core/pipeline.js; this file is
 // the only place that talks to Slack (via ../services/slack).
 
-const config = require('../config');
 const pipeline = require('../core/pipeline');
+const { resolveTenant } = require('../db');
 const {
   postResult,
   updateMessage,
@@ -32,17 +32,21 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   // Confirms the pipeline is actually invoked after the ack (before any I/O).
   console.log('[workflow] runBriefWorkflow START — brief chars:', (brief || '').length);
 
+  // Resolve this workspace's tenant tokens (DB-backed; env fallback for the
+  // demo workspace). Token source changes; nothing else does.
+  const { tokens } = await resolveTenant(opts.workspaceId);
+
   // Establish a single "live" message we transform in place (chat.update is the
   // only reliable way to do this). opts.live = {channel, ts} edits an existing
   // message (recovery buttons); opts.channelId posts a fresh building message.
   // If neither works (no bot token), fall back to response_url posts.
   let live = opts.live || null;
-  const canLive = !!config.SLACK_BOT_TOKEN;
+  const canLive = !!tokens.slack_bot;
   try {
     if (live && canLive) {
-      await updateLive(live.channel, live.ts, BUILDING_TEXT);
+      await updateLive(live.channel, live.ts, BUILDING_TEXT, undefined, tokens.slack_bot);
     } else if (opts.channelId && canLive) {
-      live = await postLive(opts.channelId, BUILDING_TEXT);
+      live = await postLive(opts.channelId, BUILDING_TEXT, undefined, tokens.slack_bot);
     } else if (responseUrl) {
       await updateMessage(BUILDING_TEXT, responseUrl, { newMessage: true, label: 'build-progress' });
       live = null;
@@ -59,7 +63,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   // Emit a final/early message: edit the live message in place when we have one,
   // otherwise fall back to a response_url post.
   const emit = async (text, blocks, fallback) => {
-    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks);
+    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks, tokens.slack_bot);
     return fallback();
   };
 
@@ -111,7 +115,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // direction with their content. Fully isolated — any failure leaves the
     // parsed brief unchanged and the pipeline untouched.
     try {
-      const { refs, counts } = await pipeline.fetchAllReferences(referenceLinks);
+      const { refs, counts } = await pipeline.fetchAllReferences(referenceLinks, tokens.slack_user);
       if (refs.length > 0) {
         const enriched = await pipeline.enrichWithReferences({ summary, writerPrompt }, refs);
         summary = enriched.summary;
@@ -174,14 +178,14 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // message. Best-effort: needs a bot token + channel + a folder that was
     // actually created.
     const projectChannel = (live && live.channel) || opts.channelId;
-    if (config.SLACK_BOT_TOKEN && projectChannel && projectFolderUrl) {
+    if (tokens.slack_bot && projectChannel && projectFolderUrl) {
       const folderMsg =
         `${emoji('quillio-folder')} Project folder created — ${campaignTitle}\n\n` +
         `📁 Campaign folder → ${projectFolderUrl}\n` +
         `📄 Copy doc → ${doc.url}\n\n` +
         `Copy has begun.`;
       try {
-        await postChatMessage({ channel: projectChannel, text: folderMsg });
+        await postChatMessage({ channel: projectChannel, text: folderMsg, token: tokens.slack_bot });
       } catch (e) {
         console.error('[Quillio] project folder message failed:', e.message);
       }
@@ -198,8 +202,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 // place via chat.update: generating → first-draft-ready (single message, no
 // stray posts). Falls back to response_url progress + chat.postMessage
 // completion if the bot token / message ts isn't available.
-async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
-  const canLive = !!config.SLACK_BOT_TOKEN && channel && messageTs;
+async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspaceId) {
+  const { tokens } = await resolveTenant(workspaceId);
+  const canLive = !!tokens.slack_bot && channel && messageTs;
   console.log('[workflow] runGenerateDraft START — canLive:', canLive, '| channel:', channel || '(none)');
 
   // Count the assets in the doc (one HEADING_3 heading per asset) so the
@@ -219,7 +224,7 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
   }
 
   const progressText = `${emoji('quillio')} ${progressMsg}`;
-  if (canLive) await updateLive(channel, messageTs, progressText);
+  if (canLive) await updateLive(channel, messageTs, progressText, undefined, tokens.slack_bot);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 
   const { title, fieldCount, url } = await pipeline.generateDraft(docId);
@@ -230,10 +235,10 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs) {
   } drafted).`;
 
   if (canLive) {
-    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId));
+    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId), tokens.slack_bot);
   } else {
     try {
-      await postChatMessage({ channel, text: completionText, webViewLink: url });
+      await postChatMessage({ channel, text: completionText, webViewLink: url, token: tokens.slack_bot });
     } catch (err) {
       console.error('[workflow] completion fallback to response_url:', err.message);
       await updateMessage(completionText, responseUrl, {

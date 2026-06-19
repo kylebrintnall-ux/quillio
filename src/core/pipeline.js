@@ -325,11 +325,11 @@ function extractCanvasId(url) {
   return after.split(/[?#]/)[0].split('/').filter(Boolean).pop() || '';
 }
 
-async function fetchSlackCanvasContent(links) {
+async function fetchSlackCanvasContent(links, userToken) {
   if (!Array.isArray(links) || links.length === 0) return [];
-  // Prefer the user token (reads what the authorizing user can see, including
-  // user-owned canvases); fall back to the bot token when none is configured.
-  const token = process.env.SLACK_USER_TOKEN || process.env.SLACK_BOT_TOKEN;
+  // Prefer the resolved tenant user token (reads what the authorizing user can
+  // see, including user-owned canvases); fall back to env when none is passed.
+  const token = userToken || process.env.SLACK_USER_TOKEN || process.env.SLACK_BOT_TOKEN;
   if (!token) return [];
   const out = [];
 
@@ -427,7 +427,7 @@ async function parseBrief(briefText) {
 // canvases) in parallel, tag each with its source type, then second-pass fetch
 // any URLs harvested from a Slides deck (appended to referenceLinks). Returns
 // { refs, counts } where counts are the first-pass per-type counts.
-async function fetchAllReferences(referenceLinks) {
+async function fetchAllReferences(referenceLinks, userToken) {
   // Snapshot links before fetching: fetchDriveReferenceContent may append
   // URLs harvested from a Slides deck, which we second-pass fetch below.
   const originalLinks = [...referenceLinks];
@@ -435,7 +435,7 @@ async function fetchAllReferences(referenceLinks) {
     fetchDriveReferenceContent(referenceLinks),
     fetchExternalURLContent(referenceLinks),
     fetchPDFContent(referenceLinks),
-    fetchSlackCanvasContent(referenceLinks),
+    fetchSlackCanvasContent(referenceLinks, userToken),
   ]);
   // Tag each reference with its true source type (the fetcher knows it;
   // Gemini only guesses). pdf/canvas already carry a type.

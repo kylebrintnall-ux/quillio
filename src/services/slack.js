@@ -185,8 +185,9 @@ function changesRequestedBlocks({ reviewerName, docUrl, projectRef }) {
 // a long generation finishes after the interaction's response_url has lapsed.
 // Requires SLACK_BOT_TOKEN (chat:write); the bot must be able to post to the
 // channel (member, or chat:write.public). Returns Slack's JSON response.
-async function postChatMessage({ channel, text, webViewLink }) {
-  if (!config.SLACK_BOT_TOKEN) throw new Error('SLACK_BOT_TOKEN is not set.');
+async function postChatMessage({ channel, text, webViewLink, token }) {
+  const botToken = token || config.SLACK_BOT_TOKEN;
+  if (!botToken) throw new Error('SLACK_BOT_TOKEN is not set.');
   if (!channel) throw new Error('No channel id for chat.postMessage.');
 
   const message = { channel, text };
@@ -196,7 +197,7 @@ async function postChatMessage({ channel, text, webViewLink }) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+      Authorization: `Bearer ${botToken}`,
     },
     body: JSON.stringify(message),
   });
@@ -306,13 +307,14 @@ async function postFolderAccessHelp({ email, folderId, brief, responseUrl }) {
 // status message into its result in place (response_url replace_original can't
 // edit the slash HTTP-ack message or a previously-posted response_url message).
 
-async function slackApi(method, payload) {
-  if (!config.SLACK_BOT_TOKEN) throw new Error('SLACK_BOT_TOKEN is not set.');
+async function slackApi(method, payload, token) {
+  const botToken = token || config.SLACK_BOT_TOKEN;
+  if (!botToken) throw new Error('SLACK_BOT_TOKEN is not set.');
   const res = await fetch('https://slack.com/api/' + method, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      Authorization: `Bearer ${config.SLACK_BOT_TOKEN}`,
+      Authorization: `Bearer ${botToken}`,
     },
     body: JSON.stringify(payload),
   });
@@ -327,14 +329,18 @@ async function slackApi(method, payload) {
 }
 
 // Post a "live" (editable) message; returns { channel, ts }.
-async function postLive(channel, text, blocks) {
-  const data = await slackApi('chat.postMessage', blocks ? { channel, text, blocks } : { channel, text });
+async function postLive(channel, text, blocks, token) {
+  const data = await slackApi(
+    'chat.postMessage',
+    blocks ? { channel, text, blocks } : { channel, text },
+    token
+  );
   return { channel: data.channel, ts: data.ts };
 }
 
 // Edit a live message in place by ts.
-async function updateLive(channel, ts, text, blocks) {
-  return slackApi('chat.update', blocks ? { channel, ts, text, blocks } : { channel, ts, text });
+async function updateLive(channel, ts, text, blocks, token) {
+  return slackApi('chat.update', blocks ? { channel, ts, text, blocks } : { channel, ts, text }, token);
 }
 
 // Diagnostic: log the bot user the SLACK_BOT_TOKEN actually belongs to. The

@@ -150,7 +150,8 @@ app.post('/slack/command', (req, res) => {
   //    never block or crash the request.
   const responseUrl = req.body.response_url;
   const channelId = req.body.channel_id;
-  runBriefWorkflow(brief, responseUrl, { channelId }).catch(async (err) => {
+  const workspaceId = req.body.team_id;
+  runBriefWorkflow(brief, responseUrl, { channelId, workspaceId }).catch(async (err) => {
     console.error('runBriefWorkflow failed:', err);
     try {
       await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
@@ -192,11 +193,12 @@ app.post('/slack/interactions', (req, res) => {
   // The clicked message — we edit it in place via chat.update (channel + ts).
   const channelId = payload.channel && payload.channel.id;
   const messageTs = payload.message && payload.message.ts;
+  const workspaceId = payload.team && payload.team.id;
   const canLive = !!config.SLACK_BOT_TOKEN && channelId && messageTs;
 
   if (action.action_id === 'generate_first_draft') {
     const docId = action.value;
-    runGenerateDraft(docId, responseUrl, channelId, messageTs).catch(async (err) => {
+    runGenerateDraft(docId, responseUrl, channelId, messageTs, workspaceId).catch(async (err) => {
       console.error('runGenerateDraft failed:', err);
       try {
         await updateMessage(`⚠️ Draft generation failed: ${err.message}`, responseUrl);
@@ -228,6 +230,7 @@ app.post('/slack/interactions', (req, res) => {
         ? { forceDefaultFolder: true }
         : { folderIdOverride: ctx.folderId };
     if (canLive) opts.live = { channel: channelId, ts: messageTs };
+    opts.workspaceId = workspaceId;
 
     runBriefWorkflow(ctx.brief || '', responseUrl, opts).catch(async (err) => {
       console.error('folder-recovery rerun failed:', err);

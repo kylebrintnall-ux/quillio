@@ -137,6 +137,7 @@ async function saveTenantToken(tenantId, service, accessToken) {
 }
 
 module.exports = {
+  getPool,
   saveVoiceGuide,
   getTenantByWorkspace,
   getTenantToken,

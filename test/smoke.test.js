@@ -227,3 +227,76 @@ test('resolveTenant falls back to a consistent env-var shape with no DB', async 
   // tokens shape — keys always present (values may be null without env set)
   assert.deepStrictEqual(Object.keys(r.tokens).sort(), ['google', 'slack_bot', 'slack_user']);
 });
+
+// --- Week 7: per-tenant asset library ---
+
+test('defaultAssets is the 30-type v3 library with valid shape', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  assert.strictEqual(DEFAULT_ASSETS.length, 30, 'exactly 30 asset types');
+
+  const groups = new Set([
+    'Paid Social',
+    'Display',
+    'Email',
+    'Events',
+    'Web',
+    'Organic Social',
+    'Direct Mail',
+    'Sales Enablement',
+  ]);
+
+  const seenSortOrders = new Set();
+  for (const a of DEFAULT_ASSETS) {
+    // required top-level keys
+    for (const k of ['name', 'group', 'sort_order', 'is_active', 'spec_source', 'spec_version', 'fields']) {
+      assert.ok(k in a, `asset "${a.name}" missing ${k}`);
+    }
+    assert.strictEqual(typeof a.name, 'string');
+    assert.ok(a.name.length > 0, 'asset name non-empty');
+    assert.ok(groups.has(a.group), `asset "${a.name}" has known group (got "${a.group}")`);
+    assert.strictEqual(a.is_active, true);
+    // spec metadata
+    assert.strictEqual(a.spec_source, 'quillio_default');
+    assert.strictEqual(a.spec_version, '1.0');
+    // contiguous, unique sort_order across types
+    assert.ok(!seenSortOrders.has(a.sort_order), `duplicate sort_order ${a.sort_order}`);
+    seenSortOrders.add(a.sort_order);
+    // fields
+    assert.ok(Array.isArray(a.fields) && a.fields.length > 0, `asset "${a.name}" has fields`);
+    for (const f of a.fields) {
+      for (const k of ['field_name', 'char_min', 'char_max', 'field_type', 'sort_order']) {
+        assert.ok(k in f, `field in "${a.name}" missing ${k}`);
+      }
+      assert.strictEqual(typeof f.field_name, 'string');
+      assert.strictEqual(typeof f.char_min, 'number');
+      assert.strictEqual(typeof f.char_max, 'number');
+      assert.strictEqual(f.field_type, 'text');
+      assert.ok(f.char_max >= f.char_min, `field "${f.field_name}" max >= min`);
+    }
+  }
+  // sort_order is 1..30 contiguous
+  assert.deepStrictEqual(
+    [...seenSortOrders].sort((x, y) => x - y),
+    Array.from({ length: 30 }, (_, i) => i + 1)
+  );
+});
+
+test('db/assets exposes seedTenantAssets + getTenantAssets', () => {
+  const a = require('../src/db/assets');
+  assert.strictEqual(typeof a.seedTenantAssets, 'function');
+  assert.strictEqual(typeof a.getTenantAssets, 'function');
+});
+
+test('db/assets degrades gracefully with no database', async () => {
+  // No DATABASE_URL in the test env → seed no-ops (false), read misses (null).
+  const { seedTenantAssets, getTenantAssets } = require('../src/db/assets');
+  assert.strictEqual(await seedTenantAssets('T0B8LPRDKHR'), false);
+  assert.strictEqual(await getTenantAssets('T0B8LPRDKHR'), null);
+});
+
+test('db exposes getPool', () => {
+  const db = require('../src/db');
+  assert.strictEqual(typeof db.getPool, 'function');
+  // No DATABASE_URL → getPool returns null (no pg connection attempted).
+  assert.strictEqual(db.getPool(), null);
+});

@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
 const { createTenantIfMissing, saveTenantToken } = require('../db');
+const { seedTenantAssets } = require('../db/assets');
 
 const router = express.Router();
 
@@ -118,6 +119,15 @@ router.get('/oauth/slack/callback', async (req, res) => {
     await createTenantIfMissing(teamId, teamName);
     if (botToken) await saveTenantToken(teamId, 'slack_bot', botToken);
     if (userToken) await saveTenantToken(teamId, 'slack_user', userToken);
+
+    // Seed the default asset library for this tenant (best-effort, idempotent —
+    // no-ops without a DB, skips if already seeded). Never block the install if
+    // seeding fails; the tenant can still use the Sheet-backed pipeline.
+    try {
+      await seedTenantAssets(teamId);
+    } catch (e) {
+      console.error('[oauth] seedTenantAssets failed (continuing):', e.message);
+    }
 
     console.log(
       `[oauth] install OK — team ${teamId} (${teamName || '?'}) bot=${!!botToken} user=${!!userToken}`

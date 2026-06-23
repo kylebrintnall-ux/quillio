@@ -300,3 +300,31 @@ test('db exposes getPool', () => {
   // No DATABASE_URL → getPool returns null (no pg connection attempted).
   assert.strictEqual(db.getPool(), null);
 });
+
+// --- Week 8: web app backend foundation ---
+
+test('adapters/web exposes runWebBrief + runWebDraft', () => {
+  const w = require('../src/adapters/web');
+  assert.strictEqual(typeof w.runWebBrief, 'function');
+  assert.strictEqual(typeof w.runWebDraft, 'function');
+});
+
+test('adapters/web does NOT import the Slack messaging layer', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  assert.ok(!/services\/slack/.test(src), 'web.js must not import services/slack');
+});
+
+test('routes/app mounts and exposes its routes', () => {
+  const router = require('../src/routes/app');
+  assert.strictEqual(typeof router, 'function', 'router is an express middleware fn');
+  const paths = router.stack
+    .filter((layer) => layer.route)
+    .map((layer) => layer.route.path)
+    .sort();
+  assert.deepStrictEqual(paths, ['/api/brief', '/api/draft', '/app']);
+});
+
+test('routes/app does NOT import the Slack messaging layer', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  assert.ok(!/services\/slack/.test(src), 'app.js must not import services/slack');
+});

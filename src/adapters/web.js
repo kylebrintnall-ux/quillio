@@ -110,11 +110,12 @@ async function runWebBrief(briefText, tenantContext = {}) {
   };
 }
 
-// Generate the first draft for an existing doc. tenantContext is accepted for a
-// consistent signature (and future per-tenant config); generateDraft re-reads
-// the doc itself, so no tokens are needed today.
-async function runWebDraft(docId, tenantContext = {}) {
-  const { title, fieldCount, url } = await pipeline.generateDraft(docId);
+// Generate (or, with `direction`, regenerate) the draft for an existing doc.
+// tenantContext is accepted for a consistent signature (and future per-tenant
+// config); generateDraft re-reads the doc itself, so no tokens are needed today.
+// `direction` is optional user revision feedback threaded into the prompt.
+async function runWebDraft(docId, tenantContext = {}, direction) {
+  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction);
   return { docId, title, fieldCount, url };
 }
 

@@ -561,9 +561,11 @@ async function generateDoc(spec, folderId) {
   return { doc, assetSpecs, projectFolderUrl };
 }
 
-// Draft copy for every field of an existing doc. Returns { title, fieldCount, url }.
-async function generateDraft(docId) {
-  return getDestination().generateDraft(docId);
+// Draft copy for every field of an existing doc. An optional `direction` string
+// is passed through as user revision feedback (the "Regenerate" path). Returns
+// { title, fieldCount, url }.
+async function generateDraft(docId, direction) {
+  return getDestination().generateDraft(docId, direction);
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web

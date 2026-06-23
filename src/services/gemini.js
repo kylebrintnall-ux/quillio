@@ -459,6 +459,7 @@ async function generateFieldDraft({
   funnelStage,
   summary,
   writerPrompt,
+  direction,
 }) {
   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
   const limitLine = ceiling
@@ -477,6 +478,9 @@ async function generateFieldDraft({
     funnelStage ? `Funnel stage: ${funnelStage}` : '',
     toneNotes ? `Tone notes: ${toneNotes}` : '',
     notes ? `Field guidance: ${notes}` : '',
+    direction
+      ? `REVISION direction from the user — apply this, overriding earlier choices where they conflict: ${direction}`
+      : '',
     limitLine,
   ]
     .filter(Boolean)
@@ -523,8 +527,20 @@ async function generateAssetDrafts({
   summary,
   writerPrompt,
   fields,
+  direction,
 }) {
   if (!fields || fields.length === 0) return [];
+
+  // When the user asks to regenerate with feedback, inject their direction as a
+  // high-priority revision instruction (otherwise these lines are absent).
+  const revisionLines = direction
+    ? [
+        'IMPORTANT — this is a REVISION based on user feedback. Apply this direction,',
+        'overriding earlier creative choices where they conflict:',
+        direction,
+        '',
+      ]
+    : [];
 
   const fieldLines = fields
     .map((f) => {
@@ -548,6 +564,7 @@ async function generateAssetDrafts({
     'and voice. Where a field repeats (e.g. multiple headlines or variants), make',
     'them clearly DISTINCT, not reworded duplicates.',
     '',
+    ...revisionLines,
     ...brandVoiceLines(assetType),
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
@@ -601,6 +618,7 @@ async function generateAssetDrafts({
         funnelStage: f.funnelStage,
         summary,
         writerPrompt,
+        direction,
       });
     }
     out.push({ fieldName: f.fieldName, copy });

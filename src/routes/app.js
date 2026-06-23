@@ -57,6 +57,7 @@ router.post('/api/draft', async (req, res) => {
   if (req.socket && typeof req.setTimeout === 'function') req.setTimeout(0);
   const body = req.body || {};
   const docId = (body.docId || '').trim();
+  const direction = (body.direction || '').trim(); // optional regenerate feedback
   const workspaceId = body.workspaceId || DEFAULT_WORKSPACE_ID;
 
   if (!docId) {
@@ -64,10 +65,11 @@ router.post('/api/draft', async (req, res) => {
   }
 
   const startedAt = Date.now();
-  console.log(`[web] /api/draft start → doc=${docId} workspace=${workspaceId}`);
+  const mode = direction ? `regenerate (${direction.length} chars)` : 'first draft';
+  console.log(`[web] /api/draft start → doc=${docId} workspace=${workspaceId} mode=${mode}`);
   try {
     const tenantContext = await resolveTenant(workspaceId);
-    const out = await runWebDraft(docId, tenantContext);
+    const out = await runWebDraft(docId, tenantContext, direction);
     const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
     console.log(`[web] /api/draft done → doc=${docId} workspace=${workspaceId} fields=${out.fieldCount} in ${secs}s`);
     return res.status(200).json({ success: true, docId: out.docId, fieldCount: out.fieldCount });

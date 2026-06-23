@@ -180,6 +180,75 @@ test('fieldLabel renders char-limit brackets per min/max', () => {
   assert.strictEqual(fieldLabel({ fieldName: 'CTA', charMin: 0, charMax: 0 }), 'CTA');
 });
 
+test('parseDoc detects per-field copy delete ranges (regeneration vs first draft)', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+
+  // Build a synthetic doc the way Google Docs returns it: each paragraph carries
+  // start/endIndex, a namedStyleType, and a textRun with its bold/italic style.
+  // The body starts at index 1 and every paragraph includes its trailing "\n".
+  function makeDoc(paras) {
+    let idx = 1;
+    const content = paras.map((para) => {
+      const raw = (para.text || '') + '\n';
+      const startIndex = idx;
+      const endIndex = idx + raw.length;
+      idx = endIndex;
+      return {
+        startIndex,
+        endIndex,
+        paragraph: {
+          paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+          elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+        },
+      };
+    });
+    return { body: { content } };
+  }
+
+  const paras = [
+    { text: 'Campaign Summary', style: 'HEADING_2' },
+    { text: 'the summary', italic: true },
+    { text: 'Writer Direction', style: 'HEADING_2' },
+    { text: 'the direction', italic: true },
+    { text: 'LinkedIn Single Image Ad', style: 'HEADING_3' },
+    { text: 'Paid Social · confident', italic: true }, // meta line (channel · tone)
+    { text: 'Headline [50]', bold: true }, // field 0 label
+    { text: 'First line of old copy' }, //     field 0 copy (para idx 7)
+    { text: 'Second line of old copy' }, //    field 0 copy (para idx 8, last non-empty)
+    { text: '' }, //                           field 0 trailing blank — must be preserved
+    { text: 'Body [100]', bold: true }, //     field 1 label (un-drafted)
+    { text: '' }, //                           field 1 trailing blank
+  ];
+  const doc = makeDoc(paras);
+  const c = doc.body.content;
+  const { summary, writerPrompt, assets } = parseDoc(doc);
+
+  assert.strictEqual(summary, 'the summary');
+  assert.strictEqual(writerPrompt, 'the direction');
+  assert.strictEqual(assets.length, 1);
+  assert.strictEqual(assets[0].assetType, 'LinkedIn Single Image Ad');
+  assert.strictEqual(assets[0].channel, 'Paid Social');
+  assert.strictEqual(assets[0].toneNotes, 'confident');
+
+  const [headline, body] = assets[0].fields;
+
+  // Field 0 was already drafted → delete range covers the copy and ends at the
+  // LAST non-empty copy paragraph (idx 8), never the trailing blank (idx 9).
+  assert.strictEqual(headline.fieldName, 'Headline');
+  assert.strictEqual(headline.charMax, 50);
+  assert.strictEqual(headline.insertIndex, c[6].endIndex);
+  assert.strictEqual(headline.deleteEnd, c[8].endIndex);
+  assert.ok(headline.deleteEnd > headline.insertIndex);
+  assert.ok(headline.deleteEnd < c[9].endIndex, 'delete range stops before the trailing blank');
+
+  // Field 1 is un-drafted → deleteEnd null, so generateDraft takes the
+  // untouched first-draft (insert-only) path.
+  assert.strictEqual(body.fieldName, 'Body');
+  assert.strictEqual(body.charMax, 100);
+  assert.strictEqual(body.insertIndex, c[10].endIndex);
+  assert.strictEqual(body.deleteEnd, null);
+});
+
 test('db exposes the tenant resolver + install-write API', () => {
   const db = require('../src/db');
   for (const fn of [

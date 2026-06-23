@@ -278,6 +278,7 @@ function parseDoc(doc) {
   const writer = { value: '' };
   const assets = [];
   let current = null;
+  let currentField = null; // last field whose copy region we're scanning
   let expecting = null; // 'summary' | 'writerPrompt'
 
   for (const item of doc.body.content || []) {
@@ -313,6 +314,7 @@ function parseDoc(doc) {
     if (named === 'HEADING_3') {
       current = { assetType: text, channel: '', toneNotes: '', fields: [], gotMeta: false };
       assets.push(current);
+      currentField = null; // a new asset ends the previous field's copy region
       continue;
     }
 
@@ -337,14 +339,28 @@ function parseDoc(doc) {
         charMax = Math.max(...vals);
         if (vals.length >= 2) charMin = Math.min(...vals);
       }
-      current.fields.push({
+      currentField = {
         fieldName,
         charMin,
         charMax,
         // The blank paragraph immediately after the label starts where this
         // label paragraph ends; that's our draft insertion point.
         insertIndex: item.endIndex,
-      });
+        // End of the last non-empty paragraph of already-drafted copy under this
+        // label (null = nothing drafted yet). Drives delete-before-insert on
+        // regeneration; stays null for a first draft so that path is untouched.
+        deleteEnd: null,
+      };
+      current.fields.push(currentField);
+      continue;
+    }
+
+    // Any other non-empty paragraph under an active field is previously drafted
+    // copy. Advance deleteEnd to this paragraph's end; trailing blank lines have
+    // empty text and never reach here, so the template blank is preserved.
+    if (current && currentField && text) {
+      currentField.deleteEnd = item.endIndex;
+      continue;
     }
   }
 
@@ -408,6 +424,7 @@ async function generateDraft(id, direction) {
           notes: ctx.notes || '',
           funnelStage: ctx.funnelStage || '',
           insertIndex: field.insertIndex,
+          deleteEnd: field.deleteEnd,
         };
       });
       const ctx0 = sheetCtx.get(ctxKey(asset.assetType, asset.fields[0].fieldName)) || {};
@@ -437,9 +454,14 @@ async function generateDraft(id, direction) {
         fields: a.fields,
         direction,
       });
-      const idxByName = new Map(a.fields.map((f) => [f.fieldName, f.insertIndex]));
+      const metaByName = new Map(
+        a.fields.map((f) => [f.fieldName, { insertIndex: f.insertIndex, deleteEnd: f.deleteEnd }])
+      );
       const mapped = drafts
-        .map((d) => ({ insertIndex: idxByName.get(d.fieldName), copy: d.copy }))
+        .map((d) => {
+          const meta = metaByName.get(d.fieldName) || {};
+          return { insertIndex: meta.insertIndex, deleteEnd: meta.deleteEnd, copy: d.copy };
+        })
         .filter((r) => r.insertIndex != null && r.copy);
       console.log(`[googleDocs] asset ${idx + 1}/${total} done: ${a.assetType} (${mapped.length} fields)`);
       return mapped;
@@ -459,11 +481,22 @@ async function generateDraft(id, direction) {
     throw new Error('All field drafts failed (Gemini timeout or error).');
   }
 
-  // Insert from the bottom of the doc upward so earlier indices stay valid.
+  // Process from the bottom of the doc upward so earlier indices stay valid:
+  // a delete/insert at a higher index never shifts the lower indices that the
+  // later (higher-in-doc) fields still reference.
   drafted.sort((a, b) => b.insertIndex - a.insertIndex);
 
   const requests = [];
-  for (const { insertIndex, copy } of drafted) {
+  for (const { insertIndex, deleteEnd, copy } of drafted) {
+    // Regeneration: remove the previously drafted copy under this label first.
+    // deleteEnd stops before the trailing blank line, so [insertIndex, deleteEnd)
+    // covers only the old copy; the blank survives as the new insertion target.
+    // First drafts have deleteEnd == null and skip this entirely (unchanged).
+    if (deleteEnd != null && deleteEnd > insertIndex) {
+      requests.push({
+        deleteContentRange: { range: { startIndex: insertIndex, endIndex: deleteEnd } },
+      });
+    }
     const text = copy + '\n';
     requests.push({ insertText: { location: { index: insertIndex }, text } });
     // Drafted copy should be regular weight, not inherit the bold label style.
@@ -583,7 +616,9 @@ module.exports = {
   createDocument,
   generateDraft,
   getDocContent,
-  // Exposed for unit tests (char-limit bracket rendering). Not part of the
-  // destination interface used by the registry.
+  // Exposed for unit tests only (not part of the destination interface used by
+  // the registry): char-limit bracket rendering, and doc re-parsing including
+  // the regeneration delete-range detection.
   fieldLabel,
+  parseDoc,
 };

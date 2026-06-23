@@ -50,23 +50,6 @@
     }
     textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 
-    .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-    .pill {
-      font-size: 13px;
-      padding: 5px 10px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--muted);
-      background: var(--bg);
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-    }
-    .pill.on {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #06302f;
-      font-weight: 600;
-    }
-
     button {
       font: inherit;
       cursor: pointer;
@@ -93,6 +76,25 @@
       font-size: 14px;
     }
     .hidden { display: none; }
+    .note {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--muted);
+      border-radius: 8px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .note .dot {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 2px solid var(--accent); border-top-color: transparent;
+      flex: none;
+      animation: spin 0.8s linear infinite;
+    }
+    @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
 
     /* Progress steps */
     .steps { list-style: none; padding: 0; margin: 20px 0; }
@@ -148,12 +150,6 @@
     <section id="screen-brief" class="screen active">
       <h1>What are we working on?</h1>
       <textarea id="brief" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>
-      <div class="pills" aria-label="Detected in your brief">
-        <span class="pill" id="pill-folder">📁 folder link</span>
-        <span class="pill" id="pill-assets">🧱 assets</span>
-        <span class="pill" id="pill-refs">🔗 references</span>
-        <span class="pill" id="pill-audience">🎯 audience</span>
-      </div>
       <button class="primary full" id="run-btn">Run Brief →</button>
       <div id="brief-error" class="error hidden"></div>
     </section>
@@ -189,6 +185,7 @@
         <button class="primary full" id="draft-btn">Generate First Draft</button>
         <button class="secondary full" id="open-btn">Open in Drive ↗</button>
       </div>
+      <div id="draft-progress" class="note hidden"></div>
       <div id="output-error" class="error hidden"></div>
     </section>
 
@@ -214,39 +211,9 @@
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
     function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
 
-    // --- Screen 1: live brief detection ------------------------------------
+    // --- Screen 1: brief input ---------------------------------------------
     var briefEl = document.getElementById('brief');
     var briefError = document.getElementById('brief-error');
-
-    var ASSET_KEYWORDS = [
-      'linkedin', 'carousel', 'meta ', 'facebook', 'instagram', 'twitter', '/x ',
-      ' ad', 'display banner', 'banner', 'dv360', 'responsive display',
-      'email', 'nurture', 'basho', 'subject line', 'preheader',
-      'landing page', 'signage', 'one-pager', 'one pager', 'battle card',
-      'direct mail', 'mailer', 'note card', 'organic social', 'form confirm'
-    ];
-    var AUDIENCE_KEYWORDS = [
-      'audience', 'targeting', 'target ', 'persona', 'segment', 'demographic',
-      'decision maker', 'decision-maker', 'buyer', 'icp', 'b2b', 'b2c',
-      'enterprise', 'smb', 'mid-market', 'marketer', 'developer', 'it leader',
-      'cmo', 'cio', 'vp ', 'director', 'aimed at', 'for '
-    ];
-    var URL_RE = /https?:\/\/[^\s]+/i;
-    var FOLDER_RE = /drive\.google\.com/i;
-
-    function hasKeyword(text, list) {
-      for (var i = 0; i < list.length; i++) { if (text.indexOf(list[i]) !== -1) return true; }
-      return false;
-    }
-    function updatePills() {
-      var raw = briefEl.value;
-      var text = raw.toLowerCase();
-      document.getElementById('pill-folder').classList.toggle('on', FOLDER_RE.test(raw));
-      document.getElementById('pill-assets').classList.toggle('on', hasKeyword(text, ASSET_KEYWORDS));
-      document.getElementById('pill-refs').classList.toggle('on', URL_RE.test(raw));
-      document.getElementById('pill-audience').classList.toggle('on', hasKeyword(text, AUDIENCE_KEYWORDS));
-    }
-    briefEl.addEventListener('input', updatePills);
 
     // --- Screen 2: staged progress -----------------------------------------
     var HEADINGS = ['Reading your brief…', 'Fetching references…', 'Building your doc…', 'Creating project folder…'];
@@ -368,22 +335,36 @@
       }
     }
 
+    // Drafting calls Gemini per field and takes ~60-90s. Give the request a
+    // generous 180s ceiling (well past the worst case) via AbortController so a
+    // genuinely hung connection still fails cleanly, and show a persistent
+    // "this takes about a minute" note while it runs.
+    var DRAFT_TIMEOUT_MS = 180000;
+
     async function generateDraft() {
       if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
       var btn = document.getElementById('draft-btn');
       var outErr = document.getElementById('output-error');
+      var progress = document.getElementById('draft-progress');
       clearError(outErr);
       btn.disabled = true;
       btn.textContent = 'Drafting…';
+      progress.innerHTML = '<span class="dot"></span><span>Generating draft… this takes about a minute. Keep this tab open.</span>';
+      progress.classList.remove('hidden');
+
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, DRAFT_TIMEOUT_MS);
       try {
         var res = await fetch('/api/draft', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ docId: state.docId, workspaceId: WORKSPACE_ID })
+          body: JSON.stringify({ docId: state.docId, workspaceId: WORKSPACE_ID }),
+          signal: controller.signal
         });
         var data = await res.json();
         if (!data || !data.success) throw new Error((data && data.error) || 'Draft generation failed.');
 
+        progress.classList.add('hidden');
         var status = document.getElementById('draft-status');
         var n = data.fieldCount;
         status.textContent = '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
@@ -395,9 +376,15 @@
         });
         btn.textContent = 'Draft Generated';
       } catch (e) {
-        showError(outErr, e.message || 'Network error — please try again.');
+        progress.classList.add('hidden');
+        var msg = e && e.name === 'AbortError'
+          ? 'Draft is taking longer than expected — it may still finish in your doc. Try Open in Drive in a minute.'
+          : (e.message || 'Network error — please try again.');
+        showError(outErr, msg);
         btn.disabled = false;
         btn.textContent = 'Generate First Draft';
+      } finally {
+        clearTimeout(timer);
       }
     }
 
@@ -408,8 +395,6 @@
     document.getElementById('run-btn').addEventListener('click', runBrief);
     document.getElementById('draft-btn').addEventListener('click', generateDraft);
     document.getElementById('open-btn').addEventListener('click', openInDrive);
-
-    updatePills();
   </script>
 </body>
 </html>

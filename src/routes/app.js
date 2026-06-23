@@ -45,7 +45,11 @@ router.post('/api/brief', async (req, res) => {
 });
 
 // POST /api/draft — generate the first draft for an existing doc.
+// Draft generation calls Gemini per field and takes 60-90s, so disable the
+// per-request socket idle timeout: the response is long-running but healthy,
+// and we don't want Node (or an upstream proxy honoring it) to close it early.
 router.post('/api/draft', async (req, res) => {
+  if (req.socket && typeof req.setTimeout === 'function') req.setTimeout(0);
   const body = req.body || {};
   const docId = (body.docId || '').trim();
   const workspaceId = body.workspaceId || DEFAULT_WORKSPACE_ID;

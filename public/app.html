@@ -347,6 +347,11 @@
     var progressHeading = document.getElementById('progress-heading');
     var progressError = document.getElementById('progress-error');
     var progressBack = document.getElementById('progress-back');
+    // A large brief can run for minutes, so the steps animate on a realistic
+    // timer through steps 1-3 and then HOLD the final step ("Creating project
+    // folder") in the working/spinning state until the real API response
+    // arrives — the animation must never finish ahead of the actual request.
+    var BRIEF_TIMEOUT_MS = 180000; // 3 min — matches /api/draft
     var stageTimer = null;
     var currentStage = 0;
 
@@ -364,8 +369,14 @@
       progressBack.classList.add('hidden');
       setStage(0);
       stageTimer = setInterval(function () {
-        // Advance toward (but never past) the final step while the request runs.
-        if (currentStage < stepEls.length - 1) setStage(currentStage + 1);
+        if (currentStage < stepEls.length - 1) {
+          setStage(currentStage + 1);
+        } else {
+          // Reached the last step — stop the timer and leave it spinning. Only
+          // finishStages() (on the real response) marks everything done.
+          clearInterval(stageTimer);
+          stageTimer = null;
+        }
       }, 1400);
     }
     function finishStages() {
@@ -445,11 +456,18 @@
 
       showScreen('progress');
       startStages();
+
+      // A big brief runs well past the browser's default patience, so bound the
+      // request with a generous 3-minute AbortController (matching /api/draft)
+      // rather than letting fetch give up with "Load failed".
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, BRIEF_TIMEOUT_MS);
       try {
         var res = await fetch('/api/brief', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ briefText: briefText, workspaceId: WORKSPACE_ID })
+          body: JSON.stringify({ briefText: briefText, workspaceId: WORKSPACE_ID }),
+          signal: controller.signal
         });
         var data = await res.json();
         if (!data || !data.success) throw new Error((data && data.error) || 'Something went wrong building your doc.');
@@ -457,7 +475,12 @@
         renderOutput(data);
         showScreen('output');
       } catch (e) {
-        failStages(e.message || 'Network error — please try again.');
+        var msg = e && e.name === 'AbortError'
+          ? 'This brief is taking longer than expected — it may still finish. Check History in a minute.'
+          : (e.message || 'Network error — please try again.');
+        failStages(msg);
+      } finally {
+        clearTimeout(timer);
       }
     }
 

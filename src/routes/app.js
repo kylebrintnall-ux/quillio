@@ -26,7 +26,11 @@ router.get('/app', (req, res) => {
 });
 
 // POST /api/brief — run a brief through the pipeline, return structured data.
+// A large brief (4+ assets with references) runs well past a minute, so disable
+// the per-request socket idle timeout — the response is long-running but
+// healthy, and we don't want Node (or an upstream proxy) to close it early.
 router.post('/api/brief', async (req, res) => {
+  if (req.socket && typeof req.setTimeout === 'function') req.setTimeout(0);
   const body = req.body || {};
   const briefText = (body.briefText || '').trim();
   const workspaceId = body.workspaceId || DEFAULT_WORKSPACE_ID;

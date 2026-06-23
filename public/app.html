@@ -91,7 +91,9 @@
       border-radius: 8px;
       font-size: 14px;
     }
-    .hidden { display: none; }
+    /* Utility: wins over component display rules regardless of source order
+       (e.g. .note / .loading set display:flex below this rule). */
+    .hidden { display: none !important; }
     .note {
       margin-top: 14px;
       padding: 10px 12px;
@@ -505,6 +507,7 @@
       show(progress);
       try {
         var data = await draftFetch(state.docId);
+        // Success: clear the in-progress note and surface the success indicator.
         hide(progress);
         var status = document.getElementById('draft-status');
         status.textContent = draftedLabel(data.fieldCount);
@@ -514,7 +517,9 @@
           var b = card.querySelector('.badge');
           if (b) b.textContent = '✓ Drafted';
         });
+        // Lock the button into its done state (disabled → grayed via :disabled).
         btn.textContent = 'Draft Generated';
+        btn.disabled = true;
       } catch (e) {
         hide(progress);
         showError(outErr, draftErrorMessage(e));

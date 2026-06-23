@@ -32,14 +32,24 @@ async function saveProject(tenantId, projectData = {}) {
     status = 'draft',
   } = projectData;
 
-  const res = await pool.query(
-    `INSERT INTO projects
-       (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING *`,
-    [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status]
-  );
-  return res.rows[0] || null;
+  console.log(`[db/projects] saveProject → tenant=${tenantId} name=${JSON.stringify(name)} doc=${copy_doc_id || 'none'}`);
+  try {
+    const res = await pool.query(
+      `INSERT INTO projects
+         (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status]
+    );
+    const saved = res.rows[0] || null;
+    console.log(`[db/projects] saveProject OK → project id=${saved ? saved.id : 'null'} for tenant=${tenantId}`);
+    return saved;
+  } catch (err) {
+    // Surface the failure (common cause: tenant_id has no matching tenants row,
+    // so the FK rejects the insert) and rethrow for the caller to handle.
+    console.error(`[db/projects] saveProject FAILED for tenant=${tenantId}: ${err.message}`);
+    throw err;
+  }
 }
 
 // All of a tenant's projects, newest first. Returns [] if there's no DB or the

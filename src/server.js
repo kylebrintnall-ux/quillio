@@ -39,6 +39,11 @@ const sessionStore = (() => {
   return new PgSession({ pool, createTableIfMissing: true });
 })();
 
+// Railway terminates TLS at a proxy in front of the app. Without trusting it,
+// Express sees the proxied request as HTTP and won't set Secure cookies — so
+// the session cookie never persists across the OAuth redirect on HTTPS.
+app.set('trust proxy', 1);
+
 app.use(
   session({
     store: sessionStore,
@@ -46,10 +51,10 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      httpOnly: true,
-      sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      sameSite: 'lax',
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     },
   })
 );

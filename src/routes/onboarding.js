@@ -34,12 +34,14 @@ router.get('/api/onboarding/me', requireAuth, (req, res) => {
 });
 
 // GET /api/onboarding/assets — the tenant's asset library grouped by category
-// (active flags included) for the Step 3 toggles. Falls back to the bundled
-// default library when there's no DB / the tenant hasn't been seeded.
-router.get('/api/onboarding/assets', requireAuth, async (req, res) => {
+// (active flags included) for the Step 3 toggles. NOT auth-gated: the asset
+// library isn't sensitive, and the onboarding page must be able to render it
+// even before/without a session. Uses the signed-in tenant when present, else
+// falls back to the bundled default library.
+router.get('/api/onboarding/assets', async (req, res) => {
   try {
     const tenantId = req.user && req.user.tenant_id;
-    let rows = await getTenantAssets(tenantId); // null without DB / unseeded
+    let rows = tenantId ? await getTenantAssets(tenantId) : null; // null without DB / unseeded
     if (!rows) {
       rows = DEFAULT_ASSETS.map((a) => ({ name: a.name, group: a.group, is_active: a.is_active !== false }));
     }

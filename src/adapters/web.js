@@ -9,6 +9,14 @@
 // tenantContext is the { tenant, tokens, source } shape resolveTenant returns.
 
 const pipeline = require('../core/pipeline');
+const { saveProject } = require('../db/projects');
+
+// Pull a Drive folder id out of its webViewLink (…/folders/<id>). Returns null
+// when there's no URL or no match — saveProject just stores a null folder id.
+function folderIdFromUrl(url) {
+  const m = /\/folders\/([^/?#]+)/.exec(url || '');
+  return m ? m[1] : null;
+}
 
 // Run a brief end to end and return structured data for the browser. Mirrors
 // the Slack adapter's pipeline sequence (parse → enrich → build) minus all the
@@ -61,7 +69,27 @@ async function runWebBrief(briefText, tenantContext = {}) {
     effectiveFolderId
   );
 
+  // 5. Persist the project to history (best-effort). A DB hiccup — or simply no
+  //    DATABASE_URL on the demo — must never fail an otherwise-good brief, so
+  //    any error is swallowed and the brief response is unaffected.
+  let projectId = null;
+  try {
+    const tenant = tenantContext.tenant || {};
+    const saved = await saveProject(tenant.id, {
+      name: campaignTitle,
+      drive_folder_id: folderIdFromUrl(projectFolderUrl),
+      drive_folder_url: projectFolderUrl,
+      copy_doc_id: doc.id,
+      copy_doc_url: doc.url,
+      status: 'draft',
+    });
+    if (saved) projectId = saved.id;
+  } catch (err) {
+    console.error('[web] saveProject skipped:', err.message);
+  }
+
   return {
+    projectId,
     docUrl: doc.url,
     folderUrl: projectFolderUrl,
     campaignTitle,
@@ -90,4 +118,12 @@ async function runWebDraft(docId, tenantContext = {}) {
   return { docId, title, fieldCount, url };
 }
 
-module.exports = { runWebBrief, runWebDraft };
+// Read a project's doc into the structured, copy-bearing shape the project view
+// renders. tenantContext is accepted for signature consistency; the Docs read
+// uses the shared service-account / env auth path (per-tenant Google auth is
+// parked — see PHASE3.md). Throws on read failure so the route shows a fallback.
+async function runWebProjectContent(docId, tenantContext = {}) {
+  return pipeline.getProjectContent(docId);
+}
+
+module.exports = { runWebBrief, runWebDraft, runWebProjectContent };

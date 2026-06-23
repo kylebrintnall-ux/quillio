@@ -566,6 +566,12 @@ async function generateDraft(docId) {
   return getDestination().generateDraft(docId);
 }
 
+// Read an existing doc into a structured, copy-bearing shape for the web
+// project view. Returns { title, summary, writerDirection, assets: [...] }.
+async function getProjectContent(docId) {
+  return getDestination().getDocContent(docId);
+}
+
 // Count the assets in a doc (one HEADING_3 heading per asset). Best-effort:
 // returns 0 if the doc can't be read.
 async function countDocAssets(docId) {
@@ -617,6 +623,7 @@ module.exports = {
   enrichWithReferences,
   generateDoc,
   generateDraft,
+  getProjectContent,
   countDocAssets,
   getFolderName,
   extractBriefFolderId,

@@ -489,11 +489,99 @@ async function generateDraft(id) {
   };
 }
 
+// Read a doc back into a structured, copy-bearing shape for the web project
+// view. Unlike parseDoc (which recovers field *positions* for drafting), this
+// also captures the drafted copy under each label: the plain paragraphs that
+// follow a bold field label, up to the next label / heading. Returns
+//   { summary, writerDirection, assets: [{ name, fields: [{ fieldName,
+//     charMin, charMax, copy }] }] }
+// Throws if the doc can't be read so the caller can surface the fallback.
+async function getDocContent(id) {
+  const { docs } = await getClients();
+  const doc = (await docs.documents.get({ documentId: id })).data;
+
+  const result = { title: doc.title || '', summary: '', writerDirection: '', assets: [] };
+  let current = null; // current asset block
+  let field = null; // current field collecting copy
+  let expecting = null; // 'summary' | 'writerDirection'
+
+  for (const item of doc.body.content || []) {
+    if (!item.paragraph) continue;
+    const p = item.paragraph;
+    const named = p.paragraphStyle?.namedStyleType;
+    const text = paragraphText(p).trim();
+    const { bold, italic } = runStyle(p);
+
+    if (named === 'HEADING_2' && text === 'Campaign Summary') {
+      expecting = 'summary';
+      field = null;
+      continue;
+    }
+    if (named === 'HEADING_2' && text === 'Writer Direction') {
+      expecting = 'writerDirection';
+      field = null;
+      continue;
+    }
+    if (expecting === 'summary') {
+      if (text) {
+        result.summary = text;
+        expecting = null;
+      }
+      continue;
+    }
+    if (expecting === 'writerDirection') {
+      if (text) {
+        result.writerDirection = text;
+        expecting = null;
+      }
+      continue;
+    }
+
+    if (named === 'HEADING_3') {
+      current = { name: text, fields: [] };
+      result.assets.push(current);
+      field = null;
+      continue;
+    }
+    if (!current) continue;
+
+    // The italic meta line (channel · tone) sits between the asset heading and
+    // its first field — skip it, it isn't copy.
+    if (italic && text && current.fields.length === 0 && !field) continue;
+
+    // A bold paragraph (optionally ending in a [min-max] / [max] bracket) starts
+    // a new field. Recover charMin/charMax exactly as parseDoc does.
+    if (bold && text) {
+      const m = text.match(/^(.*?)\s*\[([^\]]*)\]\s*$/);
+      const fieldName = m ? m[1].trim() : text;
+      const nums = (m ? m[2] : '').match(/\d+/g);
+      let charMin = 0;
+      let charMax = 0;
+      if (nums) {
+        const vals = nums.map(Number);
+        charMax = Math.max(...vals);
+        if (vals.length >= 2) charMin = Math.min(...vals);
+      }
+      field = { fieldName, charMin, charMax, copy: '' };
+      current.fields.push(field);
+      continue;
+    }
+
+    // Any other non-empty paragraph is drafted copy for the current field.
+    if (field && text) {
+      field.copy = field.copy ? `${field.copy}\n${text}` : text;
+    }
+  }
+
+  return result;
+}
+
 // The destination adapter contract.
 module.exports = {
   name: 'google-docs',
   createDocument,
   generateDraft,
+  getDocContent,
   // Exposed for unit tests (char-limit bracket rendering). Not part of the
   // destination interface used by the registry.
   fieldLabel,

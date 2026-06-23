@@ -25,8 +25,24 @@
     nav {
       border-bottom: 1px solid var(--line);
       padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
     }
-    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; cursor: pointer; }
+    nav .links { display: flex; gap: 16px; }
+    nav .navlink {
+      font-size: 15px;
+      color: var(--muted);
+      background: none;
+      border: none;
+      padding: 0;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    nav .navlink:active { transform: none; }
+    nav .navlink:hover { color: var(--ink); }
     main {
       width: 100%;
       max-width: 680px;
@@ -135,6 +151,66 @@
     .field .limit { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
 
     .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+
+    /* Field copy in the project view */
+    .field-copy { white-space: pre-wrap; font-size: 14px; color: var(--ink); padding: 4px 0 2px; }
+    .field-copy.empty { color: var(--muted); font-style: italic; }
+
+    /* Status badges (history + project view) */
+    .status {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      text-transform: capitalize;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: var(--soft);
+    }
+    .status.draft { color: #5a4b00; background: #fff4cc; border-color: #f0e0a0; }
+    .status.in-review { color: #06302f; background: var(--accent); border-color: var(--accent); }
+    .status.approved { color: #0a5d2a; background: #d8f5e0; border-color: #b3e6c4; }
+
+    /* Project history cards */
+    .project-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      margin: 10px 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .project-card:hover { border-color: var(--accent); }
+    .project-card .meta { min-width: 0; }
+    .project-card .pname { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+    .project-card .pdate { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .project-card .right { display: flex; align-items: center; gap: 10px; flex: none; }
+    .project-card .open-link {
+      font-size: 14px; font-weight: 600; color: var(--ink);
+      background: var(--soft); border: 1px solid var(--line);
+      border-radius: 8px; padding: 8px 12px;
+    }
+    .empty {
+      margin-top: 24px;
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+    }
+    .loading { margin-top: 20px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+    .loading .dot {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 2px solid var(--accent); border-top-color: transparent;
+      flex: none; animation: spin 0.8s linear infinite;
+    }
+    @media (prefers-reduced-motion: reduce) { .loading .dot { animation: none; } }
+    .titlerow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
     @media (min-width: 600px) {
       .actions { flex-direction: row; }
       .actions button { width: auto; }
@@ -143,7 +219,13 @@
   </style>
 </head>
 <body>
-  <nav><span class="brand">Quillio</span></nav>
+  <nav>
+    <span class="brand" id="nav-brand">Quillio</span>
+    <span class="links">
+      <button class="navlink" id="nav-new">New Brief</button>
+      <button class="navlink" id="nav-history">History</button>
+    </span>
+  </nav>
   <main>
 
     <!-- SCREEN 1 — BRIEF INPUT -->
@@ -189,6 +271,35 @@
       <div id="output-error" class="error hidden"></div>
     </section>
 
+    <!-- SCREEN 4 — PROJECT HISTORY -->
+    <section id="screen-history" class="screen">
+      <h1>Project history</h1>
+      <div id="history-loading" class="loading hidden"><span class="dot"></span><span>Loading projects…</span></div>
+      <div id="history-error" class="error hidden"></div>
+      <div id="history-empty" class="empty hidden">No projects yet. Run your first brief to get started.</div>
+      <div id="history-list"></div>
+    </section>
+
+    <!-- SCREEN 5 — PROJECT VIEW -->
+    <section id="screen-project" class="screen">
+      <button class="secondary" id="project-back">← Back to history</button>
+      <div class="titlerow">
+        <h1 id="project-title">Campaign</h1>
+        <span class="status" id="project-status"></span>
+      </div>
+
+      <div id="project-loading" class="loading hidden"><span class="dot"></span><span>Loading content…</span></div>
+      <div id="project-content"></div>
+      <div id="project-fallback" class="empty hidden">Content unavailable. You can still open the doc in Drive.</div>
+
+      <div class="actions">
+        <button class="secondary full" id="project-open-btn">Open in Drive ↗</button>
+        <button class="primary full hidden" id="project-draft-btn">Generate First Draft</button>
+      </div>
+      <div id="project-draft-progress" class="note hidden"></div>
+      <div id="project-error" class="error hidden"></div>
+    </section>
+
   </main>
 
   <script>
@@ -200,7 +311,9 @@
     var screens = {
       brief: document.getElementById('screen-brief'),
       progress: document.getElementById('screen-progress'),
-      output: document.getElementById('screen-output')
+      output: document.getElementById('screen-output'),
+      history: document.getElementById('screen-history'),
+      project: document.getElementById('screen-project')
     };
     function showScreen(name) {
       Object.keys(screens).forEach(function (k) {
@@ -210,6 +323,17 @@
     }
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
     function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
+    function show(el) { el.classList.remove('hidden'); }
+    function hide(el) { el.classList.add('hidden'); }
+
+    // Map a project status to its badge class. Unknown statuses render neutral.
+    function statusClass(status) {
+      var s = String(status || 'draft').toLowerCase();
+      if (s === 'in review' || s === 'in-review') return 'in-review';
+      if (s === 'approved') return 'approved';
+      if (s === 'draft') return 'draft';
+      return '';
+    }
 
     // --- Screen 1: brief input ---------------------------------------------
     var briefEl = document.getElementById('brief');
@@ -338,8 +462,36 @@
     // Drafting calls Gemini per field and takes ~60-90s. Give the request a
     // generous 180s ceiling (well past the worst case) via AbortController so a
     // genuinely hung connection still fails cleanly, and show a persistent
-    // "this takes about a minute" note while it runs.
+    // "this takes about a minute" note while it runs. Shared by Screen 3
+    // (post-brief) and Screen 5 (project view).
     var DRAFT_TIMEOUT_MS = 180000;
+    var DRAFTING_NOTE = '<span class="dot"></span><span>Generating draft… this takes about a minute. Keep this tab open.</span>';
+
+    async function draftFetch(docId) {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, DRAFT_TIMEOUT_MS);
+      try {
+        var res = await fetch('/api/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docId: docId, workspaceId: WORKSPACE_ID }),
+          signal: controller.signal
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Draft generation failed.');
+        return data;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    function draftErrorMessage(e) {
+      return e && e.name === 'AbortError'
+        ? 'Draft is taking longer than expected — it may still finish in your doc. Try Open in Drive in a minute.'
+        : (e.message || 'Network error — please try again.');
+    }
+    function draftedLabel(n) {
+      return '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
+    }
 
     async function generateDraft() {
       if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
@@ -349,42 +501,25 @@
       clearError(outErr);
       btn.disabled = true;
       btn.textContent = 'Drafting…';
-      progress.innerHTML = '<span class="dot"></span><span>Generating draft… this takes about a minute. Keep this tab open.</span>';
-      progress.classList.remove('hidden');
-
-      var controller = new AbortController();
-      var timer = setTimeout(function () { controller.abort(); }, DRAFT_TIMEOUT_MS);
+      progress.innerHTML = DRAFTING_NOTE;
+      show(progress);
       try {
-        var res = await fetch('/api/draft', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ docId: state.docId, workspaceId: WORKSPACE_ID }),
-          signal: controller.signal
-        });
-        var data = await res.json();
-        if (!data || !data.success) throw new Error((data && data.error) || 'Draft generation failed.');
-
-        progress.classList.add('hidden');
+        var data = await draftFetch(state.docId);
+        hide(progress);
         var status = document.getElementById('draft-status');
-        var n = data.fieldCount;
-        status.textContent = '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
-        status.classList.remove('hidden');
-        Array.prototype.forEach.call(document.querySelectorAll('.asset'), function (card) {
+        status.textContent = draftedLabel(data.fieldCount);
+        show(status);
+        Array.prototype.forEach.call(document.querySelectorAll('#out-assets .asset'), function (card) {
           card.classList.add('drafted');
           var b = card.querySelector('.badge');
           if (b) b.textContent = '✓ Drafted';
         });
         btn.textContent = 'Draft Generated';
       } catch (e) {
-        progress.classList.add('hidden');
-        var msg = e && e.name === 'AbortError'
-          ? 'Draft is taking longer than expected — it may still finish in your doc. Try Open in Drive in a minute.'
-          : (e.message || 'Network error — please try again.');
-        showError(outErr, msg);
+        hide(progress);
+        showError(outErr, draftErrorMessage(e));
         btn.disabled = false;
         btn.textContent = 'Generate First Draft';
-      } finally {
-        clearTimeout(timer);
       }
     }
 
@@ -392,9 +527,163 @@
       if (state.docUrl) window.open(state.docUrl, '_blank', 'noopener');
     }
 
+    // --- Screen 4: project history -----------------------------------------
+    var historyList = document.getElementById('history-list');
+    var historyLoading = document.getElementById('history-loading');
+    var historyEmpty = document.getElementById('history-empty');
+    var historyError = document.getElementById('history-error');
+
+    function formatDate(iso) {
+      if (!iso) return '';
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    async function loadHistory() {
+      showScreen('history');
+      historyList.textContent = '';
+      clearError(historyError);
+      hide(historyEmpty);
+      show(historyLoading);
+      try {
+        var res = await fetch('/api/projects?workspaceId=' + encodeURIComponent(WORKSPACE_ID));
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not load projects.');
+        hide(historyLoading);
+        var projects = data.projects || [];
+        if (!projects.length) { show(historyEmpty); return; }
+        projects.forEach(function (p) { historyList.appendChild(projectCard(p)); });
+      } catch (e) {
+        hide(historyLoading);
+        showError(historyError, e.message || 'Network error — please try again.');
+      }
+    }
+
+    function projectCard(p) {
+      var card = el('div', 'project-card');
+      var meta = el('div', 'meta');
+      meta.appendChild(el('div', 'pname', p.name || 'Untitled campaign'));
+      meta.appendChild(el('div', 'pdate', formatDate(p.created_at)));
+      card.appendChild(meta);
+
+      var right = el('div', 'right');
+      var badge = el('span', 'status ' + statusClass(p.status), p.status || 'draft');
+      right.appendChild(badge);
+      right.appendChild(el('span', 'open-link', 'Open'));
+      card.appendChild(right);
+
+      card.addEventListener('click', function () { openProject(p); });
+      return card;
+    }
+
+    // --- Screen 5: project view --------------------------------------------
+    var projectState = { project: null };
+    var projectContentEl = document.getElementById('project-content');
+    var projectLoading = document.getElementById('project-loading');
+    var projectFallback = document.getElementById('project-fallback');
+    var projectError = document.getElementById('project-error');
+    var projectDraftBtn = document.getElementById('project-draft-btn');
+
+    async function openProject(p) {
+      projectState.project = p;
+      showScreen('project');
+      document.getElementById('project-title').textContent = p.name || 'Campaign';
+      var badge = document.getElementById('project-status');
+      badge.textContent = p.status || 'draft';
+      badge.className = 'status ' + statusClass(p.status);
+
+      // The draft button only applies to projects still in draft.
+      projectDraftBtn.disabled = false;
+      projectDraftBtn.textContent = 'Generate First Draft';
+      if (statusClass(p.status) === 'draft' && p.copy_doc_id) show(projectDraftBtn);
+      else hide(projectDraftBtn);
+      hide(document.getElementById('project-draft-progress'));
+      clearError(projectError);
+
+      projectContentEl.textContent = '';
+      hide(projectFallback);
+      show(projectLoading);
+      try {
+        var res = await fetch('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID));
+        var data = await res.json();
+        hide(projectLoading);
+        if (!data || !data.success) { show(projectFallback); return; }
+        renderProjectContent(data.content || {});
+      } catch (e) {
+        hide(projectLoading);
+        show(projectFallback);
+      }
+    }
+
+    function renderProjectContent(content) {
+      projectContentEl.textContent = '';
+
+      projectContentEl.appendChild(el('h2', null, 'Campaign Summary'));
+      projectContentEl.appendChild(el('div', 'summary', content.summary || '—'));
+
+      projectContentEl.appendChild(el('h2', null, 'Writer Direction'));
+      projectContentEl.appendChild(el('div', 'direction', content.writerDirection || '—'));
+
+      projectContentEl.appendChild(el('h2', null, 'Assets'));
+      var assets = content.assets || [];
+      assets.forEach(function (a) {
+        var card = el('div', 'asset');
+        card.appendChild(el('h3', null, a.name));
+        (a.fields || []).forEach(function (f) {
+          var row = el('div', 'field');
+          row.appendChild(el('span', 'name', f.fieldName));
+          row.appendChild(el('span', 'limit', charLimit(f)));
+          card.appendChild(row);
+          if (f.copy) {
+            card.appendChild(el('div', 'field-copy', f.copy));
+          } else {
+            card.appendChild(el('div', 'field-copy empty', 'Not yet drafted'));
+          }
+        });
+        projectContentEl.appendChild(card);
+      });
+    }
+
+    function openProjectInDrive() {
+      var p = projectState.project;
+      if (p && p.copy_doc_url) window.open(p.copy_doc_url, '_blank', 'noopener');
+    }
+
+    async function generateProjectDraft() {
+      var p = projectState.project;
+      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
+      var progress = document.getElementById('project-draft-progress');
+      clearError(projectError);
+      projectDraftBtn.disabled = true;
+      projectDraftBtn.textContent = 'Drafting…';
+      progress.innerHTML = DRAFTING_NOTE;
+      show(progress);
+      try {
+        await draftFetch(p.copy_doc_id);
+        hide(progress);
+        projectDraftBtn.textContent = 'Draft Generated';
+        // Reload the now-drafted copy into the view.
+        openProject(p);
+      } catch (e) {
+        hide(progress);
+        showError(projectError, draftErrorMessage(e));
+        projectDraftBtn.disabled = false;
+        projectDraftBtn.textContent = 'Generate First Draft';
+      }
+    }
+
+    // --- Wiring -------------------------------------------------------------
     document.getElementById('run-btn').addEventListener('click', runBrief);
     document.getElementById('draft-btn').addEventListener('click', generateDraft);
     document.getElementById('open-btn').addEventListener('click', openInDrive);
+
+    document.getElementById('nav-brand').addEventListener('click', function () { showScreen('brief'); });
+    document.getElementById('nav-new').addEventListener('click', function () { showScreen('brief'); });
+    document.getElementById('nav-history').addEventListener('click', loadHistory);
+    document.getElementById('project-back').addEventListener('click', loadHistory);
+    document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
+    projectDraftBtn.addEventListener('click', generateProjectDraft);
   </script>
 </body>
 </html>

@@ -10,7 +10,8 @@
 const path = require('path');
 const express = require('express');
 const { resolveTenant } = require('../db');
-const { runWebBrief, runWebDraft } = require('../adapters/web');
+const { getProjects, getProject } = require('../db/projects');
+const { runWebBrief, runWebDraft, runWebProjectContent } = require('../adapters/web');
 
 const router = express.Router();
 
@@ -64,6 +65,54 @@ router.post('/api/draft', async (req, res) => {
     return res.status(200).json({ success: true, docId: out.docId, fieldCount: out.fieldCount });
   } catch (err) {
     console.error('[web] /api/draft failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/projects — the tenant's project history, newest first. Without a DB
+// this resolves to [] (the history view renders its empty state).
+router.get('/api/projects', async (req, res) => {
+  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
+  try {
+    const { tenant } = await resolveTenant(workspaceId);
+    const projects = await getProjects(tenant && tenant.id);
+    return res.status(200).json({ success: true, projects });
+  } catch (err) {
+    console.error('[web] /api/projects failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/projects/:id — a single project, scoped to its tenant.
+router.get('/api/projects/:id', async (req, res) => {
+  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
+  try {
+    const { tenant } = await resolveTenant(workspaceId);
+    const project = await getProject(tenant && tenant.id, req.params.id);
+    if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
+    return res.status(200).json({ success: true, project });
+  } catch (err) {
+    console.error('[web] /api/projects/:id failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/projects/:id/content — the project's doc content, parsed into
+// sections + per-field copy. A Docs read failure returns { success:false } so
+// the UI can fall back to "Content unavailable" + Open in Drive.
+router.get('/api/projects/:id/content', async (req, res) => {
+  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
+  try {
+    const { tenant } = await resolveTenant(workspaceId);
+    const project = await getProject(tenant && tenant.id, req.params.id);
+    if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
+    if (!project.copy_doc_id) {
+      return res.status(200).json({ success: false, error: 'No document for this project' });
+    }
+    const content = await runWebProjectContent(project.copy_doc_id);
+    return res.status(200).json({ success: true, content });
+  } catch (err) {
+    console.error('[web] /api/projects/:id/content failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });

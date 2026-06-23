@@ -321,7 +321,14 @@ test('routes/app mounts and exposes its routes', () => {
     .filter((layer) => layer.route)
     .map((layer) => layer.route.path)
     .sort();
-  assert.deepStrictEqual(paths, ['/api/brief', '/api/draft', '/app']);
+  assert.deepStrictEqual(paths, [
+    '/api/brief',
+    '/api/draft',
+    '/api/projects',
+    '/api/projects/:id',
+    '/api/projects/:id/content',
+    '/app',
+  ]);
 });
 
 test('routes/app does NOT import the Slack messaging layer', () => {
@@ -344,4 +351,38 @@ test('public/app.html exists with the three screens and no external assets', () 
   assert.ok(!/fonts\.googleapis|fonts\.gstatic/i.test(html), 'no Google Fonts');
   assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
   assert.ok(!/<img\b/i.test(html), 'no images');
+});
+
+// --- Week 10: project history + project view ---
+
+test('db/projects exposes saveProject + getProjects + getProject', () => {
+  const p = require('../src/db/projects');
+  assert.strictEqual(typeof p.saveProject, 'function');
+  assert.strictEqual(typeof p.getProjects, 'function');
+  assert.strictEqual(typeof p.getProject, 'function');
+});
+
+test('db/projects degrades gracefully with no database', async () => {
+  delete process.env.DATABASE_URL;
+  const { saveProject, getProjects, getProject } = require('../src/db/projects');
+  assert.strictEqual(await saveProject('T0B8LPRDKHR', { name: 'X' }), null);
+  assert.deepStrictEqual(await getProjects('T0B8LPRDKHR'), []);
+  assert.strictEqual(await getProject('T0B8LPRDKHR', 1), null);
+});
+
+test('pipeline + web adapter expose the project-content readers', () => {
+  assert.strictEqual(typeof require('../src/core/pipeline').getProjectContent, 'function');
+  assert.strictEqual(typeof require('../src/adapters/web').runWebProjectContent, 'function');
+  assert.strictEqual(typeof require('../src/destinations/googleDocs').getDocContent, 'function');
+});
+
+test('public/app.html has the history + project-view screens wired to the projects API', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  for (const id of ['screen-history', 'screen-project']) {
+    assert.ok(html.includes(id), `app.html should contain #${id}`);
+  }
+  assert.ok(html.includes('/api/projects'), 'app.html reads /api/projects');
+  assert.ok(/\/api\/projects\/.+\/content|\/content/.test(html), 'app.html fetches project content');
+  assert.ok(/No projects yet/.test(html), 'history empty state present');
+  assert.ok(/Content unavailable/.test(html), 'project-view fallback present');
 });

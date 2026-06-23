@@ -297,6 +297,7 @@
       <div class="actions">
         <button class="secondary full" id="project-open-btn">Open in Drive ↗</button>
         <button class="primary full hidden" id="project-draft-btn">Generate First Draft</button>
+        <span class="badge hidden" id="project-draft-status">✓ Draft complete</span>
       </div>
       <div id="project-draft-progress" class="note hidden"></div>
       <div id="project-error" class="error hidden"></div>
@@ -489,7 +490,7 @@
     // genuinely hung connection still fails cleanly, and show a persistent
     // "this takes about a minute" note while it runs. Shared by Screen 3
     // (post-brief) and Screen 5 (project view).
-    var DRAFT_TIMEOUT_MS = 180000;
+    var DRAFT_TIMEOUT_MS = 300000; // 5 min — larger briefs (4+ assets) draft slowly
     var DRAFTING_NOTE = '<span class="dot"></span><span>Generating draft… this takes about a minute. Keep this tab open.</span>';
 
     async function draftFetch(docId) {
@@ -612,6 +613,36 @@
     var projectFallback = document.getElementById('project-fallback');
     var projectError = document.getElementById('project-error');
     var projectDraftBtn = document.getElementById('project-draft-btn');
+    var projectDraftStatus = document.getElementById('project-draft-status');
+
+    // Does the loaded content already carry drafted copy in any field?
+    function contentHasCopy(content) {
+      var assets = (content && content.assets) || [];
+      for (var i = 0; i < assets.length; i++) {
+        var fields = assets[i].fields || [];
+        for (var j = 0; j < fields.length; j++) {
+          if (fields[j].copy && String(fields[j].copy).trim()) return true;
+        }
+      }
+      return false;
+    }
+
+    // Decide the draft affordance from whether copy already exists: drafted →
+    // show "✓ Draft complete" instead of the button; not drafted → offer the
+    // button (when there's a doc to draft into).
+    function setDraftAffordance(hasCopy) {
+      var p = projectState.project;
+      if (hasCopy) {
+        hide(projectDraftBtn);
+        show(projectDraftStatus);
+      } else {
+        hide(projectDraftStatus);
+        projectDraftBtn.disabled = false;
+        projectDraftBtn.textContent = 'Generate First Draft';
+        if (p && p.copy_doc_id) show(projectDraftBtn);
+        else hide(projectDraftBtn);
+      }
+    }
 
     async function openProject(p) {
       projectState.project = p;
@@ -621,11 +652,10 @@
       badge.textContent = p.status || 'draft';
       badge.className = 'status ' + statusClass(p.status);
 
-      // The draft button only applies to projects still in draft.
-      projectDraftBtn.disabled = false;
-      projectDraftBtn.textContent = 'Generate First Draft';
-      if (statusClass(p.status) === 'draft' && p.copy_doc_id) show(projectDraftBtn);
-      else hide(projectDraftBtn);
+      // Hide both draft affordances until the content tells us whether the doc
+      // already has copy (decided after the fetch below).
+      hide(projectDraftBtn);
+      hide(projectDraftStatus);
       hide(document.getElementById('project-draft-progress'));
       clearError(projectError);
 
@@ -636,11 +666,19 @@
         var res = await fetch('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID));
         var data = await res.json();
         hide(projectLoading);
-        if (!data || !data.success) { show(projectFallback); return; }
-        renderProjectContent(data.content || {});
+        if (!data || !data.success) {
+          show(projectFallback);
+          // Content unavailable — can't detect copy, so offer the button.
+          setDraftAffordance(false);
+          return;
+        }
+        var content = data.content || {};
+        renderProjectContent(content);
+        setDraftAffordance(contentHasCopy(content));
       } catch (e) {
         hide(projectLoading);
         show(projectFallback);
+        setDraftAffordance(false);
       }
     }
 

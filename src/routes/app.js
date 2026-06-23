@@ -63,12 +63,17 @@ router.post('/api/draft', async (req, res) => {
     return res.status(400).json({ success: false, error: 'docId is required' });
   }
 
+  const startedAt = Date.now();
+  console.log(`[web] /api/draft start → doc=${docId} workspace=${workspaceId}`);
   try {
     const tenantContext = await resolveTenant(workspaceId);
     const out = await runWebDraft(docId, tenantContext);
+    const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.log(`[web] /api/draft done → doc=${docId} workspace=${workspaceId} fields=${out.fieldCount} in ${secs}s`);
     return res.status(200).json({ success: true, docId: out.docId, fieldCount: out.fieldCount });
   } catch (err) {
-    console.error('[web] /api/draft failed:', err && err.stack ? err.stack : err);
+    const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.error(`[web] /api/draft failed → doc=${docId} after ${secs}s:`, err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -299,6 +299,77 @@ test('oauth.js wires the Google OAuth flow (per-user token storage)', () => {
   assert.ok(/connected=google/.test(src) && /error=google_failed/.test(src), 'redirects back to /app');
 });
 
+// --- Week 11: onboarding + sign-in ---
+
+test('oauth.js requests the userinfo scopes for Sign in with Google', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  assert.ok(/userinfo\.email/.test(src) && /userinfo\.profile/.test(src), 'requests userinfo scopes');
+  assert.ok(/oauth2\/v2\/userinfo/.test(src), 'calls the Google userinfo endpoint');
+  assert.ok(/req\.session\.userId/.test(src), 'sets the session userId on sign-in');
+});
+
+test('db/users exposes the finder + create/update API', () => {
+  const u = require('../src/db/users');
+  for (const fn of ['findUserByGoogleId', 'findUserByEmail', 'findUserById', 'createUser', 'updateUser']) {
+    assert.strictEqual(typeof u[fn], 'function', `users.${fn} should be a function`);
+  }
+});
+
+test('db/users degrades gracefully with no database', async () => {
+  delete process.env.DATABASE_URL;
+  const { findUserByGoogleId, findUserByEmail, findUserById, createUser, updateUser } = require('../src/db/users');
+  assert.strictEqual(await findUserByGoogleId('g1'), null);
+  assert.strictEqual(await findUserByEmail('a@b.co'), null);
+  assert.strictEqual(await findUserById(1), null);
+  assert.strictEqual(await createUser({ email: 'a@b.co' }), null);
+  assert.strictEqual(await updateUser(1, { role: 'owner' }), null);
+});
+
+test('requireAuth bypasses (attaches a demo user) with no database', () => {
+  delete process.env.DATABASE_URL;
+  const { requireAuth } = require('../src/middleware/auth');
+  assert.strictEqual(typeof requireAuth, 'function');
+  let called = false;
+  const req = { session: {}, path: '/app' };
+  const res = { redirect: () => assert.fail('should not redirect in demo mode') };
+  requireAuth(req, res, () => { called = true; });
+  assert.ok(called, 'next() called in demo mode');
+  assert.ok(req.user && req.user.tenant_id, 'a demo user is attached');
+});
+
+test('onboarding router mounts and exposes its routes', () => {
+  const router = require('../src/routes/onboarding');
+  assert.strictEqual(typeof router, 'function', 'router is an express middleware fn');
+  const paths = router.stack
+    .filter((layer) => layer.route)
+    .map((layer) => layer.route.path)
+    .sort();
+  assert.deepStrictEqual(paths, [
+    '/api/onboarding/assets',
+    '/api/onboarding/assets',
+    '/api/onboarding/folder',
+    '/api/onboarding/me',
+    '/api/onboarding/voice',
+    '/onboarding',
+  ]);
+});
+
+test('routes/onboarding does NOT import the Slack messaging layer', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'onboarding.js'), 'utf8');
+  assert.ok(!/services\/slack/.test(src), 'onboarding.js must not import services/slack');
+});
+
+test('public/onboarding.html has all six steps and talks to the onboarding API', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  for (let i = 1; i <= 6; i++) {
+    assert.ok(html.includes(`id="step-${i}"`), `onboarding.html should contain step ${i}`);
+  }
+  assert.ok(/\/oauth\/google\?redirect=onboarding/.test(html), 'Step 1 signs in with Google');
+  assert.ok(/\/api\/onboarding\/voice/.test(html), 'voice step posts to the API');
+  assert.ok(!/fonts\.googleapis|fonts\.gstatic/i.test(html), 'no external fonts');
+  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+});
+
 test('getTenantByWorkspace returns null with no database', async () => {
   // No DATABASE_URL in the test env → graceful null, not a throw.
   const { getTenantByWorkspace } = require('../src/db');

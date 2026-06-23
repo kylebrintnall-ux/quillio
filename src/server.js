@@ -2,14 +2,17 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const session = require('express-session');
 
 const config = require('./config');
 const { getClients } = require('./google');
+const { getPool } = require('./db');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
 const { generateVoiceGuide } = require('./services/gemini');
 const { saveVoiceGuide } = require('./db');
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
+const onboardingRoutes = require('./routes/onboarding');
 const { updateMessage, updateLive, openInDriveBlocks, logBotIdentity } = require('./services/slack');
 
 const app = express();
@@ -21,9 +24,43 @@ const rawBodySaver = (req, res, buf) => {
 app.use(express.urlencoded({ extended: true, verify: rawBodySaver }));
 app.use(express.json({ verify: rawBodySaver }));
 
-// Slack OAuth install flow (/oauth/slack, /oauth/slack/callback, /welcome).
-// Separate from the slash-command/interactions handlers below.
+// Web sessions (Sign in with Google). Persisted in Postgres via connect-pg-simple
+// when DATABASE_URL is set (session table auto-created); otherwise the default
+// in-memory store (fine for the keyless demo — sessions just don't survive a
+// restart). The secret is never logged; a random per-boot fallback is used when
+// SESSION_SECRET is unset.
+const sessionStore = (() => {
+  const pool = getPool();
+  if (!pool) {
+    console.warn('[session] DATABASE_URL not set — using in-memory session store (demo).');
+    return undefined;
+  }
+  const PgSession = require('connect-pg-simple')(session);
+  return new PgSession({ pool, createTableIfMissing: true });
+})();
+
+app.use(
+  session({
+    store: sessionStore,
+    secret: config.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    },
+  })
+);
+
+// Slack OAuth install flow (/oauth/slack, /oauth/slack/callback, /welcome) +
+// Google OAuth / sign-in (/oauth/google[, /callback]). Separate from the
+// slash-command/interactions handlers below.
 app.use(oauthRoutes);
+
+// Onboarding flow (/onboarding + /api/onboarding/*). Auth-gated per route.
+app.use(onboardingRoutes);
 
 // Web app surface (/app + /api/brief + /api/draft). Non-Slack product surface;
 // runs the same core pipeline via the web adapter. Mounted before the

@@ -134,4 +134,22 @@ async function getTenantAssets(tenantId) {
   }));
 }
 
-module.exports = { seedTenantAssets, getTenantAssets };
+// Onboarding asset toggles: mark a tenant's asset types active/inactive in one
+// shot. Every type whose name is in `deactivatedNames` becomes inactive; all
+// others become active. Returns true if the write ran, false if there's no DB.
+async function setActiveAssets(tenantId, deactivatedNames = []) {
+  const pool = getPool();
+  if (!pool) {
+    console.warn('[db/assets] DATABASE_URL not set — skipping setActiveAssets');
+    return false;
+  }
+  if (!tenantId) return false;
+  const names = Array.isArray(deactivatedNames) ? deactivatedNames : [];
+  await pool.query(
+    `UPDATE asset_types SET is_active = (name <> ALL($2::text[])) WHERE tenant_id = $1`,
+    [tenantId, names]
+  );
+  return true;
+}
+
+module.exports = { seedTenantAssets, getTenantAssets, setActiveAssets };

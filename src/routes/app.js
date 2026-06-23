@@ -12,6 +12,7 @@ const express = require('express');
 const { resolveTenant } = require('../db');
 const { getProjects, getProject } = require('../db/projects');
 const { runWebBrief, runWebDraft, runWebProjectContent } = require('../adapters/web');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
 // GET /app — the single-file web UI (HTML + CSS + vanilla JS). Static asset,
 // no templating: the page talks to /api/brief and /api/draft itself.
 const APP_HTML = path.join(__dirname, '..', '..', 'public', 'app.html');
-router.get('/app', (req, res) => {
+router.get('/app', requireAuth, (req, res) => {
   res.status(200).sendFile(APP_HTML);
 });
 
@@ -82,7 +83,7 @@ router.post('/api/draft', async (req, res) => {
 
 // GET /api/projects — the tenant's project history, newest first. Without a DB
 // this resolves to [] (the history view renders its empty state).
-router.get('/api/projects', async (req, res) => {
+router.get('/api/projects', requireAuth, async (req, res) => {
   const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   try {
     const { tenant } = await resolveTenant(workspaceId);
@@ -95,7 +96,7 @@ router.get('/api/projects', async (req, res) => {
 });
 
 // GET /api/projects/:id — a single project, scoped to its tenant.
-router.get('/api/projects/:id', async (req, res) => {
+router.get('/api/projects/:id', requireAuth, async (req, res) => {
   const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   try {
     const { tenant } = await resolveTenant(workspaceId);
@@ -111,7 +112,7 @@ router.get('/api/projects/:id', async (req, res) => {
 // GET /api/projects/:id/content — the project's doc content, parsed into
 // sections + per-field copy. A Docs read failure returns { success:false } so
 // the UI can fall back to "Content unavailable" + Open in Drive.
-router.get('/api/projects/:id/content', async (req, res) => {
+router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
   const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   try {
     const { tenant } = await resolveTenant(workspaceId);

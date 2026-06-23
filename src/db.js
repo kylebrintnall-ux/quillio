@@ -136,6 +136,19 @@ async function saveTenantToken(tenantId, service, accessToken) {
   return true;
 }
 
+// Set a tenant's default Drive folder id (onboarding). Returns true if the
+// write ran, false if there's no DB.
+async function setTenantDefaultFolder(tenantId, folderId) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping setTenantDefaultFolder');
+    return false;
+  }
+  if (!tenantId) return false;
+  await p.query('UPDATE tenants SET default_folder_id = $2 WHERE id = $1', [tenantId, folderId || null]);
+  return true;
+}
+
 module.exports = {
   getPool,
   saveVoiceGuide,
@@ -144,4 +157,5 @@ module.exports = {
   resolveTenant,
   createTenantIfMissing,
   saveTenantToken,
+  setTenantDefaultFolder,
 };

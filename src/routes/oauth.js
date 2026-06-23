@@ -10,17 +10,21 @@ const express = require('express');
 const config = require('../config');
 const { createTenantIfMissing, saveTenantToken } = require('../db');
 const { seedTenantAssets } = require('../db/assets');
+const { findUserByGoogleId, createUser } = require('../db/users');
 
 const router = express.Router();
 
 const BOT_SCOPES = 'commands,chat:write,chat:write.public,channels:history,users:read,im:write';
 const USER_SCOPES = 'canvases:read,files:read';
 
-// Google OAuth (per-user Drive/Docs). drive.file = files this app creates;
-// documents = read/write those docs. No access to pre-existing Drive files.
+// Google OAuth. drive.file = files this app creates; documents = read/write
+// those docs (no access to pre-existing Drive files). userinfo.email/profile
+// power "Sign in with Google" (identity for the users table + session).
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
 ].join(' ');
 
 // The web app's demo tenant — used when /oauth/google isn't given a workspaceId.
@@ -64,8 +68,10 @@ router.get('/oauth/slack', (req, res) => {
     return res.redirect('/welcome?error=install_failed');
   }
 
+  // `redirect=onboarding` returns the user to the onboarding flow after install.
+  const redirectTo = req.query.redirect === 'onboarding' ? 'onboarding' : null;
   const state = crypto.randomBytes(16).toString('hex');
-  rememberState(state);
+  rememberState(state, { redirectTo });
 
   const url = new URL('https://slack.com/oauth/v2/authorize');
   url.searchParams.set('client_id', config.SLACK_CLIENT_ID);
@@ -86,10 +92,12 @@ router.get('/oauth/slack/callback', async (req, res) => {
     }
 
     // CSRF: the state in the URL must be one we issued, unexpired, unused.
-    if (!consumeState(req.query.state)) {
+    const stateEntry = consumeState(req.query.state);
+    if (!stateEntry) {
       console.error('[oauth] state missing/expired/mismatch — aborting install');
       return res.redirect('/welcome?error=install_failed');
     }
+    const slackRedirectTo = stateEntry.data && stateEntry.data.redirectTo;
 
     const code = req.query.code;
     if (!code) {
@@ -146,6 +154,9 @@ router.get('/oauth/slack/callback', async (req, res) => {
     console.log(
       `[oauth] install OK — team ${teamId} (${teamName || '?'}) bot=${!!botToken} user=${!!userToken}`
     );
+    // Onboarding flow returns to Step 5 with a connected flag; standalone
+    // installs land on the generic welcome page.
+    if (slackRedirectTo === 'onboarding') return res.redirect('/onboarding?slack=connected');
     return res.redirect('/welcome');
   } catch (err) {
     // Never leak a stack trace to the browser — log it, show a generic page.
@@ -163,8 +174,10 @@ router.get('/oauth/google', (req, res) => {
   }
 
   const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
+  // `redirect=onboarding` keeps the user in the onboarding flow after sign-in.
+  const redirectTo = req.query.redirect === 'onboarding' ? 'onboarding' : null;
   const state = crypto.randomBytes(16).toString('hex');
-  rememberState(state, { workspaceId });
+  rememberState(state, { workspaceId, redirectTo });
 
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.searchParams.set('client_id', config.GOOGLE_CLIENT_ID);
@@ -216,26 +229,74 @@ router.get('/oauth/google/callback', async (req, res) => {
       }),
     });
     const data = await resp.json();
+    const accessToken = data && data.access_token;
     const refreshToken = data && data.refresh_token;
-    if (!resp.ok || !refreshToken) {
+    if (!resp.ok || !accessToken) {
       // Log the error code/status only — never the token payload.
       console.error('[oauth] google token exchange failed:', data && data.error ? data.error : resp.status);
       return res.redirect('/app?error=google_failed');
     }
 
-    // Persist the refresh token for this tenant (best-effort — no-ops without a
-    // DB). Never log the token itself.
+    // Ensure the tenant exists and store the refresh token (best-effort —
+    // no-ops without a DB). refresh_token only comes back on first consent, but
+    // prompt=consent forces it; missing is non-fatal for sign-in. Never logged.
     await createTenantIfMissing(workspaceId, null);
-    await saveTenantToken(workspaceId, 'google', refreshToken);
+    if (refreshToken) await saveTenantToken(workspaceId, 'google', refreshToken);
 
-    console.log(`[oauth] google connected for tenant ${workspaceId}`);
-    return res.redirect('/app?connected=google');
+    // Fetch the Google profile so we can identify / create the user.
+    const profile = await fetchGoogleProfile(accessToken);
+    if (!profile || !profile.email) {
+      console.error('[oauth] google userinfo failed — no email');
+      return res.redirect('/app?error=google_failed');
+    }
+
+    // Find or create the user, then log them in by storing their id in session.
+    let user = await findUserByGoogleId(profile.id);
+    let isNew = false;
+    if (!user) {
+      isNew = true;
+      user = await createUser({
+        email: profile.email,
+        googleId: profile.id,
+        displayName: profile.name,
+        avatarUrl: profile.picture,
+        tenantId: workspaceId,
+        role: 'owner',
+      });
+    }
+    if (req.session && user && user.id) req.session.userId = user.id;
+
+    console.log(`[oauth] google sign-in OK — tenant ${workspaceId} new=${isNew}`);
+
+    // Onboarding flow continues at step 2; otherwise new → onboarding, returning → app.
+    const redirectTo = entry.data && entry.data.redirectTo;
+    if (redirectTo === 'onboarding') return res.redirect('/onboarding?step=2');
+    return res.redirect(isNew ? '/onboarding' : '/app?connected=google');
   } catch (err) {
     // Never leak a stack trace to the browser — log it, redirect generically.
     console.error('[oauth] google callback error:', err && err.stack ? err.stack : err);
     return res.redirect('/app?error=google_failed');
   }
 });
+
+// Fetch the signed-in user's Google profile { id, email, name, picture }.
+// Best-effort: returns null on any failure (callers handle it). Never logs the
+// access token.
+async function fetchGoogleProfile(accessToken) {
+  try {
+    const resp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!resp.ok) {
+      console.error('[oauth] userinfo request failed:', resp.status);
+      return null;
+    }
+    return await resp.json();
+  } catch (err) {
+    console.error('[oauth] userinfo error:', err.message);
+    return null;
+  }
+}
 
 // Placeholder post-install page.
 router.get('/welcome', (req, res) => {

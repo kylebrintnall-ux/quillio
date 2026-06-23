@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quillio — Get set up</title>
+  <style>
+    :root {
+      --accent: #4DD9D9;
+      --ink: #111;
+      --muted: #666;
+      --line: #e3e3e3;
+      --bg: #fff;
+      --soft: #f6f6f6;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.5;
+      -webkit-text-size-adjust: 100%;
+    }
+    nav { border-bottom: 1px solid var(--line); padding: 14px 16px; }
+    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+    main { width: 100%; max-width: 600px; margin: 0 auto; padding: 24px 16px 56px; }
+
+    .step { display: none; }
+    .step.active { display: block; }
+
+    h1 { font-size: 24px; line-height: 1.25; margin: 8px 0 12px; }
+    h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 24px 0 8px; }
+    p { margin: 8px 0; }
+    .muted { color: var(--muted); }
+
+    .stepdots { display: flex; gap: 6px; margin-bottom: 20px; }
+    .stepdots span { height: 4px; flex: 1; background: var(--line); border-radius: 2px; }
+    .stepdots span.on { background: var(--accent); }
+
+    label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
+    input[type="text"], textarea {
+      width: 100%; font: inherit; padding: 11px 12px;
+      border: 1px solid var(--line); border-radius: 8px; resize: vertical;
+    }
+    textarea { min-height: 96px; }
+    input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+
+    button {
+      font: inherit; cursor: pointer; border: none; border-radius: 8px;
+      padding: 12px 18px; background: var(--ink); color: #fff; font-weight: 600;
+    }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.55; cursor: default; }
+    button.secondary { background: var(--soft); color: var(--ink); border: 1px solid var(--line); }
+    button.ghost { background: none; color: var(--muted); border: none; padding: 12px 0; }
+    .full { width: 100%; }
+    .row { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+    @media (min-width: 560px) { .row { flex-direction: row; } .row button { width: auto; } h1 { font-size: 28px; } }
+
+    .gbtn { display: inline-flex; align-items: center; gap: 10px; background: #fff; color: var(--ink); border: 1px solid var(--line); }
+    .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
+
+    .ok { color: #0a5d2a; font-weight: 700; font-size: 20px; }
+    .pill { display: inline-block; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 14px; }
+
+    .group { margin: 14px 0; }
+    .group h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 6px; }
+    .asset-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
+    .toggle { position: relative; width: 44px; height: 26px; flex: none; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .track { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: background .15s; }
+    .track::before { content: ""; position: absolute; height: 20px; width: 20px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .15s; }
+    .toggle input:checked + .track { background: var(--accent); }
+    .toggle input:checked + .track::before { transform: translateX(18px); }
+
+    .preview { white-space: pre-wrap; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-size: 14px; }
+    .progress { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    .sample { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-size: 15px; }
+
+    .error { margin-top: 14px; padding: 10px 12px; border: 1px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 8px; font-size: 14px; }
+    .hidden { display: none !important; }
+    .note { display: flex; align-items: center; gap: 10px; color: var(--muted); margin-top: 14px; }
+    .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
+  </style>
+</head>
+<body>
+  <nav><span class="brand">Quillio</span></nav>
+  <main>
+    <div class="stepdots" id="dots" aria-hidden="true"></div>
+
+    <!-- STEP 1 — WELCOME -->
+    <section class="step" id="step-1">
+      <h1>Welcome to Quillio</h1>
+      <p class="muted">Let's get you set up. It takes about 2 minutes.</p>
+      <div class="row">
+        <button class="gbtn full" id="signin-btn"><span class="g">G</span> Sign in with Google</button>
+      </div>
+    </section>
+
+    <!-- STEP 2 — DRIVE CONNECTED -->
+    <section class="step" id="step-2">
+      <h1><span class="ok">✓</span> Google Drive connected</h1>
+      <p>Signed in as <span class="pill" id="user-email">…</span></p>
+      <p class="muted">Your docs will be created in Google Drive. You can specify a folder in each brief, or set a default folder now.</p>
+      <label for="folder-url">Default Drive folder URL (optional)</label>
+      <input type="text" id="folder-url" placeholder="https://drive.google.com/drive/folders/…" />
+      <div class="row">
+        <button class="secondary" id="folder-save">Save folder</button>
+        <button class="full" id="to-step-3">Next →</button>
+      </div>
+      <div id="step2-msg" class="note hidden"></div>
+      <div id="step2-error" class="error hidden"></div>
+    </section>
+
+    <!-- STEP 3 — ASSET LIBRARY -->
+    <section class="step" id="step-3">
+      <h1>Here's your asset library</h1>
+      <p class="muted">Deactivate asset types you'll never use. You can always change this later in Settings.</p>
+      <div id="assets-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+      <div id="assets-list"></div>
+      <div class="row">
+        <button class="full" id="assets-next">Next →</button>
+      </div>
+      <div id="step3-error" class="error hidden"></div>
+    </section>
+
+    <!-- STEP 4 — VOICE GUIDE -->
+    <section class="step" id="step-4">
+      <h1>Let's set up your brand voice</h1>
+
+      <div id="voice-questions">
+        <div class="progress" id="voice-progress">Question 1 of 6</div>
+        <label id="voice-label" for="voice-input"></label>
+        <textarea id="voice-input"></textarea>
+        <div class="row">
+          <button class="secondary" id="voice-back">← Back</button>
+          <button class="full" id="voice-next">Next →</button>
+        </div>
+      </div>
+
+      <div id="voice-generating" class="note hidden"><span class="dot"></span><span>Generating your voice guide…</span></div>
+
+      <div id="voice-review" class="hidden">
+        <h2>Your voice guide</h2>
+        <div class="preview" id="voice-preview"></div>
+        <textarea id="voice-edit" class="hidden"></textarea>
+        <div class="row">
+          <button class="secondary" id="voice-edit-btn">Edit</button>
+          <button class="full" id="voice-continue">Save + Continue →</button>
+        </div>
+      </div>
+      <div id="step4-error" class="error hidden"></div>
+    </section>
+
+    <!-- STEP 5 — CONNECT SLACK -->
+    <section class="step" id="step-5">
+      <h1>Connect Quillio to Slack</h1>
+      <p class="muted" id="slack-blurb">Run <code>/quillio</code> right from your Slack workspace.</p>
+      <div id="slack-connected" class="hidden"><p><span class="ok">✓</span> Slack connected — <code>/quillio</code> is live in your workspace</p></div>
+      <div class="row">
+        <button class="full" id="slack-btn">Add to Slack</button>
+      </div>
+      <button class="ghost" id="slack-skip">I'll do this later →</button>
+    </section>
+
+    <!-- STEP 6 — DONE -->
+    <section class="step" id="step-6">
+      <h1>You're ready.</h1>
+      <p class="muted">Run your first brief in Slack with <code>/quillio</code> or from the web app.</p>
+      <h2>Try this brief</h2>
+      <div class="sample" id="sample">Q3 campaign. LinkedIn single image ad and nurture email. VP Service Operations audience.</div>
+      <div class="row">
+        <button class="full" id="go-app">Go to app →</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    'use strict';
+
+    var TOTAL_STEPS = 6;
+    function $(id) { return document.getElementById(id); }
+    function show(el) { el.classList.remove('hidden'); }
+    function hide(el) { el.classList.add('hidden'); }
+    function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
+    function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
+
+    // --- Step navigation ----------------------------------------------------
+    var current = 1;
+    function showStep(n) {
+      current = Math.min(Math.max(n, 1), TOTAL_STEPS);
+      for (var i = 1; i <= TOTAL_STEPS; i++) {
+        $('step-' + i).classList.toggle('active', i === current);
+      }
+      renderDots();
+      window.scrollTo(0, 0);
+      if (current === 2) loadMe();
+      if (current === 3) loadAssets();
+      if (current === 4) renderVoiceQuestion();
+    }
+    function renderDots() {
+      var dots = $('dots');
+      dots.innerHTML = '';
+      for (var i = 1; i <= TOTAL_STEPS; i++) {
+        var s = document.createElement('span');
+        if (i <= current) s.className = 'on';
+        dots.appendChild(s);
+      }
+    }
+
+    // --- Step 1: sign in ----------------------------------------------------
+    $('signin-btn').addEventListener('click', function () {
+      window.location.href = '/oauth/google?redirect=onboarding';
+    });
+
+    // --- Step 2: Drive connected -------------------------------------------
+    async function loadMe() {
+      try {
+        var res = await fetch('/api/onboarding/me');
+        var data = await res.json();
+        $('user-email').textContent = (data && data.email) || 'your Google account';
+      } catch (e) {
+        $('user-email').textContent = 'your Google account';
+      }
+    }
+    $('folder-save').addEventListener('click', async function () {
+      var msg = $('step2-msg');
+      var err = $('step2-error');
+      clearError(err);
+      var btn = $('folder-save');
+      btn.disabled = true;
+      msg.innerHTML = '<span class="dot"></span><span>Saving…</span>';
+      show(msg);
+      try {
+        var res = await fetch('/api/onboarding/folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderUrl: $('folder-url').value.trim() })
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not save folder.');
+        msg.innerHTML = '<span>✓ Default folder saved.</span>';
+      } catch (e) {
+        hide(msg);
+        showError(err, e.message || 'Network error — please try again.');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    $('to-step-3').addEventListener('click', function () { showStep(3); });
+
+    // --- Step 3: asset library ---------------------------------------------
+    async function loadAssets() {
+      var list = $('assets-list');
+      var loading = $('assets-loading');
+      var err = $('step3-error');
+      clearError(err);
+      list.innerHTML = '';
+      show(loading);
+      try {
+        var res = await fetch('/api/onboarding/assets');
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not load assets.');
+        hide(loading);
+        (data.groups || []).forEach(function (g) {
+          var wrap = document.createElement('div');
+          wrap.className = 'group';
+          var h = document.createElement('h3');
+          h.textContent = g.group;
+          wrap.appendChild(h);
+          (g.assets || []).forEach(function (a) {
+            var row = document.createElement('div');
+            row.className = 'asset-row';
+            var name = document.createElement('span');
+            name.textContent = a.name;
+            var toggle = document.createElement('label');
+            toggle.className = 'toggle';
+            var input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = a.active !== false;
+            input.setAttribute('data-name', a.name);
+            var track = document.createElement('span');
+            track.className = 'track';
+            toggle.appendChild(input);
+            toggle.appendChild(track);
+            row.appendChild(name);
+            row.appendChild(toggle);
+            wrap.appendChild(row);
+          });
+          list.appendChild(wrap);
+        });
+      } catch (e) {
+        hide(loading);
+        showError(err, e.message || 'Network error — please try again.');
+      }
+    }
+    $('assets-next').addEventListener('click', async function () {
+      var btn = $('assets-next');
+      var err = $('step3-error');
+      clearError(err);
+      var deactivated = [];
+      Array.prototype.forEach.call(document.querySelectorAll('#assets-list input[type="checkbox"]'), function (cb) {
+        if (!cb.checked) deactivated.push(cb.getAttribute('data-name'));
+      });
+      btn.disabled = true;
+      try {
+        var res = await fetch('/api/onboarding/assets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deactivated: deactivated })
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not save.');
+        showStep(4);
+      } catch (e) {
+        showError(err, e.message || 'Network error — please try again.');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // --- Step 4: voice guide -----------------------------------------------
+    var VOICE_QUESTIONS = [
+      { key: 'brandPersonality', q: 'How would you describe your brand personality? (3-5 words)' },
+      { key: 'toneGuidance', q: 'What tone should copy strike? (e.g. confident, warm, direct)' },
+      { key: 'audienceLanguage', q: 'Who is your primary audience?' },
+      { key: 'wordsToUse', q: 'What words or phrases should always appear?' },
+      { key: 'wordsToAvoid', q: 'What words or phrases should never appear?' },
+      { key: 'toneReference', q: 'Share a piece of copy you love and why.' }
+    ];
+    var voiceAnswers = {};
+    var vIndex = 0;
+
+    function renderVoiceQuestion() {
+      var item = VOICE_QUESTIONS[vIndex];
+      $('voice-progress').textContent = 'Question ' + (vIndex + 1) + ' of ' + VOICE_QUESTIONS.length;
+      $('voice-label').textContent = item.q;
+      $('voice-input').value = voiceAnswers[item.key] || '';
+      $('voice-back').style.visibility = vIndex === 0 ? 'hidden' : 'visible';
+      $('voice-next').textContent = vIndex === VOICE_QUESTIONS.length - 1 ? 'Generate →' : 'Next →';
+      show($('voice-questions'));
+      hide($('voice-review'));
+      hide($('voice-generating'));
+      $('voice-input').focus();
+    }
+    $('voice-back').addEventListener('click', function () {
+      voiceAnswers[VOICE_QUESTIONS[vIndex].key] = $('voice-input').value.trim();
+      if (vIndex > 0) { vIndex--; renderVoiceQuestion(); }
+    });
+    $('voice-next').addEventListener('click', async function () {
+      voiceAnswers[VOICE_QUESTIONS[vIndex].key] = $('voice-input').value.trim();
+      if (vIndex < VOICE_QUESTIONS.length - 1) { vIndex++; renderVoiceQuestion(); return; }
+      await generateVoice();
+    });
+
+    async function generateVoice() {
+      var err = $('step4-error');
+      clearError(err);
+      hide($('voice-questions'));
+      show($('voice-generating'));
+      try {
+        var res = await fetch('/api/onboarding/voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ answers: voiceAnswers })
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not generate your voice guide.');
+        hide($('voice-generating'));
+        $('voice-preview').textContent = data.voiceMarkdown || '';
+        $('voice-edit').value = data.voiceMarkdown || '';
+        show($('voice-review'));
+      } catch (e) {
+        hide($('voice-generating'));
+        show($('voice-questions'));
+        showError(err, e.message || 'Network error — please try again.');
+      }
+    }
+
+    var editing = false;
+    $('voice-edit-btn').addEventListener('click', function () {
+      editing = !editing;
+      if (editing) {
+        hide($('voice-preview'));
+        show($('voice-edit'));
+        $('voice-edit-btn').textContent = 'Done editing';
+      } else {
+        $('voice-preview').textContent = $('voice-edit').value;
+        show($('voice-preview'));
+        hide($('voice-edit'));
+        $('voice-edit-btn').textContent = 'Edit';
+      }
+    });
+    $('voice-continue').addEventListener('click', async function () {
+      var btn = $('voice-continue');
+      var err = $('step4-error');
+      clearError(err);
+      var markdown = editing ? $('voice-edit').value : $('voice-preview').textContent;
+      btn.disabled = true;
+      try {
+        var res = await fetch('/api/onboarding/voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ markdown: markdown })
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not save.');
+        showStep(5);
+      } catch (e) {
+        showError(err, e.message || 'Network error — please try again.');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // --- Step 5: Slack ------------------------------------------------------
+    $('slack-btn').addEventListener('click', function () { window.location.href = '/oauth/slack?redirect=onboarding'; });
+    $('slack-skip').addEventListener('click', function () { showStep(6); });
+
+    // --- Step 6: done -------------------------------------------------------
+    $('go-app').addEventListener('click', function () { window.location.href = '/app'; });
+
+    // --- Boot: pick the starting step from the URL --------------------------
+    (function init() {
+      var params = new URLSearchParams(window.location.search);
+      if (params.get('slack') === 'connected') {
+        showStep(5);
+        show($('slack-connected'));
+        return;
+      }
+      var step = parseInt(params.get('step'), 10);
+      showStep(step >= 1 && step <= TOTAL_STEPS ? step : 1);
+    })();
+  </script>
+</body>
+</html>

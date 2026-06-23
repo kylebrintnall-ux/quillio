@@ -90,5 +90,10 @@ module.exports = {
   SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET,
   SLACK_REDIRECT_URI: process.env.SLACK_REDIRECT_URI,
 
+  // Secret used to sign web session cookies (express-session). Set in prod;
+  // a random per-boot fallback is used when unset (sessions won't survive a
+  // restart, which is fine for the keyless demo). Never logged.
+  SESSION_SECRET: process.env.SESSION_SECRET,
+
   ALLOWED_ASSETS,
 };

@@ -275,7 +275,28 @@ test('oauth router mounts and exposes its routes', () => {
     .filter((layer) => layer.route)
     .map((layer) => layer.route.path)
     .sort();
-  assert.deepStrictEqual(paths, ['/oauth/slack', '/oauth/slack/callback', '/welcome']);
+  assert.deepStrictEqual(paths, [
+    '/oauth/google',
+    '/oauth/google/callback',
+    '/oauth/slack',
+    '/oauth/slack/callback',
+    '/welcome',
+  ]);
+});
+
+test('google exposes getClients + getClientsForTenant', () => {
+  // Export-only check — invoking would require real service-account creds.
+  const g = require('../src/google');
+  assert.strictEqual(typeof g.getClients, 'function');
+  assert.strictEqual(typeof g.getClientsForTenant, 'function');
+});
+
+test('oauth.js wires the Google OAuth flow (per-user token storage)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  assert.ok(/accounts\.google\.com\/o\/oauth2/.test(src), 'redirects to Google consent');
+  assert.ok(/oauth2\.googleapis\.com\/token/.test(src), 'exchanges code at the Google token endpoint');
+  assert.ok(/saveTenantToken\([^)]*'google'/.test(src), "stores the token under service='google'");
+  assert.ok(/connected=google/.test(src) && /error=google_failed/.test(src), 'redirects back to /app');
 });
 
 test('getTenantByWorkspace returns null with no database', async () => {

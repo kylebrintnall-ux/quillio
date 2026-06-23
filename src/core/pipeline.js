@@ -501,7 +501,9 @@ async function enrichWithReferences(parsed, refs) {
 // subfolder) inside the target folder, and build the formatted document inside
 // it. Returns { doc, assetSpecs, projectFolderUrl }. Throws createDocument
 // errors so the caller can classify them (e.g. folder-access recovery).
-async function generateDoc(spec, folderId) {
+// Optional `clients` (from getClientsForTenant) runs the Drive folder + Doc
+// creation as a specific tenant's OAuth user; omitted → shared env getClients().
+async function generateDoc(spec, folderId, clients) {
   // Read + filter the asset specs. Log the Sheet ID so a permission/403 on
   // the v2 Sheet is obvious in the logs.
   console.log('[workflow] reading Sheet', config.SHEET_ID, '…');
@@ -519,7 +521,7 @@ async function generateDoc(spec, folderId) {
   let docFolderId = folderId;
   let projectFolderUrl = null;
   try {
-    const { drive } = await getClients();
+    const { drive } = clients || (await getClients());
     const parent = folderId || config.DRIVE_FOLDER_ID;
     const folder = await drive.files.create({
       requestBody: {
@@ -556,22 +558,25 @@ async function generateDoc(spec, folderId) {
     folderId: docFolderId,
     referenceLinks: spec.referenceLinks,
     referenceInsights: spec.referenceInsights,
+    clients,
   });
 
   return { doc, assetSpecs, projectFolderUrl };
 }
 
 // Draft copy for every field of an existing doc. An optional `direction` string
-// is passed through as user revision feedback (the "Regenerate" path). Returns
+// is passed through as user revision feedback (the "Regenerate" path). Optional
+// `clients` runs the Docs read/write as a specific tenant's OAuth user. Returns
 // { title, fieldCount, url }.
-async function generateDraft(docId, direction) {
-  return getDestination().generateDraft(docId, direction);
+async function generateDraft(docId, direction, clients) {
+  return getDestination().generateDraft(docId, direction, clients);
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web
-// project view. Returns { title, summary, writerDirection, assets: [...] }.
-async function getProjectContent(docId) {
-  return getDestination().getDocContent(docId);
+// project view. Optional `clients` runs the Docs read as a tenant's OAuth user.
+// Returns { title, summary, writerDirection, assets: [...] }.
+async function getProjectContent(docId, clients) {
+  return getDestination().getDocContent(docId, clients);
 }
 
 // Count the assets in a doc (one HEADING_3 heading per asset). Best-effort:

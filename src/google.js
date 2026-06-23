@@ -68,4 +68,39 @@ async function getClients() {
   return cached;
 }
 
-module.exports = { getClients };
+// Per-tenant clients (Phase 3 — per-user Google OAuth). When the tenant has a
+// stored Google refresh token (tenant_tokens service='google'), Drive/Docs run
+// as that user via OAuth2; Sheets stays on the service account. Falls back to
+// the shared env-based getClients() when there's no tenant id, no DB, no stored
+// token, or no OAuth client creds — so the env GOOGLE_REFRESH_TOKEN demo path is
+// untouched. Built fresh per call (once per web request); never logs the token.
+async function getClientsForTenant(tenantId) {
+  if (!tenantId) return getClients();
+  if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_CLIENT_SECRET) return getClients();
+
+  let refreshToken = null;
+  try {
+    // Lazy-require to avoid a load-time dependency on the DB layer (and pg).
+    const { getTenantToken } = require('./db');
+    refreshToken = await getTenantToken(tenantId, 'google');
+  } catch (err) {
+    console.warn('[google] tenant token lookup failed — falling back to env auth:', err.message);
+  }
+  if (!refreshToken) return getClients();
+
+  // Reuse the env path's service-account Sheets client + SA email; only the
+  // Drive/Docs write client is swapped to the tenant's OAuth user.
+  const base = await getClients();
+  const userAuth = new google.auth.OAuth2(config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET);
+  userAuth.setCredentials({ refresh_token: refreshToken });
+
+  return {
+    drive: google.drive({ version: 'v3', auth: userAuth }),
+    docs: google.docs({ version: 'v1', auth: userAuth }),
+    sheets: base.sheets,
+    serviceAccountEmail: base.serviceAccountEmail,
+    usingOAuth: true,
+  };
+}
+
+module.exports = { getClients, getClientsForTenant };

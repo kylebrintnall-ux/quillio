@@ -152,9 +152,10 @@ async function createDocument({
   folderId,
   referenceLinks = [],
   referenceInsights = [],
+  clients,
 }) {
   logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
-  const { drive, docs } = await getClients();
+  const { drive, docs } = clients || (await getClients());
   const title = makeTitle(brief, campaignTitle);
 
   const created = await drive.files.create({
@@ -399,8 +400,8 @@ async function loadSheetContext() {
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateDraft(id, direction) {
-  const { docs } = await getClients();
+async function generateDraft(id, direction, clients) {
+  const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
   const { summary, writerPrompt, assets } = parseDoc(doc);
@@ -530,8 +531,8 @@ async function generateDraft(id, direction) {
 //   { summary, writerDirection, assets: [{ name, fields: [{ fieldName,
 //     charMin, charMax, copy }] }] }
 // Throws if the doc can't be read so the caller can surface the fallback.
-async function getDocContent(id) {
-  const { docs } = await getClients();
+async function getDocContent(id, clients) {
+  const { docs } = clients || (await getClients());
   const doc = (await docs.documents.get({ documentId: id })).data;
 
   const result = { title: doc.title || '', summary: '', writerDirection: '', assets: [] };

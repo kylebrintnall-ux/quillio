@@ -16,31 +16,45 @@ const router = express.Router();
 const BOT_SCOPES = 'commands,chat:write,chat:write.public,channels:history,users:read,im:write';
 const USER_SCOPES = 'canvases:read,files:read';
 
+// Google OAuth (per-user Drive/Docs). drive.file = files this app creates;
+// documents = read/write those docs. No access to pre-existing Drive files.
+const GOOGLE_SCOPES = [
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/documents',
+].join(' ');
+
+// The web app's demo tenant — used when /oauth/google isn't given a workspaceId.
+const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
+
 // CSRF state store. Cookies don't survive the cross-site OAuth redirect in
 // Safari/iPad (ITP), so we keep issued state values in-process with a short TTL
 // instead. (Single-process scope — fine for the demo; the durable version would
 // store this in Postgres/Redis once we're multi-instance.)
 const STATE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const pendingStates = new Map(); // state -> created timestamp (ms)
+const pendingStates = new Map(); // state -> { ts, data }
 
-// Remember a freshly-issued state, pruning anything expired so the Map can't
+// Remember a freshly-issued state (with optional associated data, e.g. the
+// workspace id for the Google flow), pruning anything expired so the Map can't
 // grow unbounded.
-function rememberState(state) {
+function rememberState(state, data) {
   const now = Date.now();
-  for (const [s, ts] of pendingStates) {
-    if (now - ts > STATE_TTL_MS) pendingStates.delete(s);
+  for (const [s, entry] of pendingStates) {
+    if (now - entry.ts > STATE_TTL_MS) pendingStates.delete(s);
   }
-  pendingStates.set(state, now);
+  pendingStates.set(state, { ts: now, data: data || null });
 }
 
 // Validate + consume a state on callback: it must be one we issued, unexpired,
-// and is deleted after this single use. Returns true only if valid.
+// and is deleted after this single use. Returns the stored entry (truthy) when
+// valid, or false otherwise — so `if (!consumeState(...))` still guards, and
+// callers that stored data can read entry.data.
 function consumeState(state) {
   if (!state) return false;
-  const ts = pendingStates.get(state);
-  if (ts === undefined) return false;
+  const entry = pendingStates.get(state);
+  if (entry === undefined) return false;
   pendingStates.delete(state); // one-time use
-  return Date.now() - ts <= STATE_TTL_MS;
+  if (Date.now() - entry.ts > STATE_TTL_MS) return false;
+  return entry;
 }
 
 // Step 1 — start the install: issue a CSRF state, store it, redirect to Slack.
@@ -137,6 +151,89 @@ router.get('/oauth/slack/callback', async (req, res) => {
     // Never leak a stack trace to the browser — log it, show a generic page.
     console.error('[oauth] callback error:', err && err.stack ? err.stack : err);
     return res.redirect('/welcome?error=install_failed');
+  }
+});
+
+// Step 1 (Google) — start connecting a Google account: issue a CSRF state
+// carrying the tenant's workspace id, then redirect to Google's consent screen.
+router.get('/oauth/google', (req, res) => {
+  if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_REDIRECT_URI) {
+    console.error('[oauth] GOOGLE_CLIENT_ID / GOOGLE_REDIRECT_URI not configured');
+    return res.redirect('/app?error=google_failed');
+  }
+
+  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
+  const state = crypto.randomBytes(16).toString('hex');
+  rememberState(state, { workspaceId });
+
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', config.GOOGLE_CLIENT_ID);
+  url.searchParams.set('redirect_uri', config.GOOGLE_REDIRECT_URI);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', GOOGLE_SCOPES);
+  url.searchParams.set('access_type', 'offline'); // ask for a refresh token
+  url.searchParams.set('prompt', 'consent'); // force a refresh token every time
+  url.searchParams.set('state', state);
+  return res.redirect(url.toString());
+});
+
+// Step 2 (Google) — Google redirects back with ?code & ?state. Verify the
+// state, exchange the code for a refresh token, and store it for the tenant.
+router.get('/oauth/google/callback', async (req, res) => {
+  try {
+    if (req.query.error) {
+      console.warn('[oauth] google authorize declined/error:', req.query.error);
+      return res.redirect('/app?error=google_failed');
+    }
+
+    const entry = consumeState(req.query.state);
+    if (!entry) {
+      console.error('[oauth] google state missing/expired/mismatch — aborting');
+      return res.redirect('/app?error=google_failed');
+    }
+    const workspaceId = (entry.data && entry.data.workspaceId) || DEFAULT_WORKSPACE_ID;
+
+    const code = req.query.code;
+    if (!code) {
+      console.error('[oauth] google callback missing code');
+      return res.redirect('/app?error=google_failed');
+    }
+    if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_CLIENT_SECRET || !config.GOOGLE_REDIRECT_URI) {
+      console.error('[oauth] Google OAuth env not configured');
+      return res.redirect('/app?error=google_failed');
+    }
+
+    // Exchange the authorization code for tokens.
+    const resp = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: config.GOOGLE_CLIENT_ID,
+        client_secret: config.GOOGLE_CLIENT_SECRET,
+        code: String(code),
+        redirect_uri: config.GOOGLE_REDIRECT_URI,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const data = await resp.json();
+    const refreshToken = data && data.refresh_token;
+    if (!resp.ok || !refreshToken) {
+      // Log the error code/status only — never the token payload.
+      console.error('[oauth] google token exchange failed:', data && data.error ? data.error : resp.status);
+      return res.redirect('/app?error=google_failed');
+    }
+
+    // Persist the refresh token for this tenant (best-effort — no-ops without a
+    // DB). Never log the token itself.
+    await createTenantIfMissing(workspaceId, null);
+    await saveTenantToken(workspaceId, 'google', refreshToken);
+
+    console.log(`[oauth] google connected for tenant ${workspaceId}`);
+    return res.redirect('/app?connected=google');
+  } catch (err) {
+    // Never leak a stack trace to the browser — log it, redirect generically.
+    console.error('[oauth] google callback error:', err && err.stack ? err.stack : err);
+    return res.redirect('/app?error=google_failed');
   }
 });
 

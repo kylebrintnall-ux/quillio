@@ -57,6 +57,10 @@ module.exports = {
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
 
+  // Per-user Google OAuth (Phase 3): redirect URI registered for the
+  // /oauth/google flow that stores a refresh token per tenant in Postgres.
+  GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
+
   SHEET_ID: process.env.ASSET_SHEET_ID || '1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU',
 
   // Target folder for created docs. With OAuth2 this is a normal My Drive

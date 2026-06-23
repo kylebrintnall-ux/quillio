@@ -9,6 +9,7 @@
 // tenantContext is the { tenant, tokens, source } shape resolveTenant returns.
 
 const pipeline = require('../core/pipeline');
+const { getClientsForTenant } = require('../google');
 const { saveProject } = require('../db/projects');
 
 // Pull a Drive folder id out of its webViewLink (…/folders/<id>). Returns null
@@ -24,6 +25,11 @@ function folderIdFromUrl(url) {
 // response; never leaks anything to the caller beyond the thrown message.
 async function runWebBrief(briefText, tenantContext = {}) {
   const tokens = tenantContext.tokens || {};
+  // Drive/Docs writes run as this tenant's Google OAuth user when they've
+  // connected one (else the shared env path). Reference reads stay on the SA
+  // path inside fetchAllReferences — the drive.file scope can't read arbitrary
+  // pre-existing Drive files, only ones this app created.
+  const clients = await getClientsForTenant(tenantContext.tenant && tenantContext.tenant.id);
 
   // 1. Parse the brief into title / summary / writerPrompt / assets (+ links).
   const parsedBrief = await pipeline.parseBrief(briefText);
@@ -66,7 +72,8 @@ async function runWebBrief(briefText, tenantContext = {}) {
   // 4. Build the document.
   const { doc, assetSpecs, projectFolderUrl } = await pipeline.generateDoc(
     { brief: briefText, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
-    effectiveFolderId
+    effectiveFolderId,
+    clients
   );
 
   // 5. Persist the project to history (best-effort). A DB hiccup — or simply no
@@ -115,16 +122,17 @@ async function runWebBrief(briefText, tenantContext = {}) {
 // config); generateDraft re-reads the doc itself, so no tokens are needed today.
 // `direction` is optional user revision feedback threaded into the prompt.
 async function runWebDraft(docId, tenantContext = {}, direction) {
-  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction);
+  const clients = await getClientsForTenant(tenantContext.tenant && tenantContext.tenant.id);
+  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients);
   return { docId, title, fieldCount, url };
 }
 
 // Read a project's doc into the structured, copy-bearing shape the project view
-// renders. tenantContext is accepted for signature consistency; the Docs read
-// uses the shared service-account / env auth path (per-tenant Google auth is
-// parked — see PHASE3.md). Throws on read failure so the route shows a fallback.
+// renders. The Docs read runs as the tenant's Google OAuth user when connected,
+// else the shared env path. Throws on read failure so the route shows a fallback.
 async function runWebProjectContent(docId, tenantContext = {}) {
-  return pipeline.getProjectContent(docId);
+  const clients = await getClientsForTenant(tenantContext.tenant && tenantContext.tenant.id);
+  return pipeline.getProjectContent(docId, clients);
 }
 
 module.exports = { runWebBrief, runWebDraft, runWebProjectContent };

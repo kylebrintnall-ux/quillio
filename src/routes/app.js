@@ -7,6 +7,7 @@
 // errors return a clean { success:false, error } — stack traces are logged
 // server-side only, never sent to the browser.
 
+const path = require('path');
 const express = require('express');
 const { resolveTenant } = require('../db');
 const { runWebBrief, runWebDraft } = require('../adapters/web');
@@ -16,17 +17,11 @@ const router = express.Router();
 // The demo tenant — used when a request doesn't carry a workspace id.
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
 
-// GET /app — placeholder shell. The real brief form lands in a later week.
+// GET /app — the single-file web UI (HTML + CSS + vanilla JS). Static asset,
+// no templating: the page talks to /api/brief and /api/draft itself.
+const APP_HTML = path.join(__dirname, '..', '..', 'public', 'app.html');
 router.get('/app', (req, res) => {
-  res
-    .status(200)
-    .type('html')
-    .send(
-      `<!doctype html><html><head><meta charset="utf-8"><title>Quillio</title></head>` +
-        `<body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem;">` +
-        `<h1>Quillio Web App — coming soon</h1>` +
-        `</body></html>`
-    );
+  res.status(200).sendFile(APP_HTML);
 });
 
 // POST /api/brief — run a brief through the pipeline, return structured data.
@@ -62,7 +57,7 @@ router.post('/api/draft', async (req, res) => {
   try {
     const tenantContext = await resolveTenant(workspaceId);
     const out = await runWebDraft(docId, tenantContext);
-    return res.status(200).json({ success: true, docId: out.docId });
+    return res.status(200).json({ success: true, docId: out.docId, fieldCount: out.fieldCount });
   } catch (err) {
     console.error('[web] /api/draft failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: err.message });

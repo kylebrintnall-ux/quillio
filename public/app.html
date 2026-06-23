@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quillio</title>
+  <style>
+    :root {
+      --accent: #4DD9D9;
+      --ink: #111;
+      --muted: #666;
+      --line: #e3e3e3;
+      --bg: #fff;
+      --soft: #f6f6f6;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.5;
+      -webkit-text-size-adjust: 100%;
+    }
+    nav {
+      border-bottom: 1px solid var(--line);
+      padding: 14px 16px;
+    }
+    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+    main {
+      width: 100%;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    h1 { font-size: 24px; line-height: 1.25; margin: 12px 0 16px; }
+    h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 24px 0 8px; }
+
+    textarea {
+      width: 100%;
+      min-height: 160px;
+      font: inherit;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      resize: vertical;
+    }
+    textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+
+    .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .pill {
+      font-size: 13px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--bg);
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .pill.on {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #06302f;
+      font-weight: 600;
+    }
+
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 18px;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 600;
+    }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.55; cursor: default; }
+    button.primary { background: var(--ink); }
+    button.secondary { background: var(--soft); color: var(--ink); border: 1px solid var(--line); }
+    .full { width: 100%; }
+
+    .error {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid #e7b3b3;
+      background: #fdf0f0;
+      color: #8a1f1f;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .hidden { display: none; }
+
+    /* Progress steps */
+    .steps { list-style: none; padding: 0; margin: 20px 0; }
+    .steps li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line);
+    }
+    .steps li .dot {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 2px solid var(--line);
+      flex: none;
+    }
+    .steps li.working { color: var(--ink); font-weight: 600; }
+    .steps li.working .dot { border-color: var(--accent); border-top-color: transparent; animation: spin 0.8s linear infinite; }
+    .steps li.done { color: var(--ink); }
+    .steps li.done .dot { background: var(--accent); border-color: var(--accent); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .steps li.working .dot { animation: none; } }
+
+    /* Doc output */
+    .summary, .direction { white-space: pre-wrap; }
+    .asset {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 10px 0;
+    }
+    .asset h3 { margin: 0 0 8px; font-size: 16px; }
+    .asset .badge { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .asset.drafted .badge { color: #06302f; background: var(--accent); padding: 2px 8px; border-radius: 999px; }
+    .field { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-top: 1px dashed var(--line); font-size: 14px; }
+    .field:first-of-type { border-top: none; }
+    .field .name { color: var(--ink); }
+    .field .limit { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+
+    .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+    @media (min-width: 600px) {
+      .actions { flex-direction: row; }
+      .actions button { width: auto; }
+      h1 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <nav><span class="brand">Quillio</span></nav>
+  <main>
+
+    <!-- SCREEN 1 — BRIEF INPUT -->
+    <section id="screen-brief" class="screen active">
+      <h1>What are we working on?</h1>
+      <textarea id="brief" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>
+      <div class="pills" aria-label="Detected in your brief">
+        <span class="pill" id="pill-folder">📁 folder link</span>
+        <span class="pill" id="pill-assets">🧱 assets</span>
+        <span class="pill" id="pill-refs">🔗 references</span>
+        <span class="pill" id="pill-audience">🎯 audience</span>
+      </div>
+      <button class="primary full" id="run-btn">Run Brief →</button>
+      <div id="brief-error" class="error hidden"></div>
+    </section>
+
+    <!-- SCREEN 2 — PROGRESS -->
+    <section id="screen-progress" class="screen">
+      <h1 id="progress-heading">Reading your brief…</h1>
+      <ul class="steps" id="steps">
+        <li data-step="0"><span class="dot"></span><span>Reading your brief</span></li>
+        <li data-step="1"><span class="dot"></span><span>Fetching references</span></li>
+        <li data-step="2"><span class="dot"></span><span>Building your doc</span></li>
+        <li data-step="3"><span class="dot"></span><span>Creating project folder</span></li>
+      </ul>
+      <div id="progress-error" class="error hidden"></div>
+      <button class="secondary full hidden" id="progress-back">← Back to brief</button>
+    </section>
+
+    <!-- SCREEN 3 — DOC OUTPUT -->
+    <section id="screen-output" class="screen">
+      <h1 id="out-title">Campaign</h1>
+      <div id="draft-status" class="badge hidden"></div>
+
+      <h2>Campaign Summary</h2>
+      <div class="summary" id="out-summary"></div>
+
+      <h2>Writer Direction</h2>
+      <div class="direction" id="out-direction"></div>
+
+      <h2>Assets</h2>
+      <div id="out-assets"></div>
+
+      <div class="actions">
+        <button class="primary full" id="draft-btn">Generate First Draft</button>
+        <button class="secondary full" id="open-btn">Open in Drive ↗</button>
+      </div>
+      <div id="output-error" class="error hidden"></div>
+    </section>
+
+  </main>
+
+  <script>
+    'use strict';
+
+    var WORKSPACE_ID = 'T0B8LPRDKHR';
+
+    // --- Screen switching ---------------------------------------------------
+    var screens = {
+      brief: document.getElementById('screen-brief'),
+      progress: document.getElementById('screen-progress'),
+      output: document.getElementById('screen-output')
+    };
+    function showScreen(name) {
+      Object.keys(screens).forEach(function (k) {
+        screens[k].classList.toggle('active', k === name);
+      });
+      window.scrollTo(0, 0);
+    }
+    function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
+    function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
+
+    // --- Screen 1: live brief detection ------------------------------------
+    var briefEl = document.getElementById('brief');
+    var briefError = document.getElementById('brief-error');
+
+    var ASSET_KEYWORDS = [
+      'linkedin', 'carousel', 'meta ', 'facebook', 'instagram', 'twitter', '/x ',
+      ' ad', 'display banner', 'banner', 'dv360', 'responsive display',
+      'email', 'nurture', 'basho', 'subject line', 'preheader',
+      'landing page', 'signage', 'one-pager', 'one pager', 'battle card',
+      'direct mail', 'mailer', 'note card', 'organic social', 'form confirm'
+    ];
+    var AUDIENCE_KEYWORDS = [
+      'audience', 'targeting', 'target ', 'persona', 'segment', 'demographic',
+      'decision maker', 'decision-maker', 'buyer', 'icp', 'b2b', 'b2c',
+      'enterprise', 'smb', 'mid-market', 'marketer', 'developer', 'it leader',
+      'cmo', 'cio', 'vp ', 'director', 'aimed at', 'for '
+    ];
+    var URL_RE = /https?:\/\/[^\s]+/i;
+    var FOLDER_RE = /drive\.google\.com/i;
+
+    function hasKeyword(text, list) {
+      for (var i = 0; i < list.length; i++) { if (text.indexOf(list[i]) !== -1) return true; }
+      return false;
+    }
+    function updatePills() {
+      var raw = briefEl.value;
+      var text = raw.toLowerCase();
+      document.getElementById('pill-folder').classList.toggle('on', FOLDER_RE.test(raw));
+      document.getElementById('pill-assets').classList.toggle('on', hasKeyword(text, ASSET_KEYWORDS));
+      document.getElementById('pill-refs').classList.toggle('on', URL_RE.test(raw));
+      document.getElementById('pill-audience').classList.toggle('on', hasKeyword(text, AUDIENCE_KEYWORDS));
+    }
+    briefEl.addEventListener('input', updatePills);
+
+    // --- Screen 2: staged progress -----------------------------------------
+    var HEADINGS = ['Reading your brief…', 'Fetching references…', 'Building your doc…', 'Creating project folder…'];
+    var stepEls = Array.prototype.slice.call(document.querySelectorAll('#steps li'));
+    var progressHeading = document.getElementById('progress-heading');
+    var progressError = document.getElementById('progress-error');
+    var progressBack = document.getElementById('progress-back');
+    var stageTimer = null;
+    var currentStage = 0;
+
+    function setStage(n) {
+      currentStage = n;
+      progressHeading.textContent = HEADINGS[Math.min(n, HEADINGS.length - 1)];
+      stepEls.forEach(function (li, i) {
+        li.classList.remove('working', 'done');
+        if (i < n) li.classList.add('done');
+        else if (i === n) li.classList.add('working');
+      });
+    }
+    function startStages() {
+      clearError(progressError);
+      progressBack.classList.add('hidden');
+      setStage(0);
+      stageTimer = setInterval(function () {
+        // Advance toward (but never past) the final step while the request runs.
+        if (currentStage < stepEls.length - 1) setStage(currentStage + 1);
+      }, 1400);
+    }
+    function finishStages() {
+      if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
+      stepEls.forEach(function (li) { li.classList.remove('working'); li.classList.add('done'); });
+    }
+    function failStages(msg) {
+      if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
+      stepEls.forEach(function (li) { li.classList.remove('working'); });
+      showError(progressError, msg);
+      progressBack.classList.remove('hidden');
+    }
+    progressBack.addEventListener('click', function () { showScreen('brief'); });
+
+    // --- Screen 3: render output -------------------------------------------
+    var state = { docUrl: null, docId: null };
+
+    function charLimit(f) {
+      if (!f.charMax) return '';
+      return f.charMin > 0 ? '[' + f.charMin + '–' + f.charMax + ']' : '[' + f.charMax + ']';
+    }
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+    function docIdFromUrl(url) {
+      var m = /\/d\/([^/]+)/.exec(url || '');
+      return m ? m[1] : null;
+    }
+
+    function renderOutput(data) {
+      state.docUrl = data.docUrl || null;
+      state.docId = docIdFromUrl(data.docUrl);
+
+      document.getElementById('out-title').textContent = data.campaignTitle || 'Campaign';
+      document.getElementById('out-summary').textContent = data.summary || '—';
+      document.getElementById('out-direction').textContent = data.writerDirection || '—';
+
+      var wrap = document.getElementById('out-assets');
+      wrap.textContent = '';
+      var blocks = data.assetBlocks || [];
+      if (!blocks.length && data.assets) {
+        blocks = data.assets.map(function (n) { return { name: n, fields: [] }; });
+      }
+      blocks.forEach(function (block) {
+        var card = el('div', 'asset');
+        var head = el('h3', null, block.name);
+        var badge = el('span', 'badge', 'Not yet drafted');
+        head.appendChild(document.createTextNode(' '));
+        head.appendChild(badge);
+        card.appendChild(head);
+        (block.fields || []).forEach(function (f) {
+          var row = el('div', 'field');
+          row.appendChild(el('span', 'name', f.fieldName));
+          row.appendChild(el('span', 'limit', charLimit(f)));
+          card.appendChild(row);
+        });
+        wrap.appendChild(card);
+      });
+
+      var draftStatus = document.getElementById('draft-status');
+      draftStatus.classList.add('hidden');
+      draftStatus.textContent = '';
+      var draftBtn = document.getElementById('draft-btn');
+      draftBtn.disabled = false;
+      draftBtn.textContent = 'Generate First Draft';
+      clearError(document.getElementById('output-error'));
+    }
+
+    // --- Actions ------------------------------------------------------------
+    async function runBrief() {
+      var briefText = briefEl.value.trim();
+      clearError(briefError);
+      if (!briefText) { showError(briefError, 'Add a brief first.'); return; }
+
+      showScreen('progress');
+      startStages();
+      try {
+        var res = await fetch('/api/brief', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ briefText: briefText, workspaceId: WORKSPACE_ID })
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Something went wrong building your doc.');
+        finishStages();
+        renderOutput(data);
+        showScreen('output');
+      } catch (e) {
+        failStages(e.message || 'Network error — please try again.');
+      }
+    }
+
+    async function generateDraft() {
+      if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
+      var btn = document.getElementById('draft-btn');
+      var outErr = document.getElementById('output-error');
+      clearError(outErr);
+      btn.disabled = true;
+      btn.textContent = 'Drafting…';
+      try {
+        var res = await fetch('/api/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docId: state.docId, workspaceId: WORKSPACE_ID })
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Draft generation failed.');
+
+        var status = document.getElementById('draft-status');
+        var n = data.fieldCount;
+        status.textContent = '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
+        status.classList.remove('hidden');
+        Array.prototype.forEach.call(document.querySelectorAll('.asset'), function (card) {
+          card.classList.add('drafted');
+          var b = card.querySelector('.badge');
+          if (b) b.textContent = '✓ Drafted';
+        });
+        btn.textContent = 'Draft Generated';
+      } catch (e) {
+        showError(outErr, e.message || 'Network error — please try again.');
+        btn.disabled = false;
+        btn.textContent = 'Generate First Draft';
+      }
+    }
+
+    function openInDrive() {
+      if (state.docUrl) window.open(state.docUrl, '_blank', 'noopener');
+    }
+
+    document.getElementById('run-btn').addEventListener('click', runBrief);
+    document.getElementById('draft-btn').addEventListener('click', generateDraft);
+    document.getElementById('open-btn').addEventListener('click', openInDrive);
+
+    updatePills();
+  </script>
+</body>
+</html>

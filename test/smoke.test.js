@@ -328,3 +328,20 @@ test('routes/app does NOT import the Slack messaging layer', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
   assert.ok(!/services\/slack/.test(src), 'app.js must not import services/slack');
 });
+
+// --- Week 9: web app frontend ---
+
+test('public/app.html exists with the three screens and no external assets', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // The three single-page screens are all present.
+  for (const id of ['screen-brief', 'screen-progress', 'screen-output']) {
+    assert.ok(html.includes(id), `app.html should contain #${id}`);
+  }
+  // It talks to the Week 8 API.
+  assert.ok(html.includes('/api/brief'), 'app.html posts to /api/brief');
+  assert.ok(html.includes('/api/draft'), 'app.html posts to /api/draft');
+  // System fonts / no frameworks: no external fonts, CDNs, or <img>/<script src>.
+  assert.ok(!/fonts\.googleapis|fonts\.gstatic/i.test(html), 'no Google Fonts');
+  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+  assert.ok(!/<img\b/i.test(html), 'no images');
+});

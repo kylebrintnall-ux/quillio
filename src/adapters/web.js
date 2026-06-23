@@ -66,6 +66,16 @@ async function runWebBrief(briefText, tenantContext = {}) {
     folderUrl: projectFolderUrl,
     campaignTitle,
     assets: assetSpecs.map((a) => a.assetType),
+    // Richer per-asset detail for the web UI: name + each field's char spec.
+    // Keeps `assets` (names only) above for backward compatibility.
+    assetBlocks: assetSpecs.map((a) => ({
+      name: a.assetType,
+      fields: (a.fields || []).map((f) => ({
+        fieldName: f.fieldName,
+        charMin: f.charMin,
+        charMax: f.charMax,
+      })),
+    })),
     summary,
     writerDirection: writerPrompt,
     referenceInsights,

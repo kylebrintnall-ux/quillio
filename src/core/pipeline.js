@@ -12,6 +12,7 @@ const {
 } = require('../services/gemini');
 const { getAssetSpecs } = require('../services/sheets');
 const { getDestination } = require('../destinations');
+const { getVoiceGuide } = require('../db');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
@@ -566,10 +567,23 @@ async function generateDoc(spec, folderId, clients) {
 
 // Draft copy for every field of an existing doc. An optional `direction` string
 // is passed through as user revision feedback (the "Regenerate" path). Optional
-// `clients` runs the Docs read/write as a specific tenant's OAuth user. Returns
-// { title, fieldCount, url }.
-async function generateDraft(docId, direction, clients) {
-  return getDestination().generateDraft(docId, direction, clients);
+// `clients` runs the Docs read/write as a specific tenant's OAuth user. Optional
+// `tenantId` selects that tenant's saved voice guide (Postgres) for the prompt,
+// falling back to the repo voice.md when there's no DB / no saved guide.
+// Returns { title, fieldCount, url }.
+async function generateDraft(docId, direction, clients, tenantId) {
+  // Best-effort: a DB miss/error just falls back to the repo voice.md. Never
+  // log the guide content — only whether one was found.
+  let voiceGuide = null;
+  if (tenantId) {
+    try {
+      voiceGuide = await getVoiceGuide(tenantId);
+    } catch (err) {
+      console.warn('[workflow] voice guide lookup failed — using repo voice.md:', err.message);
+    }
+  }
+  console.log(`[workflow] draft voice guide: ${voiceGuide ? 'tenant (Postgres)' : 'repo voice.md'}`);
+  return getDestination().generateDraft(docId, direction, clients, voiceGuide);
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web

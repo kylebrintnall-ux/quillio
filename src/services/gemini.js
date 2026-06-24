@@ -95,22 +95,36 @@ function mediumKeywordsForAsset(assetType) {
 }
 
 // The voice context to inject for a given asset: universal craft (incl. CTA
-// library + banned words) plus only the relevant medium subsection.
-function buildVoiceContext(assetType) {
-  if (!VOICE_PARSED) return '';
-  if (!VOICE_PARSED.sliceable) return VOICE_GUIDE;
+// library + banned words) plus only the relevant medium subsection. When a
+// per-tenant `voiceGuide` (raw markdown) is supplied and non-empty, it is the
+// source; otherwise we fall back to the repo voice.md loaded at startup.
+function buildVoiceContext(assetType, voiceGuide) {
+  // Pick the source + its parsed form. A non-empty tenant guide wins; otherwise
+  // the module-level repo voice.md (parsed once at startup).
+  let rawFull;
+  let parsed;
+  if (voiceGuide && String(voiceGuide).trim()) {
+    rawFull = String(voiceGuide).trim();
+    parsed = parseVoice(rawFull);
+  } else {
+    rawFull = VOICE_GUIDE;
+    parsed = VOICE_PARSED;
+  }
+
+  if (!parsed) return '';
+  if (!parsed.sliceable) return rawFull;
 
   const keywords = mediumKeywordsForAsset(assetType);
   let chosen = keywords
-    ? VOICE_PARSED.subs.filter((s) => keywords.some((k) => s.title.toLowerCase().includes(k)))
-    : VOICE_PARSED.subs;
-  if (chosen.length === 0) chosen = VOICE_PARSED.subs; // no match → don't drop guidance
+    ? parsed.subs.filter((s) => keywords.some((k) => s.title.toLowerCase().includes(k)))
+    : parsed.subs;
+  if (chosen.length === 0) chosen = parsed.subs; // no match → don't drop guidance
 
   return [
-    VOICE_PARSED.preMedium,
-    VOICE_PARSED.mediumsIntro,
+    parsed.preMedium,
+    parsed.mediumsIntro,
     ...chosen.map((s) => s.text),
-    VOICE_PARSED.postMedium,
+    parsed.postMedium,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -120,8 +134,8 @@ function buildVoiceContext(assetType) {
 // Empty when no voice guide is set. Frames the layering: voice.md = how to
 // write; Sheet Tone Notes = field-specific direction; character limits = hard
 // constraints that always win.
-function brandVoiceLines(assetType) {
-  const voice = buildVoiceContext(assetType);
+function brandVoiceLines(assetType, voiceGuide) {
+  const voice = buildVoiceContext(assetType, voiceGuide);
   if (!voice) return [];
   return [
     'BRAND VOICE & COPY PLAYBOOK — this is HOW to write: the overall brand voice',
@@ -460,6 +474,7 @@ async function generateFieldDraft({
   summary,
   writerPrompt,
   direction,
+  voiceGuide,
 }) {
   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
   const limitLine = ceiling
@@ -469,7 +484,7 @@ async function generateFieldDraft({
   const prompt = [
     'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
     '',
-    ...brandVoiceLines(assetType),
+    ...brandVoiceLines(assetType, voiceGuide),
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
     `Asset: ${assetType}`,
@@ -528,6 +543,7 @@ async function generateAssetDrafts({
   writerPrompt,
   fields,
   direction,
+  voiceGuide,
 }) {
   if (!fields || fields.length === 0) return [];
 
@@ -565,7 +581,7 @@ async function generateAssetDrafts({
     'them clearly DISTINCT, not reworded duplicates.',
     '',
     ...revisionLines,
-    ...brandVoiceLines(assetType),
+    ...brandVoiceLines(assetType, voiceGuide),
     `Campaign summary: ${summary}`,
     `Creative direction: ${writerPrompt}`,
     `Asset: ${assetType}`,
@@ -619,6 +635,7 @@ async function generateAssetDrafts({
         summary,
         writerPrompt,
         direction,
+        voiceGuide,
       });
     }
     out.push({ fieldName: f.fieldName, copy });

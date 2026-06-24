@@ -203,7 +203,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 // stray posts). Falls back to response_url progress + chat.postMessage
 // completion if the bot token / message ts isn't available.
 async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspaceId) {
-  const { tokens } = await resolveTenant(workspaceId);
+  const { tenant, tokens } = await resolveTenant(workspaceId);
   const canLive = !!tokens.slack_bot && channel && messageTs;
   console.log('[workflow] runGenerateDraft START — canLive:', canLive, '| channel:', channel || '(none)');
 
@@ -227,7 +227,12 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   if (canLive) await updateLive(channel, messageTs, progressText, undefined, tokens.slack_bot);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 
-  const { title, fieldCount, url } = await pipeline.generateDraft(docId);
+  const { title, fieldCount, url } = await pipeline.generateDraft(
+    docId,
+    undefined,
+    undefined,
+    tenant && tenant.id
+  );
   console.log('[workflow] generateDraft returned — posting completion');
 
   const completionText = `${emoji('quillio-copy-done')} First draft ready — *${title}* (${fieldCount} field${

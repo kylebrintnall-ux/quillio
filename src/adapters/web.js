@@ -122,8 +122,9 @@ async function runWebBrief(briefText, tenantContext = {}) {
 // config); generateDraft re-reads the doc itself, so no tokens are needed today.
 // `direction` is optional user revision feedback threaded into the prompt.
 async function runWebDraft(docId, tenantContext = {}, direction) {
-  const clients = await getClientsForTenant(tenantContext.tenant && tenantContext.tenant.id);
-  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients);
+  const tenantId = tenantContext.tenant && tenantContext.tenant.id;
+  const clients = await getClientsForTenant(tenantId);
+  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId);
   return { docId, title, fieldCount, url };
 }
 

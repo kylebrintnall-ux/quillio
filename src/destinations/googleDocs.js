@@ -400,7 +400,7 @@ async function loadSheetContext() {
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateDraft(id, direction, clients) {
+async function generateDraft(id, direction, clients, voiceGuide) {
   const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
@@ -454,6 +454,7 @@ async function generateDraft(id, direction, clients) {
         writerPrompt,
         fields: a.fields,
         direction,
+        voiceGuide,
       });
       const metaByName = new Map(
         a.fields.map((f) => [f.fieldName, { insertIndex: f.insertIndex, deleteEnd: f.deleteEnd }])

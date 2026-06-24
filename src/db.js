@@ -40,6 +40,15 @@ async function saveVoiceGuide(tenantId, rawMarkdown) {
   return true;
 }
 
+// Read a tenant's saved voice guide markdown. Returns the string, or null if
+// there's no DB / no saved guide yet.
+async function getVoiceGuide(tenantId) {
+  const p = getPool();
+  if (!p || !tenantId) return null;
+  const res = await p.query('SELECT raw_markdown FROM voice_guide WHERE tenant_id = $1 LIMIT 1', [tenantId]);
+  return (res && res.rows && res.rows[0] && res.rows[0].raw_markdown) || null;
+}
+
 // --- Tenant resolver (Phase 3) ---
 // resolveTenant() always returns the same shape — { tenant, tokens, source } —
 // whether it read from Postgres or synthesized from env vars. That lets callers
@@ -152,6 +161,7 @@ async function setTenantDefaultFolder(tenantId, folderId) {
 module.exports = {
   getPool,
   saveVoiceGuide,
+  getVoiceGuide,
   getTenantByWorkspace,
   getTenantToken,
   resolveTenant,

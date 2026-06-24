@@ -83,7 +83,27 @@
     .note { display: flex; align-items: center; gap: 10px; color: var(--muted); margin-top: 14px; }
     .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .note .dot, .spinner { animation: none; } }
+
+    .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #1a9a9a; margin-bottom: 6px; }
+
+    /* voice.md generating animation */
+    #voice-generating { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 0; color: var(--muted); }
+    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+    .genmsg { font-size: 14px; }
+
+    /* rendered voice.md preview */
+    .preview.md { font-size: 14px; }
+    .md .md-h { font-weight: 700; margin: 12px 0 4px; }
+    .md .md-h:first-child { margin-top: 0; }
+    .md .md-ul { margin: 4px 0 10px; padding-left: 20px; }
+    .md .md-ul li { margin: 2px 0; }
+    .md .md-p { margin: 6px 0; }
+
+    /* regenerate panel */
+    .regen { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 16px; }
+    .regen textarea { min-height: 60px; }
+    .regen button { margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -129,9 +149,13 @@
 
     <!-- STEP 4 — VOICE GUIDE -->
     <section class="step" id="step-4">
-      <h1>Let's set up your brand voice</h1>
+      <div class="eyebrow">VOICE GUIDE</div>
+      <h1>Set up your Voice Guide</h1>
+      <p class="muted">Your answers generate a voice.md file that Quillio injects into every first draft — keeping copy on-brand from the start.</p>
 
-      <div id="voice-questions">
+      <div id="voice-loading" class="note hidden"><span class="dot"></span><span>Loading…</span></div>
+
+      <div id="voice-questions" class="hidden">
         <div class="progress" id="voice-progress">Question 1 of 6</div>
         <label id="voice-label" for="voice-input"></label>
         <textarea id="voice-input"></textarea>
@@ -141,15 +165,23 @@
         </div>
       </div>
 
-      <div id="voice-generating" class="note hidden"><span class="dot"></span><span>Generating your voice guide…</span></div>
+      <div id="voice-generating" class="hidden">
+        <div class="spinner"></div>
+        <div class="genmsg" id="voice-genmsg">Reading your answers…</div>
+      </div>
 
       <div id="voice-review" class="hidden">
-        <h2>Your voice guide</h2>
-        <div class="preview" id="voice-preview"></div>
+        <h2>Your Voice Guide</h2>
+        <div class="preview md" id="voice-preview"></div>
         <textarea id="voice-edit" class="hidden"></textarea>
         <div class="row">
           <button class="secondary" id="voice-edit-btn">Edit</button>
-          <button class="full" id="voice-continue">Save + Continue →</button>
+          <button class="full" id="voice-continue">Looks good →</button>
+        </div>
+        <div class="regen">
+          <label for="voice-direction">Regenerate — what should change?</label>
+          <textarea id="voice-direction" placeholder="e.g. more concise, drop the jargon, warmer tone"></textarea>
+          <button class="secondary" id="voice-regen">Regenerate</button>
         </div>
       </div>
       <div id="step4-error" class="error hidden"></div>
@@ -162,6 +194,7 @@
       <div id="slack-connected" class="hidden"><p><span class="ok">✓</span> Slack connected — <code>/quillio</code> is live in your workspace</p></div>
       <div class="row">
         <button class="full" id="slack-btn">Add to Slack</button>
+        <button class="full hidden" id="slack-next">Next →</button>
       </div>
       <button class="ghost" id="slack-skip">I'll do this later →</button>
     </section>
@@ -171,7 +204,7 @@
       <h1>You're ready.</h1>
       <p class="muted">Run your first brief in Slack with <code>/quillio</code> or from the web app.</p>
       <h2>Try this brief</h2>
-      <div class="sample" id="sample">Q3 campaign. LinkedIn single image ad and nurture email. VP Service Operations audience.</div>
+      <div class="sample" id="sample">Q3 Always On Agentforce Service demand gen. LinkedIn single image ad, Meta single image ad, and nurture email. VP Service Operations and IT Director audience. Core message: Agentforce handles the routine so your team can focus on what actually matters. Tone: confident, direct, human. Reference: https://www.salesforce.com/agentforce/</div>
       <div class="row">
         <button class="full" id="go-app">Go to app →</button>
       </div>
@@ -199,7 +232,7 @@
       window.scrollTo(0, 0);
       if (current === 2) loadMe();
       if (current === 3) loadAssets();
-      if (current === 4) renderVoiceQuestion();
+      if (current === 4) loadVoice();
     }
     function renderDots() {
       var dots = $('dots');
@@ -322,7 +355,7 @@
       }
     });
 
-    // --- Step 4: voice guide -----------------------------------------------
+    // --- Step 4: Voice Guide -----------------------------------------------
     var VOICE_QUESTIONS = [
       { key: 'brandPersonality', q: 'How would you describe your brand personality? (3-5 words)' },
       { key: 'toneGuidance', q: 'What tone should copy strike? (e.g. confident, warm, direct)' },
@@ -331,8 +364,64 @@
       { key: 'wordsToAvoid', q: 'What words or phrases should never appear?' },
       { key: 'toneReference', q: 'Share a piece of copy you love and why.' }
     ];
+    var GEN_MESSAGES = ['Reading your answers…', 'Building your voice profile…', 'Writing your voice.md…', 'Almost done…'];
     var voiceAnswers = {};
     var vIndex = 0;
+    var editing = false;
+    var currentMarkdown = '';
+    var genTimer = null;
+
+    // Minimal, safe markdown rendering: ## → bold headings, * / - → bullets,
+    // **bold** inline. Everything is HTML-escaped first.
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+    function inlineMd(s) { return escapeHtml(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); }
+    function renderMarkdown(md) {
+      var lines = String(md || '').split('\n');
+      var html = '';
+      var inList = false;
+      function closeList() { if (inList) { html += '</ul>'; inList = false; } }
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].replace(/\s+$/, '');
+        if (!line.trim()) { closeList(); continue; }
+        var h = line.match(/^(#{1,6})\s+(.*)$/);
+        if (h) { closeList(); html += '<div class="md-h">' + inlineMd(h[2]) + '</div>'; continue; }
+        var b = line.match(/^\s*[-*]\s+(.*)$/);
+        if (b) { if (!inList) { html += '<ul class="md-ul">'; inList = true; } html += '<li>' + inlineMd(b[1]) + '</li>'; continue; }
+        closeList();
+        html += '<p class="md-p">' + inlineMd(line) + '</p>';
+      }
+      closeList();
+      return html;
+    }
+
+    // Entry point for Step 4: load an existing guide (returning user) or start
+    // the questionnaire.
+    async function loadVoice() {
+      clearError($('step4-error'));
+      hide($('voice-questions'));
+      hide($('voice-generating'));
+      hide($('voice-review'));
+      show($('voice-loading'));
+      try {
+        var res = await fetch('/api/onboarding/voice');
+        var data = await res.json();
+        hide($('voice-loading'));
+        if (data && data.success && data.voiceMarkdown) {
+          showReview(data.voiceMarkdown);
+        } else {
+          vIndex = 0;
+          renderVoiceQuestion();
+        }
+      } catch (e) {
+        hide($('voice-loading'));
+        vIndex = 0;
+        renderVoiceQuestion();
+      }
+    }
 
     function renderVoiceQuestion() {
       var item = VOICE_QUESTIONS[vIndex];
@@ -341,46 +430,73 @@
       $('voice-input').value = voiceAnswers[item.key] || '';
       $('voice-back').style.visibility = vIndex === 0 ? 'hidden' : 'visible';
       $('voice-next').textContent = vIndex === VOICE_QUESTIONS.length - 1 ? 'Generate →' : 'Next →';
-      show($('voice-questions'));
       hide($('voice-review'));
       hide($('voice-generating'));
+      show($('voice-questions'));
       $('voice-input').focus();
     }
     $('voice-back').addEventListener('click', function () {
       voiceAnswers[VOICE_QUESTIONS[vIndex].key] = $('voice-input').value.trim();
       if (vIndex > 0) { vIndex--; renderVoiceQuestion(); }
     });
-    $('voice-next').addEventListener('click', async function () {
+    $('voice-next').addEventListener('click', function () {
       voiceAnswers[VOICE_QUESTIONS[vIndex].key] = $('voice-input').value.trim();
       if (vIndex < VOICE_QUESTIONS.length - 1) { vIndex++; renderVoiceQuestion(); return; }
-      await generateVoice();
+      generateVoice(null);
     });
 
-    async function generateVoice() {
+    function startGenerating() {
+      hide($('voice-questions'));
+      hide($('voice-review'));
+      show($('voice-generating'));
+      var i = 0;
+      $('voice-genmsg').textContent = GEN_MESSAGES[0];
+      genTimer = setInterval(function () {
+        i = Math.min(i + 1, GEN_MESSAGES.length - 1);
+        $('voice-genmsg').textContent = GEN_MESSAGES[i];
+      }, 2000);
+    }
+    function stopGenerating() { if (genTimer) { clearInterval(genTimer); genTimer = null; } }
+
+    // Generate (direction=null) or regenerate (direction set) the voice guide.
+    async function generateVoice(direction) {
       var err = $('step4-error');
       clearError(err);
-      hide($('voice-questions'));
-      show($('voice-generating'));
+      startGenerating();
       try {
+        var payload = { answers: voiceAnswers };
+        if (direction) { payload.direction = direction; payload.previousGuide = currentMarkdown; }
         var res = await fetch('/api/onboarding/voice', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ answers: voiceAnswers })
+          body: JSON.stringify(payload)
         });
         var data = await res.json();
-        if (!data || !data.success) throw new Error((data && data.error) || 'Could not generate your voice guide.');
-        hide($('voice-generating'));
-        $('voice-preview').textContent = data.voiceMarkdown || '';
-        $('voice-edit').value = data.voiceMarkdown || '';
-        show($('voice-review'));
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not generate your Voice Guide.');
+        stopGenerating();
+        showReview(data.voiceMarkdown || '');
       } catch (e) {
-        hide($('voice-generating'));
-        show($('voice-questions'));
+        stopGenerating();
+        if (currentMarkdown) { showReview(currentMarkdown); } else { renderVoiceQuestion(); }
         showError(err, e.message || 'Network error — please try again.');
       }
     }
 
-    var editing = false;
+    // Show the rendered guide with Edit / Looks good / Regenerate.
+    function showReview(markdown) {
+      currentMarkdown = markdown || '';
+      editing = false;
+      $('voice-preview').innerHTML = renderMarkdown(currentMarkdown);
+      $('voice-edit').value = currentMarkdown;
+      show($('voice-preview'));
+      hide($('voice-edit'));
+      $('voice-edit-btn').textContent = 'Edit';
+      $('voice-direction').value = '';
+      hide($('voice-questions'));
+      hide($('voice-generating'));
+      show($('voice-review'));
+    }
+
     $('voice-edit-btn').addEventListener('click', function () {
       editing = !editing;
       if (editing) {
@@ -388,17 +504,25 @@
         show($('voice-edit'));
         $('voice-edit-btn').textContent = 'Done editing';
       } else {
-        $('voice-preview').textContent = $('voice-edit').value;
+        currentMarkdown = $('voice-edit').value;
+        $('voice-preview').innerHTML = renderMarkdown(currentMarkdown);
         show($('voice-preview'));
         hide($('voice-edit'));
         $('voice-edit-btn').textContent = 'Edit';
       }
     });
+
+    $('voice-regen').addEventListener('click', function () {
+      var direction = $('voice-direction').value.trim();
+      if (editing) { currentMarkdown = $('voice-edit').value; }
+      generateVoice(direction || 'Refresh the guide.');
+    });
+
     $('voice-continue').addEventListener('click', async function () {
       var btn = $('voice-continue');
       var err = $('step4-error');
       clearError(err);
-      var markdown = editing ? $('voice-edit').value : $('voice-preview').textContent;
+      var markdown = editing ? $('voice-edit').value : currentMarkdown;
       btn.disabled = true;
       try {
         var res = await fetch('/api/onboarding/voice', {
@@ -419,6 +543,17 @@
     // --- Step 5: Slack ------------------------------------------------------
     $('slack-btn').addEventListener('click', function () { window.location.href = '/oauth/slack?redirect=onboarding'; });
     $('slack-skip').addEventListener('click', function () { showStep(6); });
+    $('slack-next').addEventListener('click', function () { showStep(6); });
+
+    // Reflect a completed Slack install: disable the button and reveal Next →.
+    function markSlackConnected() {
+      show($('slack-connected'));
+      var btn = $('slack-btn');
+      btn.disabled = true;
+      btn.textContent = '✓ Connected';
+      show($('slack-next'));
+      hide($('slack-skip'));
+    }
 
     // --- Step 6: done -------------------------------------------------------
     $('go-app').addEventListener('click', function () { window.location.href = '/app'; });
@@ -428,7 +563,7 @@
       var params = new URLSearchParams(window.location.search);
       if (params.get('slack') === 'connected') {
         showStep(5);
-        show($('slack-connected'));
+        markSlackConnected();
         return;
       }
       var step = parseInt(params.get('step'), 10);

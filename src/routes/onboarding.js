@@ -9,7 +9,7 @@
 const path = require('path');
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
-const { setTenantDefaultFolder, saveVoiceGuide } = require('../db');
+const { setTenantDefaultFolder, saveVoiceGuide, getVoiceGuide } = require('../db');
 const { getTenantAssets, setActiveAssets } = require('../db/assets');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { generateVoiceGuide } = require('../services/gemini');
@@ -94,6 +94,18 @@ router.post('/api/onboarding/assets', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/onboarding/voice — the tenant's saved voice guide, or null. Lets
+// Step 4 show the existing guide (with edit/regenerate) for a returning user.
+router.get('/api/onboarding/voice', requireAuth, async (req, res) => {
+  try {
+    const markdown = await getVoiceGuide(req.user && req.user.tenant_id);
+    return res.status(200).json({ success: true, voiceMarkdown: markdown || null });
+  } catch (err) {
+    console.error('[onboarding] GET /voice failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /api/onboarding/voice — dual mode:
 //   { answers: {...} } → generate a voice guide via Gemini, save it, return it.
 //   { markdown: "..." } → save the user's edited markdown (the inline-edit path).
@@ -102,9 +114,9 @@ router.post('/api/onboarding/voice', requireAuth, async (req, res) => {
   const tenantId = req.user && req.user.tenant_id;
   try {
     let markdown;
-    if (typeof body.markdown === 'string' && body.markdown.trim()) {
-      markdown = body.markdown;
-    } else {
+    // `answers` present → generate (or regenerate with `direction`). Otherwise a
+    // bare `markdown` is the user's edited text being saved as-is.
+    if (body.answers) {
       const a = body.answers || {};
       markdown = await generateVoiceGuide({
         brandPersonality: a.brandPersonality,
@@ -113,7 +125,13 @@ router.post('/api/onboarding/voice', requireAuth, async (req, res) => {
         wordsToUse: a.wordsToUse,
         wordsToAvoid: a.wordsToAvoid,
         toneReference: a.toneReference,
+        direction: body.direction,
+        previousGuide: body.previousGuide,
       });
+    } else if (typeof body.markdown === 'string' && body.markdown.trim()) {
+      markdown = body.markdown;
+    } else {
+      return res.status(400).json({ success: false, error: 'answers or markdown required' });
     }
     // Persist (best-effort — no-ops without a DB).
     try {

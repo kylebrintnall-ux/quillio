@@ -627,9 +627,21 @@ async function generateAssetDrafts({
 }
 
 // Generate a brand voice guide (markdown) from the onboarding questionnaire
-// answers. Returns the raw markdown string.
+// answers. Optional `direction` (a revision instruction) and `previousGuide`
+// (the current voice.md) drive regeneration. Returns the raw markdown string.
 async function generateVoiceGuide(answers = {}) {
   const list = (v) => (Array.isArray(v) ? v.filter(Boolean).join(', ') : String(v || ''));
+  const revisionLines = [];
+  if (answers.previousGuide) {
+    revisionLines.push('', 'Here is the current voice guide to revise:', String(answers.previousGuide));
+  }
+  if (answers.direction) {
+    revisionLines.push(
+      '',
+      'Apply this revision direction, overriding earlier choices where they conflict:',
+      String(answers.direction)
+    );
+  }
   const prompt = [
     'You are a brand strategist. Generate a voice guide markdown file from these answers. Structure it with sections: Brand Personality, Tone, Words That Work, Do Not Use, Audience Language, Tone Reference. Be specific and actionable.',
     '',
@@ -639,6 +651,7 @@ async function generateVoiceGuide(answers = {}) {
     `Do Not Use: ${list(answers.wordsToAvoid)}`,
     `Audience Language: ${String(answers.audienceLanguage || '')}`,
     `Tone Reference: ${String(answers.toneReference || '')}`,
+    ...revisionLines,
     '',
     'Return ONLY the markdown, no preamble and no surrounding code fences.',
   ].join('\n');

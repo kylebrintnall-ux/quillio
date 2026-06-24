@@ -350,6 +350,7 @@ test('onboarding router mounts and exposes its routes', () => {
     '/api/onboarding/folder',
     '/api/onboarding/me',
     '/api/onboarding/voice',
+    '/api/onboarding/voice',
     '/onboarding',
   ]);
 });

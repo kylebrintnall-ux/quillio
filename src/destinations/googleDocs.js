@@ -461,7 +461,13 @@ async function generateDraft(id, direction, clients) {
       const mapped = drafts
         .map((d) => {
           const meta = metaByName.get(d.fieldName) || {};
-          return { insertIndex: meta.insertIndex, deleteEnd: meta.deleteEnd, copy: d.copy };
+          return {
+            assetType: a.assetType,
+            fieldName: d.fieldName,
+            insertIndex: meta.insertIndex,
+            deleteEnd: meta.deleteEnd,
+            copy: d.copy,
+          };
         })
         .filter((r) => r.insertIndex != null && r.copy);
       console.log(`[googleDocs] asset ${idx + 1}/${total} done: ${a.assetType} (${mapped.length} fields)`);
@@ -482,25 +488,63 @@ async function generateDraft(id, direction, clients) {
     throw new Error('All field drafts failed (Gemini timeout or error).');
   }
 
-  // Process from the bottom of the doc upward so earlier indices stay valid:
-  // a delete/insert at a higher index never shifts the lower indices that the
-  // later (higher-in-doc) fields still reference.
-  drafted.sort((a, b) => b.insertIndex - a.insertIndex);
+  // Regeneration is done in two phases so deletes and inserts never share a
+  // batch (interleaving them makes indices very hard to reason about and is the
+  // source of jumbled copy / cut labels). Phase 1 removes all previously drafted
+  // copy; we then RE-PARSE the now-clean doc so the inserts use indices that
+  // reflect its real current state, regardless of how long the old copy was.
+  //
+  // First drafts have no existing copy (deleteEnd == null everywhere), so Phase
+  // 1 and the re-parse are skipped — inserts run against the original parse,
+  // identical to the previous behavior.
 
-  const requests = [];
-  for (const { insertIndex, deleteEnd, copy } of drafted) {
-    // Regeneration: remove the previously drafted copy under this label first.
-    // deleteEnd stops before the trailing blank line, so [insertIndex, deleteEnd)
-    // covers only the old copy; the blank survives as the new insertion target.
-    // First drafts have deleteEnd == null and skip this entirely (unchanged).
-    if (deleteEnd != null && deleteEnd > insertIndex) {
-      requests.push({
-        deleteContentRange: { range: { startIndex: insertIndex, endIndex: deleteEnd } },
-      });
+  // Phase 1 — delete existing copy, bottom-to-top (reverse-order deletes are
+  // index-safe: a deletion at a higher index never shifts lower indices).
+  const deletions = drafted
+    .filter((d) => d.deleteEnd != null && d.deleteEnd > d.insertIndex)
+    .sort((a, b) => b.insertIndex - a.insertIndex);
+
+  let insertIndexByField = null;
+  if (deletions.length > 0) {
+    await docs.documents.batchUpdate({
+      documentId: id,
+      requestBody: {
+        requests: deletions.map((d) => ({
+          deleteContentRange: { range: { startIndex: d.insertIndex, endIndex: d.deleteEnd } },
+        })),
+      },
+    });
+
+    // Re-parse the cleaned doc to recover fresh, correct insertion indices.
+    const freshDoc = (await docs.documents.get({ documentId: id })).data;
+    const fresh = parseDoc(freshDoc);
+    insertIndexByField = new Map();
+    for (const asset of fresh.assets) {
+      for (const f of asset.fields) {
+        insertIndexByField.set(ctxKey(asset.assetType, f.fieldName), f.insertIndex);
+      }
     }
-    const text = copy + '\n';
-    requests.push({ insertText: { location: { index: insertIndex }, text } });
-    // Drafted copy should be regular weight, not inherit the bold label style.
+  }
+
+  // Resolve each drafted field's insertion index: the re-parsed value after a
+  // delete pass, otherwise the original parse (first draft). Drop any field we
+  // can't place (shouldn't happen, but never insert at a stale/unknown index).
+  const inserts = drafted
+    .map((d) => {
+      const idx = insertIndexByField
+        ? insertIndexByField.get(ctxKey(d.assetType, d.fieldName))
+        : d.insertIndex;
+      return idx != null ? { insertIndex: idx, copy: d.copy } : null;
+    })
+    .filter(Boolean)
+    // Bottom-to-top so each insert doesn't shift the indices of the ones above.
+    .sort((a, b) => b.insertIndex - a.insertIndex);
+
+  // Phase 2 — insert the new copy under each label (regular weight, not the
+  // bold label style).
+  const requests = [];
+  for (const { insertIndex, copy } of inserts) {
+    requests.push({ insertText: { location: { index: insertIndex }, text: copy + '\n' } });
     requests.push({
       updateTextStyle: {
         range: { startIndex: insertIndex, endIndex: insertIndex + copy.length },
@@ -519,7 +563,7 @@ async function generateDraft(id, direction, clients) {
 
   return {
     title: doc.title,
-    fieldCount: drafted.length,
+    fieldCount: inserts.length,
     url: `https://docs.google.com/document/d/${id}/edit`,
   };
 }

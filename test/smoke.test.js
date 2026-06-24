@@ -371,6 +371,50 @@ test('public/onboarding.html has all six steps and talks to the onboarding API',
   assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
 });
 
+// --- Week 12: settings page ---
+
+test('settings router mounts and exposes its routes', () => {
+  const router = require('../src/routes/settings');
+  assert.strictEqual(typeof router, 'function', 'router is an express middleware fn');
+  const paths = router.stack
+    .filter((layer) => layer.route)
+    .map((layer) => layer.route.path)
+    .sort();
+  assert.deepStrictEqual(paths, [
+    '/api/auth/signout',
+    '/api/settings/voice',
+    '/api/settings/voice',
+    '/api/settings/voice/generate',
+    '/api/settings/workspace',
+    '/api/settings/workspace/folder',
+    '/settings',
+  ]);
+});
+
+test('routes/settings does NOT import the Slack messaging layer', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  assert.ok(!/services\/slack/.test(src), 'settings.js must not import services/slack');
+});
+
+test('public/settings.html has the three sections, terminal styling, and settings API wiring', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  for (const id of ['panel-voice', 'panel-workspace', 'panel-account']) {
+    assert.ok(html.includes(id), `settings.html should contain #${id}`);
+  }
+  assert.ok(/IBM\+Plex\+Mono/.test(html), 'loads IBM Plex Mono');
+  assert.ok(/#1C1F3B/i.test(html), 'terminal navy background');
+  assert.ok(/\/api\/settings\/voice/.test(html), 'talks to the voice API');
+  assert.ok(/\/api\/auth\/signout/.test(html), 'wires sign out');
+  assert.ok(/\/oauth\/google\?redirect=settings/.test(html), 'reconnect Google returns to settings');
+  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+});
+
+test('oauth.js handles redirect=settings for Google and Slack', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  assert.ok(/\/settings\?connected=google/.test(src), 'Google callback can return to settings');
+  assert.ok(/\/settings\?slack=connected/.test(src), 'Slack callback can return to settings');
+});
+
 test('getTenantByWorkspace returns null with no database', async () => {
   // No DATABASE_URL in the test env → graceful null, not a throw.
   const { getTenantByWorkspace } = require('../src/db');

@@ -22,8 +22,10 @@
       line-height: 1.5;
       -webkit-text-size-adjust: 100%;
     }
-    nav { border-bottom: 1px solid var(--line); padding: 14px 16px; }
+    nav { border-bottom: 1px solid var(--line); padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
     nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+    nav .navlink { font-size: 15px; color: var(--muted); font-weight: 600; text-decoration: none; }
+    nav .navlink:hover { color: var(--ink); }
     main { width: 100%; max-width: 600px; margin: 0 auto; padding: 24px 16px 56px; }
 
     .step { display: none; }
@@ -109,7 +111,7 @@
   </style>
 </head>
 <body>
-  <nav><span class="brand">Quillio</span></nav>
+  <nav><span class="brand">Quillio</span><a class="navlink" href="/settings">Settings</a></nav>
   <main>
     <div class="stepdots" id="dots" aria-hidden="true"></div>
 

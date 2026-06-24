@@ -12,6 +12,12 @@ const { createTenantIfMissing, saveTenantToken } = require('../db');
 const { seedTenantAssets } = require('../db/assets');
 const { findUserByGoogleId, createUser } = require('../db/users');
 
+// Post-OAuth landing destinations we accept via ?redirect=… (whitelist).
+const ALLOWED_REDIRECTS = ['onboarding', 'settings'];
+function pickRedirect(value) {
+  return ALLOWED_REDIRECTS.includes(value) ? value : null;
+}
+
 const router = express.Router();
 
 const BOT_SCOPES = 'commands,chat:write,chat:write.public,channels:history,users:read,im:write';
@@ -68,8 +74,8 @@ router.get('/oauth/slack', (req, res) => {
     return res.redirect('/welcome?error=install_failed');
   }
 
-  // `redirect=onboarding` returns the user to the onboarding flow after install.
-  const redirectTo = req.query.redirect === 'onboarding' ? 'onboarding' : null;
+  // `redirect=onboarding|settings` returns the user there after install.
+  const redirectTo = pickRedirect(req.query.redirect);
   const state = crypto.randomBytes(16).toString('hex');
   rememberState(state, { redirectTo });
 
@@ -154,8 +160,9 @@ router.get('/oauth/slack/callback', async (req, res) => {
     console.log(
       `[oauth] install OK — team ${teamId} (${teamName || '?'}) bot=${!!botToken} user=${!!userToken}`
     );
-    // Onboarding flow returns to Step 5 with a connected flag; standalone
-    // installs land on the generic welcome page.
+    // Onboarding flow returns to Step 5 / Settings returns to /settings, each
+    // with a connected flag; standalone installs land on the welcome page.
+    if (slackRedirectTo === 'settings') return res.redirect('/settings?slack=connected');
     if (slackRedirectTo === 'onboarding') return res.redirect('/onboarding?slack=connected');
     return res.redirect('/welcome');
   } catch (err) {
@@ -174,8 +181,8 @@ router.get('/oauth/google', (req, res) => {
   }
 
   const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
-  // `redirect=onboarding` keeps the user in the onboarding flow after sign-in.
-  const redirectTo = req.query.redirect === 'onboarding' ? 'onboarding' : null;
+  // `redirect=onboarding|settings` returns the user there after sign-in.
+  const redirectTo = pickRedirect(req.query.redirect);
   const state = crypto.randomBytes(16).toString('hex');
   rememberState(state, { workspaceId, redirectTo });
 
@@ -268,8 +275,10 @@ router.get('/oauth/google/callback', async (req, res) => {
 
     console.log(`[oauth] google sign-in OK — tenant ${workspaceId} new=${isNew}`);
 
-    // Onboarding flow continues at step 2; otherwise new → onboarding, returning → app.
+    // Settings returns to /settings; onboarding continues at step 2; otherwise
+    // new → onboarding, returning → app.
     const redirectTo = entry.data && entry.data.redirectTo;
+    if (redirectTo === 'settings') return res.redirect('/settings?connected=google');
     if (redirectTo === 'onboarding') return res.redirect('/onboarding?step=2');
     return res.redirect(isNew ? '/onboarding' : '/app?connected=google');
   } catch (err) {

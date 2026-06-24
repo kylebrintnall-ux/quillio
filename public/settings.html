@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quillio — Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --accent: #4DD9D9;
+      --ink: #111;
+      --muted: #666;
+      --line: #e3e3e3;
+      --bg: #fff;
+      --soft: #f6f6f6;
+      --navy: #1C1F3B;
+      --cream: #F5F0E8;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.5;
+      -webkit-text-size-adjust: 100%;
+    }
+    nav {
+      border-bottom: 1px solid var(--line);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; cursor: pointer; }
+    nav .links { display: flex; gap: 16px; }
+    nav .navlink {
+      font-size: 15px; color: var(--muted); background: none; border: none;
+      padding: 0; font-weight: 600; cursor: pointer;
+    }
+    nav .navlink:hover { color: var(--ink); }
+    nav .navlink.active { color: var(--ink); }
+
+    main { width: 100%; max-width: 860px; margin: 0 auto; padding: 24px 16px 56px; }
+    .layout { display: flex; flex-direction: column; gap: 20px; }
+
+    .sidebar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tab {
+      font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--bg);
+      color: var(--muted); border-radius: 999px; padding: 8px 16px; font-weight: 600;
+    }
+    .tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    h1 { font-size: 24px; line-height: 1.25; margin: 4px 0 16px; }
+    h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 24px 0 8px; }
+    .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #1a9a9a; margin-bottom: 4px; }
+    p { margin: 8px 0; }
+    .muted { color: var(--muted); }
+    .break { overflow-wrap: anywhere; }
+    a { color: #1a9a9a; }
+
+    label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
+    input[type="text"], textarea {
+      width: 100%; font: inherit; padding: 11px 12px;
+      border: 1px solid var(--line); border-radius: 8px; resize: vertical;
+    }
+    input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+
+    button.btn {
+      font: inherit; cursor: pointer; border: none; border-radius: 8px;
+      padding: 11px 16px; background: var(--ink); color: #fff; font-weight: 600;
+    }
+    button.btn:active { transform: translateY(1px); }
+    button.btn:disabled { opacity: 0.55; cursor: default; }
+    button.btn.secondary { background: var(--soft); color: var(--ink); border: 1px solid var(--line); }
+    button.btn.danger { background: #fdf0f0; color: #8a1f1f; border: 1px solid #e7b3b3; }
+    .btnrow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+
+    .card { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 12px 0; }
+    .card .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .card .k { font-weight: 600; }
+    .card .v { color: var(--muted); overflow-wrap: anywhere; }
+    .pill { display: inline-block; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+
+    .soon { opacity: 0.5; }
+    .soon .row { cursor: not-allowed; }
+    .badge-soon { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
+
+    /* Terminal voice.md block */
+    .terminal {
+      background: var(--navy); color: var(--cream);
+      font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px; line-height: 1.6;
+      padding: 24px; border-radius: 8px; white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .terminal .t-h { color: var(--accent); font-weight: 600; margin: 14px 0 4px; }
+    .terminal .t-h:first-child { margin-top: 0; }
+    .terminal .t-ul { margin: 4px 0 10px; padding-left: 20px; }
+    .terminal .t-ul li { margin: 2px 0; }
+    .terminal .t-p { margin: 6px 0; }
+    textarea.terminal { min-height: 320px; white-space: pre; }
+
+    .note { display: flex; align-items: center; gap: 10px; color: var(--muted); margin: 12px 0; }
+    .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
+
+    .banner { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #b3e6c4; background: #d8f5e0; color: #0a5d2a; border-radius: 8px; font-size: 14px; }
+    .error { margin-top: 12px; padding: 10px 12px; border: 1px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 8px; font-size: 14px; }
+    .empty { margin-top: 16px; padding: 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; }
+    .progress { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    .hidden { display: none !important; }
+
+    @media (min-width: 720px) {
+      .layout { flex-direction: row; }
+      .sidebar { flex-direction: column; width: 180px; flex: none; }
+      .content { flex: 1; min-width: 0; }
+      h1 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="brand" id="nav-brand">Quillio</span>
+    <span class="links">
+      <button class="navlink" id="nav-new">New Brief</button>
+      <button class="navlink" id="nav-history">History</button>
+      <button class="navlink active" id="nav-settings">Settings</button>
+    </span>
+  </nav>
+
+  <main>
+    <div class="layout">
+      <div class="sidebar">
+        <button class="tab active" data-tab="voice">Voice Guide</button>
+        <button class="tab" data-tab="workspace">Workspace</button>
+        <button class="tab" data-tab="account">Account</button>
+      </div>
+
+      <div class="content">
+        <!-- VOICE GUIDE -->
+        <section class="panel active" id="panel-voice">
+          <div class="eyebrow">VOICE.MD</div>
+          <h1>Voice Guide</h1>
+
+          <div id="voice-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+          <div id="voice-error" class="error hidden"></div>
+          <div id="voice-banner" class="banner hidden"></div>
+
+          <!-- empty state -->
+          <div id="voice-empty" class="empty hidden">
+            No Voice Guide set up yet.
+            <div class="btnrow" style="justify-content:center">
+              <button class="btn" id="voice-setup-btn">Set up Voice Guide</button>
+            </div>
+          </div>
+
+          <!-- view + edit -->
+          <div id="voice-view" class="hidden">
+            <div class="terminal" id="voice-terminal"></div>
+            <textarea class="terminal hidden" id="voice-editor"></textarea>
+            <div class="btnrow">
+              <button class="btn secondary" id="voice-edit-btn">Edit</button>
+              <button class="btn secondary" id="voice-download-btn">Download .md</button>
+              <button class="btn secondary" id="voice-regen-btn">Regenerate</button>
+            </div>
+          </div>
+
+          <!-- six-question flow -->
+          <div id="voice-questions" class="hidden">
+            <div class="progress" id="voice-progress">Question 1 of 6</div>
+            <label id="voice-q-label" for="voice-q-input"></label>
+            <textarea id="voice-q-input"></textarea>
+            <div class="btnrow">
+              <button class="btn secondary" id="voice-q-back">← Back</button>
+              <button class="btn" id="voice-q-next">Next →</button>
+              <button class="btn secondary" id="voice-q-cancel">Cancel</button>
+            </div>
+          </div>
+
+          <!-- generating -->
+          <div id="voice-generating" class="note hidden"><span class="dot"></span><span id="voice-gen-msg">Writing your voice.md…</span></div>
+        </section>
+
+        <!-- WORKSPACE -->
+        <section class="panel" id="panel-workspace">
+          <h1>Workspace</h1>
+          <div id="ws-banner" class="banner hidden"></div>
+          <div id="ws-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+          <div id="ws-error" class="error hidden"></div>
+
+          <div id="ws-body" class="hidden">
+            <h2>Default Drive folder</h2>
+            <div class="card">
+              <div id="folder-view" class="row">
+                <span class="v" id="folder-current">Not set</span>
+                <button class="btn secondary" id="folder-edit-btn">Edit</button>
+              </div>
+              <div id="folder-edit" class="hidden">
+                <label for="folder-input">Drive folder URL</label>
+                <input type="text" id="folder-input" placeholder="https://drive.google.com/drive/folders/…" />
+                <div class="btnrow">
+                  <button class="btn" id="folder-save">Save</button>
+                  <button class="btn secondary" id="folder-cancel">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <h2>Connections</h2>
+            <div class="card">
+              <div class="row">
+                <div><div class="k">Google account</div><div class="v" id="google-status">Not connected</div></div>
+                <button class="btn secondary" id="google-reconnect">Reconnect Google</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="row">
+                <div><div class="k">Slack workspace</div><div class="v" id="slack-status">Not connected</div></div>
+                <button class="btn secondary" id="slack-reconnect">Reconnect Slack</button>
+              </div>
+            </div>
+
+            <h2>Coming soon</h2>
+            <div class="card soon"><div class="row"><span class="k">Notion</span><span class="badge-soon">Coming soon</span></div></div>
+            <div class="card soon"><div class="row"><span class="k">OneDrive</span><span class="badge-soon">Coming soon</span></div></div>
+            <div class="card soon"><div class="row"><span class="k">Figma</span><span class="badge-soon">Coming soon</span></div></div>
+            <div class="card soon"><div class="row"><span class="k">Other design tools</span><span class="badge-soon">Coming soon</span></div></div>
+          </div>
+        </section>
+
+        <!-- ACCOUNT -->
+        <section class="panel" id="panel-account">
+          <h1>Account</h1>
+          <div id="acct-error" class="error hidden"></div>
+          <div class="card">
+            <div class="row"><span class="k">Name</span><span class="v" id="acct-name">—</span></div>
+          </div>
+          <div class="card">
+            <div class="row"><span class="k">Email</span><span class="v" id="acct-email">—</span></div>
+          </div>
+          <div class="card">
+            <div class="row"><span class="k">Plan</span><span class="pill">Solo (Beta)</span></div>
+          </div>
+          <div class="btnrow">
+            <button class="btn danger" id="signout-btn">Sign out</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    'use strict';
+    function $(id) { return document.getElementById(id); }
+    function show(el) { el.classList.remove('hidden'); }
+    function hide(el) { el.classList.add('hidden'); }
+    function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
+    function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
+    function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+
+    // --- Nav ----------------------------------------------------------------
+    $('nav-brand').addEventListener('click', function () { window.location.href = '/app'; });
+    $('nav-new').addEventListener('click', function () { window.location.href = '/app'; });
+    $('nav-history').addEventListener('click', function () { window.location.href = '/app'; });
+
+    // --- Tabs ---------------------------------------------------------------
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+    function showTab(name) {
+      tabs.forEach(function (t) { t.classList.toggle('active', t.getAttribute('data-tab') === name); });
+      ['voice', 'workspace', 'account'].forEach(function (n) {
+        $('panel-' + n).classList.toggle('active', n === name);
+      });
+    }
+    tabs.forEach(function (t) { t.addEventListener('click', function () { showTab(t.getAttribute('data-tab')); }); });
+
+    // --- Markdown render (terminal): ## headings, * bullets, **bold** -------
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+    function inlineMd(s) { return escapeHtml(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); }
+    function renderMarkdown(md) {
+      var lines = String(md || '').split('\n');
+      var html = '';
+      var inList = false;
+      function closeList() { if (inList) { html += '</ul>'; inList = false; } }
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].replace(/\s+$/, '');
+        if (!line.trim()) { closeList(); continue; }
+        var h = line.match(/^(#{1,6})\s+(.*)$/);
+        if (h) { closeList(); html += '<div class="t-h">' + inlineMd(h[2]) + '</div>'; continue; }
+        var b = line.match(/^\s*[-*]\s+(.*)$/);
+        if (b) { if (!inList) { html += '<ul class="t-ul">'; inList = true; } html += '<li>' + inlineMd(b[1]) + '</li>'; continue; }
+        closeList();
+        html += '<p class="t-p">' + inlineMd(line) + '</p>';
+      }
+      closeList();
+      return html;
+    }
+
+    // --- Voice Guide --------------------------------------------------------
+    var currentVoiceMd = '';
+    var editing = false;
+
+    function renderVoiceView(md) {
+      currentVoiceMd = md || '';
+      editing = false;
+      try { $('voice-terminal').innerHTML = renderMarkdown(currentVoiceMd); }
+      catch (e) { $('voice-terminal').textContent = currentVoiceMd; }
+      $('voice-editor').value = currentVoiceMd;
+      show($('voice-terminal')); hide($('voice-editor'));
+      $('voice-edit-btn').textContent = 'Edit';
+      hide($('voice-empty')); hide($('voice-questions')); hide($('voice-generating'));
+      show($('voice-view'));
+    }
+    function showVoiceEmpty() {
+      hide($('voice-view')); hide($('voice-questions')); hide($('voice-generating'));
+      show($('voice-empty'));
+    }
+
+    async function loadVoice() {
+      clearError($('voice-error'));
+      show($('voice-loading'));
+      hide($('voice-view')); hide($('voice-empty'));
+      try {
+        var res = await fetch('/api/settings/voice');
+        var data = await res.json();
+        hide($('voice-loading'));
+        if (data && data.success && data.voiceMarkdown) renderVoiceView(data.voiceMarkdown);
+        else showVoiceEmpty();
+      } catch (e) {
+        hide($('voice-loading'));
+        showVoiceEmpty();
+        showError($('voice-error'), 'Could not load your Voice Guide.');
+      }
+    }
+
+    // Edit inline
+    $('voice-edit-btn').addEventListener('click', async function () {
+      if (!editing) {
+        editing = true;
+        hide($('voice-terminal')); show($('voice-editor'));
+        $('voice-edit-btn').textContent = 'Save';
+      } else {
+        var md = $('voice-editor').value;
+        $('voice-edit-btn').disabled = true;
+        clearError($('voice-error'));
+        try {
+          var res = await fetch('/api/settings/voice', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ voiceMarkdown: md })
+          });
+          var data = await res.json();
+          if (!data || !data.success) throw new Error((data && data.error) || 'Could not save.');
+          renderVoiceView(md);
+          banner($('voice-banner'), '✓ Voice Guide saved.');
+        } catch (e) {
+          showError($('voice-error'), e.message || 'Network error — please try again.');
+        } finally {
+          $('voice-edit-btn').disabled = false;
+        }
+      }
+    });
+
+    // Download .md
+    $('voice-download-btn').addEventListener('click', function () {
+      var blob = new Blob([currentVoiceMd], { type: 'text/markdown' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = 'voice.md';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    function banner(elm, msg) { elm.textContent = msg; show(elm); }
+
+    // --- Six-question regenerate flow --------------------------------------
+    var VOICE_QUESTIONS = [
+      { key: 'brandPersonality', q: 'How would you describe your brand personality? (3-5 words)' },
+      { key: 'toneGuidance', q: 'What tone should copy strike? (e.g. confident, warm, direct)' },
+      { key: 'audienceLanguage', q: 'Who is your primary audience?' },
+      { key: 'wordsToUse', q: 'What words or phrases should always appear?' },
+      { key: 'wordsToAvoid', q: 'What words or phrases should never appear?' },
+      { key: 'toneReference', q: 'Share a piece of copy you love and why.' }
+    ];
+    var GEN_MESSAGES = ['Reading your answers…', 'Building your voice profile…', 'Writing your voice.md…', 'Almost done…'];
+    var answers = {};
+    var qIndex = 0;
+    var genTimer = null;
+
+    function startQuestions() {
+      answers = {}; qIndex = 0;
+      clearError($('voice-error'));
+      hide($('voice-view')); hide($('voice-empty')); hide($('voice-generating'));
+      renderQuestion();
+      show($('voice-questions'));
+    }
+    function renderQuestion() {
+      var item = VOICE_QUESTIONS[qIndex];
+      $('voice-progress').textContent = 'Question ' + (qIndex + 1) + ' of ' + VOICE_QUESTIONS.length;
+      $('voice-q-label').textContent = item.q;
+      $('voice-q-input').value = answers[item.key] || '';
+      $('voice-q-back').style.visibility = qIndex === 0 ? 'hidden' : 'visible';
+      $('voice-q-next').textContent = qIndex === VOICE_QUESTIONS.length - 1 ? 'Generate →' : 'Next →';
+      $('voice-q-input').focus();
+    }
+    $('voice-setup-btn').addEventListener('click', startQuestions);
+    $('voice-regen-btn').addEventListener('click', startQuestions);
+    $('voice-q-cancel').addEventListener('click', function () {
+      if (currentVoiceMd) renderVoiceView(currentVoiceMd); else showVoiceEmpty();
+    });
+    $('voice-q-back').addEventListener('click', function () {
+      answers[VOICE_QUESTIONS[qIndex].key] = $('voice-q-input').value.trim();
+      if (qIndex > 0) { qIndex--; renderQuestion(); }
+    });
+    $('voice-q-next').addEventListener('click', function () {
+      answers[VOICE_QUESTIONS[qIndex].key] = $('voice-q-input').value.trim();
+      if (qIndex < VOICE_QUESTIONS.length - 1) { qIndex++; renderQuestion(); return; }
+      generateVoice();
+    });
+
+    function startGenerating() {
+      hide($('voice-questions'));
+      show($('voice-generating'));
+      var i = 0;
+      $('voice-gen-msg').textContent = GEN_MESSAGES[0];
+      genTimer = setInterval(function () {
+        i = Math.min(i + 1, GEN_MESSAGES.length - 1);
+        $('voice-gen-msg').textContent = GEN_MESSAGES[i];
+      }, 2000);
+    }
+    function stopGenerating() { if (genTimer) { clearInterval(genTimer); genTimer = null; } }
+
+    async function generateVoice() {
+      clearError($('voice-error'));
+      startGenerating();
+      var data;
+      try {
+        var res = await fetch('/api/settings/voice/generate', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ answers: answers, previousGuide: currentVoiceMd || undefined })
+        });
+        data = await res.json();
+      } catch (e) {
+        stopGenerating();
+        if (currentVoiceMd) renderVoiceView(currentVoiceMd); else showVoiceEmpty();
+        showError($('voice-error'), e.message || 'Network error — please try again.');
+        return;
+      }
+      stopGenerating();
+      console.log('[settings] /voice/generate response:', data);
+      if (!data || !data.success || !data.voiceMarkdown) {
+        if (currentVoiceMd) renderVoiceView(currentVoiceMd); else showVoiceEmpty();
+        showError($('voice-error'), (data && data.error) || 'Could not generate your Voice Guide.');
+        return;
+      }
+      renderVoiceView(data.voiceMarkdown);
+      banner($('voice-banner'), '✓ Voice Guide regenerated.');
+    }
+
+    // --- Workspace ----------------------------------------------------------
+    async function loadWorkspace() {
+      clearError($('ws-error'));
+      show($('ws-loading')); hide($('ws-body'));
+      try {
+        var res = await fetch('/api/settings/workspace');
+        var data = await res.json();
+        hide($('ws-loading'));
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not load workspace.');
+        $('folder-current').textContent = data.defaultFolderUrl || 'Not set';
+        $('folder-input').value = data.defaultFolderUrl || '';
+        $('google-status').textContent = data.googleEmail || 'Not connected';
+        $('slack-status').textContent = data.slackWorkspaceName || 'Not connected';
+        show($('ws-body'));
+      } catch (e) {
+        hide($('ws-loading'));
+        showError($('ws-error'), e.message || 'Network error — please try again.');
+      }
+    }
+    $('folder-edit-btn').addEventListener('click', function () { hide($('folder-view')); show($('folder-edit')); $('folder-input').focus(); });
+    $('folder-cancel').addEventListener('click', function () { hide($('folder-edit')); show($('folder-view')); });
+    $('folder-save').addEventListener('click', async function () {
+      var btn = $('folder-save'); btn.disabled = true; clearError($('ws-error'));
+      try {
+        var res = await fetch('/api/settings/workspace/folder', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderUrl: $('folder-input').value.trim() })
+        });
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not save.');
+        $('folder-current').textContent = data.folderUrl || 'Not set';
+        hide($('folder-edit')); show($('folder-view'));
+      } catch (e) {
+        showError($('ws-error'), e.message || 'Network error — please try again.');
+      } finally { btn.disabled = false; }
+    });
+    $('google-reconnect').addEventListener('click', function () { window.location.href = '/oauth/google?redirect=settings'; });
+    $('slack-reconnect').addEventListener('click', function () { window.location.href = '/oauth/slack?redirect=settings'; });
+
+    // --- Account ------------------------------------------------------------
+    async function loadAccount() {
+      clearError($('acct-error'));
+      try {
+        var res = await fetch('/api/onboarding/me');
+        var data = await res.json();
+        if (data && data.success) {
+          $('acct-name').textContent = data.displayName || '—';
+          $('acct-email').textContent = data.email || '—';
+        }
+      } catch (e) {
+        showError($('acct-error'), 'Could not load account info.');
+      }
+    }
+    $('signout-btn').addEventListener('click', async function () {
+      var btn = $('signout-btn'); btn.disabled = true;
+      try {
+        await fetch('/api/auth/signout', { method: 'POST' });
+      } catch (e) { /* navigate regardless */ }
+      window.location.href = '/onboarding';
+    });
+
+    // --- Boot ---------------------------------------------------------------
+    (function init() {
+      var params = new URLSearchParams(window.location.search);
+      loadVoice();
+      loadWorkspace();
+      loadAccount();
+      if (params.get('connected') === 'google' || params.get('slack') === 'connected') {
+        showTab('workspace');
+        banner($('ws-banner'), params.get('slack') === 'connected'
+          ? '✓ Slack reconnected.'
+          : '✓ Google reconnected.');
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -241,6 +241,7 @@
     <span class="links">
       <button class="navlink" id="nav-new">New Brief</button>
       <button class="navlink" id="nav-history">History</button>
+      <button class="navlink" id="nav-settings">Settings</button>
     </span>
   </nav>
   <main>
@@ -938,6 +939,7 @@
     document.getElementById('nav-brand').addEventListener('click', function () { showScreen('brief'); });
     document.getElementById('nav-new').addEventListener('click', function () { showScreen('brief'); });
     document.getElementById('nav-history').addEventListener('click', loadHistory);
+    document.getElementById('nav-settings').addEventListener('click', function () { window.location.href = '/settings'; });
     document.getElementById('project-back').addEventListener('click', loadHistory);
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
     projectDraftBtn.addEventListener('click', generateProjectDraft);

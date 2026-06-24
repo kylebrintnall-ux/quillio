@@ -585,23 +585,52 @@
       return '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
     }
 
-    // After drafting, the copy lives in the Google Doc — fetch it back via the
-    // project's content endpoint and re-render the asset fields with the real
-    // copy. Falls back to an "Open in Drive" note when there's no project id
-    // (e.g. no database) or the fetch fails.
+    // Fetch the project's parsed doc content. Returns the content object, or
+    // null (no project id / fetch failure). Logs each outcome so a failing
+    // /content call is visible in the console.
+    async function fetchDocContent() {
+      console.log('[app] fetchDocContent — projectId=' + state.projectId);
+      if (state.projectId == null) {
+        console.warn('[app] fetchDocContent — no projectId (e.g. no database); cannot fetch copy');
+        return null;
+      }
+      try {
+        var url = '/api/projects/' + encodeURIComponent(state.projectId) +
+          '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID);
+        var res = await fetch(url);
+        var data = await res.json();
+        console.log('[app] /api/projects/:id/content — status=' + res.status, data);
+        if (!data || !data.success || !data.content) return null;
+        return data.content;
+      } catch (e) {
+        console.error('[app] /api/projects/:id/content error: ' + (e && e.name) + ' ' + (e && e.message));
+        return null;
+      }
+    }
+
+    // Does any field of the loaded content carry drafted copy?
+    function contentHasAnyCopy(content) {
+      var assets = (content && content.assets) || [];
+      for (var i = 0; i < assets.length; i++) {
+        var fields = assets[i].fields || [];
+        for (var j = 0; j < fields.length; j++) {
+          if (fields[j].copy && String(fields[j].copy).trim()) return true;
+        }
+      }
+      return false;
+    }
+
+    // After drafting, the copy lives in the Google Doc — fetch it back and
+    // re-render the asset fields with the real copy. Shows the "Open in Drive"
+    // fallback (and returns false) when there's no project id or the fetch
+    // fails. Returns true when content rendered.
     async function loadDraftedCopy() {
       var fallback = document.getElementById('copy-fallback');
-      if (state.projectId == null) { show(fallback); return; }
-      try {
-        var res = await fetch('/api/projects/' + encodeURIComponent(state.projectId) +
-          '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID));
-        var data = await res.json();
-        if (!data || !data.success || !data.content) { show(fallback); return; }
-        hide(fallback);
-        renderOutputAssets(data.content.assets || [], { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
-      } catch (e) {
-        show(fallback);
-      }
+      var content = await fetchDocContent();
+      if (!content) { show(fallback); return false; }
+      hide(fallback);
+      renderOutputAssets(content.assets || [], { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
+      return true;
     }
 
     async function generateDraft() {
@@ -614,8 +643,10 @@
       btn.textContent = 'Drafting…';
       progress.innerHTML = DRAFTING_NOTE;
       show(progress);
+      console.log('[app] first draft start — docId=' + state.docId + ' projectId=' + state.projectId);
       try {
         var data = await draftFetch(state.docId);
+        console.log('[app] first draft /api/draft returned:', data);
         // Success: clear the in-progress note and surface the success indicator.
         hide(progress);
         var status = document.getElementById('draft-status');
@@ -641,27 +672,53 @@
       var btn = document.getElementById('regen-btn');
       var progress = document.getElementById('draft-progress');
       var outErr = document.getElementById('output-error');
+      var direction = input.value.trim();
       clearError(outErr);
+      // Lock the direction box + button while regenerating so the input can't
+      // change mid-request.
+      input.disabled = true;
       btn.disabled = true;
       btn.textContent = 'Regenerating…';
       progress.innerHTML = DRAFTING_NOTE;
       show(progress);
+      console.log('[app] regenerate start — docId=' + state.docId + ' projectId=' + state.projectId +
+        ' direction=' + JSON.stringify(direction));
+
+      var succeeded = false;
       try {
-        var data = await draftFetch(state.docId, input.value.trim());
+        var data = await draftFetch(state.docId, direction);
+        console.log('[app] regenerate /api/draft returned:', data);
         hide(progress);
         var status = document.getElementById('draft-status');
         status.textContent = draftedLabel(data.fieldCount);
         show(status);
-        // Re-fetch the regenerated copy and re-render the fields.
         await loadDraftedCopy();
-        input.value = '';
-        btn.disabled = false;
-        btn.textContent = 'Regenerate';
+        succeeded = true;
       } catch (e) {
+        console.error('[app] regenerate /api/draft failed: ' + (e && e.name) + ' ' + (e && e.message));
         hide(progress);
-        showError(outErr, draftErrorMessage(e));
+        // The connection can drop after the server has already written the doc
+        // (e.g. a proxy closing a long request). Read the doc back — if the copy
+        // is there, the regenerate actually succeeded, so don't show an error.
+        var content = await fetchDocContent();
+        if (content && contentHasAnyCopy(content)) {
+          console.log('[app] regenerate recovered — doc has copy despite the dropped request');
+          hide(document.getElementById('copy-fallback'));
+          renderOutputAssets(content.assets || [], { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
+          var rstatus = document.getElementById('draft-status');
+          rstatus.textContent = '✓ Draft updated';
+          show(rstatus);
+          succeeded = true;
+        } else {
+          showError(outErr, draftErrorMessage(e));
+        }
+      } finally {
+        // Always re-enable; clear the direction only on success so failures
+        // keep the user's text.
+        input.disabled = false;
         btn.disabled = false;
         btn.textContent = 'Regenerate';
+        if (succeeded) input.value = '';
       }
     }
 

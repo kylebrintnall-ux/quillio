@@ -151,6 +151,8 @@
     .field:first-of-type { border-top: none; }
     .field .name { color: var(--ink); }
     .field .limit { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+    .field .count { font-variant-numeric: tabular-nums; }
+    .field .count.over { color: #c0392b; font-weight: 600; }
 
     .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
 
@@ -277,6 +279,7 @@
 
       <h2>Assets</h2>
       <div id="out-assets"></div>
+      <div id="copy-fallback" class="note hidden">Open in Drive to view copy ↗</div>
 
       <div class="actions">
         <button class="primary full" id="draft-btn">Generate First Draft</button>
@@ -414,7 +417,7 @@
     progressBack.addEventListener('click', function () { showScreen('brief'); });
 
     // --- Screen 3: render output -------------------------------------------
-    var state = { docUrl: null, docId: null };
+    var state = { docUrl: null, docId: null, projectId: null };
 
     function charLimit(f) {
       if (!f.charMax) return '';
@@ -431,35 +434,72 @@
       return m ? m[1] : null;
     }
 
+    // Append one asset card to `container`. Each field shows its name, char
+    // limit, a live character count (red when over the limit), and the drafted
+    // copy beneath it. Shared by Screen 3 (post-draft) and Screen 5.
+    //   opts.badge          → heading badge text (optional)
+    //   opts.drafted        → add the .drafted style to the card
+    //   opts.showPlaceholder → render "Not yet drafted" for empty fields
+    function appendAssetCard(container, asset, opts) {
+      opts = opts || {};
+      var card = el('div', 'asset');
+      var head = el('h3', null, asset.name);
+      if (opts.badge) {
+        var badge = el('span', 'badge', opts.badge);
+        head.appendChild(document.createTextNode(' '));
+        head.appendChild(badge);
+      }
+      if (opts.drafted) card.classList.add('drafted');
+      card.appendChild(head);
+
+      (asset.fields || []).forEach(function (f) {
+        var copy = f.copy != null ? String(f.copy) : '';
+        var hasCopy = copy.trim().length > 0;
+
+        var row = el('div', 'field');
+        row.appendChild(el('span', 'name', f.fieldName));
+        var limit = el('span', 'limit', charLimit(f));
+        // Live count once copy exists; red when it exceeds the char limit.
+        if (hasCopy) {
+          var count = el('span', 'count', ' · ' + copy.length);
+          if (f.charMax && copy.length > f.charMax) count.classList.add('over');
+          limit.appendChild(count);
+        }
+        row.appendChild(limit);
+        card.appendChild(row);
+
+        if (hasCopy) {
+          card.appendChild(el('div', 'field-copy', copy));
+        } else if (opts.showPlaceholder) {
+          card.appendChild(el('div', 'field-copy empty', 'Not yet drafted'));
+        }
+      });
+      container.appendChild(card);
+    }
+
+    // Re-render Screen 3's asset list. `assets` is [{ name, fields:[...] }].
+    function renderOutputAssets(assets, opts) {
+      var wrap = document.getElementById('out-assets');
+      wrap.textContent = '';
+      (assets || []).forEach(function (a) { appendAssetCard(wrap, a, opts); });
+    }
+
     function renderOutput(data) {
       state.docUrl = data.docUrl || null;
       state.docId = docIdFromUrl(data.docUrl);
+      state.projectId = data.projectId != null ? data.projectId : null;
 
       document.getElementById('out-title').textContent = data.campaignTitle || 'Campaign';
       document.getElementById('out-summary').textContent = data.summary || '—';
       document.getElementById('out-direction').textContent = data.writerDirection || '—';
 
-      var wrap = document.getElementById('out-assets');
-      wrap.textContent = '';
       var blocks = data.assetBlocks || [];
       if (!blocks.length && data.assets) {
         blocks = data.assets.map(function (n) { return { name: n, fields: [] }; });
       }
-      blocks.forEach(function (block) {
-        var card = el('div', 'asset');
-        var head = el('h3', null, block.name);
-        var badge = el('span', 'badge', 'Not yet drafted');
-        head.appendChild(document.createTextNode(' '));
-        head.appendChild(badge);
-        card.appendChild(head);
-        (block.fields || []).forEach(function (f) {
-          var row = el('div', 'field');
-          row.appendChild(el('span', 'name', f.fieldName));
-          row.appendChild(el('span', 'limit', charLimit(f)));
-          card.appendChild(row);
-        });
-        wrap.appendChild(card);
-      });
+      // Pre-draft view: names + char limits, no copy yet.
+      renderOutputAssets(blocks, { badge: 'Not yet drafted', showPlaceholder: false });
+      hide(document.getElementById('copy-fallback'));
 
       var draftStatus = document.getElementById('draft-status');
       draftStatus.classList.add('hidden');
@@ -545,6 +585,25 @@
       return '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
     }
 
+    // After drafting, the copy lives in the Google Doc — fetch it back via the
+    // project's content endpoint and re-render the asset fields with the real
+    // copy. Falls back to an "Open in Drive" note when there's no project id
+    // (e.g. no database) or the fetch fails.
+    async function loadDraftedCopy() {
+      var fallback = document.getElementById('copy-fallback');
+      if (state.projectId == null) { show(fallback); return; }
+      try {
+        var res = await fetch('/api/projects/' + encodeURIComponent(state.projectId) +
+          '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID));
+        var data = await res.json();
+        if (!data || !data.success || !data.content) { show(fallback); return; }
+        hide(fallback);
+        renderOutputAssets(data.content.assets || [], { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
+      } catch (e) {
+        show(fallback);
+      }
+    }
+
     async function generateDraft() {
       if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
       var btn = document.getElementById('draft-btn');
@@ -562,11 +621,8 @@
         var status = document.getElementById('draft-status');
         status.textContent = draftedLabel(data.fieldCount);
         show(status);
-        Array.prototype.forEach.call(document.querySelectorAll('#out-assets .asset'), function (card) {
-          card.classList.add('drafted');
-          var b = card.querySelector('.badge');
-          if (b) b.textContent = '✓ Drafted';
-        });
+        // Pull the drafted copy back from the doc and show it inline.
+        await loadDraftedCopy();
         // Draft exists now → swap the button for the Regenerate section.
         hide(btn);
         show(document.getElementById('regen'));
@@ -596,6 +652,8 @@
         var status = document.getElementById('draft-status');
         status.textContent = draftedLabel(data.fieldCount);
         show(status);
+        // Re-fetch the regenerated copy and re-render the fields.
+        await loadDraftedCopy();
         input.value = '';
         btn.disabled = false;
         btn.textContent = 'Regenerate';
@@ -755,20 +813,7 @@
       projectContentEl.appendChild(el('h2', null, 'Assets'));
       var assets = content.assets || [];
       assets.forEach(function (a) {
-        var card = el('div', 'asset');
-        card.appendChild(el('h3', null, a.name));
-        (a.fields || []).forEach(function (f) {
-          var row = el('div', 'field');
-          row.appendChild(el('span', 'name', f.fieldName));
-          row.appendChild(el('span', 'limit', charLimit(f)));
-          card.appendChild(row);
-          if (f.copy) {
-            card.appendChild(el('div', 'field-copy', f.copy));
-          } else {
-            card.appendChild(el('div', 'field-copy empty', 'Not yet drafted'));
-          }
-        });
-        projectContentEl.appendChild(card);
+        appendAssetCard(projectContentEl, a, { showPlaceholder: true });
       });
     }
 

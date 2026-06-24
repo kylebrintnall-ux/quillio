@@ -114,10 +114,12 @@ router.post('/api/onboarding/voice', requireAuth, async (req, res) => {
   const tenantId = req.user && req.user.tenant_id;
   try {
     let markdown;
+    let mode;
     // `answers` present → generate (or regenerate with `direction`). Otherwise a
     // bare `markdown` is the user's edited text being saved as-is.
     if (body.answers) {
       const a = body.answers || {};
+      mode = body.direction ? 'regenerate' : 'generate';
       markdown = await generateVoiceGuide({
         brandPersonality: a.brandPersonality,
         toneGuidance: a.toneGuidance,
@@ -129,6 +131,7 @@ router.post('/api/onboarding/voice', requireAuth, async (req, res) => {
         previousGuide: body.previousGuide,
       });
     } else if (typeof body.markdown === 'string' && body.markdown.trim()) {
+      mode = 'save';
       markdown = body.markdown;
     } else {
       return res.status(400).json({ success: false, error: 'answers or markdown required' });
@@ -139,6 +142,10 @@ router.post('/api/onboarding/voice', requireAuth, async (req, res) => {
     } catch (e) {
       console.error('[onboarding] voice save failed (continuing):', e.message);
     }
+    // Confirm what's going back to the client (length only — not the full body).
+    console.log(
+      `[onboarding] POST /voice → mode=${mode} returning voiceMarkdown length=${(markdown || '').length}`
+    );
     return res.status(200).json({ success: true, voiceMarkdown: markdown });
   } catch (err) {
     console.error('[onboarding] /voice failed:', err && err.stack ? err.stack : err);

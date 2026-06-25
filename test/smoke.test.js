@@ -92,7 +92,6 @@ test('services, destinations, db, and handlers load with their APIs', () => {
   const gemini = require('../src/services/gemini');
   assert.strictEqual(typeof gemini.parseBrief, 'function');
   assert.strictEqual(typeof gemini.generateVoiceGuide, 'function');
-  assert.strictEqual(typeof require('../src/services/sheets').getAssetSpecs, 'function');
   assert.strictEqual(typeof require('../src/destinations').getDestination, 'function');
   assert.strictEqual(typeof require('../src/db').saveVoiceGuide, 'function');
   const approval = require('../src/handlers/approval');
@@ -166,7 +165,7 @@ test('extractCanvasId returns the final path segment (handles /docs/TEAM/ID)', (
 });
 
 test('asset-name normalize folds case, dash variants, and spacing', () => {
-  const { normalize } = require('../src/services/sheets');
+  const { normalize } = require('../src/utils/normalize');
   const base = normalize('Paid Social - LinkedIn');
   assert.strictEqual(normalize('Paid Social – LinkedIn'), base, 'en dash matches'); // en dash
   assert.strictEqual(normalize('paid social-linkedin'), base, 'case + spacing match');

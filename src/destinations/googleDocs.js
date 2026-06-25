@@ -14,7 +14,6 @@ const config = require('../config');
 const { getClients } = require('../google');
 const { DocBuilder } = require('./docBuilder');
 const { generateAssetDrafts } = require('../services/gemini');
-const { getAssetSpecs } = require('../services/sheets');
 
 // How many assets to draft concurrently (each asset is one batched Gemini call
 // plus possible per-field fallbacks). Capped low to bound peak memory/CPU on an
@@ -140,9 +139,10 @@ async function resolveLinkLabel(drive, url) {
 }
 
 // Creates the formatted Google Doc in the target Drive folder.
-// `assetSpecs` is the grouped output of sheets.getAssetSpecs(). `folderId`
-// overrides the default folder when present; `referenceLinks` adds a Reference
-// Materials section. Returns the destination-agnostic shape { id, url, title }.
+// `assetSpecs` is the grouped asset library from Postgres (pipeline's
+// tenantAssetsToSpecs). `folderId` overrides the default folder when present;
+// `referenceLinks` adds a Reference Materials section. Returns the
+// destination-agnostic shape { id, url, title }.
 async function createDocument({
   brief,
   campaignTitle,
@@ -399,31 +399,6 @@ function ctxKey(assetType, fieldName) {
   return `${String(assetType).trim().toLowerCase()}|${String(fieldName).trim().toLowerCase()}`;
 }
 
-// Reads the spec Sheet and returns a Map of ctxKey -> { channel, toneNotes,
-// notes, funnelStage, charMin, charMax } so drafting can recover the per-field
-// guidance the doc doesn't carry. Best-effort: returns an empty Map on failure.
-async function loadSheetContext() {
-  const map = new Map();
-  try {
-    const specs = await getAssetSpecs();
-    for (const group of specs) {
-      for (const f of group.fields) {
-        map.set(ctxKey(group.assetType, f.fieldName), {
-          channel: group.channel,
-          toneNotes: group.toneNotes,
-          notes: f.notes,
-          funnelStage: f.funnelStage,
-          charMin: f.charMin,
-          charMax: f.charMax,
-        });
-      }
-    }
-  } catch (err) {
-    console.warn('[googleDocs] could not load Sheet context for drafting:', err.message);
-  }
-  return map;
-}
-
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
 async function generateDraft(id, direction, clients, voiceGuide, lookupDirection) {
@@ -432,39 +407,22 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   const doc = (await docs.documents.get({ documentId: id })).data;
   const { summary, writerPrompt, assets } = parseDoc(doc);
 
-  // The doc only carries asset/channel/tone/field-label — the Sheet's per-field
-  // Notes and Funnel Stage never made it in. Re-read the Sheet and match by
-  // asset + field name to restore that context for the drafter. (The doc is
-  // still the source of truth for *positions*.) Best-effort: if the Sheet read
-  // fails, drafting proceeds with just the doc-derived context.
-  const sheetCtx = await loadSheetContext();
-
-  // Build per-asset draft targets, enriching each field with Sheet context.
+  // Build per-asset draft targets straight from the doc. The Google Sheet has
+  // been retired — per-field Notes / Funnel Stage / channel / tone no longer
+  // feed the prompt; asset-level direction (from Postgres) carries the creative
+  // guidance, and the doc carries field labels + char limits + positions.
   const assetTargets = assets
     .filter((asset) => asset.fields.length > 0)
-    .map((asset) => {
-      const fields = asset.fields.map((field) => {
-        const ctx = sheetCtx.get(ctxKey(asset.assetType, field.fieldName)) || {};
-        return {
-          fieldName: field.fieldName,
-          charMax: field.charMax || ctx.charMax || 0,
-          notes: ctx.notes || '',
-          funnelStage: ctx.funnelStage || '',
-          insertIndex: field.insertIndex,
-          deleteEnd: field.deleteEnd,
-        };
-      });
-      const ctx0 = sheetCtx.get(ctxKey(asset.assetType, asset.fields[0].fieldName)) || {};
-      return {
-        assetType: asset.assetType,
-        // Channel/tone come from the Sheet only — not from parseDoc, whose meta
-        // slot now carries asset_direction (we don't want it leaking into these).
-        channel: ctx0.channel || '',
-        toneNotes: ctx0.toneNotes || '',
-        assetDirection: lookupDirection ? lookupDirection(asset.assetType) : null,
-        fields,
-      };
-    });
+    .map((asset) => ({
+      assetType: asset.assetType,
+      assetDirection: lookupDirection ? lookupDirection(asset.assetType) : null,
+      fields: asset.fields.map((field) => ({
+        fieldName: field.fieldName,
+        charMax: field.charMax || 0,
+        insertIndex: field.insertIndex,
+        deleteEnd: field.deleteEnd,
+      })),
+    }));
 
   // Draft each asset's fields together (one batched call per asset) so the copy
   // is cohesive. Assets run with bounded concurrency; one asset failing is
@@ -477,8 +435,6 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
     try {
       const drafts = await generateAssetDrafts({
         assetType: a.assetType,
-        channel: a.channel,
-        toneNotes: a.toneNotes,
         assetDirection: a.assetDirection,
         summary,
         writerPrompt,

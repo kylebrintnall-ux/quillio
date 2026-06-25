@@ -10,7 +10,7 @@ const {
   parseBrief: geminiParseBrief,
   enrichWithReferences: geminiEnrich,
 } = require('../services/gemini');
-const { getAssetSpecs, normalize } = require('../services/sheets');
+const { normalize } = require('../utils/normalize');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide } = require('../db');
 const { getAssetDirections, getTenantAssets } = require('../db/assets');
@@ -565,28 +565,21 @@ function tenantAssetsToSpecs(rows, assetFilter = []) {
 // errors so the caller can classify them (e.g. folder-access recovery).
 // Optional `clients` (from getClientsForTenant) runs the Drive folder + Doc
 // creation as a specific tenant's OAuth user; omitted → shared env getClients().
-// Optional `tenantId` selects the per-tenant Postgres asset library as the spec
-// source (falling back to the Sheet) and supplies asset_direction.
+// `tenantId` selects the per-tenant Postgres asset library — the sole spec
+// source (the Google Sheet was fully retired) — and supplies asset_direction.
+// Throws if the tenant has no Postgres asset library (no DB / unseeded tenant):
+// Postgres is mandatory, there is no Sheet fallback.
 async function generateDoc(spec, folderId, clients, tenantId) {
-  // Prefer the tenant's Postgres asset library; fall back to the Sheet when
-  // there's no DB / no seeded rows, or on any DB error (keeps the demo working).
-  let assetSpecs = null;
-  let specSource = null;
-  try {
-    const tenantAssets = await getTenantAssets(tenantId);
-    if (tenantAssets && tenantAssets.length > 0) {
-      assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets);
-      specSource = 'postgres';
-    }
-  } catch (err) {
-    console.warn('[pipeline] getTenantAssets failed — falling back to Sheet:', err.message);
+  // Asset specs come exclusively from the tenant's Postgres library.
+  const tenantAssets = await getTenantAssets(tenantId);
+  if (!tenantAssets || tenantAssets.length === 0) {
+    throw new Error(
+      'No asset library found in Postgres for this tenant — cannot build a doc. ' +
+        'Ensure DATABASE_URL is set and the tenant has been seeded (asset_types/copy_fields).'
+    );
   }
-  if (!assetSpecs) {
-    console.log('[workflow] reading Sheet', config.SHEET_ID, '…');
-    assetSpecs = await getAssetSpecs(spec.assets);
-    specSource = 'sheet';
-  }
-  console.log(`[pipeline] asset specs source: ${specSource}`);
+  const assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets);
+  console.log('[pipeline] asset specs source: postgres');
   console.log(
     '[workflow] asset specs read OK —',
     assetSpecs.length,

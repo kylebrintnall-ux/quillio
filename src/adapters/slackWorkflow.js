@@ -166,43 +166,30 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     const { doc, assetSpecs, projectFolderUrl } = docResult;
     console.log('[workflow] doc created:', doc.id);
 
-    // 4. Show the doc-ready card — editing the build message in place when we
-    //    have a live message, else posting via response_url.
+    // 4. Show the doc-ready card — ONE message. The Campaign folder / Copy doc
+    //    links and the "Saved to <folder>" line are folded into this single card
+    //    (no separate folder-confirmation post). Editing the build message in
+    //    place when we have a live message, else posting via response_url.
+    //
+    //    This emit is the LAST Slack write in the brief flow. Previously a
+    //    second chat.postMessage fired after it (the project-folder post), which
+    //    is what made the card appear to "revert" — the final state must be
+    //    written exactly once, with nothing following it.
+    const folderName = folderFromBrief
+      ? (await pipeline.getFolderName(effectiveFolderId)) || 'your linked folder'
+      : null;
     const result = {
       title: doc.title,
       webViewLink: doc.url,
       assets: assetSpecs.map((a) => a.assetType),
       docId: doc.id,
+      folderUrl: projectFolderUrl, // null if folder creation failed → link omitted
+      folderName, // null unless the doc went to a brief-linked folder
     };
     const resultBlocks = buildResultBlocks(result).blocks;
-    // If the doc went to a brief-linked folder, note it below the doc card.
-    if (folderFromBrief) {
-      const folderName = (await pipeline.getFolderName(effectiveFolderId)) || 'your linked folder';
-      resultBlocks.push({
-        type: 'section',
-        text: { type: 'mrkdwn', text: `📁 Saved to ${folderName}` },
-      });
-    }
     await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
       postResult(result, responseUrl)
     );
-
-    // Post the project-folder confirmation as a fresh (non-ephemeral) channel
-    // message. Best-effort: needs a bot token + channel + a folder that was
-    // actually created.
-    const projectChannel = (live && live.channel) || opts.channelId;
-    if (tokens.slack_bot && projectChannel && projectFolderUrl) {
-      const folderMsg =
-        `${emoji('quillio-folder')} Project folder created — ${campaignTitle}\n\n` +
-        `📁 Campaign folder → ${projectFolderUrl}\n` +
-        `📄 Copy doc → ${doc.url}\n\n` +
-        `Copy has begun.`;
-      try {
-        await postChatMessage({ channel: projectChannel, text: folderMsg, token: tokens.slack_bot });
-      } catch (e) {
-        console.error('[Quillio] project folder message failed:', e.message);
-      }
-    }
 
     console.log('[workflow] runBriefWorkflow DONE — doc', doc.id);
   } catch (err) {

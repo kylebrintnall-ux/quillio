@@ -20,53 +20,66 @@ async function postToSlack(url, payload) {
   return { status: res.status, body };
 }
 
-// Block Kit message posted after the doc is built: title, asset list, and
-// Open in Drive / Generate First Draft / Skip buttons.
-function buildResultBlocks({ title, webViewLink, assets, docId }) {
+// Block Kit message posted after the doc is built: title, asset list, the
+// Campaign folder / Copy doc hyperlinks, an optional "Saved to <folder>" line,
+// and two buttons (Generate First Draft / Skip for now). folderUrl/folderName
+// are optional — the folder link renders only when a project folder was made.
+function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName }) {
   const assetList = assets.length
     ? assets.map((a) => `• ${a}`).join('\n')
     : '_No assets matched — included all specs._';
 
-  return {
-    blocks: [
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: `${emoji('quillio-doc-done')} Your doc is ready`, emoji: true },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*${title}*` },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Assets:*\n${assetList}` },
+    },
+  ];
+
+  // Folder + doc links as Slack hyperlinks, below the asset list. The doc link
+  // replaces the old "Open in Drive" button; the folder link only renders when a
+  // project folder was actually created.
+  const links = [];
+  if (folderUrl) links.push(`${emoji('quillio-folder')} <${folderUrl}|Campaign folder>`);
+  links.push(`${emoji('quillio-doc-done')} <${webViewLink}|Copy doc>`);
+  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: links.join('\n') } });
+
+  // "Saved to <folder>" confirmation, below the links (only for brief-linked folders).
+  if (folderName) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: `${emoji('quillio-folder')} Saved to ${folderName}` },
+    });
+  }
+
+  blocks.push({
+    type: 'actions',
+    elements: [
       {
-        type: 'header',
-        text: { type: 'plain_text', text: `${emoji('quillio-doc-done')} Your doc is ready`, emoji: true },
+        type: 'button',
+        style: 'primary',
+        text: { type: 'plain_text', text: 'Generate First Draft', emoji: true },
+        action_id: 'generate_first_draft',
+        value: docId,
       },
       {
-        type: 'section',
-        text: { type: 'mrkdwn', text: `*${title}*` },
-      },
-      {
-        type: 'section',
-        text: { type: 'mrkdwn', text: `*Assets:*\n${assetList}` },
-      },
-      {
-        type: 'actions',
-        elements: [
-          {
-            type: 'button',
-            text: { type: 'plain_text', text: 'Open in Drive', emoji: true },
-            url: webViewLink,
-            action_id: 'open_in_drive',
-          },
-          {
-            type: 'button',
-            style: 'primary',
-            text: { type: 'plain_text', text: 'Generate First Draft', emoji: true },
-            action_id: 'generate_first_draft',
-            value: docId,
-          },
-          {
-            type: 'button',
-            text: { type: 'plain_text', text: 'Skip', emoji: true },
-            action_id: 'skip',
-            value: docId,
-          },
-        ],
+        type: 'button',
+        text: { type: 'plain_text', text: 'Skip for now', emoji: true },
+        action_id: 'skip',
+        value: docId,
       },
     ],
-  };
+  });
+
+  return { blocks };
 }
 
 // Posts the doc-ready Block Kit message. With a slash-command response_url it

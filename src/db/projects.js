@@ -52,16 +52,17 @@ async function saveProject(tenantId, projectData = {}) {
   }
 }
 
-// All of a tenant's projects, newest first. Returns [] if there's no DB or the
-// tenant has none — so the history view can render its empty state uniformly.
-async function getProjects(tenantId) {
+// All of a tenant's projects, newest first. Closed projects are hidden unless
+// `includeClosed` is true (legacy 'draft' and NULL statuses are always shown —
+// only 'closed' is filtered). Returns [] if there's no DB or the tenant has none.
+async function getProjects(tenantId, includeClosed = false) {
   const pool = getPool();
   if (!pool || !tenantId) return [];
 
-  const res = await pool.query(
-    'SELECT * FROM projects WHERE tenant_id = $1 ORDER BY created_at DESC',
-    [tenantId]
-  );
+  const sql = includeClosed
+    ? 'SELECT * FROM projects WHERE tenant_id = $1 ORDER BY created_at DESC'
+    : "SELECT * FROM projects WHERE tenant_id = $1 AND status IS DISTINCT FROM 'closed' ORDER BY created_at DESC";
+  const res = await pool.query(sql, [tenantId]);
   return res.rows || [];
 }
 
@@ -78,4 +79,17 @@ async function getProject(tenantId, projectId) {
   return (res.rows && res.rows[0]) || null;
 }
 
-module.exports = { saveProject, getProjects, getProject };
+// Update a project's status (scoped to its tenant). Returns the updated row, or
+// null if there's no DB / no matching project. Callers validate the status.
+async function setProjectStatus(tenantId, projectId, status) {
+  const pool = getPool();
+  if (!pool || !tenantId || !projectId) return null;
+
+  const res = await pool.query(
+    'UPDATE projects SET status = $3 WHERE tenant_id = $1 AND id = $2 RETURNING *',
+    [tenantId, projectId, status]
+  );
+  return (res.rows && res.rows[0]) || null;
+}
+
+module.exports = { saveProject, getProjects, getProject, setProjectStatus };

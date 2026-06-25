@@ -10,7 +10,7 @@
 const path = require('path');
 const express = require('express');
 const { resolveTenant } = require('../db');
-const { getProjects, getProject } = require('../db/projects');
+const { getProjects, getProject, setProjectStatus } = require('../db/projects');
 const { runWebBrief, runWebDraft, runWebProjectContent } = require('../adapters/web');
 const { requireAuth } = require('../middleware/auth');
 
@@ -81,16 +81,40 @@ router.post('/api/draft', async (req, res) => {
   }
 });
 
-// GET /api/projects — the tenant's project history, newest first. Without a DB
-// this resolves to [] (the history view renders its empty state).
+// Project status lifecycle (Week 12). Closed projects are hidden by default but
+// never deleted.
+const VALID_STATUSES = ['not_started', 'in_progress', 'finished', 'closed'];
+
+// GET /api/projects — the tenant's projects, newest first. Closed are hidden
+// unless ?include_closed=true. Without a DB this resolves to [].
 router.get('/api/projects', requireAuth, async (req, res) => {
   const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
+  const includeClosed = req.query.include_closed === 'true';
   try {
     const { tenant } = await resolveTenant(workspaceId);
-    const projects = await getProjects(tenant && tenant.id);
+    const projects = await getProjects(tenant && tenant.id, includeClosed);
     return res.status(200).json({ success: true, projects });
   } catch (err) {
     console.error('[web] /api/projects failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /api/projects/:id/status — update a project's status. Degrades
+// gracefully: returns success even without a DB (no row to persist) so the
+// optimistic UI stays consistent. Invalid statuses are rejected.
+router.patch('/api/projects/:id/status', requireAuth, async (req, res) => {
+  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
+  const status = (req.body || {}).status;
+  if (!VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ success: false, error: 'Invalid status' });
+  }
+  try {
+    const { tenant } = await resolveTenant(workspaceId);
+    await setProjectStatus(tenant && tenant.id, req.params.id, status);
+    return res.status(200).json({ success: true, status });
+  } catch (err) {
+    console.error('[web] PATCH /api/projects/:id/status failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });

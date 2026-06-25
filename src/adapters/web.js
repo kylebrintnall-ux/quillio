@@ -88,7 +88,7 @@ async function runWebBrief(briefText, tenantContext = {}) {
       drive_folder_url: projectFolderUrl,
       copy_doc_id: doc.id,
       copy_doc_url: doc.url,
-      status: 'draft',
+      status: 'not_started',
     });
     if (saved) projectId = saved.id;
   } catch (err) {

@@ -533,6 +533,7 @@ test('routes/app mounts and exposes its routes', () => {
     '/api/projects',
     '/api/projects/:id',
     '/api/projects/:id/content',
+    '/api/projects/:id/status',
     '/app',
   ]);
 });

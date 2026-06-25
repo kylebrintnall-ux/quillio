@@ -185,9 +185,21 @@
       color: var(--muted);
       background: var(--soft);
     }
-    .status.draft { color: #5a4b00; background: #fff4cc; border-color: #f0e0a0; }
-    .status.in-review { color: #06302f; background: var(--accent); border-color: var(--accent); }
-    .status.approved { color: #0a5d2a; background: #d8f5e0; border-color: #b3e6c4; }
+    .status.not_started { color: #555; background: #ededed; border-color: #dcdcdc; }
+    .status.in_progress { color: #5a4b00; background: #fff4cc; border-color: #f0e0a0; }
+    .status.finished { color: #0a5d2a; background: #d8f5e0; border-color: #b3e6c4; }
+    .status.closed { color: #888; background: #f2f2f2; border-color: #e3e3e3; }
+
+    .status-select {
+      font: inherit; font-size: 13px; padding: 5px 7px;
+      border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
+    }
+    .card-close {
+      background: none; border: none; font-size: 20px; line-height: 1;
+      color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 6px;
+    }
+    .card-close:hover { color: #8a1f1f; background: var(--soft); }
+    .closed-toggle { display: flex; align-items: center; gap: 8px; margin-top: 18px; font-size: 14px; color: var(--muted); cursor: pointer; }
 
     /* Project history cards */
     .project-card {
@@ -202,10 +214,11 @@
       gap: 12px;
     }
     .project-card:hover { border-color: var(--accent); }
-    .project-card .meta { min-width: 0; }
+    .project-card.closed { opacity: 0.6; }
+    .project-card .meta { min-width: 0; cursor: pointer; }
     .project-card .pname { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
     .project-card .pdate { font-size: 13px; color: var(--muted); margin-top: 2px; }
-    .project-card .right { display: flex; align-items: center; gap: 10px; flex: none; }
+    .project-card .right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
     .project-card .open-link {
       font-size: 14px; font-weight: 600; color: var(--ink);
       background: var(--soft); border: 1px solid var(--line);
@@ -240,7 +253,7 @@
     <span class="brand" id="nav-brand">Quillio</span>
     <span class="links">
       <button class="navlink" id="nav-new">New Brief</button>
-      <button class="navlink" id="nav-history">History</button>
+      <button class="navlink" id="nav-history">Projects</button>
       <button class="navlink" id="nav-settings">Settings</button>
     </span>
   </nav>
@@ -294,13 +307,14 @@
       <div id="output-error" class="error hidden"></div>
     </section>
 
-    <!-- SCREEN 4 — PROJECT HISTORY -->
+    <!-- SCREEN 4 — PROJECTS -->
     <section id="screen-history" class="screen">
-      <h1>Project history</h1>
+      <h1>Projects</h1>
       <div id="history-loading" class="loading hidden"><span class="dot"></span><span>Loading projects…</span></div>
       <div id="history-error" class="error hidden"></div>
       <div id="history-empty" class="empty hidden">No projects yet. Run your first brief to get started.</div>
       <div id="history-list"></div>
+      <label class="closed-toggle"><input type="checkbox" id="show-closed" /> Show closed projects</label>
     </section>
 
     <!-- SCREEN 5 — PROJECT VIEW -->
@@ -354,14 +368,19 @@
     function show(el) { el.classList.remove('hidden'); }
     function hide(el) { el.classList.add('hidden'); }
 
-    // Map a project status to its badge class. Unknown statuses render neutral.
-    function statusClass(status) {
-      var s = String(status || 'draft').toLowerCase();
-      if (s === 'in review' || s === 'in-review') return 'in-review';
-      if (s === 'approved') return 'approved';
-      if (s === 'draft') return 'draft';
-      return '';
+    // Normalize a raw status to one canonical key (also the badge CSS class).
+    // Legacy 'draft' / unknown / empty → in_progress.
+    function statusKey(status) {
+      var s = String(status || '').toLowerCase();
+      if (s === 'finished') return 'finished';
+      if (s === 'closed') return 'closed';
+      if (s === 'not_started') return 'not_started';
+      return 'in_progress'; // in_progress + legacy 'draft' + anything else
     }
+    var STATUS_LABELS = { not_started: 'Not started', in_progress: 'In progress', finished: 'Finished', closed: 'Closed' };
+    function statusLabel(key) { return STATUS_LABELS[key] || 'In progress'; }
+    // The active states offered in the per-card dropdown (closing is via ×).
+    var ACTIVE_STATUSES = ['not_started', 'in_progress', 'finished'];
 
     // --- Screen 1: brief input ---------------------------------------------
     var briefEl = document.getElementById('brief');
@@ -655,6 +674,8 @@
         show(status);
         // Pull the drafted copy back from the doc and show it inline.
         await loadDraftedCopy();
+        // First draft done → mark the project in progress (best-effort).
+        if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
         // Draft exists now → swap the button for the Regenerate section.
         hide(btn);
         show(document.getElementById('regen'));
@@ -727,11 +748,12 @@
       if (state.docUrl) window.open(state.docUrl, '_blank', 'noopener');
     }
 
-    // --- Screen 4: project history -----------------------------------------
+    // --- Screen 4: projects ------------------------------------------------
     var historyList = document.getElementById('history-list');
     var historyLoading = document.getElementById('history-loading');
     var historyEmpty = document.getElementById('history-empty');
     var historyError = document.getElementById('history-error');
+    var showClosed = document.getElementById('show-closed');
 
     function formatDate(iso) {
       if (!iso) return '';
@@ -747,7 +769,9 @@
       hide(historyEmpty);
       show(historyLoading);
       try {
-        var res = await fetch('/api/projects?workspaceId=' + encodeURIComponent(WORKSPACE_ID));
+        var url = '/api/projects?workspaceId=' + encodeURIComponent(WORKSPACE_ID) +
+          (showClosed.checked ? '&include_closed=true' : '');
+        var res = await fetch(url);
         var data = await res.json();
         if (!data || !data.success) throw new Error((data && data.error) || 'Could not load projects.');
         hide(historyLoading);
@@ -759,22 +783,85 @@
         showError(historyError, e.message || 'Network error — please try again.');
       }
     }
+    showClosed.addEventListener('change', loadHistory);
 
     function projectCard(p) {
-      var card = el('div', 'project-card');
+      var key = statusKey(p.status);
+      var isClosed = key === 'closed';
+      var card = el('div', 'project-card' + (isClosed ? ' closed' : ''));
+
       var meta = el('div', 'meta');
       meta.appendChild(el('div', 'pname', p.name || 'Untitled campaign'));
       meta.appendChild(el('div', 'pdate', formatDate(p.created_at)));
+      meta.addEventListener('click', function () { openProject(p); });
       card.appendChild(meta);
 
       var right = el('div', 'right');
-      var badge = el('span', 'status ' + statusClass(p.status), p.status || 'draft');
+      var badge = el('span', 'status ' + key, statusLabel(key));
       right.appendChild(badge);
-      right.appendChild(el('span', 'open-link', 'Open'));
-      card.appendChild(right);
 
-      card.addEventListener('click', function () { openProject(p); });
+      if (!isClosed) {
+        // Status dropdown — change → optimistic badge update + PATCH.
+        var select = el('select', 'status-select');
+        ACTIVE_STATUSES.forEach(function (s) {
+          var opt = el('option', null, statusLabel(s));
+          opt.value = s;
+          if (s === key) opt.selected = true;
+          select.appendChild(opt);
+        });
+        select.addEventListener('click', function (e) { e.stopPropagation(); });
+        select.addEventListener('change', async function (e) {
+          e.stopPropagation();
+          var next = select.value;
+          var prev = key;
+          badge.className = 'status ' + next;
+          badge.textContent = statusLabel(next);
+          key = next;
+          var ok = await patchStatus(p.id, next);
+          if (!ok) {
+            // Revert on failure.
+            select.value = prev; key = prev;
+            badge.className = 'status ' + prev;
+            badge.textContent = statusLabel(prev);
+            showError(historyError, 'Could not update status — please try again.');
+          }
+        });
+        right.appendChild(select);
+
+        var openBtn = el('button', 'open-link', 'Open');
+        openBtn.addEventListener('click', function (e) { e.stopPropagation(); openProject(p); });
+        right.appendChild(openBtn);
+
+        var close = el('button', 'card-close', '×');
+        close.setAttribute('aria-label', 'Remove project');
+        close.addEventListener('click', async function (e) {
+          e.stopPropagation();
+          if (!window.confirm('Remove this project from your list?')) return;
+          var ok = await patchStatus(p.id, 'closed');
+          if (ok) { card.parentNode && card.parentNode.removeChild(card); }
+          else { showError(historyError, 'Could not remove project — please try again.'); }
+        });
+        right.appendChild(close);
+      }
+
+      card.appendChild(right);
       return card;
+    }
+
+    // PATCH a project's status. Returns true on success.
+    async function patchStatus(projectId, status) {
+      try {
+        var res = await fetch('/api/projects/' + encodeURIComponent(projectId) +
+          '/status?workspaceId=' + encodeURIComponent(WORKSPACE_ID), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: status })
+        });
+        var data = await res.json();
+        return !!(data && data.success);
+      } catch (e) {
+        return false;
+      }
     }
 
     // --- Screen 5: project view --------------------------------------------
@@ -824,8 +911,9 @@
       showScreen('project');
       document.getElementById('project-title').textContent = p.name || 'Campaign';
       var badge = document.getElementById('project-status');
-      badge.textContent = p.status || 'draft';
-      badge.className = 'status ' + statusClass(p.status);
+      var pkey = statusKey(p.status);
+      badge.textContent = statusLabel(pkey);
+      badge.className = 'status ' + pkey;
 
       // Hide every draft affordance until the content tells us whether the doc
       // already has copy (decided after the fetch below).

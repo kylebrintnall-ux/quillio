@@ -137,7 +137,7 @@ function openInDriveBlocks(text, webViewLink) {
 
 // --- Submit for Review / approval flow blocks (Phase 3) ---
 
-// Copy-complete card with Open in Drive + Submit for Review.
+// Copy-complete card with Open in Drive + Submit for Review + Regenerate.
 function copyCompleteBlocks(text, webViewLink, docId) {
   return [
     { type: 'section', text: { type: 'mrkdwn', text } },
@@ -146,9 +146,51 @@ function copyCompleteBlocks(text, webViewLink, docId) {
       elements: [
         { type: 'button', text: { type: 'plain_text', text: 'Open in Drive', emoji: true }, url: webViewLink, action_id: 'open_in_drive' },
         { type: 'button', text: { type: 'plain_text', text: 'Submit for Review', emoji: true }, action_id: 'submit_for_review', value: docId },
+        { type: 'button', text: { type: 'plain_text', text: 'Regenerate', emoji: true }, action_id: 'regenerate_draft', value: docId },
       ],
     },
   ];
+}
+
+// Build the "Regenerate Draft" modal view. privateMetadata is a JSON string
+// ({ docId, channel, messageTs }) — carried through the modal so the
+// view_submission handler knows which doc to regenerate and where to post the
+// result. No internal IDs are ever shown to the user; they ride in
+// private_metadata only. The direction input is optional — an empty submission
+// regenerates with no direction (identical to a first draft).
+function buildRegenerateModalView(privateMetadata) {
+  return {
+    type: 'modal',
+    callback_id: 'regenerate_modal',
+    private_metadata: privateMetadata || '',
+    title: { type: 'plain_text', text: 'Regenerate Draft', emoji: true },
+    submit: { type: 'plain_text', text: 'Regenerate', emoji: true },
+    close: { type: 'plain_text', text: 'Cancel', emoji: true },
+    blocks: [
+      {
+        type: 'input',
+        block_id: 'direction_block',
+        optional: true,
+        label: { type: 'plain_text', text: 'What should change?', emoji: true },
+        element: {
+          type: 'plain_text_input',
+          action_id: 'direction_input',
+          multiline: true,
+          placeholder: {
+            type: 'plain_text',
+            text: 'Give Quillio direction. Be specific — tone, angle, what to cut, what to emphasize.',
+          },
+        },
+      },
+    ],
+  };
+}
+
+// Open a Slack modal via views.open. triggerId is short-lived (~3s), so call
+// this promptly after acking the button click. Defaults to the env bot token,
+// matching the rest of the interactions handler.
+async function openModal(triggerId, view, token) {
+  return slackApi('views.open', { trigger_id: triggerId, view }, token);
 }
 
 // Reviewer DM: Review Copy (link) + Approve + Request Changes (action buttons).
@@ -389,6 +431,8 @@ module.exports = {
   postLive,
   updateLive,
   copyCompleteBlocks,
+  buildRegenerateModalView,
+  openModal,
   reviewRequestBlocks,
   designerHandoffBlocks,
   changesRequestedBlocks,

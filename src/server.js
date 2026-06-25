@@ -19,7 +19,14 @@ const { saveVoiceGuide } = require('./db');
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
 const onboardingRoutes = require('./routes/onboarding');
-const { updateMessage, updateLive, openInDriveBlocks, logBotIdentity } = require('./services/slack');
+const {
+  updateMessage,
+  updateLive,
+  openInDriveBlocks,
+  logBotIdentity,
+  buildRegenerateModalView,
+  openModal,
+} = require('./services/slack');
 
 const app = express();
 
@@ -240,6 +247,49 @@ app.post('/slack/interactions', (req, res) => {
     return res.status(400).send('Bad payload.');
   }
 
+  // --- Modal submission (Regenerate Draft) ---
+  // view_submission payloads carry no `actions`; handle them before the
+  // block_actions chain. Ack with an empty 200 (closes the modal) within Slack's
+  // 3s window, then fire-and-forget the regeneration.
+  if (payload.type === 'view_submission') {
+    res.status(200).send('');
+    const view = payload.view || {};
+    if (view.callback_id !== 'regenerate_modal') return;
+
+    let meta = {};
+    try {
+      meta = JSON.parse(view.private_metadata || '{}');
+    } catch {
+      /* fall through with empty meta — handled below */
+    }
+    const { docId, channel, messageTs } = meta;
+    if (!docId) {
+      console.error('[interactions] regenerate_modal submission missing docId');
+      return;
+    }
+    // Optional input → may be undefined/empty; empty regenerates with no direction.
+    const direction =
+      (view.state &&
+        view.state.values &&
+        view.state.values.direction_block &&
+        view.state.values.direction_block.direction_input &&
+        view.state.values.direction_block.direction_input.value) ||
+      undefined;
+    const workspaceId = payload.team && payload.team.id;
+
+    runGenerateDraft(docId, null, channel, messageTs, workspaceId, direction).catch(async (err) => {
+      console.error('runGenerateDraft (regenerate) failed:', err);
+      try {
+        if (channel && messageTs) {
+          await updateLive(channel, messageTs, `⚠️ Regeneration failed: ${err.message}`);
+        }
+      } catch (e) {
+        console.error('Failed to report regenerate error to Slack:', e);
+      }
+    });
+    return;
+  }
+
   // Acknowledge immediately so the buttons don't time out.
   res.status(200).send('');
 
@@ -263,6 +313,14 @@ app.post('/slack/interactions', (req, res) => {
         console.error('Failed to report error to Slack:', e);
       }
     });
+  } else if (action.action_id === 'regenerate_draft') {
+    // Open the Regenerate modal. docId/channel/messageTs ride in private_metadata
+    // (never shown to the user) so the view_submission handler can post the
+    // result back to this same message. trigger_id expires in ~3s — fire now.
+    const meta = JSON.stringify({ docId: action.value, channel: channelId, messageTs });
+    openModal(payload.trigger_id, buildRegenerateModalView(meta)).catch((err) =>
+      console.error('regenerate_draft openModal failed:', err)
+    );
   } else if (action.action_id === 'skip') {
     // Replace the buttons with a skipped-state confirmation (keep an Open in
     // Drive link). Edit the clicked message in place when possible.

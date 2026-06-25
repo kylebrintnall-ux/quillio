@@ -198,29 +198,35 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   }
 }
 
-// Handles the "Generate First Draft" button. Transforms the clicked card in
-// place via chat.update: generating → first-draft-ready (single message, no
+// Handles "Generate First Draft" and "Regenerate". Transforms the clicked card
+// in place via chat.update: generating → (re)draft-ready (single message, no
 // stray posts). Falls back to response_url progress + chat.postMessage
-// completion if the bot token / message ts isn't available.
-async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspaceId) {
+// completion if the bot token / message ts isn't available. An optional
+// `direction` string (from the Regenerate modal) is threaded into the drafter
+// as user revision feedback; empty/undefined behaves exactly like a first draft.
+async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspaceId, direction) {
   const { tenant, tokens } = await resolveTenant(workspaceId);
   const canLive = !!tokens.slack_bot && channel && messageTs;
-  console.log('[workflow] runGenerateDraft START — canLive:', canLive, '| channel:', channel || '(none)');
+  const isRegen = !!(direction && String(direction).trim());
+  console.log(
+    `[workflow] runGenerateDraft START — canLive: ${canLive} | channel: ${channel || '(none)'} | regen: ${isRegen}`
+  );
 
   // Count the assets in the doc (one HEADING_3 heading per asset) so the
   // progress message can name how many are being drafted.
   const assetCount = await pipeline.countDocAssets(docId);
 
   const count = assetCount;
+  const verb = isRegen ? 'Regenerating' : 'Drafting';
   let progressMsg;
   if (count <= 3) {
-    progressMsg = `Drafting ${count} asset${count === 1 ? '' : 's'} — back in a minute.`;
+    progressMsg = `${verb} ${count} asset${count === 1 ? '' : 's'} — back in a minute.`;
   } else if (count <= 8) {
-    progressMsg = `Drafting ${count} assets — usually 2–3 minutes. Hang tight.`;
+    progressMsg = `${verb} ${count} assets — usually 2–3 minutes. Hang tight.`;
   } else if (count <= 20) {
-    progressMsg = `Drafting ${count} assets — this one's a big brief, give it 4–5 minutes.`;
+    progressMsg = `${verb} ${count} assets — this one's a big brief, give it 4–5 minutes.`;
   } else {
-    progressMsg = `Drafting ${count} assets — full brief, grab a coffee. Back in ~5 minutes.`;
+    progressMsg = `${verb} ${count} assets — full brief, grab a coffee. Back in ~5 minutes.`;
   }
 
   const progressText = `${emoji('quillio')} ${progressMsg}`;
@@ -229,13 +235,14 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
 
   const { title, fieldCount, url } = await pipeline.generateDraft(
     docId,
-    undefined,
+    direction,
     undefined,
     tenant && tenant.id
   );
   console.log('[workflow] generateDraft returned — posting completion');
 
-  const completionText = `${emoji('quillio-copy-done')} First draft ready — *${title}* (${fieldCount} field${
+  const headline = isRegen ? 'Draft regenerated' : 'First draft ready';
+  const completionText = `${emoji('quillio-copy-done')} ${headline} — *${title}* (${fieldCount} field${
     fieldCount === 1 ? '' : 's'
   } drafted).`;
 

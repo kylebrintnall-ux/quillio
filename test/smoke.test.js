@@ -249,6 +249,56 @@ test('parseDoc detects per-field copy delete ranges (regeneration vs first draft
   assert.strictEqual(body.deleteEnd, null);
 });
 
+test('parseDoc skips per-field italic notes (insertion below notes, never deleted)', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+
+  function makeDoc(paras) {
+    let idx = 1;
+    const content = paras.map((para) => {
+      const raw = (para.text || '') + '\n';
+      const startIndex = idx;
+      const endIndex = idx + raw.length;
+      idx = endIndex;
+      return {
+        startIndex,
+        endIndex,
+        paragraph: {
+          paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+          elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+        },
+      };
+    });
+    return { body: { content } };
+  }
+
+  const paras = [
+    { text: 'LinkedIn Single Image Ad', style: 'HEADING_3' }, // idx 0
+    { text: 'Paid Social · confident', italic: true }, //       idx 1 (asset meta)
+    { text: 'Headline [50]', bold: true }, //                   idx 2 (field 0 label)
+    { text: 'Write this as a question.', italic: true }, //     idx 3 (field 0 NOTES)
+    { text: 'Drafted headline copy', italic: false }, //        idx 4 (field 0 copy)
+    { text: '' }, //                                            idx 5 (blank)
+    { text: 'Body [100]', bold: true }, //                      idx 6 (field 1 label)
+    { text: 'Lead with the pain point.', italic: true }, //     idx 7 (field 1 NOTES)
+    { text: '' }, //                                            idx 8 (blank, un-drafted)
+  ];
+  const doc = makeDoc(paras);
+  const c = doc.body.content;
+  const [headline, body] = parseDoc(doc).assets[0].fields;
+
+  // Field 0 (drafted): notes captured; copy inserts BELOW the notes; delete
+  // range covers only the copy — the notes paragraph is entirely before it.
+  assert.strictEqual(headline.notes, 'Write this as a question.');
+  assert.strictEqual(headline.insertIndex, c[3].endIndex, 'insertion point is after the notes line');
+  assert.strictEqual(headline.deleteEnd, c[4].endIndex, 'delete range covers only the copy');
+  assert.ok(c[3].endIndex <= headline.insertIndex, 'notes paragraph ends at/before the delete start → never deleted');
+
+  // Field 1 (un-drafted): notes captured; insertion is after the notes; no copy.
+  assert.strictEqual(body.notes, 'Lead with the pain point.');
+  assert.strictEqual(body.insertIndex, c[7].endIndex, 'insertion point is after the notes line');
+  assert.strictEqual(body.deleteEnd, null);
+});
+
 test('db exposes the tenant resolver + install-write API', () => {
   const db = require('../src/db');
   for (const fn of [

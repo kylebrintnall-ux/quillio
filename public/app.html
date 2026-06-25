@@ -172,6 +172,7 @@
     /* Field copy in the project view */
     .field-copy { white-space: pre-wrap; font-size: 14px; color: var(--ink); padding: 4px 0 2px; }
     .field-copy.empty { color: var(--muted); font-style: italic; }
+    .field-note { font-size: 13px; font-style: italic; color: #737373; padding: 2px 0; }
 
     /* Status badges (history + project view) */
     .status {
@@ -486,6 +487,11 @@
         }
         row.appendChild(limit);
         card.appendChild(row);
+
+        // Per-field writing guidance (Sheet Notes) — permanent, distinct from
+        // copy: muted italic, below the field name and above the drafted copy.
+        var note = f.notes != null ? String(f.notes).trim() : '';
+        if (note) card.appendChild(el('div', 'field-note', note));
 
         if (hasCopy) {
           card.appendChild(el('div', 'field-copy', copy));

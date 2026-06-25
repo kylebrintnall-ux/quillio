@@ -88,6 +88,20 @@ class DocBuilder {
     });
   }
 
+  // Per-field writing guidance (the Sheet's Notes), shown under the field label.
+  // Italic + muted grey so it reads as guidance, distinct from drafted copy
+  // (regular weight) and the asset meta line (plain italic). Parsers recognize
+  // it by the italic style + its position right after the bold label.
+  fieldNote(text) {
+    this._push(text, {
+      textStyle: {
+        italic: true,
+        foregroundColor: { color: { rgbColor: { red: 0.45, green: 0.45, blue: 0.45 } } },
+      },
+      textFields: 'italic,foregroundColor',
+    });
+  }
+
   // A bold field label, e.g. "Headline [30]".
   boldLabel(text) {
     this._push(text, {

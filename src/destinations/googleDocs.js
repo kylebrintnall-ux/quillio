@@ -249,6 +249,11 @@ async function createDocument({
     if (meta) b.italic(meta);
     for (const field of asset.fields) {
       b.boldLabel(fieldLabel(field));
+      // Per-field writing guidance (Sheet Notes) as muted italic, under the
+      // label and above the (blank) draft insertion point. Permanent guidance —
+      // parseDoc skips it so it's never treated as / overwritten by drafted copy.
+      const note = String(field.notes || '').trim();
+      if (note) b.fieldNote(note);
       b.blankLine();
     }
   }
@@ -285,6 +290,7 @@ function parseDoc(doc) {
   const assets = [];
   let current = null;
   let currentField = null; // last field whose copy region we're scanning
+  let notesSeen = false; // whether the current field's italic notes line was seen
   let expecting = null; // 'summary' | 'writerPrompt'
 
   for (const item of doc.body.content || []) {
@@ -321,6 +327,7 @@ function parseDoc(doc) {
       current = { assetType: text, channel: '', toneNotes: '', fields: [], gotMeta: false };
       assets.push(current);
       currentField = null; // a new asset ends the previous field's copy region
+      notesSeen = false;
       continue;
     }
 
@@ -350,14 +357,28 @@ function parseDoc(doc) {
         charMin,
         charMax,
         // The blank paragraph immediately after the label starts where this
-        // label paragraph ends; that's our draft insertion point.
+        // label paragraph ends; that's our draft insertion point (moved past the
+        // notes line below when one is present).
         insertIndex: item.endIndex,
         // End of the last non-empty paragraph of already-drafted copy under this
         // label (null = nothing drafted yet). Drives delete-before-insert on
         // regeneration; stays null for a first draft so that path is untouched.
         deleteEnd: null,
+        notes: '',
       };
       current.fields.push(currentField);
+      notesSeen = false;
+      continue;
+    }
+
+    // Per-field writing guidance: the italic paragraph right after a label,
+    // before any drafted copy (which is always inserted non-italic). It's
+    // permanent guidance — never copy, never deleted. Copy goes BELOW it, so
+    // advance the insertion point past the notes line.
+    if (current && currentField && currentField.deleteEnd == null && !notesSeen && italic && text) {
+      notesSeen = true;
+      currentField.notes = text;
+      currentField.insertIndex = item.endIndex;
       continue;
     }
 
@@ -576,10 +597,11 @@ async function generateDraft(id, direction, clients, voiceGuide) {
 
 // Read a doc back into a structured, copy-bearing shape for the web project
 // view. Unlike parseDoc (which recovers field *positions* for drafting), this
-// also captures the drafted copy under each label: the plain paragraphs that
-// follow a bold field label, up to the next label / heading. Returns
+// also captures the per-field italic notes + drafted copy under each label: the
+// plain paragraphs that follow a bold field label, up to the next label /
+// heading. Returns
 //   { summary, writerDirection, assets: [{ name, fields: [{ fieldName,
-//     charMin, charMax, copy }] }] }
+//     charMin, charMax, notes, copy }] }] }
 // Throws if the doc can't be read so the caller can surface the fallback.
 async function getDocContent(id, clients) {
   const { docs } = clients || (await getClients());
@@ -647,8 +669,15 @@ async function getDocContent(id, clients) {
         charMax = Math.max(...vals);
         if (vals.length >= 2) charMin = Math.min(...vals);
       }
-      field = { fieldName, charMin, charMax, copy: '' };
+      field = { fieldName, charMin, charMax, notes: '', copy: '' };
       current.fields.push(field);
+      continue;
+    }
+
+    // Per-field guidance: the italic line right after a label, before any copy.
+    // Capture it for display, but never count it as drafted copy.
+    if (field && italic && text && !field.copy && !field.notes) {
+      field.notes = text;
       continue;
     }
 

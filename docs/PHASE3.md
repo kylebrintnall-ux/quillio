@@ -215,3 +215,117 @@ Tenant-owned (live in Postgres after Phase 3):
 - `GOOGLE_REFRESH_TOKEN` → `tenant_tokens` service='google'
 - `ASSET_SHEET_ID` → `asset_types` table per tenant
 - `DRIVE_FOLDER_ID` → `tenants.default_folder_id`
+
+## APPROVAL WORKFLOW MODEL
+
+Roles:
+
+- Copywriter — creates the brief, generates and refines copy
+- Creative Manager — primary approver, always first reviewer, fixed per workspace, can override stalled reviews
+- Collaborators — optional per-project stakeholders (one or more; could be PMM, campaigns, events, or any non-creative sign-off role — never hardcoded to a specific title). Added at brief time, not in Settings.
+- Designer — notified after approval, receives copy doc + Figma link
+- Project Manager — notified at key workflow moments for visibility (optional role)
+
+Approval chain:
+
+1. Copywriter finishes copy → clicks "Submit for Review"
+2. Creative Manager notified → reviews copy in Google Doc → three options:
+   - "Request Changes" → back to copywriter with feedback
+   - "Approve — needs collaborator sign-off" → routes to all Collaborators simultaneously
+   - "Approve — send to design" → triggers Figma update + notifies Designer
+3. Collaborator review stage (when collaborators are required):
+   - All Collaborators notified simultaneously with doc link
+   - Each Collaborator reviews by adding comments directly in the Google Doc
+   - Each Collaborator then goes to Slack and clicks "Done Reviewing" or "Request Changes"
+   - Quillio tracks which Collaborators have responded and which have not
+   - Workflow stays in "pending collaborator review" state until ALL Collaborators have responded
+   - If a Collaborator has not responded after 24 hours → automated follow-up nudge sent via Slack DM or email
+   - Creative Manager can override and force-approve if a Collaborator is unavailable (safety valve to prevent projects getting permanently stuck)
+4. Once all Collaborators have responded:
+   - All approved → automatically routes to design, everyone notified (Copywriter, Creative Manager, Designer, Project Manager)
+   - Any requested changes → Copywriter notified with all feedback consolidated, Creative Manager + Designer + Project Manager also notified for visibility
+5. Designer receives notification: copy doc link + Figma link — "Copy approved. Design updated."
+
+Notification tiers (user controls which tier they're on):
+
+- Tier 1 (default) — status change only, no automation, user handles sharing manually
+- Tier 2 (opt in) — email notification to approver with comment-enabled doc link
+- Tier 3 (opt in, team only) — Slack DM to approver
+
+Figma trigger:
+
+- Creative Manager or final Collaborator approval triggers Figma copy population
+- Designer is notified after, not before — they receive the result, not a request to act
+- Designer gets: copy doc link + Figma file link
+
+Doc sharing on submission:
+
+- When submitted for review, Google Doc sharing is automatically set to "Anyone with link can comment"
+- This ensures all reviewers can open and comment without permission issues
+
+Settings fields needed:
+
+- Creative Manager — Slack user ID or email, fixed per workspace
+- Designer — Slack user ID or email, fixed per workspace
+- Project Manager — Slack user ID or email, optional, fixed per workspace
+- Default approver email — for web app / solo / freelance users (Tier 2 email flow)
+
+Per-project at brief time:
+
+- Optional collaborators field — add one or more people who need to sign off beyond the creative manager
+- Designer override — if a different designer is on this project
+- Project Manager override — if a different PM is on this project
+
+Solo / freelancer approval flow:
+
+- No Slack required
+- Tier 1: update project status to "Submitted for Review" manually, share doc yourself
+- Tier 2: set a default approver email in onboarding, submitting triggers automatic email with comment-enabled doc link
+- Status tracking in Projects tab regardless of tier
+
+## PHASE 4 — FIGMA INTEGRATION SPEC
+
+Core concept:
+
+When a brief is kicked off, Quillio creates three linked artifacts simultaneously:
+
+1. Copy doc — Google Doc with all asset copy fields
+2. Figma file — duplicated from master template, with correct frames for requested assets
+3. Project record in Postgres — copy_doc_id + figma_file_key linked together
+
+The Figma file and copy doc are connected from day one. Copy populates into Figma on approval.
+
+Master Figma template:
+
+- One master template file with all 30 asset types as frames
+- Frame naming convention: asset type + dimensions e.g. LinkedIn_1200x628, Meta_1080x1080
+- Text layer naming convention: [Headline], [Body], [CTA], [Intro], etc.
+- On brief submission: duplicate template, activate only the frames for requested assets, archive the rest
+- Figma file key saved to projects.figma_file_key in Postgres
+
+Copy population on approval:
+
+- Approved copy fields mapped to Figma text layers by field name
+- Quillio Figma API writes copy into each text layer
+- Character count compliance verified before writing
+- Designer notified with both doc and Figma links after population
+
+Figma handoff command (Phase 4):
+
+- /quillio-handoff [figma-link] — manually trigger copy population into an existing Figma file
+- Useful when Figma file already exists and was not created by Quillio
+
+Database columns already ready:
+
+- projects.figma_file_key
+- projects.deck_id
+- design_mappings table — tool, asset_type_id, frame_prefix, field_name, layer_name
+
+Build order for Phase 4:
+
+1. Quillio master Figma template — 30 frames, verified 2026 specs, correct layer naming
+2. Figma OAuth integration — read/write access per tenant
+3. Brief-time Figma file creation — duplicate template, activate correct frames
+4. /quillio-handoff — copy population into existing Figma files
+5. Approval-triggered population — automatic on Creative Manager or final Collaborator approval
+6. Designer notification — copy doc link + Figma link after population

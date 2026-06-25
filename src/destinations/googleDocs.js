@@ -155,6 +155,11 @@ async function createDocument({
   clients,
 }) {
   logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
+  // Diagnostic (counts only, never content): a missing Reference Materials /
+  // Reference Insights section traces back to one of these being 0 here.
+  console.log(
+    `[googleDocs] createDocument references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
+  );
   const { drive, docs } = clients || (await getClients());
   const title = makeTitle(brief, campaignTitle);
 

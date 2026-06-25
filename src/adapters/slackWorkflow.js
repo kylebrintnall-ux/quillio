@@ -134,6 +134,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     //      folder-access flow (Issue 3) instead of a dead-end error.
     let docResult;
     try {
+      console.log(
+        `[workflow] pre-generateDoc references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
+      );
       docResult = await pipeline.generateDoc(
         { brief, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
         effectiveFolderId

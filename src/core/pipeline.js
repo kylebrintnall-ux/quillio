@@ -495,6 +495,14 @@ async function enrichWithReferences(parsed, refs) {
       (refs.length === 1 ? refs[0] : null);
     return match ? { ...ins, type: match.type } : ins;
   });
+  // Surface the silent failure mode: references were read but the enrich pass
+  // produced no structured insights (e.g. Gemini JSON parse failed) — so the
+  // doc's Reference Insights section would be omitted.
+  if (refs.length > 0 && referenceInsights.length === 0) {
+    console.warn(
+      `[workflow] enrichWithReferences: ${refs.length} reference(s) read but 0 insights produced — Reference Insights will be empty`
+    );
+  }
   return { summary: enriched.summary, writerPrompt: enriched.writerPrompt, referenceInsights };
 }
 

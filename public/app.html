@@ -571,35 +571,47 @@
       }
     }
 
-    // Drafting calls Gemini per field and takes ~60-90s. Give the request a
-    // generous 180s ceiling (well past the worst case) via AbortController so a
-    // genuinely hung connection still fails cleanly, and show a persistent
-    // "this takes about a minute" note while it runs. Shared by Screen 3
+    // Drafting calls Gemini per field and takes ~1 minute. Rather than hold one
+    // long request open (which Railway's proxy closes → "Load failed"), we start
+    // a job and poll its status every few seconds. Shared by Screen 3
     // (post-brief) and Screen 5 (project view).
-    var DRAFT_TIMEOUT_MS = 300000; // 5 min — larger briefs (4+ assets) draft slowly
+    var DRAFT_POLL_MS = 3000; // poll cadence
+    var DRAFT_MAX_WAIT_MS = 8 * 60 * 1000; // overall ceiling (well past worst case)
     var DRAFTING_NOTE = '<span class="dot"></span><span>Generating draft… this takes about a minute. Keep this tab open.</span>';
 
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+    // Start a draft job and poll until it completes or fails. Resolves with the
+    // job result ({ docId, fieldCount }); rejects on failure / timeout.
     async function draftFetch(docId, direction) {
-      var controller = new AbortController();
-      var timer = setTimeout(function () { controller.abort(); }, DRAFT_TIMEOUT_MS);
-      try {
-        var res = await fetch('/api/draft', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' }),
-          signal: controller.signal
-        });
-        var data = await res.json();
-        if (!data || !data.success) throw new Error((data && data.error) || 'Draft generation failed.');
-        return data;
-      } finally {
-        clearTimeout(timer);
+      var startRes = await fetch('/api/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' })
+      });
+      var start = await startRes.json();
+      if (!start || !start.success || !start.jobId) {
+        throw new Error((start && start.error) || 'Could not start draft.');
       }
+      var jobId = start.jobId;
+      var deadline = Date.now() + DRAFT_MAX_WAIT_MS;
+      while (Date.now() < deadline) {
+        await sleep(DRAFT_POLL_MS);
+        var s;
+        try {
+          var r = await fetch('/api/draft/' + encodeURIComponent(jobId) + '/status');
+          s = await r.json();
+        } catch (e) {
+          continue; // transient network blip — keep polling
+        }
+        if (s && s.status === 'complete') return (s.result || {});
+        if (s && s.status === 'failed') throw new Error(s.error || 'Draft generation failed.');
+        // 'pending' (or a 404 that surfaced as {status:'failed'} already handled) → keep polling
+      }
+      throw new Error('Draft is taking longer than expected.');
     }
     function draftErrorMessage(e) {
-      return e && e.name === 'AbortError'
-        ? 'Draft is taking longer than expected — it may still finish in your doc. Try Open in Drive in a minute.'
-        : (e.message || 'Network error — please try again.');
+      return (e && e.message) || 'Network error — please try again.';
     }
     function draftedLabel(n) {
       return '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');

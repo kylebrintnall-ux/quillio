@@ -70,6 +70,9 @@ async function runWebBrief(briefText, tenantContext = {}) {
   const effectiveFolderId = pipeline.extractBriefFolderId(briefText);
 
   // 4. Build the document.
+  console.log(
+    `[web] pre-generateDoc references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
+  );
   const { doc, assetSpecs, projectFolderUrl } = await pipeline.generateDoc(
     { brief: briefText, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
     effectiveFolderId,

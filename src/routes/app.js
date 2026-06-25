@@ -7,6 +7,7 @@
 // errors return a clean { success:false, error } — stack traces are logged
 // server-side only, never sent to the browser.
 
+const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
 const { resolveTenant } = require('../db');
@@ -18,6 +19,21 @@ const router = express.Router();
 
 // The demo tenant — used when a request doesn't carry a workspace id.
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
+
+// In-memory draft job store (Week 12). Drafting takes ~1 minute, and Railway's
+// edge proxy closes a connection that's held open with no response bytes — so
+// instead of one long-awaited POST we start a job and let the client poll.
+// Single-instance only (fine here); a multi-instance deploy would need a shared
+// store. Jobs are swept after a TTL so the Map can't grow unbounded.
+const DRAFT_JOBS = new Map(); // jobId -> { status, result, error, ts }
+const DRAFT_JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function sweepDraftJobs() {
+  const now = Date.now();
+  for (const [id, job] of DRAFT_JOBS) {
+    if (now - job.ts > DRAFT_JOB_TTL_MS) DRAFT_JOBS.delete(id);
+  }
+}
 
 // GET /app — the single-file web UI (HTML + CSS + vanilla JS). Static asset,
 // no templating: the page talks to /api/brief and /api/draft itself.
@@ -50,12 +66,10 @@ router.post('/api/brief', async (req, res) => {
   }
 });
 
-// POST /api/draft — generate the first draft for an existing doc.
-// Draft generation calls Gemini per field and takes 60-90s, so disable the
-// per-request socket idle timeout: the response is long-running but healthy,
-// and we don't want Node (or an upstream proxy honoring it) to close it early.
-router.post('/api/draft', async (req, res) => {
-  if (req.socket && typeof req.setTimeout === 'function') req.setTimeout(0);
+// POST /api/draft — START draft generation and return a job id immediately.
+// The work (~1 min) runs fire-and-forget; the client polls the status endpoint
+// below. This avoids holding a long request open, which Railway's proxy closes.
+router.post('/api/draft', (req, res) => {
   const body = req.body || {};
   const docId = (body.docId || '').trim();
   const direction = (body.direction || '').trim(); // optional regenerate feedback
@@ -65,20 +79,50 @@ router.post('/api/draft', async (req, res) => {
     return res.status(400).json({ success: false, error: 'docId is required' });
   }
 
+  sweepDraftJobs();
+  const jobId = crypto.randomUUID();
+  DRAFT_JOBS.set(jobId, { status: 'pending', result: null, error: null, ts: Date.now() });
+
   const startedAt = Date.now();
   const mode = direction ? `regenerate (${direction.length} chars)` : 'first draft';
-  console.log(`[web] /api/draft start → doc=${docId} workspace=${workspaceId} mode=${mode}`);
-  try {
-    const tenantContext = await resolveTenant(workspaceId);
-    const out = await runWebDraft(docId, tenantContext, direction);
-    const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
-    console.log(`[web] /api/draft done → doc=${docId} workspace=${workspaceId} fields=${out.fieldCount} in ${secs}s`);
-    return res.status(200).json({ success: true, docId: out.docId, fieldCount: out.fieldCount });
-  } catch (err) {
-    const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
-    console.error(`[web] /api/draft failed → doc=${docId} after ${secs}s:`, err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+  console.log(`[web] /api/draft start → job=${jobId} doc=${docId} workspace=${workspaceId} mode=${mode}`);
+
+  // Fire-and-forget: run the draft, then record the outcome on the job.
+  (async () => {
+    try {
+      const tenantContext = await resolveTenant(workspaceId);
+      const out = await runWebDraft(docId, tenantContext, direction);
+      const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.log(`[web] /api/draft done → job=${jobId} doc=${docId} fields=${out.fieldCount} in ${secs}s`);
+      DRAFT_JOBS.set(jobId, {
+        status: 'complete',
+        result: { docId: out.docId, fieldCount: out.fieldCount },
+        error: null,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.error(`[web] /api/draft failed → job=${jobId} doc=${docId} after ${secs}s:`, err && err.stack ? err.stack : err);
+      DRAFT_JOBS.set(jobId, { status: 'failed', result: null, error: err.message, ts: Date.now() });
+    }
+  })();
+
+  return res.status(202).json({ success: true, jobId });
+});
+
+// GET /api/draft/:jobId/status — poll a draft job. Unknown id → 404 (e.g. the
+// job expired or the server restarted; the client falls back to reading the doc).
+router.get('/api/draft/:jobId/status', (req, res) => {
+  const job = DRAFT_JOBS.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, status: 'failed', error: 'Unknown or expired job' });
   }
+  return res.status(200).json({
+    success: true,
+    status: job.status,
+    result: job.result,
+    error: job.error,
+  });
 });
 
 // Project status lifecycle (Week 12). Closed projects are hidden by default but

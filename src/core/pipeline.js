@@ -10,10 +10,10 @@ const {
   parseBrief: geminiParseBrief,
   enrichWithReferences: geminiEnrich,
 } = require('../services/gemini');
-const { getAssetSpecs } = require('../services/sheets');
+const { getAssetSpecs, normalize } = require('../services/sheets');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide } = require('../db');
-const { getAssetDirections } = require('../db/assets');
+const { getAssetDirections, getTenantAssets } = require('../db/assets');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
@@ -526,28 +526,77 @@ async function enrichWithReferences(parsed, refs) {
   return { summary: enriched.summary, writerPrompt: enriched.writerPrompt, referenceInsights };
 }
 
+// Convert a tenant's Postgres asset library (getTenantAssets output) into the
+// exact shape getAssetSpecs returns, so every downstream consumer (createDocument,
+// generateAssetDrafts) is identical regardless of source. Postgres has no
+// channel / toneNotes / per-field notes / funnelStage columns → those map to
+// empty strings (the same value the Sheet yields when those cells are blank).
+// Applies the same filter semantics as getAssetSpecs: restrict to the requested
+// assets (normalized), but return all when the filter is empty or matches nothing.
+function tenantAssetsToSpecs(rows, assetFilter = []) {
+  let result = (rows || [])
+    .map((a) => ({
+      assetType: a.name,
+      channel: '', // not stored in Postgres (Sheet-only)
+      toneNotes: '', // not stored in Postgres (Sheet-only)
+      asset_direction: a.asset_direction || null,
+      fields: (a.fields || []).map((f) => ({
+        fieldName: f.field_name,
+        charMin: parseInt(f.char_min, 10) || 0,
+        charMax: parseInt(f.char_max, 10) || 0,
+        notes: '', // not stored in copy_fields (Sheet-only)
+        funnelStage: '', // not stored in copy_fields (Sheet-only)
+      })),
+    }))
+    // getAssetSpecs never emits an asset with zero fields — match that.
+    .filter((g) => g.fields.length > 0);
+
+  if (Array.isArray(assetFilter) && assetFilter.length > 0) {
+    const wanted = new Set(assetFilter.map(normalize));
+    const filtered = result.filter((g) => wanted.has(normalize(g.assetType)));
+    if (filtered.length > 0) result = filtered;
+  }
+  return result;
+}
+
 // Read + filter asset specs, create the campaign project folder (+ empty Assets
 // subfolder) inside the target folder, and build the formatted document inside
 // it. Returns { doc, assetSpecs, projectFolderUrl }. Throws createDocument
 // errors so the caller can classify them (e.g. folder-access recovery).
 // Optional `clients` (from getClientsForTenant) runs the Drive folder + Doc
 // creation as a specific tenant's OAuth user; omitted → shared env getClients().
-// Optional `tenantId` pulls asset-level creative direction (asset_direction)
-// from Postgres and merges it onto each Sheet-derived asset spec.
+// Optional `tenantId` selects the per-tenant Postgres asset library as the spec
+// source (falling back to the Sheet) and supplies asset_direction.
 async function generateDoc(spec, folderId, clients, tenantId) {
-  // Read + filter the asset specs. Log the Sheet ID so a permission/403 on
-  // the v2 Sheet is obvious in the logs.
-  console.log('[workflow] reading Sheet', config.SHEET_ID, '…');
-  const assetSpecs = await getAssetSpecs(spec.assets);
+  // Prefer the tenant's Postgres asset library; fall back to the Sheet when
+  // there's no DB / no seeded rows, or on any DB error (keeps the demo working).
+  let assetSpecs = null;
+  let specSource = null;
+  try {
+    const tenantAssets = await getTenantAssets(tenantId);
+    if (tenantAssets && tenantAssets.length > 0) {
+      assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets);
+      specSource = 'postgres';
+    }
+  } catch (err) {
+    console.warn('[pipeline] getTenantAssets failed — falling back to Sheet:', err.message);
+  }
+  if (!assetSpecs) {
+    console.log('[workflow] reading Sheet', config.SHEET_ID, '…');
+    assetSpecs = await getAssetSpecs(spec.assets);
+    specSource = 'sheet';
+  }
+  console.log(`[pipeline] asset specs source: ${specSource}`);
   console.log(
-    '[workflow] Sheet read OK —',
+    '[workflow] asset specs read OK —',
     assetSpecs.length,
     'asset group(s):',
     JSON.stringify(assetSpecs.map((a) => a.assetType))
   );
 
-  // Sheet stays the spec source (field names + char counts); asset_direction
-  // comes from Postgres. Best-effort: null without a DB/seed → renders nothing.
+  // asset_direction comes from Postgres regardless of spec source. Best-effort:
+  // null without a DB/seed → renders nothing. (Idempotent for the Postgres path —
+  // re-sets the same value the rows already carry.)
   const lookupDirection = await getAssetDirections(tenantId);
   for (const a of assetSpecs) a.asset_direction = lookupDirection(a.assetType);
 

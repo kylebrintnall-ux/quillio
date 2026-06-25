@@ -34,8 +34,13 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 
   // Resolve this workspace's tenant tokens (DB-backed; env fallback for the
   // demo workspace). Token source changes; nothing else does.
-  const { tenant, tokens } = await resolveTenant(opts.workspaceId);
+  const { tenant, tokens, source } = await resolveTenant(opts.workspaceId);
   const tenantId = tenant && tenant.id;
+  // Log the token SOURCE only (db = Postgres tenant_tokens, env = fallback) —
+  // never the tokens themselves.
+  console.log(
+    `[workflow] tenant resolved — source: ${source} | tenantId: ${tenantId || '(none)'}`
+  );
 
   // Establish a single "live" message we transform in place (chat.update is the
   // only reliable way to do this). opts.live = {channel, ts} edits an existing

@@ -8,6 +8,12 @@ const config = require('./config');
 const { getClients } = require('./google');
 const { getPool } = require('./db');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
+const {
+  handleSubmitForReview,
+  handleApprove,
+  handleRequestChanges,
+  handleResubmit,
+} = require('./handlers/approval');
 const { generateVoiceGuide } = require('./services/gemini');
 const { saveVoiceGuide } = require('./db');
 const oauthRoutes = require('./routes/oauth');
@@ -291,8 +297,24 @@ app.post('/slack/interactions', (req, res) => {
         console.error('Failed to report error to Slack:', e);
       }
     });
+  } else if (action.action_id === 'submit_for_review') {
+    // Approval workflow (handlers/approval.js). Each handler reads the full
+    // payload (channel/message/user/value) itself, so pass payload, not value.
+    // Fire-and-forget — the 200 ack above already closed the 3s window.
+    handleSubmitForReview(payload).catch((err) =>
+      console.error('submit_for_review failed:', err)
+    );
+  } else if (action.action_id === 'approve') {
+    handleApprove(payload).catch((err) => console.error('approve failed:', err));
+  } else if (action.action_id === 'request_changes') {
+    handleRequestChanges(payload).catch((err) =>
+      console.error('request_changes failed:', err)
+    );
+  } else if (action.action_id === 'resubmit') {
+    handleResubmit(payload).catch((err) => console.error('resubmit failed:', err));
   }
-  // 'open_in_drive' is a link button — no server-side work.
+  // 'open_in_drive' / 'review_copy' are link buttons — no server-side work.
+  // 'populate_figma' is Phase 4 — intentionally unwired.
 });
 
 app.listen(config.PORT, () => {

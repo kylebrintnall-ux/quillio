@@ -61,8 +61,6 @@ module.exports = {
   // /oauth/google flow that stores a refresh token per tenant in Postgres.
   GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
 
-  SHEET_ID: process.env.ASSET_SHEET_ID || '1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU',
-
   // Target folder for created docs. With OAuth2 this is a normal My Drive
   // folder owned by the OAuth user. With the service account (no OAuth2), this
   // should be a Shared Drive folder (service accounts have no personal quota).

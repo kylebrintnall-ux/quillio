@@ -415,10 +415,29 @@ function isFolderAccessError(err, folderId) {
 // writerPrompt, assets, unmatchedAssets, folderId, referenceLinks).
 async function parseBrief(briefText) {
   const parsed = await geminiParseBrief(briefText);
+
+  // Folder routing NEVER trusts Gemini's folderId. Gemini frequently truncates
+  // a long Drive folder id in its JSON output (observed: the 33-char id
+  // `1BB6nSrJbooQafNRR8LGXFwowMb8hOb9o` came back as `1BB6nSrJbooQafNRR8LG`).
+  // extractBriefFolderId reads the raw brief text with a deterministic regex,
+  // so it always recovers the full id. Override parsed.folderId with it so any
+  // consumer of parsedBrief.folderId gets the correct value regardless of what
+  // Gemini did. (The Slack/web adapters already call extractBriefFolderId
+  // directly for routing; this keeps the parsed object internally consistent.)
+  const rawFolderId = extractBriefFolderId(briefText);
+  if (rawFolderId && rawFolderId !== parsed.folderId) {
+    console.log(
+      `[gemini] overriding Gemini folderId ${JSON.stringify(parsed.folderId)} with raw-text folderId ${JSON.stringify(rawFolderId)}`
+    );
+  }
+  parsed.folderId = rawFolderId || null;
+
   // A Drive folder URL is a destination (folder routing), not a reference
   // document — strip it from referenceLinks so it's never ingested or listed
-  // in the doc's Reference Materials. Folder routing reads the brief text
-  // directly (extractBriefFolderId), so this doesn't affect where the doc lands.
+  // in the doc's Reference Materials. This also drops any *truncated* folder URL
+  // Gemini may have placed there (DRIVE_FOLDER_RE matches the partial id too).
+  // Folder routing reads the brief text directly (extractBriefFolderId above),
+  // so this doesn't affect where the doc lands.
   if (Array.isArray(parsed.referenceLinks)) {
     parsed.referenceLinks = parsed.referenceLinks.filter((u) => !DRIVE_FOLDER_RE.test(String(u)));
   }

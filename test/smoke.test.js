@@ -529,6 +529,7 @@ test('routes/app mounts and exposes its routes', () => {
     .sort();
   assert.deepStrictEqual(paths, [
     '/api/brief',
+    '/api/brief/:jobId/status',
     '/api/draft',
     '/api/draft/:jobId/status',
     '/api/projects',

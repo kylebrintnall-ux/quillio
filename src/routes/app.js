@@ -20,19 +20,52 @@ const router = express.Router();
 // The demo tenant — used when a request doesn't carry a workspace id.
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
 
-// In-memory draft job store (Week 12). Drafting takes ~1 minute, and Railway's
-// edge proxy closes a connection that's held open with no response bytes — so
-// instead of one long-awaited POST we start a job and let the client poll.
+// In-memory async job store (Week 12). Brief runs (~30-90s) and draft runs
+// (~1 min) both outlast Railway's edge proxy, which closes a connection held
+// open with no response bytes — so instead of one long-awaited POST we start a
+// job and let the client poll its status. Shared by /api/brief and /api/draft.
 // Single-instance only (fine here); a multi-instance deploy would need a shared
 // store. Jobs are swept after a TTL so the Map can't grow unbounded.
-const DRAFT_JOBS = new Map(); // jobId -> { status, result, error, ts }
-const DRAFT_JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const JOBS = new Map(); // jobId -> { status, result, error, ts }
+const JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function sweepDraftJobs() {
+function sweepJobs() {
   const now = Date.now();
-  for (const [id, job] of DRAFT_JOBS) {
-    if (now - job.ts > DRAFT_JOB_TTL_MS) DRAFT_JOBS.delete(id);
+  for (const [id, job] of JOBS) {
+    if (now - job.ts > JOB_TTL_MS) JOBS.delete(id);
   }
+}
+
+// Start a job: register it as pending, run `work()` fire-and-forget, and record
+// its result/error on settle. Returns the new jobId. `label` is for logs only.
+function startJob(label, work) {
+  sweepJobs();
+  const jobId = crypto.randomUUID();
+  JOBS.set(jobId, { status: 'pending', result: null, error: null, ts: Date.now() });
+  const startedAt = Date.now();
+  (async () => {
+    try {
+      const result = await work();
+      const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.log(`[web] job done → ${label} job=${jobId} in ${secs}s`);
+      JOBS.set(jobId, { status: 'complete', result, error: null, ts: Date.now() });
+    } catch (err) {
+      const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.error(`[web] job failed → ${label} job=${jobId} after ${secs}s:`, err && err.stack ? err.stack : err);
+      JOBS.set(jobId, { status: 'failed', result: null, error: err.message, ts: Date.now() });
+    }
+  })();
+  return jobId;
+}
+
+// Shared poll handler for a job's status route. Unknown id → 404 (job expired
+// or the server restarted; clients fall back as appropriate).
+function sendJobStatus(req, res) {
+  const job = JOBS.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, status: 'failed', error: 'Unknown or expired job' });
+  }
+  return res.status(200).json({ success: true, status: job.status, result: job.result, error: job.error });
 }
 
 // GET /app — the single-file web UI (HTML + CSS + vanilla JS). Static asset,
@@ -42,12 +75,10 @@ router.get('/app', requireAuth, (req, res) => {
   res.status(200).sendFile(APP_HTML);
 });
 
-// POST /api/brief — run a brief through the pipeline, return structured data.
-// A large brief (4+ assets with references) runs well past a minute, so disable
-// the per-request socket idle timeout — the response is long-running but
-// healthy, and we don't want Node (or an upstream proxy) to close it early.
-router.post('/api/brief', async (req, res) => {
-  if (req.socket && typeof req.setTimeout === 'function') req.setTimeout(0);
+// POST /api/brief — START a brief run and return a job id immediately. The work
+// (~30-90s) runs fire-and-forget; the client polls the status endpoint below.
+// This avoids holding a long request open, which Railway's proxy closes.
+router.post('/api/brief', (req, res) => {
   const body = req.body || {};
   const briefText = (body.briefText || '').trim();
   const workspaceId = body.workspaceId || DEFAULT_WORKSPACE_ID;
@@ -56,15 +87,17 @@ router.post('/api/brief', async (req, res) => {
     return res.status(400).json({ success: false, error: 'briefText is required' });
   }
 
-  try {
+  const jobId = startJob(`brief workspace=${workspaceId}`, async () => {
     const tenantContext = await resolveTenant(workspaceId);
-    const out = await runWebBrief(briefText, tenantContext);
-    return res.status(200).json({ success: true, ...out });
-  } catch (err) {
-    console.error('[web] /api/brief failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
+    return runWebBrief(briefText, tenantContext); // the full { docUrl, assetBlocks, … }
+  });
+  console.log(`[web] /api/brief start → job=${jobId} workspace=${workspaceId}`);
+  return res.status(202).json({ success: true, jobId });
 });
+
+// GET /api/brief/:jobId/status — poll a brief job. On complete, `result` is the
+// same structured payload the old synchronous endpoint returned.
+router.get('/api/brief/:jobId/status', sendJobStatus);
 
 // POST /api/draft — START draft generation and return a job id immediately.
 // The work (~1 min) runs fire-and-forget; the client polls the status endpoint
@@ -79,51 +112,19 @@ router.post('/api/draft', (req, res) => {
     return res.status(400).json({ success: false, error: 'docId is required' });
   }
 
-  sweepDraftJobs();
-  const jobId = crypto.randomUUID();
-  DRAFT_JOBS.set(jobId, { status: 'pending', result: null, error: null, ts: Date.now() });
-
-  const startedAt = Date.now();
   const mode = direction ? `regenerate (${direction.length} chars)` : 'first draft';
+  const jobId = startJob(`draft doc=${docId} ${mode}`, async () => {
+    const tenantContext = await resolveTenant(workspaceId);
+    const out = await runWebDraft(docId, tenantContext, direction);
+    return { docId: out.docId, fieldCount: out.fieldCount };
+  });
   console.log(`[web] /api/draft start → job=${jobId} doc=${docId} workspace=${workspaceId} mode=${mode}`);
-
-  // Fire-and-forget: run the draft, then record the outcome on the job.
-  (async () => {
-    try {
-      const tenantContext = await resolveTenant(workspaceId);
-      const out = await runWebDraft(docId, tenantContext, direction);
-      const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
-      console.log(`[web] /api/draft done → job=${jobId} doc=${docId} fields=${out.fieldCount} in ${secs}s`);
-      DRAFT_JOBS.set(jobId, {
-        status: 'complete',
-        result: { docId: out.docId, fieldCount: out.fieldCount },
-        error: null,
-        ts: Date.now(),
-      });
-    } catch (err) {
-      const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
-      console.error(`[web] /api/draft failed → job=${jobId} doc=${docId} after ${secs}s:`, err && err.stack ? err.stack : err);
-      DRAFT_JOBS.set(jobId, { status: 'failed', result: null, error: err.message, ts: Date.now() });
-    }
-  })();
-
   return res.status(202).json({ success: true, jobId });
 });
 
 // GET /api/draft/:jobId/status — poll a draft job. Unknown id → 404 (e.g. the
 // job expired or the server restarted; the client falls back to reading the doc).
-router.get('/api/draft/:jobId/status', (req, res) => {
-  const job = DRAFT_JOBS.get(req.params.jobId);
-  if (!job) {
-    return res.status(404).json({ success: false, status: 'failed', error: 'Unknown or expired job' });
-  }
-  return res.status(200).json({
-    success: true,
-    status: job.status,
-    result: job.result,
-    error: job.error,
-  });
-});
+router.get('/api/draft/:jobId/status', sendJobStatus);
 
 // Project status lifecycle (Week 12). Closed projects are hidden by default but
 // never deleted.

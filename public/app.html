@@ -394,9 +394,8 @@
     var progressBack = document.getElementById('progress-back');
     // A large brief can run for minutes, so the steps animate on a realistic
     // timer through steps 1-3 and then HOLD the final step ("Creating project
-    // folder") in the working/spinning state until the real API response
-    // arrives — the animation must never finish ahead of the actual request.
-    var BRIEF_TIMEOUT_MS = 180000; // 3 min — matches /api/draft
+    // folder") in the working/spinning state until the brief job completes —
+    // the animation must never finish ahead of the actual result.
     var stageTimer = null;
     var currentStage = 0;
 
@@ -544,71 +543,61 @@
       showScreen('progress');
       startStages();
 
-      // A big brief runs well past the browser's default patience, so bound the
-      // request with a generous 3-minute AbortController (matching /api/draft)
-      // rather than letting fetch give up with "Load failed".
-      var controller = new AbortController();
-      var timer = setTimeout(function () { controller.abort(); }, BRIEF_TIMEOUT_MS);
+      // Start a brief job and poll until it completes — no long-held request for
+      // Railway's proxy to cut. On failure, failStages shows the error + the
+      // "Back to brief" button.
       try {
-        var res = await fetch('/api/brief', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ briefText: briefText, workspaceId: WORKSPACE_ID }),
-          signal: controller.signal
-        });
-        var data = await res.json();
-        if (!data || !data.success) throw new Error((data && data.error) || 'Something went wrong building your doc.');
+        var data = await runJob('/api/brief', { briefText: briefText, workspaceId: WORKSPACE_ID }, '/api/brief');
         finishStages();
         renderOutput(data);
         showScreen('output');
       } catch (e) {
-        var msg = e && e.name === 'AbortError'
-          ? 'This brief is taking longer than expected — it may still finish. Check History in a minute.'
-          : (e.message || 'Network error — please try again.');
-        failStages(msg);
-      } finally {
-        clearTimeout(timer);
+        failStages(e.message || 'Network error — please try again.');
       }
     }
 
-    // Drafting calls Gemini per field and takes ~1 minute. Rather than hold one
-    // long request open (which Railway's proxy closes → "Load failed"), we start
-    // a job and poll its status every few seconds. Shared by Screen 3
-    // (post-brief) and Screen 5 (project view).
-    var DRAFT_POLL_MS = 3000; // poll cadence
-    var DRAFT_MAX_WAIT_MS = 8 * 60 * 1000; // overall ceiling (well past worst case)
+    // Brief runs (~30-90s) and draft runs (~1 min) both outlast Railway's proxy
+    // if held in one request, so the server starts a job and we poll its status.
     var DRAFTING_NOTE = '<span class="dot"></span><span>Generating draft… this takes about a minute. Keep this tab open.</span>';
 
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-    // Start a draft job and poll until it completes or fails. Resolves with the
-    // job result ({ docId, fieldCount }); rejects on failure / timeout.
-    async function draftFetch(docId, direction) {
-      var startRes = await fetch('/api/draft', {
+    // Start an async job (POST `startUrl`) and poll `<statusBase>/<jobId>/status`
+    // every 3s until it completes or fails. Resolves with the job result; rejects
+    // on failure / timeout. Shared by the brief and draft flows.
+    var JOB_POLL_MS = 3000;
+    var JOB_MAX_WAIT_MS = 8 * 60 * 1000; // overall ceiling, well past the worst case
+    async function runJob(startUrl, body, statusBase) {
+      var startRes = await fetch(startUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' })
+        body: JSON.stringify(body)
       });
       var start = await startRes.json();
       if (!start || !start.success || !start.jobId) {
-        throw new Error((start && start.error) || 'Could not start draft.');
+        throw new Error((start && start.error) || 'Could not start the job.');
       }
       var jobId = start.jobId;
-      var deadline = Date.now() + DRAFT_MAX_WAIT_MS;
+      var deadline = Date.now() + JOB_MAX_WAIT_MS;
       while (Date.now() < deadline) {
-        await sleep(DRAFT_POLL_MS);
+        await sleep(JOB_POLL_MS);
         var s;
         try {
-          var r = await fetch('/api/draft/' + encodeURIComponent(jobId) + '/status');
+          var r = await fetch(statusBase + '/' + encodeURIComponent(jobId) + '/status');
           s = await r.json();
         } catch (e) {
           continue; // transient network blip — keep polling
         }
         if (s && s.status === 'complete') return (s.result || {});
-        if (s && s.status === 'failed') throw new Error(s.error || 'Draft generation failed.');
-        // 'pending' (or a 404 that surfaced as {status:'failed'} already handled) → keep polling
+        if (s && s.status === 'failed') throw new Error(s.error || 'The job failed.');
+        // 'pending' → keep polling
       }
-      throw new Error('Draft is taking longer than expected.');
+      throw new Error('This is taking longer than expected.');
+    }
+
+    // Draft job → resolves with { docId, fieldCount }.
+    function draftFetch(docId, direction) {
+      return runJob('/api/draft', { docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' }, '/api/draft');
     }
     function draftErrorMessage(e) {
       return (e && e.message) || 'Network error — please try again.';

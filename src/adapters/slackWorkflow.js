@@ -70,13 +70,15 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   try {
     // 1. Parse the brief into title / summary / writerPrompt / assets (+ folder & links).
     const parsedBrief = await pipeline.parseBrief(brief);
-    const { campaignTitle, assets, unmatchedAssets, folderId, referenceLinks } = parsedBrief;
+    // NB: parsedBrief.folderId (Gemini's guess) is intentionally NOT used — it
+    // can truncate a long id. Folder routing uses extractBriefFolderId below.
+    const { campaignTitle, assets, unmatchedAssets, referenceLinks } = parsedBrief;
     let { summary, writerPrompt } = parsedBrief; // may be enriched below
     let referenceInsights = []; // populated by enrichment, rendered in the doc
     console.log('[workflow] Gemini parse OK — assets:', JSON.stringify(assets));
     console.log('[workflow] campaignTitle:', JSON.stringify(campaignTitle));
     console.log('[workflow] unmatchedAssets:', JSON.stringify(unmatchedAssets));
-    console.log('[workflow] folderId:', folderId, '| referenceLinks:', JSON.stringify(referenceLinks));
+    console.log('[workflow] referenceLinks:', JSON.stringify(referenceLinks));
 
     // Issue 2: all requested assets are unknown — don't substitute a nearest
     // guess; tell the user exactly what couldn't be matched. (A vague brief with

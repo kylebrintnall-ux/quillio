@@ -633,10 +633,19 @@ async function getFolderName(folderId) {
   }
 }
 
-// Extract a Drive folder id straight from the brief text (deterministic regex),
-// or null if none.
+// Extract a Drive folder id straight from the brief text (deterministic — never
+// trust the Gemini-parsed folderId, which can truncate a long id). The id is the
+// full run of characters after /folders/ (or open?id=) up to the next delimiter
+// — slash, query, fragment, whitespace, or wrapping punctuation — or end of
+// string. Google ids are [A-Za-z0-9_-], but we capture broadly and stop only at
+// a true boundary so a valid id is never cut short.
+const FOLDER_ID_STOP = "/?#&\\s\"'<>()\\[\\]{}";
+const BRIEF_FOLDER_PATH_RE = new RegExp(`drive\\.google\\.com/drive/folders/([^${FOLDER_ID_STOP}]+)`);
+const BRIEF_FOLDER_OPEN_RE = new RegExp(`drive\\.google\\.com/open\\?id=([^${FOLDER_ID_STOP}]+)`);
+
 function extractBriefFolderId(briefText) {
-  const m = String(briefText || '').match(DRIVE_FOLDER_RE);
+  const text = String(briefText || '');
+  const m = text.match(BRIEF_FOLDER_PATH_RE) || text.match(BRIEF_FOLDER_OPEN_RE);
   return m ? m[1] : null;
 }
 

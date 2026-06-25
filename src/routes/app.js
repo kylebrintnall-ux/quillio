@@ -91,7 +91,9 @@ router.post('/api/brief', (req, res) => {
     const tenantContext = await resolveTenant(workspaceId);
     return runWebBrief(briefText, tenantContext); // the full { docUrl, assetBlocks, … }
   });
-  console.log(`[web] /api/brief start → job=${jobId} workspace=${workspaceId}`);
+  // Log the brief length so a truncated brief (e.g. a cut folder URL) is obvious
+  // — never the brief content itself.
+  console.log(`[web] /api/brief start → job=${jobId} workspace=${workspaceId} briefText.length=${briefText.length}`);
   return res.status(202).json({ success: true, jobId });
 });
 

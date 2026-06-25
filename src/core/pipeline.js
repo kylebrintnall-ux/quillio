@@ -13,6 +13,7 @@ const {
 const { getAssetSpecs } = require('../services/sheets');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide } = require('../db');
+const { getAssetDirections } = require('../db/assets');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
@@ -512,7 +513,9 @@ async function enrichWithReferences(parsed, refs) {
 // errors so the caller can classify them (e.g. folder-access recovery).
 // Optional `clients` (from getClientsForTenant) runs the Drive folder + Doc
 // creation as a specific tenant's OAuth user; omitted → shared env getClients().
-async function generateDoc(spec, folderId, clients) {
+// Optional `tenantId` pulls asset-level creative direction (asset_direction)
+// from Postgres and merges it onto each Sheet-derived asset spec.
+async function generateDoc(spec, folderId, clients, tenantId) {
   // Read + filter the asset specs. Log the Sheet ID so a permission/403 on
   // the v2 Sheet is obvious in the logs.
   console.log('[workflow] reading Sheet', config.SHEET_ID, '…');
@@ -523,6 +526,11 @@ async function generateDoc(spec, folderId, clients) {
     'asset group(s):',
     JSON.stringify(assetSpecs.map((a) => a.assetType))
   );
+
+  // Sheet stays the spec source (field names + char counts); asset_direction
+  // comes from Postgres. Best-effort: null without a DB/seed → renders nothing.
+  const lookupDirection = await getAssetDirections(tenantId);
+  for (const a of assetSpecs) a.asset_direction = lookupDirection(a.assetType);
 
   // Create the project folder (named after the campaign) inside the target
   // folder, with an empty Assets subfolder. The copy doc then goes inside the
@@ -577,7 +585,8 @@ async function generateDoc(spec, folderId, clients) {
 // is passed through as user revision feedback (the "Regenerate" path). Optional
 // `clients` runs the Docs read/write as a specific tenant's OAuth user. Optional
 // `tenantId` selects that tenant's saved voice guide (Postgres) for the prompt,
-// falling back to the repo voice.md when there's no DB / no saved guide.
+// falling back to the repo voice.md when there's no DB / no saved guide, and
+// supplies the asset-level creative direction lookup for the drafter.
 // Returns { title, fieldCount, url }.
 async function generateDraft(docId, direction, clients, tenantId) {
   // Best-effort: a DB miss/error just falls back to the repo voice.md. Never
@@ -591,7 +600,8 @@ async function generateDraft(docId, direction, clients, tenantId) {
     }
   }
   console.log(`[workflow] draft voice guide: ${voiceGuide ? 'tenant (Postgres)' : 'repo voice.md'}`);
-  return getDestination().generateDraft(docId, direction, clients, voiceGuide);
+  const lookupDirection = await getAssetDirections(tenantId);
+  return getDestination().generateDraft(docId, direction, clients, voiceGuide, lookupDirection);
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web

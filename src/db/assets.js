@@ -47,10 +47,10 @@ async function seedTenantAssets(tenantId) {
     await client.query('BEGIN');
     for (const asset of DEFAULT_ASSETS) {
       const typeRes = await client.query(
-        `INSERT INTO asset_types (tenant_id, name, "group", is_active, sort_order)
-           VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO asset_types (tenant_id, name, "group", is_active, sort_order, asset_direction)
+           VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id`,
-        [tenantId, asset.name, asset.group, asset.is_active, asset.sort_order]
+        [tenantId, asset.name, asset.group, asset.is_active, asset.sort_order, asset.asset_direction || null]
       );
       const assetTypeId = typeRes.rows[0].id;
 
@@ -94,7 +94,7 @@ async function getTenantAssets(tenantId) {
   if (!pool || !tenantId) return null;
 
   const typesRes = await pool.query(
-    `SELECT id, name, "group", sort_order
+    `SELECT id, name, "group", sort_order, asset_direction
        FROM asset_types
       WHERE tenant_id = $1 AND is_active = true
       ORDER BY sort_order, id`,
@@ -130,6 +130,7 @@ async function getTenantAssets(tenantId) {
     name: t.name,
     group: t.group,
     sort_order: t.sort_order,
+    asset_direction: t.asset_direction || null,
     fields: fieldsByType.get(t.id) || [],
   }));
 }
@@ -152,4 +153,34 @@ async function setActiveAssets(tenantId, deactivatedNames = []) {
   return true;
 }
 
-module.exports = { seedTenantAssets, getTenantAssets, setActiveAssets };
+// Best-effort asset-level creative direction lookup for a tenant. Reads the
+// tenant's asset library (getTenantAssets) and returns a function
+// (assetName) => direction|null, matched by normalized name. Degrades to a
+// function that always returns null when there's no DB / no rows / no column
+// data — so the pipeline merges nothing and renders normally.
+function normName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[‐-―−]/g, '-') // unicode dashes / minus → hyphen
+    .replace(/\s*-\s*/g, '-') // drop spaces around hyphens
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function getAssetDirections(tenantId) {
+  let rows = null;
+  try {
+    rows = await getTenantAssets(tenantId);
+  } catch (err) {
+    console.warn('[db/assets] getAssetDirections lookup failed — no directions:', err.message);
+  }
+  const byNorm = new Map();
+  if (Array.isArray(rows)) {
+    for (const a of rows) {
+      if (a && a.asset_direction) byNorm.set(normName(a.name), a.asset_direction);
+    }
+  }
+  return (assetName) => byNorm.get(normName(assetName)) || null;
+}
+
+module.exports = { seedTenantAssets, getTenantAssets, setActiveAssets, getAssetDirections };

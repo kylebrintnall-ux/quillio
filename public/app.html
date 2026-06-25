@@ -172,7 +172,7 @@
     /* Field copy in the project view */
     .field-copy { white-space: pre-wrap; font-size: 14px; color: var(--ink); padding: 4px 0 2px; }
     .field-copy.empty { color: var(--muted); font-style: italic; }
-    .field-note { font-size: 13px; font-style: italic; color: #737373; padding: 2px 0; }
+    .asset-direction { font-size: 13px; font-style: italic; color: #737373; margin: 2px 0 8px; }
 
     /* Status badges (history + project view) */
     .status {
@@ -472,6 +472,11 @@
       if (opts.drafted) card.classList.add('drafted');
       card.appendChild(head);
 
+      // Asset-level creative direction — one muted italic line under the asset
+      // name (same treatment as the doc). Optional.
+      var assetDirection = asset.asset_direction != null ? String(asset.asset_direction).trim() : '';
+      if (assetDirection) card.appendChild(el('div', 'asset-direction', assetDirection));
+
       (asset.fields || []).forEach(function (f) {
         var copy = f.copy != null ? String(f.copy) : '';
         var hasCopy = copy.trim().length > 0;
@@ -487,11 +492,6 @@
         }
         row.appendChild(limit);
         card.appendChild(row);
-
-        // Per-field writing guidance (Sheet Notes) — permanent, distinct from
-        // copy: muted italic, below the field name and above the drafted copy.
-        var note = f.notes != null ? String(f.notes).trim() : '';
-        if (note) card.appendChild(el('div', 'field-note', note));
 
         if (hasCopy) {
           card.appendChild(el('div', 'field-copy', copy));

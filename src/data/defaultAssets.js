@@ -230,6 +230,47 @@ const RAW = [
   ]],
 ];
 
+// Asset-level creative direction — one line of "how to write this asset",
+// rendered as an italic line under the asset heading and fed to the drafter.
+// Keyed by exact asset name.
+const DIRECTIONS = {
+  'LinkedIn Single Image Ad': 'Direct. Benefit-led. Lead with the outcome, not the feature.',
+  'LinkedIn Carousel Ad': 'Each card earns the next. One idea per card, strong close.',
+  'LinkedIn Single Image Ad — Variant A':
+    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
+  'LinkedIn Single Image Ad — Variant B':
+    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
+  'LinkedIn Single Image Ad — Variant C':
+    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
+  'LinkedIn Single Image Ad — Variant D':
+    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
+  'Meta Single Image Ad': 'Lead with the insight or tension. Stop the scroll in the first line.',
+  'Meta Carousel Ad': 'Each card standalone. Swipe tells a story. Last card closes.',
+  'Twitter/X Ad': 'Punchy. Opinionated. One idea, no hedging.',
+  'Display Banner — Standard': 'Fewest possible words. Headline does all the work. CTA is a verb.',
+  'Google DV360 / Responsive Display':
+    'System assembles combinations. Every element must work alone and together.',
+  'Demand Gen Nurture Email': 'Curiosity or tension in the subject. No clickbait. Earn the click.',
+  'Event Invitation Email': 'Make the value of attending undeniable. Date and CTA above the fold.',
+  'Event Reminder Email': 'Urgency without panic. Reinforce the one reason to show up.',
+  'Event Follow-Up / Recap Email': 'Gratitude first, value second, next step third.',
+  'Sales Basho Email': 'Ultra-short. One insight, one ask. Sounds like a person, not a campaign.',
+  'Event Landing Page': 'The page answers one question: why should I be there? Answer it fast.',
+  'On-Site Signage — General': 'Read in motion. Three seconds max. Verb first.',
+  'On-Site Signage — Session Title Card': 'Clear over clever. Speaker name prominent. No jargon in the title.',
+  'On-Site Signage — Directional': 'Action word + destination. Nothing else.',
+  'Campaign Landing Page': 'One message, one CTA. Everything else supports or gets cut.',
+  'Form Confirm Page': 'Confirm the action, set the expectation, suggest the next step.',
+  'Organic Social — LinkedIn': 'Insight or opinion first. Professional but human. No corporate speak.',
+  'Organic Social — Instagram': 'Visual does the work. Copy adds context or personality, not explanation.',
+  'Organic Social — Twitter/X': 'One idea. Confident take. Under 240 and it still lands.',
+  'Direct Mail — Box / Mailer': 'Outer copy earns the open. Inside copy earns the action.',
+  'Direct Mail — Note Card / Rep Letter': 'First person, human tone. Sounds like the rep, not marketing.',
+  'Direct Mail — Insert': 'Standalone piece — assume no context. Lead with the offer, close with urgency.',
+  'One-Pager': 'Scannable in 30 seconds. Problem, solution, proof, CTA. Nothing extra.',
+  'Battle Card': 'Arm the rep, not the reader. Crisp, confident, scannable under pressure.',
+};
+
 const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   name,
   group,
@@ -237,6 +278,7 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   is_active: true,
   spec_source: SPEC_SOURCE,
   spec_version: SPEC_VERSION,
+  asset_direction: DIRECTIONS[name] || '',
   fields: fields.map(([field_name, char_min, char_max], j) => ({
     field_name,
     char_min,

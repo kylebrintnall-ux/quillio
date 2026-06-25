@@ -25,11 +25,12 @@ function folderIdFromUrl(url) {
 // response; never leaks anything to the caller beyond the thrown message.
 async function runWebBrief(briefText, tenantContext = {}) {
   const tokens = tenantContext.tokens || {};
+  const tenantId = tenantContext.tenant && tenantContext.tenant.id;
   // Drive/Docs writes run as this tenant's Google OAuth user when they've
   // connected one (else the shared env path). Reference reads stay on the SA
   // path inside fetchAllReferences — the drive.file scope can't read arbitrary
   // pre-existing Drive files, only ones this app created.
-  const clients = await getClientsForTenant(tenantContext.tenant && tenantContext.tenant.id);
+  const clients = await getClientsForTenant(tenantId);
 
   // 1. Parse the brief into title / summary / writerPrompt / assets (+ links).
   const parsedBrief = await pipeline.parseBrief(briefText);
@@ -76,7 +77,8 @@ async function runWebBrief(briefText, tenantContext = {}) {
   const { doc, assetSpecs, projectFolderUrl } = await pipeline.generateDoc(
     { brief: briefText, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
     effectiveFolderId,
-    clients
+    clients,
+    tenantId
   );
 
   // 5. Persist the project to history (best-effort). A DB hiccup — or simply no
@@ -108,6 +110,7 @@ async function runWebBrief(briefText, tenantContext = {}) {
     // Keeps `assets` (names only) above for backward compatibility.
     assetBlocks: assetSpecs.map((a) => ({
       name: a.assetType,
+      asset_direction: a.asset_direction || null,
       fields: (a.fields || []).map((f) => ({
         fieldName: f.fieldName,
         charMin: f.charMin,

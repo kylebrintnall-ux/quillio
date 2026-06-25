@@ -34,7 +34,8 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 
   // Resolve this workspace's tenant tokens (DB-backed; env fallback for the
   // demo workspace). Token source changes; nothing else does.
-  const { tokens } = await resolveTenant(opts.workspaceId);
+  const { tenant, tokens } = await resolveTenant(opts.workspaceId);
+  const tenantId = tenant && tenant.id;
 
   // Establish a single "live" message we transform in place (chat.update is the
   // only reliable way to do this). opts.live = {channel, ts} edits an existing
@@ -141,7 +142,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       );
       docResult = await pipeline.generateDoc(
         { brief, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
-        effectiveFolderId
+        effectiveFolderId,
+        undefined, // Slack uses the shared env Google client
+        tenantId
       );
     } catch (err) {
       if (pipeline.isFolderAccessError(err, effectiveFolderId)) {

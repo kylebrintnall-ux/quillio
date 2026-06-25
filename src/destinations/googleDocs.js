@@ -245,15 +245,15 @@ async function createDocument({
 
   for (const asset of assetSpecs) {
     b.assetHeading(asset.assetType);
+    // Asset-level creative direction (from Postgres) — one italic line directly
+    // under the heading. Falls back to the Sheet's channel · tone meta when no
+    // direction is set; omitted entirely when both are empty.
+    const direction = String(asset.asset_direction || '').trim();
     const meta = [asset.channel, asset.toneNotes].filter(Boolean).join(' · ');
-    if (meta) b.italic(meta);
+    const headerLine = direction || meta;
+    if (headerLine) b.italic(headerLine);
     for (const field of asset.fields) {
       b.boldLabel(fieldLabel(field));
-      // Per-field writing guidance (Sheet Notes) as muted italic, under the
-      // label and above the (blank) draft insertion point. Permanent guidance —
-      // parseDoc skips it so it's never treated as / overwritten by drafted copy.
-      const note = String(field.notes || '').trim();
-      if (note) b.fieldNote(note);
       b.blankLine();
     }
   }
@@ -426,7 +426,7 @@ async function loadSheetContext() {
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateDraft(id, direction, clients, voiceGuide) {
+async function generateDraft(id, direction, clients, voiceGuide, lookupDirection) {
   const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
@@ -457,8 +457,11 @@ async function generateDraft(id, direction, clients, voiceGuide) {
       const ctx0 = sheetCtx.get(ctxKey(asset.assetType, asset.fields[0].fieldName)) || {};
       return {
         assetType: asset.assetType,
-        channel: ctx0.channel || asset.channel,
-        toneNotes: ctx0.toneNotes || asset.toneNotes,
+        // Channel/tone come from the Sheet only — not from parseDoc, whose meta
+        // slot now carries asset_direction (we don't want it leaking into these).
+        channel: ctx0.channel || '',
+        toneNotes: ctx0.toneNotes || '',
+        assetDirection: lookupDirection ? lookupDirection(asset.assetType) : null,
         fields,
       };
     });
@@ -476,6 +479,7 @@ async function generateDraft(id, direction, clients, voiceGuide) {
         assetType: a.assetType,
         channel: a.channel,
         toneNotes: a.toneNotes,
+        assetDirection: a.assetDirection,
         summary,
         writerPrompt,
         fields: a.fields,
@@ -645,16 +649,20 @@ async function getDocContent(id, clients) {
     }
 
     if (named === 'HEADING_3') {
-      current = { name: text, fields: [] };
+      current = { name: text, asset_direction: '', fields: [] };
       result.assets.push(current);
       field = null;
       continue;
     }
     if (!current) continue;
 
-    // The italic meta line (channel · tone) sits between the asset heading and
-    // its first field — skip it, it isn't copy.
-    if (italic && text && current.fields.length === 0 && !field) continue;
+    // The italic line between the asset heading and its first field is the
+    // asset-level creative direction (or legacy channel · tone) — capture it for
+    // display; it isn't field copy.
+    if (italic && text && current.fields.length === 0 && !field) {
+      if (!current.asset_direction) current.asset_direction = text;
+      continue;
+    }
 
     // A bold paragraph (optionally ending in a [min-max] / [max] bracket) starts
     // a new field. Recover charMin/charMax exactly as parseDoc does.

@@ -121,9 +121,10 @@ router.get('/app', requireAuth, (req, res) => {
 
 // POST /api/upload — accept brief reference files (multipart form-data) and
 // stash them in the temp dir. Returns { fileRefs: [{ path, filename, mimetype }] }
-// for the client to pass into /api/brief. Open access, matching /api/brief.
-// Multer errors (too big / too many) return a clean 400 rather than crashing.
-router.post('/api/upload', (req, res) => {
+// for the client to pass into /api/brief. Requires a session (audit HIGH 1) so
+// unauthenticated callers can't write temp files / fill the disk. Multer errors
+// (too big / too many) return a clean 400 rather than crashing.
+router.post('/api/upload', requireAuth, (req, res) => {
   uploadMw(req, res, (err) => {
     if (err) {
       return res.status(400).json({ success: false, error: err.message });
@@ -202,10 +203,12 @@ const VALID_STATUSES = ['not_started', 'in_progress', 'finished', 'closed'];
 // GET /api/projects — the tenant's projects, newest first. Closed are hidden
 // unless ?include_closed=true. Without a DB this resolves to [].
 router.get('/api/projects', requireAuth, async (req, res) => {
-  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   const includeClosed = req.query.include_closed === 'true';
   try {
-    const { tenant } = await resolveTenant(workspaceId);
+    // Tenant comes from the authenticated session (req.user.tenant_id), never a
+    // client-supplied param — prevents cross-tenant reads (audit HIGH 3). In demo
+    // mode requireAuth attaches the demo tenant (T0B8LPRDKHR).
+    const { tenant } = await resolveTenant(req.user && req.user.tenant_id);
     const projects = await getProjects(tenant && tenant.id, includeClosed);
     return res.status(200).json({ success: true, projects });
   } catch (err) {
@@ -218,13 +221,13 @@ router.get('/api/projects', requireAuth, async (req, res) => {
 // gracefully: returns success even without a DB (no row to persist) so the
 // optimistic UI stays consistent. Invalid statuses are rejected.
 router.patch('/api/projects/:id/status', requireAuth, async (req, res) => {
-  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   const status = (req.body || {}).status;
   if (!VALID_STATUSES.includes(status)) {
     return res.status(400).json({ success: false, error: 'Invalid status' });
   }
   try {
-    const { tenant } = await resolveTenant(workspaceId);
+    // Tenant from the session, not a client param (audit HIGH 3).
+    const { tenant } = await resolveTenant(req.user && req.user.tenant_id);
     await setProjectStatus(tenant && tenant.id, req.params.id, status);
     return res.status(200).json({ success: true, status });
   } catch (err) {
@@ -235,9 +238,9 @@ router.patch('/api/projects/:id/status', requireAuth, async (req, res) => {
 
 // GET /api/projects/:id — a single project, scoped to its tenant.
 router.get('/api/projects/:id', requireAuth, async (req, res) => {
-  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   try {
-    const { tenant } = await resolveTenant(workspaceId);
+    // Tenant from the session, not a client param (audit HIGH 3).
+    const { tenant } = await resolveTenant(req.user && req.user.tenant_id);
     const project = await getProject(tenant && tenant.id, req.params.id);
     if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
     return res.status(200).json({ success: true, project });
@@ -251,9 +254,9 @@ router.get('/api/projects/:id', requireAuth, async (req, res) => {
 // sections + per-field copy. A Docs read failure returns { success:false } so
 // the UI can fall back to "Content unavailable" + Open in Drive.
 router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
-  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   try {
-    const { tenant } = await resolveTenant(workspaceId);
+    // Tenant from the session, not a client param (audit HIGH 3).
+    const { tenant } = await resolveTenant(req.user && req.user.tenant_id);
     const project = await getProject(tenant && tenant.id, req.params.id);
     if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
     if (!project.copy_doc_id) {

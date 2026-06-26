@@ -5,7 +5,6 @@ const express = require('express');
 const session = require('express-session');
 
 const config = require('./config');
-const { getClients } = require('./google');
 const { getPool } = require('./db');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
 const {
@@ -14,8 +13,6 @@ const {
   handleRequestChanges,
   handleResubmit,
 } = require('./handlers/approval');
-const { generateVoiceGuide } = require('./services/gemini');
-const { saveVoiceGuide } = require('./db');
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
 const onboardingRoutes = require('./routes/onboarding');
@@ -164,50 +161,11 @@ function extractChallenge(body) {
 app.get('/', (req, res) => res.status(200).send('Quillio is running.'));
 app.get('/health', (req, res) => res.status(200).json({ ok: true }));
 
-// --- Voice guide onboarding ---
-// Takes the six onboarding answers, generates a voice guide via Gemini, persists
-// it (Postgres voice_guide row + voice.md in the tenant's Drive folder), and
-// returns the markdown to the client for review/editing before final save.
-// Persistence is best-effort: a Postgres or Drive failure is logged but still
-// returns the generated markdown so the client can review it.
-app.post('/api/voice-guide/generate', async (req, res) => {
-  const body = req.body || {};
-  const tenantId = body.tenantId || 'default';
-  try {
-    const markdown = await generateVoiceGuide({
-      brandPersonality: body.brandPersonality,
-      toneGuidance: body.toneGuidance,
-      wordsToAvoid: body.wordsToAvoid,
-      wordsToUse: body.wordsToUse,
-      audienceLanguage: body.audienceLanguage,
-      toneReference: body.toneReference,
-    });
-
-    // Persist to Postgres (best-effort).
-    try {
-      await saveVoiceGuide(tenantId, markdown);
-    } catch (e) {
-      console.error('[voice-guide] Postgres save failed:', e.message);
-    }
-
-    // Save as voice.md in the tenant's Drive folder (best-effort).
-    try {
-      const { drive } = await getClients();
-      await drive.files.create({
-        requestBody: { name: 'voice.md', mimeType: 'text/plain', parents: [config.DRIVE_FOLDER_ID] },
-        media: { mimeType: 'text/plain', body: markdown },
-        supportsAllDrives: true,
-      });
-    } catch (e) {
-      console.error('[voice-guide] Drive save failed:', e.message);
-    }
-
-    return res.status(200).json({ markdown });
-  } catch (err) {
-    console.error('[voice-guide] generate failed:', err.message);
-    return res.status(500).json({ error: err.message });
-  }
-});
+// NOTE: the legacy, UNAUTHENTICATED POST /api/voice-guide/generate endpoint was
+// removed here (security audit HIGH 1). It accepted a client-supplied tenantId
+// and let anyone overwrite any tenant's voice guide + drive unauthenticated
+// Gemini/Drive usage. Voice-guide generation now lives behind requireAuth in
+// /api/settings/voice/generate and /api/onboarding/voice (tenant from session).
 
 // --- Slash command: /quillio [brief] ---
 //

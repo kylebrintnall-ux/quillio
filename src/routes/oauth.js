@@ -180,11 +180,14 @@ router.get('/oauth/google', (req, res) => {
     return res.redirect('/app?error=google_failed');
   }
 
-  const workspaceId = req.query.workspaceId || DEFAULT_WORKSPACE_ID;
   // `redirect=onboarding|settings` returns the user there after sign-in.
+  // NOTE: we intentionally do NOT accept a client-supplied workspaceId here
+  // (audit HIGH 4) — a self-asserted workspace let a new user join an arbitrary
+  // tenant. New users are assigned the default tenant; real workspace linking
+  // will be wired separately.
   const redirectTo = pickRedirect(req.query.redirect);
   const state = crypto.randomBytes(16).toString('hex');
-  rememberState(state, { workspaceId, redirectTo });
+  rememberState(state, { redirectTo });
 
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.searchParams.set('client_id', config.GOOGLE_CLIENT_ID);
@@ -211,7 +214,9 @@ router.get('/oauth/google/callback', async (req, res) => {
       console.error('[oauth] google state missing/expired/mismatch — aborting');
       return res.redirect('/app?error=google_failed');
     }
-    const workspaceId = (entry.data && entry.data.workspaceId) || DEFAULT_WORKSPACE_ID;
+    // New users are assigned the default tenant — we do NOT trust a
+    // client-supplied workspaceId for tenant membership (audit HIGH 4).
+    const workspaceId = DEFAULT_WORKSPACE_ID;
 
     const code = req.query.code;
     if (!code) {

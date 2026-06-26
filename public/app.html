@@ -479,6 +479,59 @@
     }
     .regen-input:focus { border-color: rgba(255,255,255,0.9); outline: none; }
     .regen-input::placeholder { color: rgba(26,26,46,0.4); }
+
+    /* ── GENERATING (v8) ── */
+    #screen-generating.active {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; min-height: calc(100vh - 150px);
+    }
+    .gen-gif { width: 150px; height: 150px; image-rendering: pixelated; margin-bottom: 32px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) both; }
+    .gen-message { font-family: 'StarCrush', serif; font-size: 18px; letter-spacing: 0.03em; color: var(--ink); min-height: 64px; line-height: 1.45; padding: 0 16px; max-width: 420px; transition: opacity 0.3s ease, transform 0.3s ease; }
+
+    /* ── COPY DONE (v8) — reuses output-header / asset-card / output-ctas ── */
+    #screen-copydone { padding-bottom: 150px; }
+    .copydone-sub { font-size: 14px; line-height: 1.6; color: rgba(26,26,46,0.7); margin: 0 0 20px; }
+
+    /* ── REGENERATE MODAL (bottom sheet) ── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(26,26,46,0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      display: flex; align-items: flex-end; justify-content: center;
+      opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+    .modal-sheet {
+      width: 100%; max-width: 520px;
+      background: linear-gradient(180deg, #2FA8DC, #4DD9D9);
+      border-radius: 24px 24px 0 0; padding: 24px 26px 48px;
+      transform: translateY(100%); transition: transform 0.35s cubic-bezier(0.34,1.2,0.64,1);
+      border-top: 1.5px solid rgba(255,255,255,0.4);
+    }
+    .modal-overlay.open .modal-sheet { transform: translateY(0); }
+    .modal-handle { width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.4); margin: 0 auto 20px; }
+    .modal-title { font-family: 'StarCrush', serif; font-size: 18px; color: var(--ink); letter-spacing: 0.02em; margin-bottom: 16px; }
+    .modal-textarea {
+      width: 100%; min-height: 120px; border: none; outline: none; resize: none;
+      background: rgba(255,255,255,0.25); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1.5px solid rgba(255,255,255,0.45); border-radius: 14px;
+      font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; line-height: 1.6; color: var(--ink);
+      padding: 14px 16px; margin-bottom: 14px; -webkit-appearance: none;
+    }
+    .modal-textarea::placeholder { color: rgba(26,26,46,0.4); }
+    .modal-btn {
+      display: flex; align-items: center; justify-content: center; width: 100%; padding: 18px;
+      background: var(--gold); border: none; border-radius: 14px; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--ink);
+      box-shadow: 0 4px 16px rgba(201,168,76,0.35); -webkit-tap-highlight-color: transparent;
+    }
+    .modal-btn:active { transform: scale(0.98); }
+    .modal-btn:disabled { opacity: 0.6; cursor: default; }
+    .modal-cancel {
+      display: flex; align-items: center; justify-content: center; width: 100%; padding: 14px; margin-top: 10px;
+      background: transparent; border: none; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: rgba(26,26,46,0.5);
+      -webkit-tap-highlight-color: transparent;
+    }
   </style>
 </head>
 <body>
@@ -528,13 +581,12 @@
       <button class="cta-secondary hidden" id="progress-back">← Back to brief</button>
     </section>
 
-    <!-- SCREEN 3 — DOC OUTPUT -->
+    <!-- SCREEN 3 — DOC OUTPUT (pre-draft spec view) -->
     <section id="screen-output" class="screen">
       <div class="output-header">
         <h2 class="output-title" id="out-title">Campaign</h2>
         <img class="header-gif" src="/assets/gifs/quillio-doc-done.gif" alt="">
       </div>
-      <div id="draft-status" class="draft-status hidden"></div>
 
       <div class="section-label">Campaign Summary</div>
       <p class="section-body" id="out-summary"></p>
@@ -544,18 +596,34 @@
 
       <div class="assets-label">Assets</div>
       <div id="out-assets"></div>
-      <div id="copy-fallback" class="note hidden">Open in Drive to view copy ↗</div>
-
-      <div class="regen hidden" id="regen">
-        <textarea class="regen-input" id="regen-input" placeholder="What should change? Give Quillio direction."></textarea>
-        <button class="cta-primary" id="regen-btn">Regenerate</button>
-      </div>
-      <div id="draft-progress" class="note hidden"></div>
       <div id="output-error" class="error hidden"></div>
 
       <div class="output-ctas">
         <button class="cta-primary" id="draft-btn">Generate First Draft</button>
         <button class="cta-secondary" id="open-btn">Open in Drive</button>
+      </div>
+    </section>
+
+    <!-- SCREEN 4 — GENERATING -->
+    <section id="screen-generating" class="screen">
+      <img class="gen-gif" src="/assets/gifs/quillio_magic_v27.gif" alt="">
+      <div class="gen-message" id="gen-message">Warming up the quill…</div>
+    </section>
+
+    <!-- SCREEN 5 — COPY DONE (drafted view) -->
+    <section id="screen-copydone" class="screen">
+      <div class="output-header">
+        <h2 class="output-title" id="copydone-title">Your copy is ready</h2>
+        <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">
+      </div>
+      <div id="copydone-status" class="draft-status hidden"></div>
+      <div id="copydone-fallback" class="note hidden">Open in Drive to view the copy ↗</div>
+      <div id="copydone-assets"></div>
+      <div id="copydone-error" class="error hidden"></div>
+
+      <div class="output-ctas">
+        <button class="cta-primary" id="copydone-regen-btn">Regenerate</button>
+        <button class="cta-secondary" id="copydone-open-btn">Open in Drive</button>
       </div>
     </section>
 
@@ -596,6 +664,17 @@
 
   </main>
 
+  <!-- Regenerate bottom-sheet modal (Copy Done screen) -->
+  <div class="modal-overlay" id="regen-modal">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-title">What should change?</div>
+      <textarea class="modal-textarea" id="regen-modal-input" placeholder="Give Quillio direction — tone, length, what to emphasize, what to cut."></textarea>
+      <button class="modal-btn" id="regen-modal-submit">Regenerate</button>
+      <button class="modal-cancel" id="regen-modal-cancel">Cancel</button>
+    </div>
+  </div>
+
   <script>
     'use strict';
 
@@ -606,11 +685,13 @@
       brief: document.getElementById('screen-brief'),
       progress: document.getElementById('screen-progress'),
       output: document.getElementById('screen-output'),
+      generating: document.getElementById('screen-generating'),
+      copydone: document.getElementById('screen-copydone'),
       history: document.getElementById('screen-history'),
       project: document.getElementById('screen-project')
     };
     // Which nav link is highlighted for each screen (cosmetic only).
-    var NAV_FOR_SCREEN = { brief: 'nav-new', progress: 'nav-new', output: 'nav-new', history: 'nav-history', project: 'nav-history' };
+    var NAV_FOR_SCREEN = { brief: 'nav-new', progress: 'nav-new', output: 'nav-new', generating: 'nav-new', copydone: 'nav-new', history: 'nav-history', project: 'nav-history' };
     function setNavActive(name) {
       ['nav-new', 'nav-history', 'nav-settings'].forEach(function (id) {
         document.getElementById(id).classList.toggle('active', id === NAV_FOR_SCREEN[name]);
@@ -793,7 +874,7 @@
     progressBack.addEventListener('click', function () { showScreen('brief'); });
 
     // --- Screen 3: render output -------------------------------------------
-    var state = { docUrl: null, docId: null, projectId: null };
+    var state = { docUrl: null, docId: null, projectId: null, campaignTitle: null };
 
     function charLimit(f) {
       if (!f.charMax) return '';
@@ -884,8 +965,9 @@
       state.docUrl = data.docUrl || null;
       state.docId = docIdFromUrl(data.docUrl);
       state.projectId = data.projectId != null ? data.projectId : null;
+      state.campaignTitle = data.campaignTitle || 'Campaign';
 
-      document.getElementById('out-title').textContent = data.campaignTitle || 'Campaign';
+      document.getElementById('out-title').textContent = state.campaignTitle;
       document.getElementById('out-summary').textContent = data.summary || '—';
       document.getElementById('out-direction').textContent = data.writerDirection || '—';
 
@@ -895,19 +977,11 @@
       }
       // Pre-draft view: names + char limits, no copy yet.
       renderOutputAssets(blocks, { badge: 'Not yet drafted', showPlaceholder: false });
-      hide(document.getElementById('copy-fallback'));
 
-      var draftStatus = document.getElementById('draft-status');
-      draftStatus.classList.add('hidden');
-      draftStatus.textContent = '';
       var draftBtn = document.getElementById('draft-btn');
       draftBtn.disabled = false;
       draftBtn.textContent = 'Generate First Draft';
       show(draftBtn);
-      // Fresh brief → no draft yet, so reset the Regenerate section.
-      hide(document.getElementById('regen'));
-      document.getElementById('regen-input').value = '';
-      hide(document.getElementById('draft-progress'));
       clearError(document.getElementById('output-error'));
     }
 
@@ -1022,107 +1096,173 @@
       return false;
     }
 
-    // After drafting, the copy lives in the Google Doc — fetch it back and
-    // re-render the asset fields with the real copy. Shows the "Open in Drive"
-    // fallback (and returns false) when there's no project id or the fetch
-    // fails. Returns true when content rendered.
-    async function loadDraftedCopy() {
-      var fallback = document.getElementById('copy-fallback');
+    // --- Screens 4 & 5: generation animation + copy-done -------------------
+    // Generation phrases (v8). A shuffled subset cycles continuously until the
+    // real draft job resolves — the animation never finishes ahead of the
+    // actual result (same principle as the progress screen's held last step).
+    var GEN_PHRASES = [
+      'Kicking things off…', 'Warming up the quill…', 'Running low on ink…',
+      'Lowering your risk of carpal tunnel…', 'Making it sound human…',
+      'Generating first draft…', 'Asking the quill nicely…', 'Hang tight, words incoming…',
+      'Choosing between three synonyms for leverage…', 'Removing unnecessary jargon… mostly…',
+      'Finding the perfect em dash…', 'Spell-checking. Obviously.',
+      'Adding the Oxford comma. You\'re welcome.', 'Making it punchy. But not too punchy.',
+      'Cutting the word very. Twice.', 'Replacing synergy with something real…',
+      'Making sure it doesn\'t sound like a robot wrote it…', 'Putting the final period on it…',
+      'Deciding between punchy and punchier…', 'Removing the fourth exclamation point…',
+      'Making the CTA actually compelling…', 'Ensuring no sentence starts with Unfortunately…',
+      'Cutting the fluff. There was a lot of fluff.', 'Choosing words that earn their keep…',
+      'Rewriting the headline. Again.', 'Making sure it passes the so-what test…',
+      'Removing we are excited to announce…', 'Counting characters so you don\'t have to…',
+      'Replacing leverage with use. You\'re welcome.', 'Making the subject line actually get opened…',
+      'Ensuring the CTA doesn\'t say Learn More…', 'Cutting the passive voice. Most of it anyway.',
+      'Removing the word robust. Three times.', 'Tightening the opening line…',
+      'Making sure the hook actually hooks…', 'Swapping innovative for something true…',
+      'Removing the word seamless. Again.', 'Giving the CTA some backbone…',
+      'Checking that nothing is best-in-class…', 'Making sure it\'s direct without being rude…',
+      'Swapping unlock for something less sales-y…', 'Almost done. We promise.',
+      'Final pass. This one\'s for real.'
+    ];
+    var genTimer = null;
+
+    function shuffle(arr) {
+      var a = arr.slice();
+      for (var i = a.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var t = a[i]; a[i] = a[j]; a[j] = t;
+      }
+      return a;
+    }
+
+    function startGenerating() {
+      var msgEl = document.getElementById('gen-message');
+      var picked = shuffle(GEN_PHRASES);
+      var idx = 0;
+      msgEl.style.transition = 'none';
+      msgEl.textContent = picked[0];
+      msgEl.style.opacity = 1;
+      msgEl.style.transform = 'translateY(0)';
+      if (genTimer) clearInterval(genTimer);
+      genTimer = setInterval(function () {
+        idx = (idx + 1) % picked.length;
+        msgEl.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+        msgEl.style.opacity = 0;
+        msgEl.style.transform = 'translateY(8px)';
+        setTimeout(function () {
+          msgEl.textContent = picked[idx];
+          msgEl.style.opacity = 1;
+          msgEl.style.transform = 'translateY(0)';
+        }, 300);
+      }, 3200);
+    }
+    function stopGenerating() {
+      if (genTimer) { clearInterval(genTimer); genTimer = null; }
+    }
+
+    // Render the drafted copy into the Copy Done screen's card list.
+    function renderCopyDoneAssets(assets) {
+      var wrap = document.getElementById('copydone-assets');
+      wrap.textContent = '';
+      (assets || []).forEach(function (a) {
+        appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
+      });
+      var cards = wrap.querySelectorAll('.asset-card');
+      for (var i = 0; i < cards.length; i++) {
+        cards[i].classList.add('reveal');
+        cards[i].style.animationDelay = (i * 0.12) + 's';
+      }
+    }
+
+    // Pull the drafted copy back from the doc and populate the Copy Done screen.
+    // Returns true when copy rendered, false when it fell back to "Open in Drive".
+    async function loadCopyDone(fieldCount) {
+      document.getElementById('copydone-title').textContent = state.campaignTitle || 'Your copy is ready';
+      var fallback = document.getElementById('copydone-fallback');
+      var statusEl = document.getElementById('copydone-status');
+      clearError(document.getElementById('copydone-error'));
       var content = await fetchDocContent();
-      if (!content) { show(fallback); return false; }
+      if (!content) {
+        document.getElementById('copydone-assets').textContent = '';
+        show(fallback);
+        statusEl.classList.add('hidden');
+        return false;
+      }
       hide(fallback);
-      renderOutputAssets(content.assets || [], { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
+      renderCopyDoneAssets(content.assets || []);
+      statusEl.textContent = fieldCount != null ? draftedLabel(fieldCount) : '✓ Draft ready';
+      show(statusEl);
       return true;
     }
 
+    // Generate First Draft (from the Output screen): animate while the real
+    // draft job runs, then show the Copy Done screen. On a dropped connection,
+    // re-read the doc — if the copy landed, it actually succeeded.
     async function generateDraft() {
       if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
-      var btn = document.getElementById('draft-btn');
-      var outErr = document.getElementById('output-error');
-      var progress = document.getElementById('draft-progress');
-      clearError(outErr);
-      btn.disabled = true;
-      btn.textContent = 'Drafting…';
-      progress.innerHTML = DRAFTING_NOTE;
-      show(progress);
+      showScreen('generating');
+      startGenerating();
       console.log('[app] first draft start — docId=' + state.docId + ' projectId=' + state.projectId);
       try {
         var data = await draftFetch(state.docId);
         console.log('[app] first draft /api/draft returned:', data);
-        // Success: clear the in-progress note and surface the success indicator.
-        hide(progress);
-        var status = document.getElementById('draft-status');
-        status.textContent = draftedLabel(data.fieldCount);
-        show(status);
-        // Pull the drafted copy back from the doc and show it inline.
-        await loadDraftedCopy();
-        // First draft done → mark the project in progress (best-effort).
+        stopGenerating();
+        await loadCopyDone(data.fieldCount);
         if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
-        // Draft exists now → swap the button for the Regenerate section.
-        hide(btn);
-        show(document.getElementById('regen'));
+        showScreen('copydone');
       } catch (e) {
-        hide(progress);
-        showError(outErr, draftErrorMessage(e));
-        btn.disabled = false;
-        btn.textContent = 'Generate First Draft';
+        stopGenerating();
+        var content = await fetchDocContent();
+        if (content && contentHasAnyCopy(content)) {
+          console.log('[app] first draft recovered — doc has copy despite the dropped request');
+          await loadCopyDone(null);
+          if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
+          showScreen('copydone');
+        } else {
+          showScreen('output');
+          showError(document.getElementById('output-error'), draftErrorMessage(e));
+        }
       }
     }
 
-    // Regenerate (Screen 3) — re-run drafting with the user's direction text.
-    async function regenerateDraft() {
-      if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
-      var input = document.getElementById('regen-input');
-      var btn = document.getElementById('regen-btn');
-      var progress = document.getElementById('draft-progress');
-      var outErr = document.getElementById('output-error');
+    // --- Regenerate bottom-sheet modal (Copy Done) -------------------------
+    function openRegenModal() {
+      document.getElementById('regen-modal').classList.add('open');
+      setTimeout(function () { document.getElementById('regen-modal-input').focus(); }, 400);
+    }
+    function closeRegenModal() {
+      document.getElementById('regen-modal').classList.remove('open');
+    }
+    async function submitRegen() {
+      if (!state.docId) { closeRegenModal(); showError(document.getElementById('copydone-error'), 'No document to draft.'); return; }
+      var input = document.getElementById('regen-modal-input');
       var direction = input.value.trim();
-      clearError(outErr);
-      // Lock the direction box + button while regenerating so the input can't
-      // change mid-request.
-      input.disabled = true;
-      btn.disabled = true;
-      btn.textContent = 'Regenerating…';
-      progress.innerHTML = DRAFTING_NOTE;
-      show(progress);
-      console.log('[app] regenerate start — docId=' + state.docId + ' projectId=' + state.projectId +
-        ' direction=' + JSON.stringify(direction));
-
-      var succeeded = false;
+      closeRegenModal();
+      showScreen('generating');
+      startGenerating();
+      console.log('[app] regenerate start — docId=' + state.docId + ' direction=' + JSON.stringify(direction));
       try {
         var data = await draftFetch(state.docId, direction);
         console.log('[app] regenerate /api/draft returned:', data);
-        hide(progress);
-        var status = document.getElementById('draft-status');
-        status.textContent = draftedLabel(data.fieldCount);
-        show(status);
-        await loadDraftedCopy();
-        succeeded = true;
+        stopGenerating();
+        input.value = '';
+        await loadCopyDone(data.fieldCount);
+        document.getElementById('copydone-status').textContent = '✓ Draft updated';
+        showScreen('copydone');
       } catch (e) {
         console.error('[app] regenerate /api/draft failed: ' + (e && e.name) + ' ' + (e && e.message));
-        hide(progress);
-        // The connection can drop after the server has already written the doc
-        // (e.g. a proxy closing a long request). Read the doc back — if the copy
-        // is there, the regenerate actually succeeded, so don't show an error.
+        stopGenerating();
+        // The connection can drop after the doc was written — re-read it.
         var content = await fetchDocContent();
         if (content && contentHasAnyCopy(content)) {
           console.log('[app] regenerate recovered — doc has copy despite the dropped request');
-          hide(document.getElementById('copy-fallback'));
-          renderOutputAssets(content.assets || [], { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
-          var rstatus = document.getElementById('draft-status');
-          rstatus.textContent = '✓ Draft updated';
-          show(rstatus);
-          succeeded = true;
+          await loadCopyDone(null);
+          document.getElementById('copydone-status').textContent = '✓ Draft updated';
+          input.value = '';
+          showScreen('copydone');
         } else {
-          showError(outErr, draftErrorMessage(e));
+          showScreen('copydone');
+          showError(document.getElementById('copydone-error'), draftErrorMessage(e));
         }
-      } finally {
-        // Always re-enable; clear the direction only on success so failures
-        // keep the user's text.
-        input.disabled = false;
-        btn.disabled = false;
-        btn.textContent = 'Regenerate';
-        if (succeeded) input.value = '';
       }
     }
 
@@ -1405,8 +1545,14 @@
     document.getElementById('attach-btn').addEventListener('click', function () { fileInput.click(); });
     fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
     document.getElementById('draft-btn').addEventListener('click', generateDraft);
-    document.getElementById('regen-btn').addEventListener('click', regenerateDraft);
     document.getElementById('open-btn').addEventListener('click', openInDrive);
+    document.getElementById('copydone-regen-btn').addEventListener('click', openRegenModal);
+    document.getElementById('copydone-open-btn').addEventListener('click', openInDrive);
+    document.getElementById('regen-modal-submit').addEventListener('click', submitRegen);
+    document.getElementById('regen-modal-cancel').addEventListener('click', closeRegenModal);
+    document.getElementById('regen-modal').addEventListener('click', function (e) {
+      if (e.target === document.getElementById('regen-modal')) closeRegenModal();
+    });
 
     document.getElementById('nav-brand').addEventListener('click', function () { showScreen('brief'); });
     document.getElementById('nav-new').addEventListener('click', function () { showScreen('brief'); });

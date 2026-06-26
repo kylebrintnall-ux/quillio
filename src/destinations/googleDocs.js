@@ -16,9 +16,10 @@ const { DocBuilder } = require('./docBuilder');
 const { generateAssetDrafts } = require('../services/gemini');
 
 // How many assets to draft concurrently (each asset is one batched Gemini call
-// plus possible per-field fallbacks). Capped low to bound peak memory/CPU on an
-// all-8-assets run. Tunable via DRAFT_CONCURRENCY.
-const DRAFT_CONCURRENCY = Number(process.env.DRAFT_CONCURRENCY) || 3;
+// plus possible per-field fallbacks). Bounded to keep peak memory/CPU sane on an
+// all-8-assets run while cutting wall-clock for typical 4-6 asset briefs.
+// Tunable via DRAFT_CONCURRENCY.
+const DRAFT_CONCURRENCY = Number(process.env.DRAFT_CONCURRENCY) || 5;
 
 // Log a memory snapshot so we can see if a big run is approaching a ceiling.
 function logMemory(label) {

@@ -720,8 +720,15 @@ async function generateDoc(spec, folderId, clients, tenantId) {
   // Create the project folder (named after the campaign) inside the target
   // folder, with an empty Assets subfolder. The copy doc then goes inside the
   // project folder rather than the bare target folder.
+  //
+  // Only the PROJECT folder must finish before the doc (the doc lives in it).
+  // The empty "Assets" subfolder is independent — nothing downstream reads it —
+  // so we kick it off WITHOUT awaiting and let it run concurrently with the doc
+  // build, shaving a Drive round-trip off the critical path. It's settled
+  // (best-effort) before we return so a failure is still logged, not orphaned.
   let docFolderId = folderId;
   let projectFolderUrl = null;
+  let assetsSubfolderPromise = Promise.resolve();
   try {
     const { drive } = clients || (await getClients());
     const parent = folderId || config.DRIVE_FOLDER_ID;
@@ -737,20 +744,26 @@ async function generateDoc(spec, folderId, clients, tenantId) {
     docFolderId = folder.data.id;
     projectFolderUrl = folder.data.webViewLink;
     console.log('[Quillio] project folder created:', docFolderId);
-    // Empty Assets subfolder, ready for exports.
-    await drive.files.create({
-      requestBody: {
-        name: 'Assets',
-        mimeType: 'application/vnd.google-apps.folder',
-        parents: [docFolderId],
-      },
-      supportsAllDrives: true,
-    });
+    // Empty Assets subfolder, ready for exports — fire-and-forget (not on the
+    // doc's critical path). Failure is logged, never thrown.
+    assetsSubfolderPromise = drive.files
+      .create({
+        requestBody: {
+          name: 'Assets',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [docFolderId],
+        },
+        supportsAllDrives: true,
+      })
+      .catch((err) => {
+        console.error('[Quillio] Assets subfolder creation failed:', err.message);
+      });
   } catch (err) {
     console.error('[Quillio] project folder creation failed:', err.message);
     docFolderId = folderId; // fall back to the bare target folder
   }
 
+  // Build the doc in parallel with the Assets subfolder.
   const doc = await getDestination().createDocument({
     brief: spec.brief,
     campaignTitle: spec.campaignTitle,
@@ -762,6 +775,9 @@ async function generateDoc(spec, folderId, clients, tenantId) {
     referenceInsights: spec.referenceInsights,
     clients,
   });
+
+  // Make sure the subfolder call has settled before returning (best-effort).
+  await assetsSubfolderPromise;
 
   return { doc, assetSpecs, projectFolderUrl };
 }

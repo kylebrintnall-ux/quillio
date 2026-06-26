@@ -143,24 +143,27 @@ router.post('/api/upload', requireAuth, (req, res) => {
 // (~30-90s) runs fire-and-forget; the client polls the status endpoint below.
 // This avoids holding a long request open, which Railway's proxy closes.
 // Optional `fileRefs` (from /api/upload) are ingested as upload references.
-router.post('/api/brief', (req, res) => {
+// Requires a session (audit HIGH 2); the tenant comes from req.user.tenant_id —
+// never a client-supplied workspaceId — so a brief always runs as the signed-in
+// tenant. In demo mode requireAuth attaches the demo tenant (T0B8LPRDKHR).
+router.post('/api/brief', requireAuth, (req, res) => {
   const body = req.body || {};
   const briefText = (body.briefText || '').trim();
-  const workspaceId = body.workspaceId || DEFAULT_WORKSPACE_ID;
+  const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
   const fileRefs = safeFileRefs(body.fileRefs);
 
   if (!briefText) {
     return res.status(400).json({ success: false, error: 'briefText is required' });
   }
 
-  const jobId = startJob(`brief workspace=${workspaceId}`, async () => {
-    const tenantContext = await resolveTenant(workspaceId);
+  const jobId = startJob(`brief tenant=${sessionTenant}`, async () => {
+    const tenantContext = await resolveTenant(sessionTenant);
     return runWebBrief(briefText, tenantContext, fileRefs); // the full { docUrl, assetBlocks, … }
   });
   // Log the brief length so a truncated brief (e.g. a cut folder URL) is obvious
   // — never the brief content itself.
   console.log(
-    `[web] /api/brief start → job=${jobId} workspace=${workspaceId} briefText.length=${briefText.length} files=${fileRefs.length}`
+    `[web] /api/brief start → job=${jobId} tenant=${sessionTenant} briefText.length=${briefText.length} files=${fileRefs.length}`
   );
   return res.status(202).json({ success: true, jobId });
 });
@@ -172,11 +175,13 @@ router.get('/api/brief/:jobId/status', sendJobStatus);
 // POST /api/draft — START draft generation and return a job id immediately.
 // The work (~1 min) runs fire-and-forget; the client polls the status endpoint
 // below. This avoids holding a long request open, which Railway's proxy closes.
-router.post('/api/draft', (req, res) => {
+// Requires a session (audit HIGH 2); the tenant comes from req.user.tenant_id,
+// never a client-supplied workspaceId.
+router.post('/api/draft', requireAuth, (req, res) => {
   const body = req.body || {};
   const docId = (body.docId || '').trim();
   const direction = (body.direction || '').trim(); // optional regenerate feedback
-  const workspaceId = body.workspaceId || DEFAULT_WORKSPACE_ID;
+  const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
 
   if (!docId) {
     return res.status(400).json({ success: false, error: 'docId is required' });
@@ -184,11 +189,11 @@ router.post('/api/draft', (req, res) => {
 
   const mode = direction ? `regenerate (${direction.length} chars)` : 'first draft';
   const jobId = startJob(`draft doc=${docId} ${mode}`, async () => {
-    const tenantContext = await resolveTenant(workspaceId);
+    const tenantContext = await resolveTenant(sessionTenant);
     const out = await runWebDraft(docId, tenantContext, direction);
     return { docId: out.docId, fieldCount: out.fieldCount };
   });
-  console.log(`[web] /api/draft start → job=${jobId} doc=${docId} workspace=${workspaceId} mode=${mode}`);
+  console.log(`[web] /api/draft start → job=${jobId} doc=${docId} tenant=${sessionTenant} mode=${mode}`);
   return res.status(202).json({ success: true, jobId });
 });
 

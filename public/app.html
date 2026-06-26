@@ -393,7 +393,6 @@
 
     /* Shared v8 keyframes */
     @keyframes popIn { from { transform: scale(0.55); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-    @keyframes dotPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.4); } }
 
     /* Shared v8 secondary CTA */
     .cta-secondary {
@@ -410,14 +409,28 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       text-align: center; min-height: calc(100vh - 150px);
     }
-    .progress-gif { width: 130px; height: 130px; image-rendering: pixelated; margin-bottom: 30px; animation: popIn 0.45s cubic-bezier(0.34,1.56,0.64,1) both; }
-    .progress-step-text { font-family: 'StarCrush', serif; font-size: 20px; letter-spacing: 0.03em; color: var(--ink); margin-bottom: 28px; min-height: 52px; line-height: 1.35; transition: opacity 0.3s ease, transform 0.3s ease; }
-    .progress-dots { display: flex; gap: 10px; justify-content: center; margin-bottom: 24px; }
-    .progress-dot { width: 8px; height: 8px; border-radius: 2px; background: rgba(26,26,46,0.18); transition: background 0.3s ease; }
-    .progress-dot.done { background: rgba(26,26,46,0.5); }
-    .progress-dot.active { background: var(--gold); animation: dotPulse 1s ease infinite; }
-    #screen-progress .error { width: 100%; max-width: 360px; }
-    #progress-back { width: 100%; max-width: 280px; }
+    .progress-gif { width: 130px; height: 130px; image-rendering: pixelated; margin-bottom: 28px; animation: popIn 0.45s cubic-bezier(0.34,1.56,0.64,1) both; }
+
+    /* ── PIXEL PROGRESS BAR (v8) — shared by brief run + draft ──
+       Chunky segmented #4DD9D9 bar on a navy panel; IBM Plex Sans copy (mono is
+       reserved for the Voice Guide terminal). Estimate-driven: the bar is paced
+       by an elapsed/estimate fraction (the brief/draft jobs only report
+       pending→complete), caps below full, then snaps to 100% on completion. */
+    .progress-panel {
+      width: 100%; max-width: 360px; margin: 0 auto;
+      background: rgba(26,26,46,0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1.5px solid rgba(77,217,217,0.25); border-radius: 16px; padding: 16px 18px 18px;
+    }
+    .progress-estimate { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; color: var(--sky-btm); margin-bottom: 12px; text-align: left; }
+    .progress-track { display: flex; gap: 3px; height: 20px; padding: 3px; background: rgba(0,0,0,0.28); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 6px; }
+    .progress-seg { flex: 1 1 0; background: rgba(255,255,255,0.08); border-radius: 2px; transition: background 0.2s ease; }
+    .progress-seg.filled { background: var(--sky-btm); box-shadow: 0 0 6px rgba(77,217,217,0.55); }
+    .progress-track.pulsing .progress-seg.filled { animation: segPulse 1s ease-in-out infinite; }
+    @keyframes segPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .progress-label { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.92); margin-top: 14px; min-height: 20px; text-align: left; }
+    .progress-sublabel { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 400; color: rgba(255,255,255,0.55); margin-top: 4px; min-height: 16px; text-align: left; }
+    #screen-progress .error { width: 100%; max-width: 360px; margin-top: 16px; }
+    #progress-back { width: 100%; max-width: 360px; margin-top: 14px; }
 
     /* ── OUTPUT (v8) ── */
     #screen-output { padding-bottom: 150px; }
@@ -485,8 +498,7 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       text-align: center; min-height: calc(100vh - 150px);
     }
-    .gen-gif { width: 150px; height: 150px; image-rendering: pixelated; margin-bottom: 32px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) both; }
-    .gen-message { font-family: 'StarCrush', serif; font-size: 18px; letter-spacing: 0.03em; color: var(--ink); min-height: 64px; line-height: 1.45; padding: 0 16px; max-width: 420px; transition: opacity 0.3s ease, transform 0.3s ease; }
+    .gen-gif { width: 150px; height: 150px; image-rendering: pixelated; margin-bottom: 28px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) both; }
 
     /* ── COPY DONE (v8) — reuses output-header / asset-card / output-ctas ── */
     #screen-copydone { padding-bottom: 150px; }
@@ -609,6 +621,18 @@
     .project-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
     #screen-project .empty { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.5); color: rgba(26,26,46,0.65); }
     #screen-project .loading { color: rgba(26,26,46,0.7); }
+
+    /* ── TOAST (v8) — brief auto-dismissing confirmation ── */
+    .toast {
+      position: fixed; left: 50%; bottom: 120px; z-index: 300; max-width: 360px;
+      transform: translateX(-50%) translateY(12px);
+      background: rgba(26,26,46,0.92); color: #fff;
+      border: 1.5px solid rgba(77,217,217,0.35); border-radius: 12px; padding: 12px 18px;
+      font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 500;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+      opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
@@ -644,15 +668,14 @@
       <div id="brief-error" class="error hidden"></div>
     </section>
 
-    <!-- SCREEN 2 — PROGRESS -->
+    <!-- SCREEN 2 — PROGRESS (pixel progress bar) -->
     <section id="screen-progress" class="screen">
       <img id="progress-gif" class="progress-gif" src="/assets/gifs/quillio-scroll.gif" alt="">
-      <div id="progress-text" class="progress-step-text">Reading your brief…</div>
-      <div class="progress-dots">
-        <div class="progress-dot active" id="dot-0"></div>
-        <div class="progress-dot" id="dot-1"></div>
-        <div class="progress-dot" id="dot-2"></div>
-        <div class="progress-dot" id="dot-3"></div>
+      <div class="progress-panel">
+        <div class="progress-estimate" id="brief-progress-estimate">Estimated: ~20s</div>
+        <div class="progress-track" id="brief-progress-track"></div>
+        <div class="progress-label" id="brief-progress-label">Parsing brief…</div>
+        <div class="progress-sublabel" id="brief-progress-sublabel"></div>
       </div>
       <div id="progress-error" class="error hidden"></div>
       <button class="cta-secondary hidden" id="progress-back">← Back to brief</button>
@@ -681,10 +704,15 @@
       </div>
     </section>
 
-    <!-- SCREEN 4 — GENERATING -->
+    <!-- SCREEN 4 — GENERATING (magic quill + pixel progress bar) -->
     <section id="screen-generating" class="screen">
       <img class="gen-gif" src="/assets/gifs/quillio_magic_v27.gif" alt="">
-      <div class="gen-message" id="gen-message">Warming up the quill…</div>
+      <div class="progress-panel">
+        <div class="progress-estimate" id="draft-progress-estimate">Estimated: ~30s</div>
+        <div class="progress-track" id="draft-progress-track"></div>
+        <div class="progress-label" id="draft-progress-label">Drafting…</div>
+        <div class="progress-sublabel" id="draft-progress-sublabel"></div>
+      </div>
     </section>
 
     <!-- SCREEN 5 — COPY DONE (drafted view) -->
@@ -693,7 +721,6 @@
         <h2 class="output-title" id="copydone-title">Your copy is ready</h2>
         <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">
       </div>
-      <div id="copydone-status" class="draft-status hidden"></div>
       <div id="copydone-fallback" class="note hidden">Open in Drive to view the copy ↗</div>
       <div id="copydone-assets"></div>
       <div id="copydone-error" class="error hidden"></div>
@@ -751,6 +778,9 @@
     </section>
 
   </main>
+
+  <!-- Auto-dismissing confirmation toast -->
+  <div class="toast" id="toast"></div>
 
   <!-- Regenerate bottom-sheet modal (Copy Done screen) -->
   <div class="modal-overlay" id="regen-modal">
@@ -880,89 +910,105 @@
       return data.fileRefs || [];
     }
 
-    // --- Screen 2: staged progress -----------------------------------------
-    var HEADINGS = ['Reading your brief…', 'Hunting down references…', 'Building your doc…', 'Filing it away…'];
-    // One GIF per stage (v8 design system). Index matches HEADINGS / dots.
+    // --- Screen 2: pixel progress bar (brief run) --------------------------
+    // One GIF per stage, kept above the bar. Index matches BRIEF_STAGES.
     var STEP_GIFS = [
       '/assets/gifs/quillio-scroll.gif',
       '/assets/gifs/quillio-review.gif',
       '/assets/gifs/quillio_magic_v27.gif',
       '/assets/gifs/quillio-folder.gif'
     ];
-    var STEP_COUNT = HEADINGS.length;
-    var progressGif = document.getElementById('progress-gif');
-    var progressText = document.getElementById('progress-text');
+    var BRIEF_STAGES = ['Parsing brief…', 'Fetching references…', 'Building your doc…', 'Creating project folder…'];
     var progressError = document.getElementById('progress-error');
     var progressBack = document.getElementById('progress-back');
-    // A large brief can run for minutes, so the steps animate on a realistic
-    // timer through steps 1-3 and then HOLD the final step ("Creating project
-    // folder") in the working/spinning state until the brief job completes —
-    // the animation must never finish ahead of the actual result.
-    var stageTimer = null;
-    var currentStage = 0;
 
-    // Set the dot states for stage n: earlier dots done, current dot active.
-    function setDots(n) {
-      for (var d = 0; d < STEP_COUNT; d++) {
-        var dot = document.getElementById('dot-' + d);
-        if (!dot) continue;
-        dot.className = 'progress-dot' + (d < n ? ' done' : d === n ? ' active' : '');
+    // --- Shared pixel-bar helpers ---
+    var PROGRESS_SEGS = 12;
+    function buildTrack(trackEl) {
+      trackEl.innerHTML = '';
+      for (var i = 0; i < PROGRESS_SEGS; i++) {
+        var s = document.createElement('div');
+        s.className = 'progress-seg';
+        trackEl.appendChild(s);
       }
     }
-    function setStage(n) {
-      currentStage = n;
-      var gifSrc = STEP_GIFS[Math.min(n, STEP_GIFS.length - 1)];
-      // Replace the <img> so the GIF restarts and the popIn animation replays.
-      var newGif = document.createElement('img');
-      newGif.id = 'progress-gif';
-      newGif.className = 'progress-gif';
-      newGif.alt = '';
-      newGif.src = gifSrc;
-      progressGif.parentNode.replaceChild(newGif, progressGif);
-      progressGif = newGif;
-      // Fade the step text out then in with the new heading.
-      progressText.style.opacity = 0;
-      progressText.style.transform = 'translateY(8px)';
-      setTimeout(function () {
-        progressText.textContent = HEADINGS[Math.min(n, HEADINGS.length - 1)];
-        progressText.style.opacity = 1;
-        progressText.style.transform = 'translateY(0)';
-      }, 120);
-      setDots(n);
+    function fillTrack(trackEl, frac) {
+      var segs = trackEl.children;
+      var n = Math.round(Math.max(0, Math.min(1, frac)) * segs.length);
+      for (var i = 0; i < segs.length; i++) segs[i].classList.toggle('filled', i < n);
     }
-    function startStages() {
+    // Count URL-ish reference links in the brief text (http(s) links).
+    function countReferenceLinks(text) {
+      var m = String(text || '').match(/https?:\/\/[^\s)]+/g);
+      return m ? m.length : 0;
+    }
+
+    // Swap the per-stage GIF above the brief bar (replace <img> to replay popIn).
+    function setBriefGif(stage) {
+      var gif = document.getElementById('progress-gif');
+      if (!gif) return;
+      var src = STEP_GIFS[Math.min(stage, STEP_GIFS.length - 1)];
+      if (gif.getAttribute('src') === src) return;
+      var n = document.createElement('img');
+      n.id = 'progress-gif'; n.className = 'progress-gif'; n.alt = ''; n.src = src;
+      gif.parentNode.replaceChild(n, gif);
+    }
+
+    // Estimate-driven brief bar. The brief job only reports pending→complete, so
+    // the bar is paced by elapsed/estimate (caps at ~96%), advancing the stage
+    // label + GIF by fraction; finishBriefBar() snaps to 100% on the real result.
+    var briefBarTimer = null;
+    function startBriefBar(estimateSec) {
+      var track = document.getElementById('brief-progress-track');
+      var estimateEl = document.getElementById('brief-progress-estimate');
+      var labelEl = document.getElementById('brief-progress-label');
+      var subEl = document.getElementById('brief-progress-sublabel');
       clearError(progressError);
       progressBack.classList.add('hidden');
-      setStage(0);
-      stageTimer = setInterval(function () {
-        if (currentStage < STEP_COUNT - 1) {
-          setStage(currentStage + 1);
-        } else {
-          // Reached the last step — stop the timer and leave it pulsing. Only
-          // finishStages() (on the real response) marks everything done.
-          clearInterval(stageTimer);
-          stageTimer = null;
+      buildTrack(track);
+      fillTrack(track, 0);
+      track.classList.remove('pulsing');
+      estimateEl.textContent = 'Estimated: ~' + Math.round(estimateSec) + 's';
+      labelEl.textContent = BRIEF_STAGES[0];
+      subEl.textContent = '';
+      setBriefGif(0);
+      var startTs = Date.now();
+      var lastStage = 0;
+      if (briefBarTimer) clearInterval(briefBarTimer);
+      briefBarTimer = setInterval(function () {
+        var elapsed = (Date.now() - startTs) / 1000;
+        var frac = Math.min(elapsed / estimateSec, 0.96);
+        fillTrack(track, frac);
+        var stage = Math.min(BRIEF_STAGES.length - 1, Math.floor((frac / 0.96) * BRIEF_STAGES.length));
+        if (stage !== lastStage) {
+          lastStage = stage;
+          labelEl.textContent = BRIEF_STAGES[stage];
+          setBriefGif(stage);
         }
-      }, 1400);
+        // Sub-label on the final (folder) stage — communicates the Drive wait.
+        subEl.textContent = stage >= BRIEF_STAGES.length - 1 ? 'Setting up your Drive workspace…' : '';
+        if (elapsed >= estimateSec) {
+          track.classList.add('pulsing');
+          labelEl.textContent = 'Almost there…';
+        }
+      }, 250);
     }
-    function finishStages() {
-      if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
-      for (var d = 0; d < STEP_COUNT; d++) {
-        var dot = document.getElementById('dot-' + d);
-        if (dot) dot.className = 'progress-dot done';
-      }
+    function finishBriefBar() {
+      if (briefBarTimer) { clearInterval(briefBarTimer); briefBarTimer = null; }
+      var track = document.getElementById('brief-progress-track');
+      track.classList.remove('pulsing');
+      fillTrack(track, 1);
     }
-    function failStages(msg) {
-      if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
-      var active = document.querySelector('#screen-progress .progress-dot.active');
-      if (active) active.classList.remove('active');
+    function failBriefBar(msg) {
+      if (briefBarTimer) { clearInterval(briefBarTimer); briefBarTimer = null; }
+      document.getElementById('brief-progress-track').classList.remove('pulsing');
       showError(progressError, msg);
       progressBack.classList.remove('hidden');
     }
     progressBack.addEventListener('click', function () { showScreen('brief'); });
 
     // --- Screen 3: render output -------------------------------------------
-    var state = { docUrl: null, docId: null, projectId: null, campaignTitle: null };
+    var state = { docUrl: null, docId: null, projectId: null, campaignTitle: null, assets: [] };
 
     function charLimit(f) {
       if (!f.charMax) return '';
@@ -1063,6 +1109,8 @@
       if (!blocks.length && data.assets) {
         blocks = data.assets.map(function (n) { return { name: n, fields: [] }; });
       }
+      // Remember the asset names for the draft progress-bar estimate + labels.
+      state.assets = blocks.map(function (b) { return b.name; });
       // Pre-draft view: names + char limits, no copy yet.
       renderOutputAssets(blocks, { badge: 'Not yet drafted', showPlaceholder: false });
 
@@ -1079,23 +1127,29 @@
       clearError(briefError);
       if (!briefText) { showError(briefError, 'Add a brief first.'); return; }
 
+      // Estimate: base 8s + links×5 + files×8 + assets×4. Assets are unknown
+      // until the brief is parsed server-side, so default to 3.
+      var refCount = countReferenceLinks(briefText);
+      var fileCount = attachedFiles.length;
+      var estimateSec = 8 + refCount * 5 + fileCount * 8 + 3 * 4;
+
       showScreen('progress');
-      startStages();
+      startBriefBar(estimateSec);
 
       // Start a brief job and poll until it completes — no long-held request for
       // Railway's proxy to cut. Any attached files are uploaded first, then their
-      // refs are passed into the brief job. On failure, failStages shows the
+      // refs are passed into the brief job. On failure, failBriefBar shows the
       // error + the "Back to brief" button.
       try {
         var fileRefs = [];
         if (attachedFiles.length) { fileRefs = await uploadFiles(attachedFiles); }
         var data = await runJob('/api/brief', { briefText: briefText, workspaceId: WORKSPACE_ID, fileRefs: fileRefs }, '/api/brief');
-        finishStages();
+        finishBriefBar();
         renderOutput(data);
         showScreen('output');
         clearAttachedFiles();
       } catch (e) {
-        failStages(e.message || 'Network error — please try again.');
+        failBriefBar(e.message || 'Network error — please try again.');
       }
     }
 
@@ -1184,67 +1238,68 @@
       return false;
     }
 
-    // --- Screens 4 & 5: generation animation + copy-done -------------------
-    // Generation phrases (v8). A shuffled subset cycles continuously until the
-    // real draft job resolves — the animation never finishes ahead of the
-    // actual result (same principle as the progress screen's held last step).
-    var GEN_PHRASES = [
-      'Kicking things off…', 'Warming up the quill…', 'Running low on ink…',
-      'Lowering your risk of carpal tunnel…', 'Making it sound human…',
-      'Generating first draft…', 'Asking the quill nicely…', 'Hang tight, words incoming…',
-      'Choosing between three synonyms for leverage…', 'Removing unnecessary jargon… mostly…',
-      'Finding the perfect em dash…', 'Spell-checking. Obviously.',
-      'Adding the Oxford comma. You\'re welcome.', 'Making it punchy. But not too punchy.',
-      'Cutting the word very. Twice.', 'Replacing synergy with something real…',
-      'Making sure it doesn\'t sound like a robot wrote it…', 'Putting the final period on it…',
-      'Deciding between punchy and punchier…', 'Removing the fourth exclamation point…',
-      'Making the CTA actually compelling…', 'Ensuring no sentence starts with Unfortunately…',
-      'Cutting the fluff. There was a lot of fluff.', 'Choosing words that earn their keep…',
-      'Rewriting the headline. Again.', 'Making sure it passes the so-what test…',
-      'Removing we are excited to announce…', 'Counting characters so you don\'t have to…',
-      'Replacing leverage with use. You\'re welcome.', 'Making the subject line actually get opened…',
-      'Ensuring the CTA doesn\'t say Learn More…', 'Cutting the passive voice. Most of it anyway.',
-      'Removing the word robust. Three times.', 'Tightening the opening line…',
-      'Making sure the hook actually hooks…', 'Swapping innovative for something true…',
-      'Removing the word seamless. Again.', 'Giving the CTA some backbone…',
-      'Checking that nothing is best-in-class…', 'Making sure it\'s direct without being rude…',
-      'Swapping unlock for something less sales-y…', 'Almost done. We promise.',
-      'Final pass. This one\'s for real.'
-    ];
-    var genTimer = null;
-
-    function shuffle(arr) {
-      var a = arr.slice();
-      for (var i = a.length - 1; i > 0; i--) {
-        var j = Math.floor(Math.random() * (i + 1));
-        var t = a[i]; a[i] = a[j]; a[j] = t;
+    // --- Screens 4 & 5: draft progress bar + copy-done ---------------------
+    // Asset types with longer copy take longer to draft; the rest are quick.
+    var COMPLEX_ASSET_RE = /email|landing|signage|one[\s-]?pager/i;
+    function estimateDraftSec(assetNames) {
+      if (!assetNames || !assetNames.length) return 24;
+      var total = 0;
+      for (var i = 0; i < assetNames.length; i++) {
+        total += COMPLEX_ASSET_RE.test(assetNames[i]) ? 15 : 8;
       }
-      return a;
+      return total;
     }
 
-    function startGenerating() {
-      var msgEl = document.getElementById('gen-message');
-      var picked = shuffle(GEN_PHRASES);
-      var idx = 0;
-      msgEl.style.transition = 'none';
-      msgEl.textContent = picked[0];
-      msgEl.style.opacity = 1;
-      msgEl.style.transform = 'translateY(0)';
-      if (genTimer) clearInterval(genTimer);
-      genTimer = setInterval(function () {
-        idx = (idx + 1) % picked.length;
-        msgEl.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-        msgEl.style.opacity = 0;
-        msgEl.style.transform = 'translateY(8px)';
-        setTimeout(function () {
-          msgEl.textContent = picked[idx];
-          msgEl.style.opacity = 1;
-          msgEl.style.transform = 'translateY(0)';
-        }, 300);
-      }, 3200);
+    // Estimate-driven draft bar. The draft job only reports pending→complete, so
+    // the bar is paced by elapsed/estimate and the label walks
+    // "Drafting [asset]…" across the asset list by fraction; finishDraftBar()
+    // snaps to 100% on the real result.
+    var draftBarTimer = null;
+    function startDraftBar(assetNames) {
+      var names = (assetNames && assetNames.length) ? assetNames : ['your copy'];
+      var estimateSec = estimateDraftSec(assetNames);
+      var track = document.getElementById('draft-progress-track');
+      var estimateEl = document.getElementById('draft-progress-estimate');
+      var labelEl = document.getElementById('draft-progress-label');
+      var subEl = document.getElementById('draft-progress-sublabel');
+      buildTrack(track);
+      fillTrack(track, 0);
+      track.classList.remove('pulsing');
+      estimateEl.textContent = 'Estimated: ~' + Math.round(estimateSec) + 's';
+      labelEl.textContent = 'Drafting ' + names[0] + '…';
+      subEl.textContent = names.length > 1 ? (names.length + ' assets') : '';
+      var startTs = Date.now();
+      var lastIdx = 0;
+      if (draftBarTimer) clearInterval(draftBarTimer);
+      draftBarTimer = setInterval(function () {
+        var elapsed = (Date.now() - startTs) / 1000;
+        var frac = Math.min(elapsed / estimateSec, 0.96);
+        fillTrack(track, frac);
+        var idx = Math.min(names.length - 1, Math.floor((frac / 0.96) * names.length));
+        if (idx !== lastIdx) { lastIdx = idx; labelEl.textContent = 'Drafting ' + names[idx] + '…'; }
+        if (elapsed >= estimateSec) {
+          track.classList.add('pulsing');
+          labelEl.textContent = 'Almost there…';
+        }
+      }, 250);
     }
-    function stopGenerating() {
-      if (genTimer) { clearInterval(genTimer); genTimer = null; }
+    function stopDraftBar() {
+      if (draftBarTimer) { clearInterval(draftBarTimer); draftBarTimer = null; }
+    }
+    function finishDraftBar() {
+      stopDraftBar();
+      var track = document.getElementById('draft-progress-track');
+      if (track) { track.classList.remove('pulsing'); fillTrack(track, 1); }
+    }
+
+    // Brief auto-dismissing confirmation toast.
+    var toastTimer = null;
+    function showToast(msg) {
+      var t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2000);
     }
 
     // Render the drafted copy into the Copy Done screen's card list.
@@ -1263,22 +1318,18 @@
 
     // Pull the drafted copy back from the doc and populate the Copy Done screen.
     // Returns true when copy rendered, false when it fell back to "Open in Drive".
-    async function loadCopyDone(fieldCount) {
+    async function loadCopyDone() {
       document.getElementById('copydone-title').textContent = state.campaignTitle || 'Your copy is ready';
       var fallback = document.getElementById('copydone-fallback');
-      var statusEl = document.getElementById('copydone-status');
       clearError(document.getElementById('copydone-error'));
       var content = await fetchDocContent();
       if (!content) {
         document.getElementById('copydone-assets').textContent = '';
         show(fallback);
-        statusEl.classList.add('hidden');
         return false;
       }
       hide(fallback);
       renderCopyDoneAssets(content.assets || []);
-      statusEl.textContent = fieldCount != null ? draftedLabel(fieldCount) : '✓ Draft ready';
-      show(statusEl);
       return true;
     }
 
@@ -1288,23 +1339,26 @@
     async function generateDraft() {
       if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
       showScreen('generating');
-      startGenerating();
+      startDraftBar(state.assets);
       console.log('[app] first draft start — docId=' + state.docId + ' projectId=' + state.projectId);
       try {
         var data = await draftFetch(state.docId);
         console.log('[app] first draft /api/draft returned:', data);
-        stopGenerating();
-        await loadCopyDone(data.fieldCount);
+        finishDraftBar();
+        await loadCopyDone();
         if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
         showScreen('copydone');
+        showToast(draftedLabel(data.fieldCount));
       } catch (e) {
-        stopGenerating();
+        stopDraftBar();
         var content = await fetchDocContent();
         if (content && contentHasAnyCopy(content)) {
           console.log('[app] first draft recovered — doc has copy despite the dropped request');
-          await loadCopyDone(null);
+          finishDraftBar();
+          await loadCopyDone();
           if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
           showScreen('copydone');
+          showToast('✓ First draft ready');
         } else {
           showScreen('output');
           showError(document.getElementById('output-error'), draftErrorMessage(e));
@@ -1326,27 +1380,28 @@
       var direction = input.value.trim();
       closeRegenModal();
       showScreen('generating');
-      startGenerating();
+      startDraftBar(state.assets);
       console.log('[app] regenerate start — docId=' + state.docId + ' direction=' + JSON.stringify(direction));
       try {
         var data = await draftFetch(state.docId, direction);
         console.log('[app] regenerate /api/draft returned:', data);
-        stopGenerating();
+        finishDraftBar();
         input.value = '';
-        await loadCopyDone(data.fieldCount);
-        document.getElementById('copydone-status').textContent = '✓ Draft updated';
+        await loadCopyDone();
         showScreen('copydone');
+        showToast('✓ Draft updated');
       } catch (e) {
         console.error('[app] regenerate /api/draft failed: ' + (e && e.name) + ' ' + (e && e.message));
-        stopGenerating();
+        stopDraftBar();
         // The connection can drop after the doc was written — re-read it.
         var content = await fetchDocContent();
         if (content && contentHasAnyCopy(content)) {
           console.log('[app] regenerate recovered — doc has copy despite the dropped request');
-          await loadCopyDone(null);
-          document.getElementById('copydone-status').textContent = '✓ Draft updated';
+          finishDraftBar();
+          await loadCopyDone();
           input.value = '';
           showScreen('copydone');
+          showToast('✓ Draft updated');
         } else {
           showScreen('copydone');
           showError(document.getElementById('copydone-error'), draftErrorMessage(e));

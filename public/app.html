@@ -532,6 +532,83 @@
       font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: rgba(26,26,46,0.5);
       -webkit-tap-highlight-color: transparent;
     }
+
+    /* ── PROJECTS (v8) ── */
+    .projects-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--ink); letter-spacing: 0.02em; margin-bottom: 16px; }
+    .projects-search-wrap { margin-bottom: 14px; }
+    .projects-search {
+      display: flex; align-items: center; gap: 10px;
+      background: rgba(255,255,255,0.18); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1.5px solid rgba(255,255,255,0.38); border-radius: 14px; padding: 12px 16px; margin-bottom: 10px;
+    }
+    .search-input { flex: 1; border: none; outline: none; background: transparent; font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; color: var(--ink); -webkit-appearance: none; }
+    .search-input::placeholder { color: rgba(26,26,46,0.38); }
+    .filter-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+    .filter-row::-webkit-scrollbar { display: none; }
+    .filter-chip {
+      font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.04em; white-space: nowrap;
+      padding: 7px 14px; background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.35);
+      border-radius: 100px; color: rgba(26,26,46,0.65); cursor: pointer; flex-shrink: 0;
+      transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+    }
+    .filter-chip.active { background: var(--ink); border-color: var(--ink); color: var(--white); }
+    .project-card {
+      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 16px; padding: 16px 18px; margin-bottom: 10px;
+      cursor: pointer; transition: transform 0.15s; -webkit-tap-highlight-color: transparent; display: block;
+    }
+    .project-card:active { transform: scale(0.99); }
+    .project-card.closed { opacity: 0.55; }
+    .project-card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; gap: 12px; }
+    .project-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--ink); letter-spacing: 0.02em; line-height: 1.35; flex: 1; }
+    .project-card-status {
+      font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.04em;
+      width: 96px; text-align: center; flex-shrink: 0; padding: 5px 0;
+      border-radius: 3px; border: 2px solid transparent; box-shadow: 2px 2px 0 rgba(0,0,0,0.12);
+      cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.1s;
+    }
+    .project-card-status:active { transform: scale(0.95); }
+    .status-active { color: #0A5C32; background: #C6F0D8; border-color: #2ECC71; box-shadow: 2px 2px 0 rgba(10,92,50,0.2); }
+    .status-draft { color: #7A5500; background: #FFF0B3; border-color: #C9A84C; box-shadow: 2px 2px 0 rgba(122,85,0,0.2); }
+    .status-notstarted { color: rgba(26,26,46,0.5); background: rgba(255,255,255,0.5); border-color: rgba(26,26,46,0.2); box-shadow: 2px 2px 0 rgba(26,26,46,0.1); }
+    .project-card-meta { display: flex; align-items: center; gap: 10px; }
+    .meta-date, .meta-assets { font-size: 12px; font-weight: 500; color: rgba(26,26,46,0.5); }
+    .meta-divider { width: 3px; height: 3px; border-radius: 50%; background: rgba(26,26,46,0.3); }
+
+    /* Status dropdown (tappable pill) */
+    .status-dropdown {
+      position: fixed; z-index: 200; min-width: 150px;
+      background: rgba(26,26,46,0.95); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1.5px solid rgba(77,217,217,0.2); border-radius: 10px; overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3); display: none;
+    }
+    .status-dropdown.open { display: block; }
+    .status-dropdown-item {
+      display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 11px; color: rgba(255,255,255,0.8); letter-spacing: 0.04em;
+      transition: background 0.1s; -webkit-tap-highlight-color: transparent;
+    }
+    .status-dropdown-item:hover { background: rgba(255,255,255,0.08); }
+    .status-dropdown-item:active { background: rgba(255,255,255,0.14); }
+    .status-dropdown-remove { color: #E8908A; border-top: 1px solid rgba(255,255,255,0.1); }
+    .status-dot-preview { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+    /* Loading / empty / closed-toggle on the sky */
+    #screen-history .empty { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.5); color: rgba(26,26,46,0.65); }
+    #screen-history .loading { color: rgba(26,26,46,0.7); }
+    .closed-toggle { color: rgba(26,26,46,0.62); font-size: 13px; margin-top: 16px; }
+
+    /* ── PROJECT DETAIL (v8 touch-up) ── */
+    .back-link {
+      background: none; border: none; padding: 6px 0; margin-bottom: 12px; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: rgba(26,26,46,0.7);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .back-link:hover { color: var(--ink); }
+    #screen-project .project-card-status { cursor: default; }
+    .project-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+    #screen-project .empty { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.5); color: rgba(26,26,46,0.65); }
+    #screen-project .loading { color: rgba(26,26,46,0.7); }
   </style>
 </head>
 <body>
@@ -627,9 +704,20 @@
       </div>
     </section>
 
-    <!-- SCREEN 4 — PROJECTS -->
+    <!-- SCREEN 6 — PROJECTS (list) -->
     <section id="screen-history" class="screen">
-      <h1>Projects</h1>
+      <div class="projects-title">Projects</div>
+      <div class="projects-search-wrap">
+        <div class="projects-search">
+          <input class="search-input" type="text" id="history-search" placeholder="Search projects…" autocomplete="off">
+        </div>
+        <div class="filter-row" id="history-filters">
+          <span class="filter-chip active" data-filter="all">All</span>
+          <span class="filter-chip" data-filter="finished">Finished</span>
+          <span class="filter-chip" data-filter="in_progress">In Progress</span>
+          <span class="filter-chip" data-filter="not_started">Not Started</span>
+        </div>
+      </div>
       <div id="history-loading" class="loading hidden"><span class="dot"></span><span>Loading projects…</span></div>
       <div id="history-error" class="error hidden"></div>
       <div id="history-empty" class="empty hidden">No projects yet. Run your first brief to get started.</div>
@@ -637,26 +725,26 @@
       <label class="closed-toggle"><input type="checkbox" id="show-closed" /> Show closed projects</label>
     </section>
 
-    <!-- SCREEN 5 — PROJECT VIEW -->
+    <!-- PROJECT DETAIL (opened from the Projects list) -->
     <section id="screen-project" class="screen">
-      <button class="secondary" id="project-back">← Back to history</button>
-      <div class="titlerow">
-        <h1 id="project-title">Campaign</h1>
-        <span class="status" id="project-status"></span>
+      <button class="back-link" id="project-back">← Back to projects</button>
+      <div class="output-header">
+        <h2 class="output-title" id="project-title">Campaign</h2>
+        <span class="project-card-status" id="project-status"></span>
       </div>
 
       <div id="project-loading" class="loading hidden"><span class="dot"></span><span>Loading content…</span></div>
       <div id="project-content"></div>
       <div id="project-fallback" class="empty hidden">Content unavailable. You can still open the doc in Drive.</div>
 
-      <div class="actions">
-        <button class="secondary full" id="project-open-btn">Open in Drive ↗</button>
-        <button class="primary full hidden" id="project-draft-btn">Generate First Draft</button>
-        <span class="badge hidden" id="project-draft-status">✓ Draft complete</span>
+      <div class="project-actions">
+        <button class="cta-primary hidden" id="project-draft-btn">Generate First Draft</button>
+        <span class="draft-status hidden" id="project-draft-status">✓ Draft complete</span>
+        <button class="cta-secondary" id="project-open-btn">Open in Drive</button>
       </div>
       <div class="regen hidden" id="project-regen">
         <textarea class="regen-input" id="project-regen-input" placeholder="What should change? Give Quillio direction."></textarea>
-        <button class="primary full" id="project-regen-btn">Regenerate</button>
+        <button class="cta-primary" id="project-regen-btn">Regenerate</button>
       </div>
       <div id="project-draft-progress" class="note hidden"></div>
       <div id="project-error" class="error hidden"></div>
@@ -1284,11 +1372,19 @@
       return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
     }
 
+    // Loaded projects (raw) + current filter/search — re-rendered client-side.
+    var historyProjects = [];
+    var activeHistoryFilter = 'all';
+    var historyQuery = '';
+
+    // v8 status-pill class per canonical status key.
+    var PILL_CLASS = { finished: 'status-active', in_progress: 'status-draft', not_started: 'status-notstarted', closed: 'status-notstarted' };
+
     async function loadHistory() {
       showScreen('history');
-      historyList.textContent = '';
       clearError(historyError);
       hide(historyEmpty);
+      historyList.textContent = '';
       show(historyLoading);
       try {
         var url = '/api/projects?workspaceId=' + encodeURIComponent(WORKSPACE_ID) +
@@ -1297,9 +1393,8 @@
         var data = await res.json();
         if (!data || !data.success) throw new Error((data && data.error) || 'Could not load projects.');
         hide(historyLoading);
-        var projects = data.projects || [];
-        if (!projects.length) { show(historyEmpty); return; }
-        projects.forEach(function (p) { historyList.appendChild(projectCard(p)); });
+        historyProjects = data.projects || [];
+        renderHistoryList();
       } catch (e) {
         hide(historyLoading);
         showError(historyError, e.message || 'Network error — please try again.');
@@ -1307,67 +1402,127 @@
     }
     showClosed.addEventListener('change', loadHistory);
 
+    // Render the loaded projects through the active filter chip + search query.
+    function renderHistoryList() {
+      closeStatusDropdown();
+      historyList.textContent = '';
+      hide(historyEmpty);
+      var q = historyQuery.trim().toLowerCase();
+      var filtered = historyProjects.filter(function (p) {
+        var key = statusKey(p.status);
+        if (activeHistoryFilter !== 'all' && key !== activeHistoryFilter) return false;
+        if (q && (p.name || '').toLowerCase().indexOf(q) === -1) return false;
+        return true;
+      });
+      if (!filtered.length) { show(historyEmpty); return; }
+      filtered.forEach(function (p) { historyList.appendChild(projectCard(p)); });
+    }
+
+    // Filter chips + search wiring.
+    document.getElementById('history-filters').addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('.filter-chip') : null;
+      if (!chip) return;
+      activeHistoryFilter = chip.getAttribute('data-filter');
+      this.querySelectorAll('.filter-chip').forEach(function (c) { c.classList.remove('active'); });
+      chip.classList.add('active');
+      renderHistoryList();
+    });
+    document.getElementById('history-search').addEventListener('input', function () {
+      historyQuery = this.value;
+      renderHistoryList();
+    });
+
     function projectCard(p) {
       var key = statusKey(p.status);
       var isClosed = key === 'closed';
       var card = el('div', 'project-card' + (isClosed ? ' closed' : ''));
 
-      var meta = el('div', 'meta');
-      meta.appendChild(el('div', 'pname', p.name || 'Untitled campaign'));
-      meta.appendChild(el('div', 'pdate', formatDate(p.created_at)));
-      meta.addEventListener('click', function () { openProject(p); });
+      var top = el('div', 'project-card-top');
+      top.appendChild(el('span', 'project-card-name', p.name || 'Untitled campaign'));
+      var pill = el('span', 'project-card-status ' + (PILL_CLASS[key] || 'status-notstarted'), statusLabel(key));
+      if (!isClosed) {
+        // Tappable pill → status dropdown (doesn't open the project).
+        pill.addEventListener('click', function (e) { e.stopPropagation(); openStatusDropdown(pill, p); });
+      }
+      top.appendChild(pill);
+      card.appendChild(top);
+
+      var meta = el('div', 'project-card-meta');
+      var dateStr = formatDate(p.created_at);
+      if (dateStr) meta.appendChild(el('span', 'meta-date', dateStr));
       card.appendChild(meta);
 
-      var right = el('div', 'right');
-      var badge = el('span', 'status ' + key, statusLabel(key));
-      right.appendChild(badge);
+      // Card body opens the project; the status pill above is exempt.
+      card.addEventListener('click', function () { openProject(p); });
+      return card;
+    }
 
-      if (!isClosed) {
-        // Status dropdown — change → optimistic badge update + PATCH.
-        var select = el('select', 'status-select');
-        ACTIVE_STATUSES.forEach(function (s) {
-          var opt = el('option', null, statusLabel(s));
-          opt.value = s;
-          if (s === key) opt.selected = true;
-          select.appendChild(opt);
-        });
-        select.addEventListener('click', function (e) { e.stopPropagation(); });
-        select.addEventListener('change', async function (e) {
-          e.stopPropagation();
-          var next = select.value;
-          var prev = key;
-          badge.className = 'status ' + next;
-          badge.textContent = statusLabel(next);
-          key = next;
-          var ok = await patchStatus(p.id, next);
-          if (!ok) {
-            // Revert on failure.
-            select.value = prev; key = prev;
-            badge.className = 'status ' + prev;
-            badge.textContent = statusLabel(prev);
-            showError(historyError, 'Could not update status — please try again.');
-          }
-        });
-        right.appendChild(select);
+    // --- Status dropdown (tappable pill) -----------------------------------
+    var statusDropdownEl = null;
+    var dropdownTarget = null; // { project, pill }
 
-        var openBtn = el('button', 'open-link', 'Open');
-        openBtn.addEventListener('click', function (e) { e.stopPropagation(); openProject(p); });
-        right.appendChild(openBtn);
+    function buildStatusDropdown() {
+      var d = document.createElement('div');
+      d.className = 'status-dropdown';
+      d.id = 'status-dropdown';
+      d.innerHTML =
+        '<div class="status-dropdown-item" data-status="finished"><span class="status-dot-preview" style="background:#2ECC71;border:1px solid #0A5C32;"></span>Finished</div>' +
+        '<div class="status-dropdown-item" data-status="in_progress"><span class="status-dot-preview" style="background:#C9A84C;border:1px solid #7A5500;"></span>In Progress</div>' +
+        '<div class="status-dropdown-item" data-status="not_started"><span class="status-dot-preview" style="background:rgba(255,255,255,0.6);border:1px solid rgba(26,26,46,0.3);"></span>Not Started</div>' +
+        '<div class="status-dropdown-item status-dropdown-remove" data-status="closed">Remove from list</div>';
+      d.addEventListener('click', function (e) {
+        var item = e.target.closest ? e.target.closest('.status-dropdown-item') : null;
+        if (item) selectStatus(item.getAttribute('data-status'));
+      });
+      document.body.appendChild(d);
+      return d;
+    }
+    function openStatusDropdown(pill, project) {
+      if (!statusDropdownEl) statusDropdownEl = buildStatusDropdown();
+      dropdownTarget = { project: project, pill: pill };
+      var rect = pill.getBoundingClientRect();
+      statusDropdownEl.style.top = (rect.bottom + 6) + 'px';
+      statusDropdownEl.style.left = Math.max(8, Math.min(rect.left - 40, window.innerWidth - 158)) + 'px';
+      statusDropdownEl.classList.add('open');
+      setTimeout(function () { document.addEventListener('click', closeDropdownOutside, { once: true }); }, 10);
+    }
+    function closeStatusDropdown() {
+      if (statusDropdownEl) statusDropdownEl.classList.remove('open');
+      dropdownTarget = null;
+    }
+    function closeDropdownOutside(e) {
+      if (statusDropdownEl && !statusDropdownEl.contains(e.target)) closeStatusDropdown();
+    }
+    async function selectStatus(status) {
+      if (!dropdownTarget) return;
+      var project = dropdownTarget.project;
+      var pill = dropdownTarget.pill;
+      var prev = project.status;
+      closeStatusDropdown();
 
-        var close = el('button', 'card-close', '×');
-        close.setAttribute('aria-label', 'Remove project');
-        close.addEventListener('click', async function (e) {
-          e.stopPropagation();
-          if (!window.confirm('Remove this project from your list?')) return;
-          var ok = await patchStatus(p.id, 'closed');
-          if (ok) { card.parentNode && card.parentNode.removeChild(card); }
-          else { showError(historyError, 'Could not remove project — please try again.'); }
-        });
-        right.appendChild(close);
+      if (status === 'closed') {
+        if (!window.confirm('Remove this project from your list?')) return;
+        var okClose = await patchStatus(project.id, 'closed');
+        if (okClose) { project.status = 'closed'; renderHistoryList(); }
+        else { showError(historyError, 'Could not remove project — please try again.'); }
+        return;
       }
 
-      card.appendChild(right);
-      return card;
+      // Optimistic pill update; revert on failure.
+      project.status = status;
+      pill.className = 'project-card-status ' + (PILL_CLASS[status] || 'status-notstarted');
+      pill.textContent = statusLabel(status);
+      var ok = await patchStatus(project.id, status);
+      if (!ok) {
+        project.status = prev;
+        var pk = statusKey(prev);
+        pill.className = 'project-card-status ' + (PILL_CLASS[pk] || 'status-notstarted');
+        pill.textContent = statusLabel(pk);
+        showError(historyError, 'Could not update status — please try again.');
+      } else if (activeHistoryFilter !== 'all') {
+        // The card may no longer match the active filter.
+        renderHistoryList();
+      }
     }
 
     // PATCH a project's status. Returns true on success.
@@ -1435,7 +1590,7 @@
       var badge = document.getElementById('project-status');
       var pkey = statusKey(p.status);
       badge.textContent = statusLabel(pkey);
-      badge.className = 'status ' + pkey;
+      badge.className = 'project-card-status ' + (PILL_CLASS[pkey] || 'status-notstarted');
 
       // Hide every draft affordance until the content tells us whether the doc
       // already has copy (decided after the fetch below).
@@ -1472,13 +1627,13 @@
     function renderProjectContent(content) {
       projectContentEl.textContent = '';
 
-      projectContentEl.appendChild(el('h2', null, 'Campaign Summary'));
-      projectContentEl.appendChild(el('div', 'summary', content.summary || '—'));
+      projectContentEl.appendChild(el('div', 'section-label', 'Campaign Summary'));
+      projectContentEl.appendChild(el('div', 'section-body', content.summary || '—'));
 
-      projectContentEl.appendChild(el('h2', null, 'Writer Direction'));
-      projectContentEl.appendChild(el('div', 'direction', content.writerDirection || '—'));
+      projectContentEl.appendChild(el('div', 'section-label', 'Writer Direction'));
+      projectContentEl.appendChild(el('div', 'section-body', content.writerDirection || '—'));
 
-      projectContentEl.appendChild(el('h2', null, 'Assets'));
+      projectContentEl.appendChild(el('div', 'assets-label', 'Assets'));
       var assets = content.assets || [];
       assets.forEach(function (a) {
         appendAssetCard(projectContentEl, a, { showPlaceholder: true });

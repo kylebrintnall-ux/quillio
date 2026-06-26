@@ -418,6 +418,67 @@
     .progress-dot.active { background: var(--gold); animation: dotPulse 1s ease infinite; }
     #screen-progress .error { width: 100%; max-width: 360px; }
     #progress-back { width: 100%; max-width: 280px; }
+
+    /* ── OUTPUT (v8) ── */
+    #screen-output { padding-bottom: 150px; }
+    .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
+    .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--ink); letter-spacing: 0.02em; flex: 1; margin: 0; }
+    .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
+    .section-label, .assets-label {
+      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--ink); opacity: 0.75;
+    }
+    .section-label { margin-bottom: 8px; }
+    .assets-label { margin-bottom: 14px; }
+    .section-body { font-size: 14px; line-height: 1.65; color: rgba(26,26,46,0.78); margin: 0 0 24px; white-space: pre-wrap; }
+    .asset-card {
+      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px; padding: 18px 18px 12px; margin-bottom: 12px;
+    }
+    @keyframes cardIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+    .asset-card.reveal { animation: cardIn 0.45s ease both; }
+    .asset-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 5px; }
+    .asset-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--ink); letter-spacing: 0.02em; }
+    .asset-card-badge { font-family: 'IBM Plex Sans', sans-serif; font-size: 10px; font-weight: 600; color: rgba(26,26,46,0.5); background: rgba(26,26,46,0.06); border-radius: 100px; padding: 2px 9px; }
+    .asset-card-badge.drafted { color: #0A5C32; background: #C6F0D8; }
+    .asset-direction { font-size: 12px; font-style: italic; color: rgba(26,26,46,0.48); margin: 0 0 12px; line-height: 1.5; }
+    .asset-field { display: flex; align-items: baseline; justify-content: space-between; padding: 10px 0; border-top: 1px solid rgba(26,26,46,0.06); gap: 12px; }
+    .asset-field.has-copy { flex-direction: column; align-items: flex-start; gap: 5px; }
+    .field-name { font-size: 13px; font-weight: 500; color: rgba(26,26,46,0.72); flex-shrink: 0; }
+    .field-count { font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.32); background: rgba(26,26,46,0.05); border-radius: 6px; padding: 2px 8px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .field-copy { font-size: 13px; line-height: 1.5; color: rgba(26,26,46,0.82); width: 100%; white-space: pre-line; }
+    .field-meta { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px; }
+    .field-char { font-size: 11px; color: rgba(26,26,46,0.35); font-variant-numeric: tabular-nums; }
+    .field-char.over { color: #c0392b; font-weight: 600; }
+    .field-char.placeholder { font-style: italic; }
+    .draft-status { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 600; color: #0A5C32; background: #C6F0D8; border: 1.5px solid #2ECC71; border-radius: 100px; padding: 6px 14px; display: inline-block; margin-bottom: 16px; }
+
+    /* Fixed bottom CTA bar (output) */
+    .output-ctas {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+      padding: 14px 26px 28px; max-width: 520px; margin: 0 auto;
+      background: linear-gradient(0deg, rgba(77,217,217,0.97) 60%, transparent);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .cta-primary {
+      display: flex; align-items: center; justify-content: center; padding: 17px;
+      background: var(--gold); border: none; border-radius: 14px; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--ink);
+      box-shadow: 0 4px 16px rgba(201,168,76,0.35); transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+    }
+    .cta-primary:active { transform: scale(0.98); }
+    .cta-primary:disabled { opacity: 0.6; cursor: default; }
+
+    /* Regenerate (inline, output screen) */
+    .regen { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .regen-input {
+      width: 100%; min-height: 80px; resize: vertical;
+      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px;
+      font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; line-height: 1.5; color: var(--ink);
+      padding: 14px 16px; -webkit-appearance: none; outline: none;
+    }
+    .regen-input:focus { border-color: rgba(255,255,255,0.9); outline: none; }
+    .regen-input::placeholder { color: rgba(26,26,46,0.4); }
   </style>
 </head>
 <body>
@@ -469,29 +530,33 @@
 
     <!-- SCREEN 3 — DOC OUTPUT -->
     <section id="screen-output" class="screen">
-      <h1 id="out-title">Campaign</h1>
-      <div id="draft-status" class="badge hidden"></div>
+      <div class="output-header">
+        <h2 class="output-title" id="out-title">Campaign</h2>
+        <img class="header-gif" src="/assets/gifs/quillio-doc-done.gif" alt="">
+      </div>
+      <div id="draft-status" class="draft-status hidden"></div>
 
-      <h2>Campaign Summary</h2>
-      <div class="summary" id="out-summary"></div>
+      <div class="section-label">Campaign Summary</div>
+      <p class="section-body" id="out-summary"></p>
 
-      <h2>Writer Direction</h2>
-      <div class="direction" id="out-direction"></div>
+      <div class="section-label">Writer Direction</div>
+      <p class="section-body" id="out-direction"></p>
 
-      <h2>Assets</h2>
+      <div class="assets-label">Assets</div>
       <div id="out-assets"></div>
       <div id="copy-fallback" class="note hidden">Open in Drive to view copy ↗</div>
 
-      <div class="actions">
-        <button class="primary full" id="draft-btn">Generate First Draft</button>
-        <button class="secondary full" id="open-btn">Open in Drive ↗</button>
-      </div>
       <div class="regen hidden" id="regen">
         <textarea class="regen-input" id="regen-input" placeholder="What should change? Give Quillio direction."></textarea>
-        <button class="primary full" id="regen-btn">Regenerate</button>
+        <button class="cta-primary" id="regen-btn">Regenerate</button>
       </div>
       <div id="draft-progress" class="note hidden"></div>
       <div id="output-error" class="error hidden"></div>
+
+      <div class="output-ctas">
+        <button class="cta-primary" id="draft-btn">Generate First Draft</button>
+        <button class="cta-secondary" id="open-btn">Open in Drive</button>
+      </div>
     </section>
 
     <!-- SCREEN 4 — PROJECTS -->
@@ -753,15 +818,14 @@
     //   opts.showPlaceholder → render "Not yet drafted" for empty fields
     function appendAssetCard(container, asset, opts) {
       opts = opts || {};
-      var card = el('div', 'asset');
-      var head = el('h3', null, asset.name);
+      var card = el('div', 'asset-card');
+
+      var header = el('div', 'asset-card-header');
+      header.appendChild(el('span', 'asset-card-name', asset.name));
       if (opts.badge) {
-        var badge = el('span', 'badge', opts.badge);
-        head.appendChild(document.createTextNode(' '));
-        head.appendChild(badge);
+        header.appendChild(el('span', 'asset-card-badge' + (opts.drafted ? ' drafted' : ''), opts.badge));
       }
-      if (opts.drafted) card.classList.add('drafted');
-      card.appendChild(head);
+      card.appendChild(header);
 
       // Asset-level creative direction — one muted italic line under the asset
       // name (same treatment as the doc). Optional.
@@ -771,33 +835,49 @@
       (asset.fields || []).forEach(function (f) {
         var copy = f.copy != null ? String(f.copy) : '';
         var hasCopy = copy.trim().length > 0;
-
-        var row = el('div', 'field');
-        row.appendChild(el('span', 'name', f.fieldName));
-        var limit = el('span', 'limit', charLimit(f));
-        // Live count once copy exists; red when it exceeds the char limit.
-        if (hasCopy) {
-          var count = el('span', 'count', ' · ' + copy.length);
-          if (f.charMax && copy.length > f.charMax) count.classList.add('over');
-          limit.appendChild(count);
-        }
-        row.appendChild(limit);
-        card.appendChild(row);
+        var limit = charLimit(f); // '[70]' / '[40–60]' / ''
 
         if (hasCopy) {
-          card.appendChild(el('div', 'field-copy', copy));
-        } else if (opts.showPlaceholder) {
-          card.appendChild(el('div', 'field-copy empty', 'Not yet drafted'));
+          // Drafted field: name, the copy, then a meta row (live char count +
+          // limit). Count turns red when it exceeds the field's char limit.
+          var row = el('div', 'asset-field has-copy');
+          row.appendChild(el('span', 'field-name', f.fieldName));
+          row.appendChild(el('div', 'field-copy', copy));
+          var meta = el('div', 'field-meta');
+          var charText = f.charMax ? (copy.length + ' / ' + f.charMax) : (copy.length + ' chars');
+          var charSpan = el('span', 'field-char', charText);
+          if (f.charMax && copy.length > f.charMax) charSpan.classList.add('over');
+          meta.appendChild(charSpan);
+          if (limit) meta.appendChild(el('span', 'field-count', limit));
+          row.appendChild(meta);
+          card.appendChild(row);
+        } else {
+          // Undrafted field: name + char limit, or a "Not yet drafted" note when
+          // we're showing placeholders (post-draft empty field / project view).
+          var prow = el('div', 'asset-field');
+          prow.appendChild(el('span', 'field-name', f.fieldName));
+          if (opts.showPlaceholder) {
+            prow.appendChild(el('span', 'field-char placeholder', 'Not yet drafted'));
+          } else if (limit) {
+            prow.appendChild(el('span', 'field-count', limit));
+          }
+          card.appendChild(prow);
         }
       });
       container.appendChild(card);
     }
 
     // Re-render Screen 3's asset list. `assets` is [{ name, fields:[...] }].
+    // Cards fade in sequentially (v8 staggered reveal).
     function renderOutputAssets(assets, opts) {
       var wrap = document.getElementById('out-assets');
       wrap.textContent = '';
       (assets || []).forEach(function (a) { appendAssetCard(wrap, a, opts); });
+      var cards = wrap.querySelectorAll('.asset-card');
+      for (var i = 0; i < cards.length; i++) {
+        cards[i].classList.add('reveal');
+        cards[i].style.animationDelay = (i * 0.1) + 's';
+      }
     }
 
     function renderOutput(data) {

@@ -35,7 +35,7 @@ Goal: The database actually does work at runtime for real tenants.
 
 Goal: New tenants get the full 30-asset default library in Postgres on install.
 
-- Read master asset library from Asset & Field Library v3 Sheet on install
+- Seed the master asset library from the bundled default library (`src/data/defaultAssets.js`) on install
 - Seed `asset_types` and `copy_fields` tables for new tenant
 - Three-tier editability:
   - Tier 1 — Platform spec fields locked by default (character counts) with override warning
@@ -43,7 +43,7 @@ Goal: New tenants get the full 30-asset default library in Postgres on install.
   - Tier 3 — Custom assets added by tenant are fully owned by them
 - `is_active` flag — deactivate assets without deleting
 - `spec_source` and `spec_version` columns on `copy_fields` for future LiveSpecs (Phase 7)
-- Demo falls back to Sheet as before via feature flag
+- Postgres is the single source of truth for asset specs — the Google Sheet has been fully retired (no fallback; Postgres is mandatory to build docs)
 - Smoke test: new tenant install triggers asset seeding, 30 types present in Postgres
 
 ## Week 8 — Web app foundation (quillio.app/app)
@@ -213,7 +213,7 @@ Tenant-owned (live in Postgres after Phase 3):
 - `SLACK_BOT_TOKEN` → `tenant_tokens` service='slack_bot'
 - `SLACK_USER_TOKEN` → `tenant_tokens` service='slack_user'
 - `GOOGLE_REFRESH_TOKEN` → `tenant_tokens` service='google'
-- `ASSET_SHEET_ID` → `asset_types` table per tenant
+- `ASSET_SHEET_ID` → `asset_types` + `copy_fields` per tenant (Google Sheet fully retired; Postgres is the single source of truth)
 - `DRIVE_FOLDER_ID` → `tenants.default_folder_id`
 
 ## APPROVAL WORKFLOW MODEL

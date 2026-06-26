@@ -17,7 +17,7 @@ copy.
    │
    └─▶ (async, ~7s+)
          1. Gemini parses the brief → { summary, writerPrompt, assets }
-         2. Read asset specs from the Google Sheet, filtered to those assets
+         2. Read asset specs from Postgres (the tenant's asset library), filtered to those assets
          3. Create a formatted Google Doc in the Drive folder
          4. Post a Block Kit message: title, asset list,
             [Open in Drive] [Generate First Draft] [Skip]
@@ -30,7 +30,7 @@ copy.
 ### Why Node, not Apps Script
 
 Slack slash commands **must** get an HTTP response within 3 seconds, but the
-full workflow (Gemini + Sheets + Docs + Slack) takes 7+ seconds. Google Apps
+full workflow (Gemini + Postgres + Docs + Slack) takes 7+ seconds. Google Apps
 Script can't return early and keep working — `doPost` only "responds" when the
 function returns. This app sends Slack its `200` acknowledgment **first**, then
 runs the workflow asynchronously after the response is flushed. That single
@@ -43,12 +43,13 @@ requirement is the reason this lives in Node/Express. See
 src/
   server.js              Express app; ack-first slash command + interactions
   config.js              Env vars and baked-in IDs/URLs
-  google.js              Auth → Drive/Docs/Sheets clients (service account +
+  google.js              Auth → Drive/Docs clients (service account +
                          optional OAuth2 for writes)
   workflow.js            Orchestrates the async pipeline (destination-agnostic)
+  db/
+    assets.js            Per-tenant asset library in Postgres (the spec source)
   services/
     gemini.js            Brief parsing + per-field draft generation
-    sheets.js            Reads & groups the asset spec Sheet
     slack.js             Block Kit message + Slack posting helpers
   destinations/          Output adapters — where the brief gets written
     index.js             Registry; selects the adapter via DESTINATION
@@ -70,7 +71,8 @@ env var. No workflow changes required.
 | Variable | Required | Description |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | ✅ | Google Gemini API key. Create one at <https://aistudio.google.com/app/apikey>. |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | ✅ | The **full JSON** of a Google Cloud service-account key, as a single-line string. Always used to read the Sheet. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | ✅ | The **full JSON** of a Google Cloud service-account key, as a single-line string. Used for Drive/Docs API access. |
+| `DATABASE_URL` | ✅ | Postgres connection string. The asset library (asset specs) lives in Postgres — it is the single source of truth, so this is required to build docs. |
 | `PORT` | ✅ | HTTP port. Railway sets this automatically; defaults to `3000` locally. |
 | `SLACK_WEBHOOK_URL` | ✅ | Incoming webhook the Block Kit result is posted to. It's a secret, so it isn't baked into the code. |
 | `GOOGLE_CLIENT_ID` | ⬜ | OAuth2 client ID. Required only if using OAuth2 for Drive/Docs writes. |
@@ -78,7 +80,6 @@ env var. No workflow changes required.
 | `GOOGLE_REFRESH_TOKEN` | ⬜ | OAuth2 refresh token. **If set, all Drive/Docs writes run as this OAuth2 user** instead of the service account (the personal-Gmail path). If unset, the service account does the writes. |
 | `DESTINATION` | ⬜ | Output adapter id. Defaults to `google-docs`. |
 | `GEMINI_MODEL` | ⬜ | Gemini model id. Defaults to `gemini-2.5-flash`. |
-| `ASSET_SHEET_ID` | ⬜ | Asset specs Sheet. Defaults to `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`. |
 | `DRIVE_FOLDER_ID` | ⬜ | Folder docs are created in. Defaults to `1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U`. |
 | `SLACK_SIGNING_SECRET` | ⬜ | If set, every incoming Slack request is signature-verified. |
 | `SLACK_BOT_TOKEN` | ⬜ | Bot token (`xoxb-…`). Enables posting/editing the status message in place via `chat.postMessage` / `chat.update` (the live "Building…" → result flow). |
@@ -86,16 +87,17 @@ env var. No workflow changes required.
 
 See `.env.example` for a copy-paste template.
 
-## The asset spec Sheet
+## The asset library
 
-The Sheet at `SHEET_ID` must have a header row with these columns (order
-doesn't matter, names are matched case-insensitively):
+Asset specs live in **Postgres** — the `asset_types` and `copy_fields` tables,
+per tenant (read via `db/assets.js` `getTenantAssets`). This is the single
+source of truth; the old Google Sheet has been fully retired. A new tenant is
+seeded from the bundled default library (`src/data/defaultAssets.js`) on install,
+and the demo tenant ships pre-seeded. Field names and character limits drive
+each doc section; asset-level creative direction is stored alongside.
 
-`Asset Type` · `Channel` · `Field Name` · `Character Limit` · `Notes` ·
-`Funnel Stage` · `Tone Notes`
-
-One row per field. Rows are grouped by **Asset Type** to form each section of
-the doc. Gemini may only choose assets from this fixed list:
+Gemini may only choose assets from a fixed allow-list (`config.ALLOWED_ASSETS`);
+its output is filtered against it defensively. The current list:
 
 - Display Banner
 - Organic Social
@@ -112,8 +114,8 @@ the doc. Gemini may only choose assets from this fixed list:
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
    create (or pick) a project.
-2. Enable the **Google Drive API**, **Google Docs API**, and **Google Sheets
-   API** for that project (APIs & Services → Library).
+2. Enable the **Google Drive API** and **Google Docs API** for that project
+   (APIs & Services → Library).
 3. Go to **APIs & Services → Credentials → Create Credentials → Service
    account**. Give it a name and create it.
 4. Open the service account → **Keys → Add Key → Create new key → JSON**.
@@ -128,15 +130,11 @@ the doc. Gemini may only choose assets from this fixed list:
    GOOGLE_SERVICE_ACCOUNT_JSON=$(cat service-account.json | tr -d '\n')
    ```
 
-### 2. Share the Sheet, and pick how docs get written
+### 2. Pick how docs get written
 
 The service account is a distinct Google identity — it can only see what's
-shared with it. **Always** share the Sheet with it:
-
-- Open the **asset specs Sheet** → **Share** → paste the service account
-  `client_email` → give it **Viewer** access.
-
-Then choose **one** path for *writing* the docs:
+shared with it. (Asset specs come from Postgres now, so there's no Sheet to
+share.) Choose **one** path for *writing* the docs:
 
 **Path A — OAuth2 (personal Gmail).** A service account has essentially no
 personal ("My Drive") storage quota, so a doc it *owns* fails to create with
@@ -236,14 +234,17 @@ To exercise the Slack endpoints locally, expose the port with a tunnel (e.g.
 2. In [Railway](https://railway.app/), **New Project → Deploy from GitHub repo**
    and pick this repo. Nixpacks detects Node and runs `npm start`
    (also pinned in `railway.json` / `Procfile`).
-3. **Variables**: add `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` (paste the
+3. **Add Postgres**: in the project, **New → Database → Add PostgreSQL**. Railway
+   injects `DATABASE_URL` automatically — the asset library lives here, so it's
+   required. Seed the tenant's asset library (see `scripts/`).
+4. **Variables**: add `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` (paste the
    full JSON), and `SLACK_WEBHOOK_URL`. For the personal-Gmail (OAuth2) path,
    also add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
    `GOOGLE_REFRESH_TOKEN`. `PORT` is injected by Railway automatically. Add any
    optional overrides you need.
-4. Deploy, then open **Settings → Networking → Generate Domain** to get the
+5. Deploy, then open **Settings → Networking → Generate Domain** to get the
    public URL.
-5. Put that domain into the Slack app's slash-command and interactivity Request
+6. Put that domain into the Slack app's slash-command and interactivity Request
    URLs (`/slack/command` and `/slack/interactions`).
 
 ## License

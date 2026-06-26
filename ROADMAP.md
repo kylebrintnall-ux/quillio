@@ -124,10 +124,10 @@ Ads launched to platform
 4. Right read path: `files.info` → private download URL → full content
 5. Critical: adding a scope does NOT upgrade existing token. Must reinstall AND paste new `xoxp-` token
 
-**Asset & Field Library v3:**
+**Asset library (Postgres):**
 
 - 30 asset types: Paid Social, Display, Email, Events, Web, Direct Mail, Organic Social, Sales Enablement
-- Sheet ID: `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`
+- Source of truth: Postgres `asset_types` + `copy_fields`, per tenant (seeded from `src/data/defaultAssets.js`). The original Google Sheet (`1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`) has been fully retired.
 - Quillio Campaigns folder: `1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U`
 
 **Current env vars (single-tenant):**
@@ -142,9 +142,8 @@ GEMINI_API_KEY
 GOOGLE_REFRESH_TOKEN
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
-ASSET_SHEET_ID
 DRIVE_FOLDER_ID
-DATABASE_URL             — Phase 3 Postgres
+DATABASE_URL             — Postgres (asset library — the sole spec source)
 ```
 
 -----
@@ -279,7 +278,7 @@ deck_templates (
 | `SLACK_BOT_TOKEN` | tenant_tokens, service='slack_bot' |
 | `SLACK_USER_TOKEN` | tenant_tokens, service='slack_user' |
 | `GOOGLE_REFRESH_TOKEN` | tenant_tokens, service='google' |
-| `ASSET_SHEET_ID` | asset_types table per tenant |
+| `ASSET_SHEET_ID` | asset_types + copy_fields per tenant (Sheet fully retired) |
 | `DRIVE_FOLDER_ID` | tenants.default_folder_id |
 
 **Developer-owned — stay as env vars forever:**
@@ -304,7 +303,7 @@ DATABASE_URL
   teams.js — Phase 6
 
 /integrations
-  google.js — Drive, Docs, Sheets
+  google.js — Drive, Docs
   figma.js — Phase 4
   notion.js — Phase 5
   canva.js — Phase 5
@@ -319,11 +318,17 @@ DATABASE_URL
 if (tenant exists in Postgres) {
   use tenant config from database
 } else {
-  fall back to Sheets + env vars
+  fall back to env vars (tokens/folders only)
 }
 ```
 
 Demo never breaks during migration.
+
+> **Migration complete.** The Google Sheet has been fully retired — asset specs
+> now come exclusively from Postgres (`asset_types` + `copy_fields`), and
+> `generateDoc` throws if a tenant has no library. There is no Sheet fallback;
+> Postgres is mandatory. Tenant tokens/folders still fall back to env vars for
+> the demo workspace.
 
 ### 3c — OAuth Flows
 
@@ -1006,7 +1011,7 @@ The doc feedback feature requires a comment adapter per doc platform. The Slack/
 
 **Key asset IDs:**
 
-- Asset & Field Library v3: `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`
+- Asset library: Postgres `asset_types` + `copy_fields` per tenant (the original Sheet `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU` is fully retired)
 - Quillio Campaigns folder: `1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U`
 - Sample campaign brief doc: `1JQBT6pPFGN6OcZqU4r_DdCyhKojqRXSXdRd7Nopm8pE`
 - Sample strategy deck (PPTX): Agentforce-Q3-Strategy-Deck-Quillio-Test.pptx

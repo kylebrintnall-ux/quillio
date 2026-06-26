@@ -12,7 +12,7 @@ deploys on Railway.
 ## The one architectural rule that matters
 
 **Acknowledge Slack first, then do the work.** Slack slash commands require an
-HTTP response within 3 seconds, but the full pipeline (Gemini → Sheets → Docs →
+HTTP response within 3 seconds, but the full pipeline (Gemini → Postgres → Docs →
 Slack) takes 7+ seconds. `src/server.js` sends the `200` ack **before** calling
 `runBriefWorkflow()`, which then runs fire-and-forget. This early-return pattern
 is why the app exists in Node instead of Google Apps Script (Apps Script's
@@ -30,14 +30,16 @@ src/
                      /slack/interactions) + /health. Ack-first; optional
                      Slack signature verification.
   config.js          Env vars + baked-in IDs/URLs (all env-overridable).
-  google.js          Auth → memoized Drive/Docs/Sheets clients. Sheets is always
-                     the service account; Drive/Docs writes use OAuth2 when
-                     GOOGLE_REFRESH_TOKEN is set, else the service account.
+  google.js          Auth → memoized Drive/Docs clients. Drive/Docs writes use
+                     OAuth2 when GOOGLE_REFRESH_TOKEN is set, else the service
+                     account.
   workflow.js        Orchestrates the async pipeline (parse → specs →
                      destination → post). Destination-agnostic.
+  db/
+    assets.js        Per-tenant asset library in Postgres (asset_types +
+                     copy_fields). getTenantAssets() is the spec source.
   services/
     gemini.js        Gemini REST calls: parseBrief() + generateFieldDraft().
-    sheets.js        Reads the spec Sheet, groups rows by Asset Type, filters.
     slack.js         Block Kit message + Slack POST helpers.
   destinations/      Output adapters — where the brief gets written.
     index.js         Registry; getDestination() selects via config.DESTINATION.
@@ -51,8 +53,9 @@ Data flow for `/quillio [brief]`:
 2. `workflow.runBriefWorkflow`:
    - `gemini.parseBrief` → `{ summary, writerPrompt, assets }` (assets
      constrained to the fixed allowed list).
-   - `sheets.getAssetSpecs(assets)` → grouped specs (all assets if the filter is
-     empty / matches nothing).
+   - `getTenantAssets(tenantId)` → the tenant's Postgres asset library, converted
+     to grouped specs and filtered to `assets` (all assets if the filter is empty
+     / matches nothing). Postgres is the sole spec source.
    - `getDestination().createDocument(...)` → `{ id, url, title }` (creates +
      formats the doc via the active destination adapter).
    - `slack.postResult` → Block Kit message with Open in Drive / Generate First
@@ -83,9 +86,9 @@ Data flow for `/quillio [brief]`:
   Gemini output is filtered against it defensively.
 - **Brand voice** lives in `voice.md` at the repo root, loaded once at startup
   by `gemini.js` and injected into every draft prompt as the overall brand
-  identity (the Sheet's Tone Notes remain field-specific direction). HTML
-  comments are stripped; an unfilled placeholder (headings/comments only) injects
-  nothing. Edits take effect on restart/deploy.
+  identity (per-asset creative direction comes from Postgres `asset_direction`).
+  HTML comments are stripped; an unfilled placeholder (headings/comments only)
+  injects nothing. Edits take effect on restart/deploy.
   - **Editing `voice.md` — mind the structural coupling.** To save tokens,
     `gemini.js` slices the file per asset: everything *except* the
     `## … Writing Across Mediums` section is treated as universal craft and
@@ -107,11 +110,12 @@ Data flow for `/quillio [brief]`:
 ## Environment variables
 
 Required: `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `SLACK_WEBHOOK_URL`,
-`PORT`. Optional: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
-`GOOGLE_REFRESH_TOKEN` (OAuth2 for Drive/Docs writes — the personal-Gmail
-path), `DESTINATION`, `GEMINI_MODEL`, `SHEET_ID`, `DRIVE_FOLDER_ID`,
+`PORT`, `DATABASE_URL` (Postgres holds the asset library — the sole spec source,
+so it's required to build docs). Optional: `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` (OAuth2 for Drive/Docs writes —
+the personal-Gmail path), `DESTINATION`, `GEMINI_MODEL`, `DRIVE_FOLDER_ID`,
 `SLACK_SIGNING_SECRET`. See `.env.example` and `README.md` for details,
-including how to mint the OAuth2 refresh token and share the Sheet.
+including how to mint the OAuth2 refresh token.
 
 ## Running & checking
 
@@ -133,9 +137,10 @@ Railway setup.
 
 ## Gotchas
 
-- The service account is a separate Google identity. The Sheet must always be
-  shared with its `client_email` (Viewer). Most "permission" errors trace back
-  to this.
+- The service account is a separate Google identity — it can only access Drive
+  resources shared with its `client_email`. Most Drive/Docs "permission" errors
+  trace back to a folder not shared with it. (Asset specs come from Postgres, not
+  a Sheet, so there's no Sheet to share.)
 - **Two write paths for Drive/Docs, decided by `GOOGLE_REFRESH_TOKEN`:**
   - *OAuth2 (token set):* writes run as a real Gmail user via OAuth2. This is
     the fix for the service account's `storageQuotaExceeded` — service accounts
@@ -149,23 +154,26 @@ Railway setup.
   rely on doc re-parsing for everything else.
 - Do not commit `.env` or the service-account JSON (see `.gitignore`).
 
-## Asset spec Sheet
+## Asset library (Postgres)
 
-Live Sheet (`ASSET_SHEET_ID` default): `1NVDCcjPO2ZG1Vmt40WTwTYmXTl27dBiwrinHHKK9tCU`
-(the "Agentforce Copy System — Asset & Prompt Library", v2). The old v1 Sheet
-`1skbkkKlHMDUzeG8_bFpcSjrvweumivePuSOvr5qIfqk` is retired.
+Asset specs live in **Postgres** — `asset_types` + `copy_fields`, per tenant,
+read via `db/assets.js` `getTenantAssets`. This is the single source of truth;
+the Google Sheet (and `services/sheets.js`) has been **fully retired**. A new
+tenant is seeded from the bundled default library (`src/data/defaultAssets.js`)
+on install; the demo tenant ships pre-seeded. **Postgres is mandatory** —
+`generateDoc` throws if a tenant has no asset library (no DB / unseeded).
 
-Fields are read **dynamically** from the Sheet — `sheets.getAssetSpecs` groups
-rows by `Asset Type` in row order, draft copy is generated per field by name,
-and `parseDoc` recovers fields from the doc via the bold-label-ending-in-
-`[limit]` pattern. **Nothing hardcodes field names or field counts**, so adding,
-renaming, or reordering fields in the Sheet needs no code change — just edit the
-Sheet (it's read live on every `/quillio`).
+Fields are read **dynamically** from the tenant's library —
+`pipeline.tenantAssetsToSpecs` converts rows into the grouped spec shape, draft
+copy is generated per field by name, and `parseDoc` recovers fields from the doc
+via the bold-label-ending-in-`[limit]` pattern. **Nothing hardcodes field names
+or field counts**, so adding, renaming, or reordering fields means editing the
+`asset_types` / `copy_fields` rows (or the default library + reseed) — no code
+change.
 
-The Dynamic Email block (v2) is ordered: Subject Line 1, Subject Line 2,
+The Dynamic Email block is ordered: Subject Line 1, Subject Line 2,
 Pre-header, Headline (Offer 1) [50], Offer Body 1, CTA Text (Offer 1),
-Headline (Offer 2) [50], Offer Body 2, CTA Text (Offer 2). (v1's single
-"Headline" was split into per-offer "Headline (Offer 1)" / "Headline (Offer 2)".)
+Headline (Offer 2) [50], Offer Body 2, CTA Text (Offer 2).
 
 ## Vision & roadmap
 
@@ -178,5 +186,5 @@ LiveSpecs) is to become the industry source of truth for platform copy specs.
 
 When building features, check `ROADMAP.md` for intent, and treat its
 "Current verified specs" tables as the reference for character limits (the live
-limits actually enforced come from the asset spec Sheet).
+limits actually enforced come from the Postgres asset library).
 

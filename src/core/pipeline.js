@@ -9,6 +9,7 @@ const { getClients } = require('../google');
 const {
   parseBrief: geminiParseBrief,
   enrichWithReferences: geminiEnrich,
+  describeImage,
 } = require('../services/gemini');
 const { normalize } = require('../utils/normalize');
 const { getDestination } = require('../destinations');
@@ -444,11 +445,129 @@ async function parseBrief(briefText) {
   return parsed;
 }
 
+// --- Attached file references (uploads) ---
+// Files attached directly to a brief (web upload or Slack file) are ingested
+// through the same enrichment pipeline as reference links and tagged
+// type:'upload'. Caps: 10MB per file, 3 files max.
+const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
+const ATTACH_MAX_FILES = 3;
+const ATTACH_CONTENT_MAX = 5000;
+
+// Extract reference content from one file buffer by mimetype / filename:
+//   PDF   → pdf-parse,  DOCX → mammoth,  JPG/PNG → Gemini vision (describeImage).
+// Returns { title, content, type:'upload' } or null (unsupported / empty /
+// failed). Per-file failures are logged and swallowed so one bad file never
+// blocks the brief.
+async function extractAttachment(buffer, mimetype, filename) {
+  const mt = String(mimetype || '').toLowerCase();
+  const name = String(filename || 'attachment');
+  const title = cleanFilenameTitle(name) || name;
+  try {
+    if (mt.includes('pdf') || /\.pdf$/i.test(name)) {
+      process.env.SUPPRESS_NO_CONFIG_WARNING = true;
+      const pdfParse = require('pdf-parse');
+      const parsed = await pdfParse(buffer);
+      const content = String(parsed.text || '').trim().slice(0, ATTACH_CONTENT_MAX);
+      return content ? { title, content, type: 'upload' } : null;
+    }
+    if (
+      mt.includes('wordprocessingml') ||
+      mt.includes('msword') ||
+      /\.docx$/i.test(name)
+    ) {
+      const mammoth = require('mammoth');
+      const { value } = await mammoth.extractRawText({ buffer });
+      const content = String(value || '').trim().slice(0, ATTACH_CONTENT_MAX);
+      return content ? { title, content, type: 'upload' } : null;
+    }
+    if (mt.startsWith('image/') || /\.(jpe?g|png)$/i.test(name)) {
+      const description = await describeImage(buffer.toString('base64'), mt || 'image/png');
+      const content = String(description || '').trim().slice(0, ATTACH_CONTENT_MAX);
+      return content ? { title, content, type: 'upload' } : null;
+    }
+    console.warn(`[Quillio] attachment skipped (unsupported type ${mt || '?'}): ${name}`);
+  } catch (err) {
+    console.error(`[Quillio] attachment extract failed (${name}): ${err.message}`);
+  }
+  return null;
+}
+
+// Web path: read attached files from local (temp) paths and extract content.
+// fileRefs: [{ path, filename, mimetype }]. Enforces the 3-file / 10MB caps.
+// Returns upload refs ([{ title, content, type:'upload' }]).
+async function processAttachedFiles(fileRefs) {
+  if (!Array.isArray(fileRefs) || fileRefs.length === 0) return [];
+  const fs = require('fs').promises;
+  const out = [];
+  for (const f of fileRefs.slice(0, ATTACH_MAX_FILES)) {
+    if (!f || !f.path) continue;
+    try {
+      const stat = await fs.stat(f.path);
+      if (stat.size > ATTACH_MAX_BYTES) {
+        console.warn(`[Quillio] attachment too large (${stat.size}B), skipping: ${f.filename}`);
+        continue;
+      }
+      const buffer = await fs.readFile(f.path);
+      const ref = await extractAttachment(buffer, f.mimetype, f.filename);
+      if (ref) out.push(ref);
+    } catch (err) {
+      console.error(`[Quillio] could not process attachment ${f && f.filename}: ${err.message}`);
+    }
+  }
+  return out;
+}
+
+// Slack path: download file attachments (authorized fetch with the bot token,
+// same pattern as canvas ingestion) and extract content. attachments:
+// [{ url, filename, mimetype }] where url is a Slack url_private_download.
+// Enforces the 3-file / 10MB caps. Returns upload refs.
+async function fetchAttachedFiles(attachments, token) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
+  const authToken = token || process.env.SLACK_BOT_TOKEN;
+  const out = [];
+  for (const a of attachments.slice(0, ATTACH_MAX_FILES)) {
+    if (!a || !a.url) continue;
+    try {
+      const res = await fetch(a.url, {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      });
+      if (!res.ok) throw new Error(`download status ${res.status}`);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (buffer.length > ATTACH_MAX_BYTES) {
+        console.warn(`[Quillio] Slack attachment too large (${buffer.length}B), skipping: ${a.filename}`);
+        continue;
+      }
+      const ref = await extractAttachment(buffer, a.mimetype, a.filename);
+      if (ref) out.push(ref);
+    } catch (err) {
+      console.error(`[Quillio] could not fetch Slack attachment ${a && a.filename}: ${err.message}`);
+    }
+  }
+  return out;
+}
+
+// Best-effort temp-file cleanup for web uploads. Unlinks each path, ignoring
+// errors (already gone / never written). Call in a finally so files are removed
+// on success or failure.
+async function cleanupAttachedFiles(fileRefs) {
+  if (!Array.isArray(fileRefs) || fileRefs.length === 0) return;
+  const fs = require('fs').promises;
+  for (const f of fileRefs) {
+    if (!f || !f.path) continue;
+    try {
+      await fs.unlink(f.path);
+    } catch {
+      /* already gone — ignore */
+    }
+  }
+}
+
 // Fetch every linked reference (Drive/Docs/Slides, external URLs, PDFs, Slack
 // canvases) in parallel, tag each with its source type, then second-pass fetch
-// any URLs harvested from a Slides deck (appended to referenceLinks). Returns
-// { refs, counts } where counts are the first-pass per-type counts.
-async function fetchAllReferences(referenceLinks, userToken) {
+// any URLs harvested from a Slides deck (appended to referenceLinks). Optional
+// `attachments` (Slack file objects) are downloaded + ingested as type:'upload'.
+// Returns { refs, counts } where counts are the per-type counts.
+async function fetchAllReferences(referenceLinks, userToken, attachments, botToken) {
   // Snapshot links before fetching: fetchDriveReferenceContent may append
   // URLs harvested from a Slides deck, which we second-pass fetch below.
   const originalLinks = [...referenceLinks];
@@ -480,6 +599,10 @@ async function fetchAllReferences(referenceLinks, userToken) {
     refs.push(...moreExternal.map((r) => ({ ...r, type: 'external' })), ...morePdf);
   }
 
+  // Attached files (Slack uploads): download + extract, tagged type:'upload'.
+  const uploadRefs = await fetchAttachedFiles(attachments, botToken);
+  if (uploadRefs.length > 0) refs.push(...uploadRefs);
+
   return {
     refs,
     counts: {
@@ -487,6 +610,7 @@ async function fetchAllReferences(referenceLinks, userToken) {
       external: refExternal.length,
       pdf: refPdf.length,
       canvas: refCanvas.length,
+      upload: uploadRefs.length,
     },
   };
 }
@@ -729,6 +853,9 @@ async function getServiceAccountEmail() {
 module.exports = {
   parseBrief,
   fetchAllReferences,
+  fetchAttachedFiles,
+  processAttachedFiles,
+  cleanupAttachedFiles,
   enrichWithReferences,
   generateDoc,
   generateDraft,

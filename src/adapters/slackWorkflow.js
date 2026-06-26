@@ -123,14 +123,23 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // direction with their content. Fully isolated — any failure leaves the
     // parsed brief unchanged and the pipeline untouched.
     try {
-      const { refs, counts } = await pipeline.fetchAllReferences(referenceLinks, tokens.slack_user);
+      // opts.attachments (Slack file objects: { url, filename, mimetype }) are
+      // downloaded with the bot token and ingested as type:'upload'. Plumbing is
+      // ready; standard slash commands don't carry files, so this is normally
+      // empty until the Events API (message-with-files) feeds it.
+      const { refs, counts } = await pipeline.fetchAllReferences(
+        referenceLinks,
+        tokens.slack_user,
+        opts.attachments,
+        tokens.slack_bot
+      );
       if (refs.length > 0) {
         const enriched = await pipeline.enrichWithReferences({ summary, writerPrompt }, refs);
         summary = enriched.summary;
         writerPrompt = enriched.writerPrompt;
         referenceInsights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
         console.log(
-          `[Quillio] enriched brief from ${counts.drive} Drive + ${counts.external} external + ${counts.pdf} PDF + ${counts.canvas} canvas reference(s)`
+          `[Quillio] enriched brief from ${counts.drive} Drive + ${counts.external} external + ${counts.pdf} PDF + ${counts.canvas} canvas + ${counts.upload || 0} upload reference(s)`
         );
       }
     } catch (err) {

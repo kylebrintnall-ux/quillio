@@ -118,6 +118,29 @@ function verifySlack(req) {
   }
 }
 
+// Normalize Slack file objects into the attachment shape fetchAllReferences
+// expects: [{ url, filename, mimetype }]. `files` may be an array (Events API)
+// or a JSON string; anything else (e.g. a slash command, which carries no files)
+// yields []. Prefers url_private_download for the authorized fetch.
+function parseSlackFiles(files) {
+  let arr = files;
+  if (typeof arr === 'string') {
+    try {
+      arr = JSON.parse(arr);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((f) => ({
+      url: f && (f.url_private_download || f.url_private),
+      filename: (f && (f.name || f.title)) || 'attachment',
+      mimetype: (f && f.mimetype) || '',
+    }))
+    .filter((f) => f.url);
+}
+
 // Pulls a Slack url_verification challenge out of the request body, whether it
 // arrives as a top-level JSON body or wrapped in the form-encoded `payload`.
 // Returns the challenge string, or null if this isn't a verification request.
@@ -215,7 +238,11 @@ app.post('/slack/command', (req, res) => {
   const responseUrl = req.body.response_url;
   const channelId = req.body.channel_id;
   const workspaceId = req.body.team_id;
-  runBriefWorkflow(brief, responseUrl, { channelId, workspaceId }).catch(async (err) => {
+  // File-attachment plumbing: slash commands don't carry files, but if a future
+  // Events API handler supplies a files array ([{ url, filename, mimetype }]),
+  // it threads straight through to fetchAllReferences as upload references.
+  const attachments = parseSlackFiles(req.body.files);
+  runBriefWorkflow(brief, responseUrl, { channelId, workspaceId, attachments }).catch(async (err) => {
     console.error('runBriefWorkflow failed:', err);
     try {
       await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);

@@ -689,4 +689,42 @@ async function generateVoiceGuide(answers = {}) {
     .trim();
 }
 
-module.exports = { parseBrief, enrichWithReferences, generateFieldDraft, generateAssetDrafts, generateVoiceGuide };
+// Describe an image used as a creative reference. Sends the image inline to
+// Gemini vision (2.5 Flash accepts image inputs natively) and returns a text
+// blob: any verbatim text in the image plus a description of its visual tone,
+// palette, style, mood, and brand/product elements — feeds the writer direction
+// as creative context. Best-effort: returns '' on any failure (no key, timeout,
+// bad image) so a single bad attachment never blocks the brief.
+async function describeImage(base64Data, mimetype) {
+  if (!base64Data) return '';
+  const prompt =
+    'This image is being used as a creative reference for a marketing copywriting project. ' +
+    'First, extract any text visible in the image verbatim. Then describe: the visual tone, ' +
+    'color palette, design style, emotional mood, and any brand or product elements present. ' +
+    'Be specific and concrete — this description will inform copy direction.';
+  try {
+    const text = await callGemini({
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimetype || 'image/png', data: base64Data } },
+          ],
+        },
+      ],
+    });
+    return String(text || '').trim();
+  } catch (err) {
+    console.error(`[gemini] describeImage failed: ${err.message}`);
+    return '';
+  }
+}
+
+module.exports = {
+  parseBrief,
+  enrichWithReferences,
+  generateFieldDraft,
+  generateAssetDrafts,
+  generateVoiceGuide,
+  describeImage,
+};

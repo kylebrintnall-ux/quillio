@@ -66,6 +66,27 @@
     }
     textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 
+    .brief-attach { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; flex-wrap: wrap; }
+    .attach-btn {
+      font: inherit; font-size: 14px; padding: 6px 12px; width: auto;
+      border: 1px solid var(--line); border-radius: 8px; background: #fff;
+      color: var(--ink); cursor: pointer;
+    }
+    .attach-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .attach-hint { font-size: 12px; color: var(--muted); }
+    .file-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .file-tag {
+      display: inline-flex; align-items: center; gap: 6px; max-width: 240px;
+      font-size: 13px; padding: 5px 8px 5px 10px; border: 1px solid var(--line);
+      border-radius: 999px; background: var(--card, #f6f6f6);
+    }
+    .file-tag .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-tag .rm {
+      border: none; background: none; width: auto; padding: 0 2px; margin: 0;
+      font-size: 15px; line-height: 1; color: var(--muted); cursor: pointer;
+    }
+    .file-tag .rm:hover { color: #c0392b; }
+
     button {
       font: inherit;
       cursor: pointer;
@@ -264,6 +285,12 @@
     <section id="screen-brief" class="screen active">
       <h1>What are we working on?</h1>
       <textarea id="brief" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>
+      <div class="brief-attach">
+        <button type="button" class="attach-btn" id="attach-btn" title="Attach reference files">+ Add files</button>
+        <input type="file" id="file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" multiple hidden>
+        <span class="attach-hint">PDF, DOCX, JPG, PNG · up to 3 files, 10MB each</span>
+      </div>
+      <div id="file-tags" class="file-tags"></div>
       <button class="primary full" id="run-btn">Run Brief →</button>
       <div id="brief-error" class="error hidden"></div>
     </section>
@@ -386,6 +413,72 @@
     // --- Screen 1: brief input ---------------------------------------------
     var briefEl = document.getElementById('brief');
     var briefError = document.getElementById('brief-error');
+
+    // --- File attachments (brief reference files) --------------------------
+    var MAX_FILES = 3;
+    var MAX_FILE_BYTES = 10 * 1024 * 1024;
+    var attachedFiles = []; // File objects held in memory until submit
+    var fileInput = document.getElementById('file-input');
+    var fileTags = document.getElementById('file-tags');
+
+    function fileIcon(f) {
+      var n = (f.name || '').toLowerCase();
+      if (n.match(/\.pdf$/)) return '📄';
+      if (n.match(/\.docx$/)) return '📝';
+      if (n.match(/\.(jpe?g|png)$/)) return '🖼️';
+      return '📎';
+    }
+
+    function renderFileTags() {
+      fileTags.innerHTML = '';
+      attachedFiles.forEach(function (f, i) {
+        var tag = document.createElement('span');
+        tag.className = 'file-tag';
+        var icon = document.createElement('span');
+        icon.textContent = fileIcon(f);
+        var name = document.createElement('span');
+        name.className = 'name';
+        name.textContent = f.name;
+        var rm = document.createElement('button');
+        rm.className = 'rm';
+        rm.type = 'button';
+        rm.textContent = '×';
+        rm.title = 'Remove';
+        rm.addEventListener('click', function () { removeFile(i); });
+        tag.appendChild(icon);
+        tag.appendChild(name);
+        tag.appendChild(rm);
+        fileTags.appendChild(tag);
+      });
+    }
+
+    function removeFile(i) { attachedFiles.splice(i, 1); renderFileTags(); }
+    function clearAttachedFiles() { attachedFiles = []; renderFileTags(); }
+
+    function addFiles(fileList) {
+      clearError(briefError);
+      var rejected = [];
+      Array.prototype.forEach.call(fileList, function (f) {
+        if (attachedFiles.length >= MAX_FILES) { rejected.push(f.name + ' (max ' + MAX_FILES + ')'); return; }
+        if (f.size > MAX_FILE_BYTES) { rejected.push(f.name + ' (over 10MB)'); return; }
+        if (!f.name.match(/\.(pdf|docx|jpe?g|png)$/i)) { rejected.push(f.name + ' (unsupported)'); return; }
+        // Skip exact dupes (name + size).
+        if (attachedFiles.some(function (x) { return x.name === f.name && x.size === f.size; })) return;
+        attachedFiles.push(f);
+      });
+      renderFileTags();
+      if (rejected.length) showError(briefError, 'Skipped: ' + rejected.join(', '));
+    }
+
+    // Upload held files to /api/upload; returns the fileRefs the brief job needs.
+    async function uploadFiles(files) {
+      var fd = new FormData();
+      files.forEach(function (f) { fd.append('files', f); });
+      var res = await fetch('/api/upload', { method: 'POST', body: fd });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok || !data.success) throw new Error((data && data.error) || 'File upload failed.');
+      return data.fileRefs || [];
+    }
 
     // --- Screen 2: staged progress -----------------------------------------
     var HEADINGS = ['Reading your brief…', 'Fetching references…', 'Building your doc…', 'Creating project folder…'];
@@ -550,13 +643,17 @@
       startStages();
 
       // Start a brief job and poll until it completes — no long-held request for
-      // Railway's proxy to cut. On failure, failStages shows the error + the
-      // "Back to brief" button.
+      // Railway's proxy to cut. Any attached files are uploaded first, then their
+      // refs are passed into the brief job. On failure, failStages shows the
+      // error + the "Back to brief" button.
       try {
-        var data = await runJob('/api/brief', { briefText: briefText, workspaceId: WORKSPACE_ID }, '/api/brief');
+        var fileRefs = [];
+        if (attachedFiles.length) { fileRefs = await uploadFiles(attachedFiles); }
+        var data = await runJob('/api/brief', { briefText: briefText, workspaceId: WORKSPACE_ID, fileRefs: fileRefs }, '/api/brief');
         finishStages();
         renderOutput(data);
         showScreen('output');
+        clearAttachedFiles();
       } catch (e) {
         failStages(e.message || 'Network error — please try again.');
       }
@@ -1027,6 +1124,8 @@
 
     // --- Wiring -------------------------------------------------------------
     document.getElementById('run-btn').addEventListener('click', runBrief);
+    document.getElementById('attach-btn').addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
     document.getElementById('draft-btn').addEventListener('click', generateDraft);
     document.getElementById('regen-btn').addEventListener('click', regenerateDraft);
     document.getElementById('open-btn').addEventListener('click', openInDrive);

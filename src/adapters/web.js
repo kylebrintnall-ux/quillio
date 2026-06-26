@@ -23,7 +23,7 @@ function folderIdFromUrl(url) {
 // the Slack adapter's pipeline sequence (parse → enrich → build) minus all the
 // chat.update lifecycle. Throws on failure so the route can shape the error
 // response; never leaks anything to the caller beyond the thrown message.
-async function runWebBrief(briefText, tenantContext = {}) {
+async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
   const tokens = tenantContext.tokens || {};
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
   // Drive/Docs writes run as this tenant's Google OAuth user when they've
@@ -49,21 +49,37 @@ async function runWebBrief(briefText, tenantContext = {}) {
     );
   }
 
-  // 2. Enrich from linked references (best-effort — any failure leaves the
-  //    parsed brief unchanged, exactly like the Slack adapter).
+  // 2. Enrich from linked references + attached files (best-effort — any failure
+  //    leaves the parsed brief unchanged, exactly like the Slack adapter). Temp
+  //    upload files are always cleaned up, success or failure.
   try {
     const { refs, counts } = await pipeline.fetchAllReferences(referenceLinks, tokens.slack_user);
-    if (refs.length > 0) {
-      const enriched = await pipeline.enrichWithReferences({ summary, writerPrompt }, refs);
+
+    // Attached files (web uploads): read from temp paths, extract, then delete
+    // the temp files immediately regardless of outcome.
+    let uploadRefs = [];
+    if (Array.isArray(fileRefs) && fileRefs.length > 0) {
+      try {
+        uploadRefs = await pipeline.processAttachedFiles(fileRefs);
+      } finally {
+        await pipeline.cleanupAttachedFiles(fileRefs);
+      }
+    }
+
+    const allRefs = uploadRefs.length > 0 ? [...refs, ...uploadRefs] : refs;
+    if (allRefs.length > 0) {
+      const enriched = await pipeline.enrichWithReferences({ summary, writerPrompt }, allRefs);
       summary = enriched.summary;
       writerPrompt = enriched.writerPrompt;
       referenceInsights = Array.isArray(enriched.referenceInsights) ? enriched.referenceInsights : [];
       console.log(
-        `[web] enriched brief from ${counts.drive} Drive + ${counts.external} external + ${counts.pdf} PDF + ${counts.canvas} canvas reference(s)`
+        `[web] enriched brief from ${counts.drive} Drive + ${counts.external} external + ${counts.pdf} PDF + ${counts.canvas} canvas + ${uploadRefs.length} upload reference(s)`
       );
     }
   } catch (err) {
     console.error('[web] reference enrichment skipped:', err.message);
+    // Ensure temp uploads are removed even if processing threw before its finally.
+    await pipeline.cleanupAttachedFiles(fileRefs);
   }
 
   // 3. Folder routing: honor a Drive folder URL embedded in the brief; null

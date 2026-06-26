@@ -585,6 +585,7 @@ test('routes/app mounts and exposes its routes', () => {
     '/api/projects/:id',
     '/api/projects/:id/content',
     '/api/projects/:id/status',
+    '/api/upload',
     '/app',
   ]);
 });
@@ -643,4 +644,44 @@ test('public/app.html has the history + project-view screens wired to the projec
   assert.ok(/\/api\/projects\/.+\/content|\/content/.test(html), 'app.html fetches project content');
   assert.ok(/No projects yet/.test(html), 'history empty state present');
   assert.ok(/Content unavailable/.test(html), 'project-view fallback present');
+});
+
+// --- File attachment as reference input (Phase 3 additions) ---
+
+test('pipeline exposes the attachment ingestion helpers', () => {
+  const pipeline = require('../src/core/pipeline');
+  assert.strictEqual(typeof pipeline.fetchAttachedFiles, 'function');
+  assert.strictEqual(typeof pipeline.processAttachedFiles, 'function');
+  assert.strictEqual(typeof pipeline.cleanupAttachedFiles, 'function');
+});
+
+test('attachment helpers handle empty input without network/fs', async () => {
+  const pipeline = require('../src/core/pipeline');
+  assert.deepStrictEqual(await pipeline.fetchAttachedFiles([]), []);
+  assert.deepStrictEqual(await pipeline.fetchAttachedFiles(undefined), []);
+  assert.deepStrictEqual(await pipeline.processAttachedFiles([]), []);
+  // cleanup of nothing must not throw
+  await pipeline.cleanupAttachedFiles([]);
+  await pipeline.cleanupAttachedFiles(undefined);
+});
+
+test('gemini.describeImage returns "" gracefully on empty/no-key', async () => {
+  const { describeImage } = require('../src/services/gemini');
+  assert.strictEqual(typeof describeImage, 'function');
+  // No base64 → short-circuits to '' (no API call).
+  assert.strictEqual(await describeImage('', 'image/png'), '');
+});
+
+test('app.html has the file-attachment UI wired (+ button, picker, upload)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('id="attach-btn"'), 'has the + add-files button');
+  assert.ok(/id="file-input"[^>]*accept="\.pdf,\.docx,\.jpg,\.jpeg,\.png"/.test(html), 'file input accepts the supported types');
+  assert.ok(html.includes('/api/upload'), 'app.html uploads to /api/upload');
+  assert.ok(html.includes('fileRefs'), 'app.html passes fileRefs into the brief job');
+});
+
+test('app route exposes POST /api/upload (multipart) and loads', () => {
+  // Requiring the route module proves multer wired in cleanly at load time.
+  const router = require('../src/routes/app');
+  assert.strictEqual(typeof router, 'function');
 });

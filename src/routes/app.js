@@ -8,8 +8,10 @@
 // server-side only, never sent to the browser.
 
 const crypto = require('crypto');
+const os = require('os');
 const path = require('path');
 const express = require('express');
+const multer = require('multer');
 const { resolveTenant } = require('../db');
 const { getProjects, getProject, setProjectStatus } = require('../db/projects');
 const { runWebBrief, runWebDraft, runWebProjectContent } = require('../adapters/web');
@@ -19,6 +21,48 @@ const router = express.Router();
 
 // The demo tenant — used when a request doesn't carry a workspace id.
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
+
+// --- File attachment uploads (Phase 3 additions) ---
+// Brief reference files are uploaded to /api/upload, stored in the OS temp dir,
+// and their paths handed to /api/brief. Caps: 10MB per file, 3 files max; only
+// PDF / DOCX / JPG / PNG accepted. The pipeline deletes the temp files after
+// ingestion.
+const ALLOWED_UPLOAD_MIME = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg',
+  'image/png',
+]);
+const uploadMw = multer({
+  dest: os.tmpdir(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 3 },
+  fileFilter: (req, file, cb) => {
+    const ok =
+      ALLOWED_UPLOAD_MIME.has(file.mimetype) || /\.(pdf|docx|jpe?g|png)$/i.test(file.originalname);
+    cb(null, ok);
+  },
+}).array('files', 3);
+
+// /api/brief is open and `fileRefs` arrives in the client JSON body, so paths are
+// attacker-controlled. Only honor paths that resolve INSIDE the temp dir (where
+// /api/upload writes), preventing path traversal / arbitrary file reads
+// (e.g. {path:'/etc/passwd'}). Caps to 3 and re-stringifies the metadata.
+const TMP_PREFIX = path.resolve(os.tmpdir());
+function safeFileRefs(refs) {
+  if (!Array.isArray(refs)) return [];
+  return refs
+    .filter((f) => f && typeof f.path === 'string')
+    .filter((f) => {
+      const p = path.resolve(f.path);
+      return p === TMP_PREFIX || p.startsWith(TMP_PREFIX + path.sep);
+    })
+    .slice(0, 3)
+    .map((f) => ({
+      path: f.path,
+      filename: String(f.filename || 'attachment'),
+      mimetype: String(f.mimetype || ''),
+    }));
+}
 
 // In-memory async job store (Week 12). Brief runs (~30-90s) and draft runs
 // (~1 min) both outlast Railway's edge proxy, which closes a connection held
@@ -75,13 +119,34 @@ router.get('/app', requireAuth, (req, res) => {
   res.status(200).sendFile(APP_HTML);
 });
 
+// POST /api/upload — accept brief reference files (multipart form-data) and
+// stash them in the temp dir. Returns { fileRefs: [{ path, filename, mimetype }] }
+// for the client to pass into /api/brief. Open access, matching /api/brief.
+// Multer errors (too big / too many) return a clean 400 rather than crashing.
+router.post('/api/upload', (req, res) => {
+  uploadMw(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    const fileRefs = (req.files || []).map((f) => ({
+      path: f.path,
+      filename: f.originalname,
+      mimetype: f.mimetype,
+    }));
+    console.log(`[web] /api/upload received ${fileRefs.length} file(s)`);
+    return res.status(200).json({ success: true, fileRefs });
+  });
+});
+
 // POST /api/brief — START a brief run and return a job id immediately. The work
 // (~30-90s) runs fire-and-forget; the client polls the status endpoint below.
 // This avoids holding a long request open, which Railway's proxy closes.
+// Optional `fileRefs` (from /api/upload) are ingested as upload references.
 router.post('/api/brief', (req, res) => {
   const body = req.body || {};
   const briefText = (body.briefText || '').trim();
   const workspaceId = body.workspaceId || DEFAULT_WORKSPACE_ID;
+  const fileRefs = safeFileRefs(body.fileRefs);
 
   if (!briefText) {
     return res.status(400).json({ success: false, error: 'briefText is required' });
@@ -89,11 +154,13 @@ router.post('/api/brief', (req, res) => {
 
   const jobId = startJob(`brief workspace=${workspaceId}`, async () => {
     const tenantContext = await resolveTenant(workspaceId);
-    return runWebBrief(briefText, tenantContext); // the full { docUrl, assetBlocks, … }
+    return runWebBrief(briefText, tenantContext, fileRefs); // the full { docUrl, assetBlocks, … }
   });
   // Log the brief length so a truncated brief (e.g. a cut folder URL) is obvious
   // — never the brief content itself.
-  console.log(`[web] /api/brief start → job=${jobId} workspace=${workspaceId} briefText.length=${briefText.length}`);
+  console.log(
+    `[web] /api/brief start → job=${jobId} workspace=${workspaceId} briefText.length=${briefText.length} files=${fileRefs.length}`
+  );
   return res.status(202).json({ success: true, jobId });
 });
 

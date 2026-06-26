@@ -9,6 +9,8 @@
 const path = require('path');
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
+const { voiceLimiter } = require('../middleware/rateLimit');
+const { clientErrorMessage } = require('../utils/errors');
 const { setTenantDefaultFolder, saveVoiceGuide, getVoiceGuide } = require('../db');
 const { getTenantAssets, setActiveAssets } = require('../db/assets');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
@@ -59,7 +61,7 @@ router.get('/api/onboarding/assets', async (req, res) => {
     return res.status(200).json({ success: true, groups });
   } catch (err) {
     console.error('[onboarding] /assets failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -78,7 +80,7 @@ router.post('/api/onboarding/folder', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, folderId });
   } catch (err) {
     console.error('[onboarding] /folder failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -90,7 +92,7 @@ router.post('/api/onboarding/assets', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, deactivated });
   } catch (err) {
     console.error('[onboarding] /assets save failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -102,14 +104,14 @@ router.get('/api/onboarding/voice', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, voiceMarkdown: markdown || null });
   } catch (err) {
     console.error('[onboarding] GET /voice failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
 // POST /api/onboarding/voice — dual mode:
 //   { answers: {...} } → generate a voice guide via Gemini, save it, return it.
 //   { markdown: "..." } → save the user's edited markdown (the inline-edit path).
-router.post('/api/onboarding/voice', requireAuth, async (req, res) => {
+router.post('/api/onboarding/voice', voiceLimiter, requireAuth, async (req, res) => {
   const body = req.body || {};
   const tenantId = req.user && req.user.tenant_id;
   try {
@@ -149,7 +151,7 @@ router.post('/api/onboarding/voice', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, voiceMarkdown: markdown });
   } catch (err) {
     console.error('[onboarding] /voice failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 

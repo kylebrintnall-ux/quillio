@@ -24,6 +24,7 @@ const {
   buildRegenerateModalView,
   openModal,
 } = require('./services/slack');
+const { oauthLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
@@ -71,7 +72,9 @@ app.use(
 
 // Slack OAuth install flow (/oauth/slack, /oauth/slack/callback, /welcome) +
 // Google OAuth / sign-in (/oauth/google[, /callback]). Separate from the
-// slash-command/interactions handlers below.
+// slash-command/interactions handlers below. Rate-limit the /oauth/* surface
+// (20/hr/IP) — /welcome is not under /oauth so it stays unlimited.
+app.use('/oauth', oauthLimiter);
 app.use(oauthRoutes);
 
 // Onboarding flow (/onboarding + /api/onboarding/*). Auth-gated per route.
@@ -358,6 +361,23 @@ app.post('/slack/interactions', (req, res) => {
   }
   // 'open_in_drive' / 'review_copy' are link buttons — no server-side work.
   // 'populate_figma' is Phase 4 — intentionally unwired.
+});
+
+// Global error handler (must be LAST, with 4 args). Catches anything thrown in a
+// sync handler or passed to next(err) — most importantly body-parser/multer
+// parse errors that individual routes don't see. Logs the full error
+// server-side; the client gets a clean JSON body with NO stack trace, and a
+// generic message in production.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[error] unhandled:', err && err.stack ? err.stack : err);
+  if (res.headersSent) return next(err);
+  const status = err && Number.isInteger(err.status || err.statusCode) ? err.status || err.statusCode : 500;
+  const isProd = process.env.NODE_ENV === 'production';
+  return res.status(status).json({
+    success: false,
+    error: isProd ? 'Something went wrong' : (err && err.message) || 'Something went wrong',
+  });
 });
 
 app.listen(config.PORT, () => {

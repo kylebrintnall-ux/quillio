@@ -10,6 +10,8 @@
 const path = require('path');
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
+const { voiceLimiter } = require('../middleware/rateLimit');
+const { clientErrorMessage } = require('../utils/errors');
 const {
   resolveTenant,
   getVoiceGuide,
@@ -43,7 +45,7 @@ router.get('/api/settings/voice', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, voiceMarkdown: markdown || null });
   } catch (err) {
     console.error('[settings] GET /voice failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -58,13 +60,13 @@ router.post('/api/settings/voice', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error('[settings] POST /voice failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
 // POST /api/settings/voice/generate — six answers (+ optional direction) →
 // Gemini → save → return the new markdown.
-router.post('/api/settings/voice/generate', requireAuth, async (req, res) => {
+router.post('/api/settings/voice/generate', voiceLimiter, requireAuth, async (req, res) => {
   const body = req.body || {};
   const a = body.answers || {};
   try {
@@ -86,7 +88,7 @@ router.post('/api/settings/voice/generate', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, voiceMarkdown: markdown });
   } catch (err) {
     console.error('[settings] /voice/generate failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -103,7 +105,7 @@ router.get('/api/settings/workspace', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('[settings] GET /workspace failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -115,7 +117,7 @@ router.post('/api/settings/workspace/folder', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, folderUrl: folderUrlFromId(folderId) });
   } catch (err) {
     console.error('[settings] /workspace/folder failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 

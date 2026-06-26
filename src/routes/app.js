@@ -16,6 +16,8 @@ const { resolveTenant } = require('../db');
 const { getProjects, getProject, setProjectStatus } = require('../db/projects');
 const { runWebBrief, runWebDraft, runWebProjectContent } = require('../adapters/web');
 const { requireAuth } = require('../middleware/auth');
+const { briefLimiter, draftLimiter, uploadLimiter } = require('../middleware/rateLimit');
+const { clientErrorMessage } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -124,7 +126,7 @@ router.get('/app', requireAuth, (req, res) => {
 // for the client to pass into /api/brief. Requires a session (audit HIGH 1) so
 // unauthenticated callers can't write temp files / fill the disk. Multer errors
 // (too big / too many) return a clean 400 rather than crashing.
-router.post('/api/upload', requireAuth, (req, res) => {
+router.post('/api/upload', uploadLimiter, requireAuth, (req, res) => {
   uploadMw(req, res, (err) => {
     if (err) {
       return res.status(400).json({ success: false, error: err.message });
@@ -146,7 +148,7 @@ router.post('/api/upload', requireAuth, (req, res) => {
 // Requires a session (audit HIGH 2); the tenant comes from req.user.tenant_id —
 // never a client-supplied workspaceId — so a brief always runs as the signed-in
 // tenant. In demo mode requireAuth attaches the demo tenant (T0B8LPRDKHR).
-router.post('/api/brief', requireAuth, (req, res) => {
+router.post('/api/brief', briefLimiter, requireAuth, (req, res) => {
   const body = req.body || {};
   const briefText = (body.briefText || '').trim();
   const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
@@ -177,7 +179,7 @@ router.get('/api/brief/:jobId/status', sendJobStatus);
 // below. This avoids holding a long request open, which Railway's proxy closes.
 // Requires a session (audit HIGH 2); the tenant comes from req.user.tenant_id,
 // never a client-supplied workspaceId.
-router.post('/api/draft', requireAuth, (req, res) => {
+router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
   const body = req.body || {};
   const docId = (body.docId || '').trim();
   const direction = (body.direction || '').trim(); // optional regenerate feedback
@@ -218,7 +220,7 @@ router.get('/api/projects', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, projects });
   } catch (err) {
     console.error('[web] /api/projects failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -237,7 +239,7 @@ router.patch('/api/projects/:id/status', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, status });
   } catch (err) {
     console.error('[web] PATCH /api/projects/:id/status failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -251,7 +253,7 @@ router.get('/api/projects/:id', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, project });
   } catch (err) {
     console.error('[web] /api/projects/:id failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 
@@ -271,7 +273,7 @@ router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, content });
   } catch (err) {
     console.error('[web] /api/projects/:id/content failed:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });
 

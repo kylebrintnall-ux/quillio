@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Quillio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
   <style>
     :root {
       --accent: #4DD9D9;
@@ -266,32 +269,159 @@
     @media (min-width: 600px) {
       .actions { flex-direction: row; }
       .actions button { width: auto; }
-      h1 { font-size: 28px; }
     }
+
+    /* =====================================================================
+       v8 DESIGN SYSTEM  — global scaffolding + Screen 1 (New Brief)
+       Appended last so it overrides the legacy base styles above. Screens
+       not yet ported keep their legacy component styles and stay legible on
+       the sky background until their turn.
+       ===================================================================== */
+    @font-face {
+      font-family: 'StarCrush';
+      src: url('/fonts/Star_Crush.otf') format('opentype');
+      font-weight: normal; font-style: normal; font-display: swap;
+    }
+    :root {
+      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
+      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF;
+      --ink: #1A1A2E; /* v8 navy — overrides the legacy #111 ink token */
+    }
+    html, body { height: auto; min-height: 100%; overflow-x: hidden; }
+    body {
+      font-family: 'IBM Plex Sans', sans-serif;
+      background: var(--ink);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    .sky-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background: linear-gradient(180deg, #1E78BE 0%, #2FA8DC 35%, #3BBDE0 60%, #4DD9D9 100%);
+    }
+    .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+
+    /* Nav — dark glass, pixel-quill logo + StarCrush wordmark/links */
+    nav {
+      position: relative; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 58px; padding: 0 12px 0 18px; gap: 8px;
+      background: rgba(26,26,46,0.9);
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(77,217,217,0.15);
+    }
+    .nav-logo {
+      display: flex; align-items: center; gap: 8px; flex: none;
+      background: none; border: none; padding: 0; cursor: pointer; text-decoration: none;
+    }
+    .nav-quill-img { width: 28px; height: 28px; image-rendering: pixelated; object-fit: contain; }
+    .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
+    .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
+    .nav-link {
+      font-family: 'StarCrush', serif; font-size: 12px; color: rgba(255,255,255,0.4);
+      background: none; border: none; padding: 7px 9px; border-radius: 8px;
+      letter-spacing: 0.04em; white-space: nowrap; cursor: pointer; transition: color 0.15s, background 0.15s;
+    }
+    .nav-link:hover { color: #fff; background: rgba(255,255,255,0.08); }
+    .nav-link.active { color: var(--sky-btm); background: rgba(77,217,217,0.12); }
+
+    /* Content column */
+    main {
+      position: relative; z-index: 5;
+      max-width: 520px; margin: 0 auto; width: 100%;
+      padding: 32px 26px 40px;
+    }
+
+    /* ── BRIEF (v8) ── */
+    .brief-headline { font-family: 'StarCrush', serif; font-size: 36px; line-height: 1.1; color: var(--ink); margin: 0 0 10px; text-align: center; }
+    .brief-sub { font-size: 15px; font-weight: 400; line-height: 1.55; color: rgba(26,26,46,0.68); margin: 0 0 26px; text-align: center; }
+    .glass-card {
+      background: rgba(255,255,255,0.14);
+      backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+      border: 1.5px solid rgba(255,255,255,0.38); border-radius: 18px; overflow: hidden;
+      box-shadow: 0 8px 32px rgba(26,26,46,0.1), inset 0 1px 0 rgba(255,255,255,0.45);
+    }
+    .glass-textarea {
+      width: 100%; min-height: 172px; border: none; outline: none; resize: none;
+      background: transparent; font-family: 'IBM Plex Sans', sans-serif;
+      font-size: 15px; font-weight: 400; line-height: 1.6; color: var(--ink);
+      padding: 18px 18px 14px; -webkit-appearance: none;
+    }
+    .glass-textarea:focus { outline: none; border: none; }
+    .glass-textarea::placeholder { color: rgba(26,26,46,0.4); font-size: 14px; }
+    .card-footer {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px 12px; border-top: 1px solid rgba(255,255,255,0.22);
+    }
+    .attach-btn {
+      width: 44px; height: 44px; flex: none;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.38);
+      border-radius: 10px; cursor: pointer; padding: 0;
+      font-size: 22px; font-weight: 300; color: rgba(26,26,46,0.55); line-height: 1;
+      transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+    }
+    .attach-btn:hover { background: rgba(255,255,255,0.32); color: rgba(26,26,46,0.8); }
+    .attach-btn:active { background: rgba(255,255,255,0.32); }
+    .run-btn {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      padding: 13px 16px; background: var(--gold); border: none; border-radius: 12px;
+      cursor: pointer; position: relative; overflow: hidden; transition: all 0.18s;
+      box-shadow: 0 4px 16px rgba(201,168,76,0.38), inset 0 1px 0 rgba(255,255,255,0.22);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .run-btn::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,0.16) 0%, transparent 55%); pointer-events: none; }
+    .run-btn:active { transform: scale(0.98); }
+    .run-btn:disabled { opacity: 0.55; cursor: default; }
+    .run-btn-text { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em; color: var(--ink); position: relative; }
+    .attach-hint { display: block; margin-top: 12px; font-size: 12px; color: rgba(26,26,46,0.6); text-align: center; }
+
+    /* File tags — glassy pills (no emoji) */
+    .file-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .file-tag {
+      display: inline-flex; align-items: center; gap: 6px; max-width: 240px;
+      font-size: 13px; padding: 6px 10px; color: var(--ink);
+      border: 1.5px solid rgba(255,255,255,0.5); border-radius: 999px;
+      background: rgba(255,255,255,0.42);
+    }
+    .file-tag .ext {
+      font-family: 'StarCrush', serif; font-size: 9px; letter-spacing: 0.04em;
+      color: rgba(26,26,46,0.55); flex: none;
+    }
+    .file-tag .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-tag .rm { border: none; background: none; width: auto; padding: 0 2px; margin: 0; font-size: 15px; line-height: 1; color: rgba(26,26,46,0.5); cursor: pointer; }
+    .file-tag .rm:hover { color: #c0392b; }
   </style>
 </head>
 <body>
+  <div class="sky-bg"></div>
+  <div class="clouds-wrap"></div>
   <nav>
-    <span class="brand" id="nav-brand">Quillio</span>
-    <span class="links">
-      <button class="navlink" id="nav-new">New Brief</button>
-      <button class="navlink" id="nav-history">Projects</button>
-      <button class="navlink" id="nav-settings">Settings</button>
-    </span>
+    <button type="button" class="nav-logo" id="nav-brand">
+      <img class="nav-quill-img" src="/assets/images/quillio-quill.png" alt="Quillio">
+      <span class="nav-wordmark">Quillio</span>
+    </button>
+    <div class="nav-links">
+      <button type="button" class="nav-link active" id="nav-new">Brief</button>
+      <button type="button" class="nav-link" id="nav-history">Projects</button>
+      <button type="button" class="nav-link" id="nav-settings">Settings</button>
+    </div>
   </nav>
   <main>
 
     <!-- SCREEN 1 — BRIEF INPUT -->
     <section id="screen-brief" class="screen active">
-      <h1>What are we working on?</h1>
-      <textarea id="brief" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>
-      <div class="brief-attach">
-        <button type="button" class="attach-btn" id="attach-btn" title="Attach reference files">+ Add files</button>
-        <input type="file" id="file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" multiple hidden>
-        <span class="attach-hint">PDF, DOCX, JPG, PNG · up to 3 files, 10MB each</span>
+      <h1 class="brief-headline">What are<br>we writing?</h1>
+      <p class="brief-sub">Describe the campaign, drop a link, or paste a brief. Quillio handles the rest.</p>
+      <div class="glass-card">
+        <textarea id="brief" class="glass-textarea" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>
+        <div class="card-footer">
+          <button type="button" class="attach-btn" id="attach-btn" title="Attach reference files">+</button>
+          <input type="file" id="file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" multiple hidden>
+          <button class="run-btn" id="run-btn"><span class="run-btn-text">Run Brief</span></button>
+        </div>
       </div>
       <div id="file-tags" class="file-tags"></div>
-      <button class="primary full" id="run-btn">Run Brief →</button>
+      <span class="attach-hint">PDF, DOCX, JPG, PNG · up to 3 files, 10MB each</span>
       <div id="brief-error" class="error hidden"></div>
     </section>
 
@@ -385,10 +515,18 @@
       history: document.getElementById('screen-history'),
       project: document.getElementById('screen-project')
     };
+    // Which nav link is highlighted for each screen (cosmetic only).
+    var NAV_FOR_SCREEN = { brief: 'nav-new', progress: 'nav-new', output: 'nav-new', history: 'nav-history', project: 'nav-history' };
+    function setNavActive(name) {
+      ['nav-new', 'nav-history', 'nav-settings'].forEach(function (id) {
+        document.getElementById(id).classList.toggle('active', id === NAV_FOR_SCREEN[name]);
+      });
+    }
     function showScreen(name) {
       Object.keys(screens).forEach(function (k) {
         screens[k].classList.toggle('active', k === name);
       });
+      setNavActive(name);
       window.scrollTo(0, 0);
     }
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
@@ -421,12 +559,10 @@
     var fileInput = document.getElementById('file-input');
     var fileTags = document.getElementById('file-tags');
 
+    // Short uppercase extension label (no emoji — design rule).
     function fileIcon(f) {
-      var n = (f.name || '').toLowerCase();
-      if (n.match(/\.pdf$/)) return '📄';
-      if (n.match(/\.docx$/)) return '📝';
-      if (n.match(/\.(jpe?g|png)$/)) return '🖼️';
-      return '📎';
+      var m = (f.name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+      return m ? m[1].toUpperCase() : 'FILE';
     }
 
     function renderFileTags() {
@@ -435,6 +571,7 @@
         var tag = document.createElement('span');
         tag.className = 'file-tag';
         var icon = document.createElement('span');
+        icon.className = 'ext';
         icon.textContent = fileIcon(f);
         var name = document.createElement('span');
         name.className = 'name';
@@ -1138,6 +1275,56 @@
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
     projectDraftBtn.addEventListener('click', generateProjectDraft);
     document.getElementById('project-regen-btn').addEventListener('click', regenerateProjectDraft);
+
+    // --- Pixel clouds (v8 design system) -----------------------------------
+    // Programmatic SVG pixel clouds drifting slowly across the sky. One shared
+    // layer behind every screen. Ported verbatim from the v8 prototype.
+    (function () {
+      var cloudShapes = [
+        [[2,6,3,2],[3,4,5,3],[5,3,7,2],[9,2,5,2],[12,3,5,2],[14,4,4,3],[0,7,20,5],[1,6,18,2],[2,5,16,2],[0,10,20,3],[1,12,18,2],[2,13,14,1]],
+        [[3,5,4,2],[4,3,7,3],[7,2,5,2],[10,3,6,2],[1,6,18,5],[2,5,16,2],[0,8,20,4],[1,11,18,2],[2,12,15,1]],
+        [[1,5,3,2],[3,3,6,3],[7,2,7,2],[12,3,6,3],[15,4,3,2],[0,6,19,5],[1,5,17,2],[0,9,19,3],[1,11,17,1]],
+        [[2,4,4,2],[4,2,6,3],[8,1,5,2],[11,2,5,2],[1,5,14,4],[2,4,12,2],[0,7,15,3],[1,9,13,1]]
+      ];
+      var cloudConfigs = [
+        {shape:0,w:300,top:72, side:'right',offset:-20,anim:'driftL',dur:105,op:0.24},
+        {shape:1,w:220,top:190,side:'left', offset:-30,anim:'driftR',dur:135,op:0.20},
+        {shape:2,w:270,top:330,side:'right',offset:30, anim:'driftL',dur:165,op:0.18},
+        {shape:3,w:180,top:460,side:'left', offset:20, anim:'driftR',dur:98, op:0.15},
+        {shape:0,w:240,top:590,side:'right',offset:-10,anim:'driftL',dur:125,op:0.16},
+        {shape:1,w:250,top:710,side:'left', offset:-40,anim:'driftR',dur:150,op:0.14},
+        {shape:2,w:200,top:840,side:'right',offset:25, anim:'driftL',dur:115,op:0.17}
+      ];
+      var styleEl = document.createElement('style');
+      styleEl.textContent =
+        '@keyframes driftL { 0% { transform:translateX(0); } 100% { transform:translateX(-140vw); } }' +
+        '@keyframes driftR { 0% { transform:translateX(0); } 100% { transform:translateX(140vw); } }';
+      document.head.appendChild(styleEl);
+      function populateClouds(wrap) {
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        cloudConfigs.forEach(function (c, i) {
+          var shape = cloudShapes[c.shape % cloudShapes.length];
+          var unit = Math.max(7, Math.floor(c.w / 22));
+          var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('viewBox', '0 0 ' + (22 * unit) + ' ' + (15 * unit));
+          svg.setAttribute('width', 22 * unit); svg.setAttribute('height', 15 * unit);
+          svg.style.cssText = 'position:absolute;image-rendering:pixelated;opacity:' + c.op + ';top:' + c.top + 'px;' +
+            (c.side === 'right' ? 'right:' + c.offset + 'px' : 'left:' + c.offset + 'px') +
+            ';animation:' + c.anim + ' ' + c.dur + 's linear ' + (i * -14) + 's infinite;';
+          shape.forEach(function (r) {
+            var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', r[0] * unit); rect.setAttribute('y', r[1] * unit);
+            rect.setAttribute('width', r[2] * unit); rect.setAttribute('height', r[3] * unit);
+            rect.setAttribute('fill', r[1] >= 10 ? '#B8E4F8' : 'white');
+            rect.setAttribute('opacity', r[1] >= 10 ? '0.5' : '1');
+            svg.appendChild(rect);
+          });
+          wrap.appendChild(svg);
+        });
+      }
+      document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
+    })();
   </script>
 </body>
 </html>

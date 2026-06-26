@@ -597,19 +597,25 @@ test('routes/app does NOT import the Slack messaging layer', () => {
 
 // --- Week 9: web app frontend ---
 
-test('public/app.html exists with the three screens and no external assets', () => {
+test('public/app.html has the core screens, API wiring, and the v8 design system', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  // The three single-page screens are all present.
-  for (const id of ['screen-brief', 'screen-progress', 'screen-output']) {
+  // The single-page screens are all present (incl. the v8 generating + copy-done).
+  for (const id of ['screen-brief', 'screen-progress', 'screen-output', 'screen-generating', 'screen-copydone']) {
     assert.ok(html.includes(id), `app.html should contain #${id}`);
   }
   // It talks to the Week 8 API.
   assert.ok(html.includes('/api/brief'), 'app.html posts to /api/brief');
   assert.ok(html.includes('/api/draft'), 'app.html posts to /api/draft');
-  // System fonts / no frameworks: no external fonts, CDNs, or <img>/<script src>.
-  assert.ok(!/fonts\.googleapis|fonts\.gstatic/i.test(html), 'no Google Fonts');
+  // No JS frameworks / CDNs — all client logic stays inline.
   assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
-  assert.ok(!/<img\b/i.test(html), 'no images');
+  // v8 design system (replaces the old "system fonts, no images" rule): the
+  // StarCrush display font is loaded via @font-face, IBM Plex is the body font,
+  // and the pixel-art assets are referenced from the scoped /assets + /fonts
+  // static routes.
+  assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
+  assert.ok(/IBM\+Plex\+Sans/.test(html), 'loads IBM Plex Sans');
+  assert.ok(/\/assets\/images\/quillio-quill\.png/.test(html), 'uses the pixel-quill logo');
+  assert.ok(/\/assets\/gifs\//.test(html), 'uses the progress/header GIFs');
 });
 
 // --- Week 10: project history + project view ---

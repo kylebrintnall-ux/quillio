@@ -173,7 +173,91 @@ function extractChallenge(body) {
   return null;
 }
 
-app.get('/', (req, res) => res.status(200).send('Quillio is running.'));
+// GET / — public landing page (no auth). Self-contained HTML; no frameworks.
+// Brand assets load from the v8 static mounts (/fonts, /assets) configured above.
+const LANDING_HTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quillio</title>
+  <style>
+    @font-face {
+      font-family: 'Star Crush';
+      src: url('/fonts/Star_Crush.otf') format('opentype');
+      font-display: swap;
+    }
+    :root {
+      --navy: #1C1F3B;
+      --sky: #4DD9D9;
+      --cream: #F5F0E8;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--navy);
+      color: var(--cream);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    .hero { max-width: 480px; width: 100%; }
+    .quill { width: 96px; height: auto; margin: 0 auto 8px; display: block; }
+    .wordmark {
+      font-family: 'Star Crush', 'Georgia', serif;
+      font-size: clamp(56px, 18vw, 104px);
+      line-height: 1;
+      color: var(--cream);
+      margin: 0 0 12px;
+      letter-spacing: 0.02em;
+    }
+    .tagline {
+      font-size: clamp(15px, 4.5vw, 18px);
+      color: var(--cream);
+      opacity: 0.85;
+      margin: 0 0 32px;
+    }
+    .actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-block;
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: none;
+      padding: 12px 24px;
+      border-radius: 10px;
+      border: 2px solid var(--sky);
+      transition: opacity 0.15s ease;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: var(--sky); color: var(--navy); }
+    .btn-secondary { background: transparent; color: var(--sky); }
+    @media (max-width: 380px) {
+      .actions { flex-direction: column; }
+      .btn { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="hero">
+    <img class="quill" src="/assets/gifs/quillio_magic_v27.gif" alt="Quillio" />
+    <h1 class="wordmark">Quillio</h1>
+    <p class="tagline">Creative brief intelligence for copywriters.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="/app">Go to app</a>
+      <a class="btn btn-secondary" href="/onboarding">Sign in</a>
+    </div>
+  </main>
+</body>
+</html>`;
+app.get('/', (req, res) => res.status(200).type('html').send(LANDING_HTML));
 app.get('/health', (req, res) => res.status(200).json({ ok: true }));
 
 // NOTE: the legacy, UNAUTHENTICATED POST /api/voice-guide/generate endpoint was

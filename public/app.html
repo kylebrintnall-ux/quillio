@@ -390,6 +390,34 @@
     .file-tag .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .file-tag .rm { border: none; background: none; width: auto; padding: 0 2px; margin: 0; font-size: 15px; line-height: 1; color: rgba(26,26,46,0.5); cursor: pointer; }
     .file-tag .rm:hover { color: #c0392b; }
+
+    /* Shared v8 keyframes */
+    @keyframes popIn { from { transform: scale(0.55); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @keyframes dotPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.4); } }
+
+    /* Shared v8 secondary CTA */
+    .cta-secondary {
+      display: flex; align-items: center; justify-content: center; padding: 15px;
+      background: rgba(255,255,255,0.28); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      border: 1.5px solid rgba(255,255,255,0.5); border-radius: 14px;
+      cursor: pointer; font-family: 'StarCrush', serif; font-size: 13px;
+      letter-spacing: 0.05em; color: var(--ink); transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+    }
+    .cta-secondary:active { transform: scale(0.98); }
+
+    /* ── PROGRESS (v8) ── */
+    #screen-progress.active {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; min-height: calc(100vh - 150px);
+    }
+    .progress-gif { width: 130px; height: 130px; image-rendering: pixelated; margin-bottom: 30px; animation: popIn 0.45s cubic-bezier(0.34,1.56,0.64,1) both; }
+    .progress-step-text { font-family: 'StarCrush', serif; font-size: 20px; letter-spacing: 0.03em; color: var(--ink); margin-bottom: 28px; min-height: 52px; line-height: 1.35; transition: opacity 0.3s ease, transform 0.3s ease; }
+    .progress-dots { display: flex; gap: 10px; justify-content: center; margin-bottom: 24px; }
+    .progress-dot { width: 8px; height: 8px; border-radius: 2px; background: rgba(26,26,46,0.18); transition: background 0.3s ease; }
+    .progress-dot.done { background: rgba(26,26,46,0.5); }
+    .progress-dot.active { background: var(--gold); animation: dotPulse 1s ease infinite; }
+    #screen-progress .error { width: 100%; max-width: 360px; }
+    #progress-back { width: 100%; max-width: 280px; }
   </style>
 </head>
 <body>
@@ -427,15 +455,16 @@
 
     <!-- SCREEN 2 — PROGRESS -->
     <section id="screen-progress" class="screen">
-      <h1 id="progress-heading">Reading your brief…</h1>
-      <ul class="steps" id="steps">
-        <li data-step="0"><span class="dot"></span><span>Reading your brief</span></li>
-        <li data-step="1"><span class="dot"></span><span>Fetching references</span></li>
-        <li data-step="2"><span class="dot"></span><span>Building your doc</span></li>
-        <li data-step="3"><span class="dot"></span><span>Creating project folder</span></li>
-      </ul>
+      <img id="progress-gif" class="progress-gif" src="/assets/gifs/quillio-scroll.gif" alt="">
+      <div id="progress-text" class="progress-step-text">Reading your brief…</div>
+      <div class="progress-dots">
+        <div class="progress-dot active" id="dot-0"></div>
+        <div class="progress-dot" id="dot-1"></div>
+        <div class="progress-dot" id="dot-2"></div>
+        <div class="progress-dot" id="dot-3"></div>
+      </div>
       <div id="progress-error" class="error hidden"></div>
-      <button class="secondary full hidden" id="progress-back">← Back to brief</button>
+      <button class="cta-secondary hidden" id="progress-back">← Back to brief</button>
     </section>
 
     <!-- SCREEN 3 — DOC OUTPUT -->
@@ -618,9 +647,17 @@
     }
 
     // --- Screen 2: staged progress -----------------------------------------
-    var HEADINGS = ['Reading your brief…', 'Fetching references…', 'Building your doc…', 'Creating project folder…'];
-    var stepEls = Array.prototype.slice.call(document.querySelectorAll('#steps li'));
-    var progressHeading = document.getElementById('progress-heading');
+    var HEADINGS = ['Reading your brief…', 'Hunting down references…', 'Building your doc…', 'Filing it away…'];
+    // One GIF per stage (v8 design system). Index matches HEADINGS / dots.
+    var STEP_GIFS = [
+      '/assets/gifs/quillio-scroll.gif',
+      '/assets/gifs/quillio-review.gif',
+      '/assets/gifs/quillio_magic_v27.gif',
+      '/assets/gifs/quillio-folder.gif'
+    ];
+    var STEP_COUNT = HEADINGS.length;
+    var progressGif = document.getElementById('progress-gif');
+    var progressText = document.getElementById('progress-text');
     var progressError = document.getElementById('progress-error');
     var progressBack = document.getElementById('progress-back');
     // A large brief can run for minutes, so the steps animate on a realistic
@@ -630,24 +667,44 @@
     var stageTimer = null;
     var currentStage = 0;
 
+    // Set the dot states for stage n: earlier dots done, current dot active.
+    function setDots(n) {
+      for (var d = 0; d < STEP_COUNT; d++) {
+        var dot = document.getElementById('dot-' + d);
+        if (!dot) continue;
+        dot.className = 'progress-dot' + (d < n ? ' done' : d === n ? ' active' : '');
+      }
+    }
     function setStage(n) {
       currentStage = n;
-      progressHeading.textContent = HEADINGS[Math.min(n, HEADINGS.length - 1)];
-      stepEls.forEach(function (li, i) {
-        li.classList.remove('working', 'done');
-        if (i < n) li.classList.add('done');
-        else if (i === n) li.classList.add('working');
-      });
+      var gifSrc = STEP_GIFS[Math.min(n, STEP_GIFS.length - 1)];
+      // Replace the <img> so the GIF restarts and the popIn animation replays.
+      var newGif = document.createElement('img');
+      newGif.id = 'progress-gif';
+      newGif.className = 'progress-gif';
+      newGif.alt = '';
+      newGif.src = gifSrc;
+      progressGif.parentNode.replaceChild(newGif, progressGif);
+      progressGif = newGif;
+      // Fade the step text out then in with the new heading.
+      progressText.style.opacity = 0;
+      progressText.style.transform = 'translateY(8px)';
+      setTimeout(function () {
+        progressText.textContent = HEADINGS[Math.min(n, HEADINGS.length - 1)];
+        progressText.style.opacity = 1;
+        progressText.style.transform = 'translateY(0)';
+      }, 120);
+      setDots(n);
     }
     function startStages() {
       clearError(progressError);
       progressBack.classList.add('hidden');
       setStage(0);
       stageTimer = setInterval(function () {
-        if (currentStage < stepEls.length - 1) {
+        if (currentStage < STEP_COUNT - 1) {
           setStage(currentStage + 1);
         } else {
-          // Reached the last step — stop the timer and leave it spinning. Only
+          // Reached the last step — stop the timer and leave it pulsing. Only
           // finishStages() (on the real response) marks everything done.
           clearInterval(stageTimer);
           stageTimer = null;
@@ -656,11 +713,15 @@
     }
     function finishStages() {
       if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
-      stepEls.forEach(function (li) { li.classList.remove('working'); li.classList.add('done'); });
+      for (var d = 0; d < STEP_COUNT; d++) {
+        var dot = document.getElementById('dot-' + d);
+        if (dot) dot.className = 'progress-dot done';
+      }
     }
     function failStages(msg) {
       if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
-      stepEls.forEach(function (li) { li.classList.remove('working'); });
+      var active = document.querySelector('#screen-progress .progress-dot.active');
+      if (active) active.classList.remove('active');
       showError(progressError, msg);
       progressBack.classList.remove('hidden');
     }

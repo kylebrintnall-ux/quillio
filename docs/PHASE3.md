@@ -329,3 +329,29 @@ Build order for Phase 4:
 4. /quillio-handoff — copy population into existing Figma files
 5. Approval-triggered population — automatic on Creative Manager or final Collaborator approval
 6. Designer notification — copy doc link + Figma link after population
+
+## PHASE 3 ADDITIONS
+
+### File attachment as reference input
+
+Web app:
+
+- `+` button next to brief input opens file picker
+- Supported: PDF, DOCX, JPG, PNG
+- PDF — extract text via pdf-parse (already in pipeline)
+- DOCX — extract text via mammoth
+- Images — pass to Gemini vision as base64; extract text if present; describe visual tone, aesthetic, color, style for mood boards
+- All file content treated identically to reference links once ingested
+- Appears in Reference Insights section of the doc with source type: upload
+
+Slack:
+
+- Detect file attachments in `/quillio` message or thread
+- Download via `files.info` + authorized fetch (same pattern as canvas ingestion)
+- Same ingestion pipeline as web app
+
+Gemini vision for images:
+
+- Gemini 2.5 Flash accepts image inputs natively
+- For text-heavy images: extract text
+- For mood boards / visual references: describe color palette, visual tone, style, emotional direction — feeds into writer direction as creative context

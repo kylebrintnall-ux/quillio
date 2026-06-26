@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const path = require('path');
 const express = require('express');
 const session = require('express-session');
 
@@ -76,6 +77,17 @@ app.use(
 // (20/hr/IP) — /welcome is not under /oauth so it stays unlimited.
 app.use('/oauth', oauthLimiter);
 app.use(oauthRoutes);
+
+// Static design-system assets (v8 design system): the StarCrush display font,
+// progress/header GIFs, and the pixel-quill logo. Scoped to ONLY the asset
+// directories under public/ — NOT the whole public/ dir — so the page files
+// (app.html, settings.html, onboarding.html) stay behind their existing
+// auth-gated sendFile routes. These files are non-sensitive brand assets, so
+// they're served unauthenticated and cached aggressively.
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const staticOpts = { immutable: true, maxAge: '7d' };
+app.use('/fonts', express.static(path.join(PUBLIC_DIR, 'fonts'), staticOpts));
+app.use('/assets', express.static(path.join(PUBLIC_DIR, 'assets'), staticOpts));
 
 // Onboarding flow (/onboarding + /api/onboarding/*). Auth-gated per route.
 app.use(onboardingRoutes);

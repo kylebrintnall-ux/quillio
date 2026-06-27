@@ -40,7 +40,7 @@ const ALLOWED_ASSETS = [
 module.exports = {
   PORT: process.env.PORT || 3000,
 
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim(),
   GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
 
   // Service account: used for reading the specs Sheet, and for Drive/Docs
@@ -58,7 +58,7 @@ module.exports = {
   // %0A in the auth URL and Google rejects it as invalid_request). `&&` keeps an
   // unset var undefined so the "not configured" guards still fire.
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_ID.trim(),
-  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_CLIENT_SECRET.trim(),
   GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
 
   // Per-user Google OAuth (Phase 3): redirect URI registered for the
@@ -79,18 +79,18 @@ module.exports = {
   // so it is NOT hardcoded — set it via the SLACK_WEBHOOK_URL env var.
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL,
 
-  SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET,
+  SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET && process.env.SLACK_SIGNING_SECRET.trim(),
 
   // Bot token (xoxb-…) for Slack Web API calls (chat.postMessage). Used for the
   // draft-complete message, which can finish after the interaction response_url
   // has expired/been used up. Needs the chat:write scope (and chat:write.public
   // to post in channels the bot isn't a member of).
-  SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
+  SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN && process.env.SLACK_BOT_TOKEN.trim(),
 
   // Slack OAuth (Phase 3 install flow). Client id/secret identify the Quillio
   // app; redirect URI must match the one registered in the Slack app config.
-  SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID,
-  SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET,
+  SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_ID.trim(),
+  SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET && process.env.SLACK_CLIENT_SECRET.trim(),
   SLACK_REDIRECT_URI: process.env.SLACK_REDIRECT_URI,
 
   // Secret used to sign web session cookies (express-session). Set in prod;

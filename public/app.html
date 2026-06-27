@@ -1159,18 +1159,49 @@
 
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+    // Browsers throw a TypeError for a failed fetch ("Load failed" on iOS Safari,
+    // "Failed to fetch" on Chrome) and an AbortError when our timeout fires.
+    // Collapse both into one clear, non-cryptic message for the user.
+    function isNetworkError(e) {
+      var name = e && e.name;
+      var msg = (e && e.message) || '';
+      return name === 'AbortError' || name === 'TypeError' || /load failed|failed to fetch|network/i.test(msg);
+    }
+    var NET_MSG = 'Couldn’t reach the server — it may be momentarily unavailable. Check your connection and try again.';
+
+    // fetch with an abort timeout so a hung request fails fast (and surfaces a
+    // clear message) instead of spinning forever on a flaky mobile connection.
+    function fetchWithTimeout(url, opts, timeoutMs) {
+      var ctrl = new AbortController();
+      var id = setTimeout(function () { ctrl.abort(); }, timeoutMs || 15000);
+      var merged = opts || {};
+      merged.signal = ctrl.signal;
+      return fetch(url, merged).finally(function () { clearTimeout(id); });
+    }
+
     // Start an async job (POST `startUrl`) and poll `<statusBase>/<jobId>/status`
     // every 3s until it completes or fails. Resolves with the job result; rejects
     // on failure / timeout. Shared by the brief and draft flows.
     var JOB_POLL_MS = 3000;
     var JOB_MAX_WAIT_MS = 8 * 60 * 1000; // overall ceiling, well past the worst case
     async function runJob(startUrl, body, statusBase) {
-      var startRes = await fetch(startUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      var start = await startRes.json();
+      // Start the job. IMPORTANT: do NOT auto-retry this POST. The work runs
+      // fire-and-forget server-side, so if the response is lost on a flaky
+      // connection the job still runs — a blind retry would start a SECOND job
+      // (duplicate doc). One attempt with a timeout; a network failure becomes a
+      // clear message instead of the raw "Load failed".
+      var start;
+      try {
+        var startRes = await fetchWithTimeout(startUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }, 20000);
+        start = await startRes.json();
+      } catch (e) {
+        if (isNetworkError(e)) throw new Error(NET_MSG);
+        throw e;
+      }
       if (!start || !start.success || !start.jobId) {
         throw new Error((start && start.error) || 'Could not start the job.');
       }
@@ -1180,10 +1211,11 @@
         await sleep(JOB_POLL_MS);
         var s;
         try {
-          var r = await fetch(statusBase + '/' + encodeURIComponent(jobId) + '/status');
+          // Per-poll timeout so a single hung poll can't stall the 3s cadence.
+          var r = await fetchWithTimeout(statusBase + '/' + encodeURIComponent(jobId) + '/status', {}, 10000);
           s = await r.json();
         } catch (e) {
-          continue; // transient network blip — keep polling
+          continue; // transient blip / poll timeout — keep polling (idempotent)
         }
         if (s && s.status === 'complete') return (s.result || {});
         if (s && s.status === 'failed') throw new Error(s.error || 'The job failed.');
@@ -1215,7 +1247,7 @@
       try {
         var url = '/api/projects/' + encodeURIComponent(state.projectId) +
           '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID);
-        var res = await fetch(url);
+        var res = await fetchWithTimeout(url, {}, 20000);
         var data = await res.json();
         console.log('[app] /api/projects/:id/content — status=' + res.status, data);
         if (!data || !data.success || !data.content) return null;
@@ -1444,7 +1476,9 @@
       try {
         var url = '/api/projects?workspaceId=' + encodeURIComponent(WORKSPACE_ID) +
           (showClosed.checked ? '&include_closed=true' : '');
-        var res = await fetch(url);
+        // Timeout so the list can't spin on "Loading projects…" forever when the
+        // request hangs on a flaky connection.
+        var res = await fetchWithTimeout(url, {}, 15000);
         var data = await res.json();
         if (!data || !data.success) throw new Error((data && data.error) || 'Could not load projects.');
         hide(historyLoading);
@@ -1452,7 +1486,7 @@
         renderHistoryList();
       } catch (e) {
         hide(historyLoading);
-        showError(historyError, e.message || 'Network error — please try again.');
+        showError(historyError, isNetworkError(e) ? NET_MSG : (e.message || 'Couldn’t load projects — please try again.'));
       }
     }
     showClosed.addEventListener('change', loadHistory);
@@ -1660,7 +1694,7 @@
       hide(projectFallback);
       show(projectLoading);
       try {
-        var res = await fetch('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID));
+        var res = await fetchWithTimeout('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID), {}, 20000);
         var data = await res.json();
         hide(projectLoading);
         if (!data || !data.success) {

@@ -430,7 +430,8 @@
     .progress-label { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.92); margin-top: 14px; min-height: 20px; text-align: left; }
     .progress-sublabel { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 400; color: rgba(255,255,255,0.55); margin-top: 4px; min-height: 16px; text-align: left; }
     #screen-progress .error { width: 100%; max-width: 360px; margin-top: 16px; }
-    #progress-back { width: 100%; max-width: 360px; margin-top: 14px; }
+    #progress-check-projects { width: 100%; max-width: 360px; margin-top: 14px; }
+    #progress-back { width: 100%; max-width: 360px; margin-top: 10px; }
 
     /* ── OUTPUT (v8) ── */
     #screen-output { padding-bottom: 150px; }
@@ -678,6 +679,7 @@
         <div class="progress-sublabel" id="brief-progress-sublabel"></div>
       </div>
       <div id="progress-error" class="error hidden"></div>
+      <button class="cta-primary hidden" id="progress-check-projects">Check Projects ↗</button>
       <button class="cta-secondary hidden" id="progress-back">← Back to brief</button>
     </section>
 
@@ -965,6 +967,7 @@
       var subEl = document.getElementById('brief-progress-sublabel');
       clearError(progressError);
       progressBack.classList.add('hidden');
+      document.getElementById('progress-check-projects').classList.add('hidden');
       buildTrack(track);
       fillTrack(track, 0);
       track.classList.remove('pulsing');
@@ -999,13 +1002,22 @@
       track.classList.remove('pulsing');
       fillTrack(track, 1);
     }
-    function failBriefBar(msg) {
+    // offerCheckProjects: the brief may have run server-side despite the client
+    // error (lost-response / timeout) — the job is fire-and-forget, so it can
+    // still create a doc. Surface a "Check Projects" link so the user verifies
+    // before re-running (which would create a duplicate).
+    function failBriefBar(msg, offerCheckProjects) {
       if (briefBarTimer) { clearInterval(briefBarTimer); briefBarTimer = null; }
       document.getElementById('brief-progress-track').classList.remove('pulsing');
-      showError(progressError, msg);
+      showError(
+        progressError,
+        offerCheckProjects ? msg + ' Your brief may still have finished — check Projects before re-running.' : msg
+      );
+      document.getElementById('progress-check-projects').classList.toggle('hidden', !offerCheckProjects);
       progressBack.classList.remove('hidden');
     }
     progressBack.addEventListener('click', function () { showScreen('brief'); });
+    document.getElementById('progress-check-projects').addEventListener('click', loadHistory);
 
     // --- Screen 3: render output -------------------------------------------
     var state = { docUrl: null, docId: null, projectId: null, campaignTitle: null, assets: [] };
@@ -1149,7 +1161,12 @@
         showScreen('output');
         clearAttachedFiles();
       } catch (e) {
-        failBriefBar(e.message || 'Network error — please try again.');
+        var msg = e.message || 'Network error — please try again.';
+        // A lost start response (NET_MSG) or an exhausted poll deadline means the
+        // fire-and-forget brief job may still have run server-side and created a
+        // doc — offer Check Projects so the user can verify before re-running.
+        var mayHaveStarted = msg === NET_MSG || /taking longer than expected/i.test(msg);
+        failBriefBar(msg, mayHaveStarted);
       }
     }
 

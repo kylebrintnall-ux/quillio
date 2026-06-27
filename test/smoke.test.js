@@ -416,7 +416,10 @@ test('public/onboarding.html has all six steps and talks to the onboarding API',
   }
   assert.ok(/\/oauth\/google\?redirect=onboarding/.test(html), 'Step 1 signs in with Google');
   assert.ok(/\/api\/onboarding\/voice/.test(html), 'voice step posts to the API');
-  assert.ok(!/fonts\.googleapis|fonts\.gstatic/i.test(html), 'no external fonts');
+  // v8 design system: StarCrush via @font-face + IBM Plex from Google Fonts
+  // (matches app.html / settings.html). Scripts must still all be inline.
+  assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
+  assert.ok(/IBM\+Plex\+Sans/.test(html), 'loads IBM Plex Sans');
   assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
 });
 

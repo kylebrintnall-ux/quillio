@@ -4,114 +4,170 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Quillio — Get set up</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
   <style>
+    /* =====================================================================
+       v8 DESIGN SYSTEM — Onboarding. Matches app.html / settings.html:
+       sky-gradient bg + pixel clouds, dark-glass nav (pixel quill + StarCrush),
+       glass cards/inputs, gold buttons, IBM Plex body, StarCrush headings.
+       ===================================================================== */
+    @font-face {
+      font-family: 'StarCrush';
+      src: url('/fonts/Star_Crush.otf') format('opentype');
+      font-weight: normal; font-style: normal; font-display: swap;
+    }
     :root {
-      --accent: #4DD9D9;
-      --ink: #111;
-      --muted: #666;
-      --line: #e3e3e3;
-      --bg: #fff;
-      --soft: #f6f6f6;
+      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
+      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF; --ink: #1A1A2E;
     }
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; }
+    html, body { margin: 0; padding: 0; height: auto; min-height: 100%; overflow-x: hidden; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      color: var(--ink);
-      background: var(--bg);
-      line-height: 1.5;
-      -webkit-text-size-adjust: 100%;
+      font-family: 'IBM Plex Sans', sans-serif;
+      background: var(--ink); color: var(--ink);
+      line-height: 1.5; -webkit-text-size-adjust: 100%; -webkit-font-smoothing: antialiased;
     }
-    nav { border-bottom: 1px solid var(--line); padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
-    nav .navlink { font-size: 15px; color: var(--muted); font-weight: 600; text-decoration: none; }
-    nav .navlink:hover { color: var(--ink); }
-    main { width: 100%; max-width: 600px; margin: 0 auto; padding: 24px 16px 56px; }
+    .sky-bg { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, #1E78BE 0%, #2FA8DC 35%, #3BBDE0 60%, #4DD9D9 100%); }
+    .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+
+    /* Nav — dark glass, pixel-quill logo + StarCrush wordmark/links */
+    nav {
+      position: relative; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 58px; padding: 0 12px 0 18px; gap: 8px;
+      background: rgba(26,26,46,0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(77,217,217,0.15);
+    }
+    .nav-logo { display: flex; align-items: center; gap: 8px; flex: none; background: none; border: none; padding: 0; cursor: pointer; text-decoration: none; }
+    .nav-quill-img { width: 28px; height: 28px; image-rendering: pixelated; object-fit: contain; }
+    .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
+    .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
+    .nav-link {
+      font-family: 'StarCrush', serif; font-size: 12px; color: rgba(255,255,255,0.4);
+      background: none; border: none; padding: 7px 9px; border-radius: 8px;
+      letter-spacing: 0.04em; white-space: nowrap; cursor: pointer; text-decoration: none;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-link:hover { color: #fff; background: rgba(255,255,255,0.08); }
+
+    main { position: relative; z-index: 5; width: 100%; max-width: 520px; margin: 0 auto; padding: 32px 26px 56px; }
 
     .step { display: none; }
     .step.active { display: block; }
 
-    h1 { font-size: 24px; line-height: 1.25; margin: 8px 0 12px; }
-    h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 24px 0 8px; }
-    p { margin: 8px 0; }
-    .muted { color: var(--muted); }
+    h1 { font-family: 'StarCrush', serif; font-size: 30px; line-height: 1.15; letter-spacing: 0.02em; color: var(--ink); margin: 6px 0 12px; }
+    h2 { font-family: 'StarCrush', serif; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.5); margin: 24px 0 8px; }
+    p { margin: 8px 0; color: rgba(26,26,46,0.78); }
+    .muted { color: rgba(26,26,46,0.6); }
+    code { font-family: 'IBM Plex Mono', monospace; font-size: 0.92em; background: rgba(26,26,46,0.08); border-radius: 5px; padding: 1px 6px; }
 
-    .stepdots { display: flex; gap: 6px; margin-bottom: 20px; }
-    .stepdots span { height: 4px; flex: 1; background: var(--line); border-radius: 2px; }
-    .stepdots span.on { background: var(--accent); }
+    /* Progress dots — sky for completed steps */
+    .stepdots { display: flex; gap: 6px; margin-bottom: 22px; }
+    .stepdots span { height: 5px; flex: 1; background: rgba(255,255,255,0.4); border-radius: 3px; }
+    .stepdots span.on { background: var(--sky-btm); }
 
-    label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
+    label { display: block; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 12px; letter-spacing: 0.02em; color: rgba(26,26,46,0.75); margin: 16px 0 6px; }
     input[type="text"], textarea {
-      width: 100%; font: inherit; padding: 11px 12px;
-      border: 1px solid var(--line); border-radius: 8px; resize: vertical;
+      width: 100%; font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; resize: vertical;
+      padding: 12px 14px; color: var(--ink); -webkit-appearance: none;
+      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
     }
-    textarea { min-height: 96px; }
-    input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+    textarea { min-height: 96px; line-height: 1.6; }
+    input:focus, textarea:focus { outline: none; border-color: rgba(255,255,255,0.95); }
+    ::placeholder { color: rgba(26,26,46,0.4); }
 
     button {
-      font: inherit; cursor: pointer; border: none; border-radius: 8px;
-      padding: 12px 18px; background: var(--ink); color: #fff; font-weight: 600;
+      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em;
+      cursor: pointer; border: none; border-radius: 12px; padding: 14px 18px;
+      background: var(--gold); color: var(--ink); box-shadow: 0 4px 16px rgba(201,168,76,0.3);
+      -webkit-tap-highlight-color: transparent;
     }
-    button:active { transform: translateY(1px); }
-    button:disabled { opacity: 0.55; cursor: default; }
-    button.secondary { background: var(--soft); color: var(--ink); border: 1px solid var(--line); }
-    button.ghost { background: none; color: var(--muted); border: none; padding: 12px 0; }
+    button:active { transform: scale(0.98); }
+    button:disabled { opacity: 0.55; cursor: default; box-shadow: none; }
+    button.secondary { background: rgba(255,255,255,0.25); color: var(--ink); border: 1.5px solid rgba(255,255,255,0.45); box-shadow: none; }
+    button.ghost { background: none; color: rgba(26,26,46,0.6); border: none; box-shadow: none; padding: 12px 0; }
     .full { width: 100%; }
     .row { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-    @media (min-width: 560px) { .row { flex-direction: row; } .row button { width: auto; } h1 { font-size: 28px; } }
+    @media (min-width: 560px) { .row { flex-direction: row; } .row button { width: auto; } h1 { font-size: 34px; } }
 
-    .gbtn { display: inline-flex; align-items: center; gap: 10px; background: #fff; color: var(--ink); border: 1px solid var(--line); }
-    .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
+    .gbtn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: var(--white); color: var(--ink); border: none; box-shadow: 0 4px 16px rgba(26,26,46,0.12); }
+    .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--sky-btm); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; font-family: 'IBM Plex Sans', sans-serif; }
 
-    .ok { color: #0a5d2a; font-weight: 700; font-size: 20px; }
-    .pill { display: inline-block; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 14px; }
+    .ok { color: #0A5C32; font-weight: 700; font-size: 20px; }
+    .pill { display: inline-block; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 13px; font-weight: 600; color: rgba(26,26,46,0.6); }
 
-    .group { margin: 14px 0; }
-    .group h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 6px; }
-    .asset-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
+    /* Asset library — glass card per group */
+    .group { background: rgba(255,255,255,0.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px; padding: 6px 16px 12px; margin: 12px 0; }
+    .group h3 { font-family: 'StarCrush', serif; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(26,26,46,0.5); margin: 12px 0 4px; }
+    .asset-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(26,26,46,0.1); font-size: 15px; color: var(--ink); }
     .toggle { position: relative; width: 44px; height: 26px; flex: none; cursor: pointer; }
     .toggle input { opacity: 0; width: 0; height: 0; }
-    .track { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: background .15s; }
+    .track { position: absolute; inset: 0; background: rgba(26,26,46,0.2); border-radius: 999px; transition: background .15s; }
     .track::before { content: ""; position: absolute; height: 20px; width: 20px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .15s; }
-    .toggle input:checked + .track { background: var(--accent); }
+    .toggle input:checked + .track { background: var(--sky-btm); }
     .toggle input:checked + .track::before { transform: translateX(18px); }
 
-    .preview { white-space: pre-wrap; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-size: 14px; }
-    .progress { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-    .sample { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-size: 15px; }
+    .progress { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: rgba(26,26,46,0.6); margin-bottom: 6px; }
+    .sample { background: rgba(255,255,255,0.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px; padding: 16px; font-size: 15px; line-height: 1.6; color: var(--ink); }
 
-    .error { margin-top: 14px; padding: 10px 12px; border: 1px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 8px; font-size: 14px; }
+    .error { margin-top: 14px; padding: 10px 12px; border: 1.5px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 12px; font-size: 14px; }
     .hidden { display: none !important; }
-    .note { display: flex; align-items: center; gap: 10px; color: var(--muted); margin-top: 14px; }
-    .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
+    .note { display: flex; align-items: center; gap: 10px; color: rgba(26,26,46,0.65); margin-top: 14px; font-size: 14px; }
+    .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--sky-btm); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .note .dot, .spinner { animation: none; } }
 
-    .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #1a9a9a; margin-bottom: 6px; }
+    .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.55); margin-bottom: 6px; }
     .break { overflow-wrap: anywhere; }
-    a { color: #1a9a9a; }
+    a { color: #0d6b6b; }
 
     /* voice.md generating animation */
-    #voice-generating { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 0; color: var(--muted); }
-    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
-    .genmsg { font-size: 14px; }
+    #voice-generating { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 0; color: rgba(255,255,255,0.85); }
+    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.25); border-top-color: var(--sky-btm); animation: spin .8s linear infinite; }
+    .genmsg { font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
 
-    /* rendered voice.md preview */
-    .preview.md { font-size: 14px; }
-    .md .md-h { font-weight: 700; margin: 12px 0 4px; }
+    /* rendered voice.md preview — dark terminal block (matches settings) */
+    .preview {
+      background: rgba(26,26,46,0.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      color: rgba(255,255,255,0.85); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 16px;
+      padding: 20px; font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .preview.md { white-space: normal; }
+    .md .md-h { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px; letter-spacing: 0.03em; color: var(--sky-btm); margin: 14px 0 4px; }
     .md .md-h:first-child { margin-top: 0; }
     .md .md-ul { margin: 4px 0 10px; padding-left: 20px; }
-    .md .md-ul li { margin: 2px 0; }
-    .md .md-p { margin: 6px 0; }
+    .md .md-ul li { color: rgba(255,255,255,0.78); margin: 2px 0; }
+    .md .md-p { color: rgba(255,255,255,0.78); margin: 6px 0; }
+    .md strong { color: rgba(255,255,255,0.95); }
+    /* The inline voice editor textarea uses the dark terminal treatment too. */
+    #voice-edit {
+      font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.7; min-height: 320px; white-space: pre;
+      background: rgba(26,26,46,0.9); color: rgba(255,255,255,0.85);
+      border: 1.5px solid rgba(77,217,217,0.2); border-radius: 14px;
+    }
+    #voice-edit:focus { border-color: rgba(77,217,217,0.45); }
 
     /* regenerate panel */
-    .regen { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 16px; }
+    .regen { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.4); padding-top: 16px; }
     .regen textarea { min-height: 60px; }
     .regen button { margin-top: 10px; }
   </style>
 </head>
 <body>
-  <nav><span class="brand">Quillio</span><a class="navlink" href="/settings">Settings</a></nav>
+  <div class="sky-bg"></div>
+  <div class="clouds-wrap"></div>
+  <nav>
+    <a class="nav-logo" href="/app">
+      <img class="nav-quill-img" src="/assets/images/quillio-quill.png" alt="Quillio">
+      <span class="nav-wordmark">Quillio</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="/app">App</a>
+      <a class="nav-link" href="/settings">Settings</a>
+    </div>
+  </nav>
   <main>
     <div class="stepdots" id="dots" aria-hidden="true"></div>
 
@@ -650,6 +706,54 @@
       }
       var step = parseInt(params.get('step'), 10);
       showStep(step >= 1 && step <= TOTAL_STEPS ? step : 1);
+    })();
+
+    // --- Pixel clouds (v8 design system) -----------------------------------
+    (function () {
+      var cloudShapes = [
+        [[2,6,3,2],[3,4,5,3],[5,3,7,2],[9,2,5,2],[12,3,5,2],[14,4,4,3],[0,7,20,5],[1,6,18,2],[2,5,16,2],[0,10,20,3],[1,12,18,2],[2,13,14,1]],
+        [[3,5,4,2],[4,3,7,3],[7,2,5,2],[10,3,6,2],[1,6,18,5],[2,5,16,2],[0,8,20,4],[1,11,18,2],[2,12,15,1]],
+        [[1,5,3,2],[3,3,6,3],[7,2,7,2],[12,3,6,3],[15,4,3,2],[0,6,19,5],[1,5,17,2],[0,9,19,3],[1,11,17,1]],
+        [[2,4,4,2],[4,2,6,3],[8,1,5,2],[11,2,5,2],[1,5,14,4],[2,4,12,2],[0,7,15,3],[1,9,13,1]]
+      ];
+      var cloudConfigs = [
+        {shape:0,w:300,top:72, side:'right',offset:-20,anim:'driftL',dur:105,op:0.24},
+        {shape:1,w:220,top:190,side:'left', offset:-30,anim:'driftR',dur:135,op:0.20},
+        {shape:2,w:270,top:330,side:'right',offset:30, anim:'driftL',dur:165,op:0.18},
+        {shape:3,w:180,top:460,side:'left', offset:20, anim:'driftR',dur:98, op:0.15},
+        {shape:0,w:240,top:590,side:'right',offset:-10,anim:'driftL',dur:125,op:0.16},
+        {shape:1,w:250,top:710,side:'left', offset:-40,anim:'driftR',dur:150,op:0.14},
+        {shape:2,w:200,top:840,side:'right',offset:25, anim:'driftL',dur:115,op:0.17}
+      ];
+      var styleEl = document.createElement('style');
+      styleEl.textContent =
+        '@keyframes driftL { 0% { transform:translateX(0); } 100% { transform:translateX(-140vw); } }' +
+        '@keyframes driftR { 0% { transform:translateX(0); } 100% { transform:translateX(140vw); } }';
+      document.head.appendChild(styleEl);
+      function populateClouds(wrap) {
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        cloudConfigs.forEach(function (c, i) {
+          var shape = cloudShapes[c.shape % cloudShapes.length];
+          var unit = Math.max(7, Math.floor(c.w / 22));
+          var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('viewBox', '0 0 ' + (22 * unit) + ' ' + (15 * unit));
+          svg.setAttribute('width', 22 * unit); svg.setAttribute('height', 15 * unit);
+          svg.style.cssText = 'position:absolute;image-rendering:pixelated;opacity:' + c.op + ';top:' + c.top + 'px;' +
+            (c.side === 'right' ? 'right:' + c.offset + 'px' : 'left:' + c.offset + 'px') +
+            ';animation:' + c.anim + ' ' + c.dur + 's linear ' + (i * -14) + 's infinite;';
+          shape.forEach(function (r) {
+            var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', r[0] * unit); rect.setAttribute('y', r[1] * unit);
+            rect.setAttribute('width', r[2] * unit); rect.setAttribute('height', r[3] * unit);
+            rect.setAttribute('fill', r[1] >= 10 ? '#B8E4F8' : 'white');
+            rect.setAttribute('opacity', r[1] >= 10 ? '0.5' : '1');
+            svg.appendChild(rect);
+          });
+          wrap.appendChild(svg);
+        });
+      }
+      document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
     })();
   </script>
 </body>

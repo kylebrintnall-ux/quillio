@@ -82,20 +82,43 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
     await pipeline.cleanupAttachedFiles(fileRefs);
   }
 
-  // 3. Folder routing: honor a Drive folder URL embedded in the brief; null
-  //    falls through to the default folder inside generateDoc.
-  const effectiveFolderId = pipeline.extractBriefFolderId(briefText);
+  // 3. Folder routing (priority): a Drive folder URL embedded in the brief, else
+  //    the tenant's saved default folder (Settings → default_folder_id), else
+  //    null → generateDoc falls back to config.DRIVE_FOLDER_ID.
+  const effectiveFolderId = pipeline.resolveDestinationFolderId(briefText, tenantContext.tenant);
 
   // 4. Build the document.
   console.log(
-    `[web] pre-generateDoc references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
+    `[web] folder routing → effectiveFolderId=${effectiveFolderId || '(config default)'}; pre-generateDoc references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
   );
-  const { doc, assetSpecs, projectFolderUrl } = await pipeline.generateDoc(
-    { brief: briefText, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
-    effectiveFolderId,
-    clients,
-    tenantId
-  );
+  let docResult;
+  try {
+    docResult = await pipeline.generateDoc(
+      { brief: briefText, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
+      effectiveFolderId,
+      clients,
+      tenantId
+    );
+  } catch (err) {
+    // A user-specified destination folder (brief URL or Settings default) that
+    // the writing identity can't reach: surface a clear, actionable message
+    // rather than a generic failure. effectiveFolderId is null when no folder
+    // was specified, so isFolderAccessError returns false and we rethrow.
+    if (pipeline.isFolderAccessError(err, effectiveFolderId)) {
+      let email = null;
+      try {
+        email = await pipeline.getServiceAccountEmail();
+      } catch (_) {
+        /* best-effort — fall back to a generic share hint below */
+      }
+      const share = email
+        ? `Share it with the Quillio service account (${email}) and give it Editor access, then run the brief again.`
+        : `Make sure it's shared (Editor access) with the Google account Quillio writes as, then run the brief again.`;
+      throw new Error(`Couldn't write to your Drive folder (${effectiveFolderId}). ${share}`);
+    }
+    throw err;
+  }
+  const { doc, assetSpecs, projectFolderUrl } = docResult;
 
   // 5. Persist the project to history (best-effort). A DB hiccup — or simply no
   //    DATABASE_URL on the demo — must never fail an otherwise-good brief, so

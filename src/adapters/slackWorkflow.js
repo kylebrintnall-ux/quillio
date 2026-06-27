@@ -109,13 +109,14 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       console.log('[workflow] folderId: default (none in brief)');
     }
 
-    // Decide the target folder: forced default, explicit override, or the
-    // brief's folder (null → createDocument uses the default DRIVE_FOLDER_ID).
+    // Decide the target folder: forced default, explicit override, else the
+    // routing priority (brief folder URL → tenant's saved default folder → null,
+    // where null makes createDocument fall back to config.DRIVE_FOLDER_ID).
     const effectiveFolderId = opts.forceDefaultFolder
       ? null
       : opts.folderIdOverride !== undefined
         ? opts.folderIdOverride
-        : briefFolderId;
+        : pipeline.resolveDestinationFolderId(brief, tenant);
     // Whether we're using a folder the brief linked (for the confirmation line).
     const folderFromBrief = !!effectiveFolderId && effectiveFolderId === briefFolderId;
 

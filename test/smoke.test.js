@@ -123,6 +123,21 @@ test('isFolderAccessError classifies folder-access failures', () => {
   assert.strictEqual(isFolderAccessError(new Error('totally unrelated failure'), 'F1'), false);
 });
 
+test('resolveDestinationFolderId prioritizes brief URL > tenant default > none', () => {
+  const { resolveDestinationFolderId } = require('../src/core/pipeline');
+  const tenant = { default_folder_id: 'TENANT_DEFAULT' };
+  // 1. A folder URL in the brief overrides the tenant default.
+  assert.strictEqual(
+    resolveDestinationFolderId('put it in https://drive.google.com/drive/folders/BRIEF_FOLDER', tenant),
+    'BRIEF_FOLDER'
+  );
+  // 2. No brief URL → the tenant's saved default folder (the Settings value).
+  assert.strictEqual(resolveDestinationFolderId('no folder link here', tenant), 'TENANT_DEFAULT');
+  // 3. No brief URL and no tenant default → null (generateDoc uses config.DRIVE_FOLDER_ID).
+  assert.strictEqual(resolveDestinationFolderId('no folder', { default_folder_id: null }), null);
+  assert.strictEqual(resolveDestinationFolderId('no folder', null), null);
+});
+
 test('copyCompleteBlocks builds Open in Drive + Submit for Review', () => {
   const { copyCompleteBlocks } = require('../src/services/slack');
   const blocks = copyCompleteBlocks('done', 'https://doc', 'DOC1');

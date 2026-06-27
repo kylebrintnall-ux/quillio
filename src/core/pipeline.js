@@ -860,6 +860,17 @@ function extractBriefFolderId(briefText) {
   return m ? m[1] : null;
 }
 
+// Decide where a generated doc should land, in priority order:
+//   1. A Drive folder URL embedded in the brief text (explicit per-brief override)
+//   2. The tenant's saved default folder (Settings → tenants.default_folder_id)
+//   3. null → generateDoc falls back to config.DRIVE_FOLDER_ID (global default)
+// `tenant` is the object resolveTenant returns; it carries default_folder_id in
+// both the Postgres and env-fallback shapes. Centralized so the web + Slack
+// adapters route identically.
+function resolveDestinationFolderId(briefText, tenant) {
+  return extractBriefFolderId(briefText) || (tenant && tenant.default_folder_id) || null;
+}
+
 // The service account's email (for folder-access recovery messaging).
 async function getServiceAccountEmail() {
   const { serviceAccountEmail } = await getClients();
@@ -879,6 +890,7 @@ module.exports = {
   countDocAssets,
   getFolderName,
   extractBriefFolderId,
+  resolveDestinationFolderId,
   extractCanvasId,
   isFolderAccessError,
   getServiceAccountEmail,

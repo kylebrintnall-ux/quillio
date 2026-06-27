@@ -53,13 +53,18 @@ module.exports = {
   // Gmail path — files are owned by a real account with real storage quota,
   // sidestepping the service account's zero-quota limitation. Sheet reads
   // always stay on the service account.
-  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  // .trim() guards against a trailing newline/space in the env value (a pasted
+  // Railway var like "…googleusercontent.com\n" or "…/callback\n" encodes to
+  // %0A in the auth URL and Google rejects it as invalid_request). `&&` keeps an
+  // unset var undefined so the "not configured" guards still fire.
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_ID.trim(),
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
 
   // Per-user Google OAuth (Phase 3): redirect URI registered for the
   // /oauth/google flow that stores a refresh token per tenant in Postgres.
-  GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
+  // Trimmed for the same reason as GOOGLE_CLIENT_ID above.
+  GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI && process.env.GOOGLE_REDIRECT_URI.trim(),
 
   // Target folder for created docs. With OAuth2 this is a normal My Drive
   // folder owned by the OAuth user. With the service account (no OAuth2), this

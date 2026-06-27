@@ -197,30 +197,6 @@ router.get('/oauth/google', (req, res) => {
   url.searchParams.set('access_type', 'offline'); // ask for a refresh token
   url.searchParams.set('prompt', 'consent'); // force a refresh token every time
   url.searchParams.set('state', state);
-
-  // [TEMP DEBUG] Diagnose Google "Error 400: invalid_request". Logs the exact
-  // authorization URL + every parameter. JSON.stringify exposes any stray
-  // whitespace / trailing newline in the env values (the usual culprit — a
-  // value like "…apps.googleusercontent.com\n" encodes to %0A and Google
-  // rejects it), which url.toString() would hide behind %0A. The lengths make a
-  // hidden trailing char obvious. The client SECRET is not part of this URL and
-  // is never logged. Remove once resolved.
-  console.log('[oauth][DEBUG] google authorize URL:', url.toString());
-  console.log(
-    '[oauth][DEBUG] google authorize params:',
-    JSON.stringify({
-      client_id: config.GOOGLE_CLIENT_ID,
-      client_id_len: config.GOOGLE_CLIENT_ID ? config.GOOGLE_CLIENT_ID.length : 0,
-      redirect_uri: config.GOOGLE_REDIRECT_URI,
-      redirect_uri_len: config.GOOGLE_REDIRECT_URI ? config.GOOGLE_REDIRECT_URI.length : 0,
-      scope: GOOGLE_SCOPES,
-      response_type: 'code',
-      access_type: 'offline',
-      prompt: 'consent',
-      state: state,
-    })
-  );
-
   return res.redirect(url.toString());
 });
 

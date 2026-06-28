@@ -464,7 +464,7 @@ Content:
 
 1. Rebuild neutral master template in Figma — all 30 frames, realistic layouts,
    correct text layer naming, Read Me First page
-2. Save master template file key in Quillio (`quillio_master_template_key` in
+2. Save master template file key in Quillio (`figma_master_template_key` in
    `tenants` table)
 3. Figma OAuth integration — read/write access per tenant
 4. Brand kit onboarding step — file upload, Gemini extraction, `design.md`

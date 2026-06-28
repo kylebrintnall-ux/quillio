@@ -478,6 +478,30 @@ Content:
 10. Designer notification — doc link + Figma link after population
 11. /quillio-handoff — manually trigger copy population into an existing Figma file
 
+### DYNAMIC TIME-BASED THEMES
+
+The sky gradient background shifts based on time of day, making the app feel
+alive. Four themes using the existing pixel art aesthetic:
+
+- **Dawn (5am–9am)** — soft pink and orange gradient sky, pixel sun rising,
+  morning clouds
+- **Day (9am–5pm)** — current sky blue gradient (`#4DD9D9` → teal), white pixel
+  clouds (default)
+- **Dusk (5pm–8pm)** — amber and purple gradient, pixel sun setting, longer cloud
+  shadows
+- **Night (8pm–5am)** — deep navy to black gradient, pixel moon, pixel stars,
+  darker clouds
+
+Implementation:
+
+- CSS custom properties (`--sky-top`, `--sky-bottom`, `--cloud-opacity` etc)
+  swapped per theme
+- JS checks current time on load and applies a theme class to the body
+- Theme assets: pixel moon GIF, pixel stars, pixel sun for dawn/dusk
+- Settings toggle: Auto (follows device time, default) or Manual (user picks
+  theme)
+- Manual preference saved to Postgres per user
+
 ## PHASE 3 ADDITIONS
 
 ### File attachment as reference input

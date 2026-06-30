@@ -42,7 +42,8 @@ const TABLES = [
       name TEXT NOT NULL,
       "group" TEXT,
       is_active BOOLEAN DEFAULT true,
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      spec_note TEXT
     )`,
   ],
   [

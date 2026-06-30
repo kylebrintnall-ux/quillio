@@ -47,10 +47,18 @@ async function seedTenantAssets(tenantId) {
     await client.query('BEGIN');
     for (const asset of DEFAULT_ASSETS) {
       const typeRes = await client.query(
-        `INSERT INTO asset_types (tenant_id, name, "group", is_active, sort_order, asset_direction)
-           VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO asset_types (tenant_id, name, "group", is_active, sort_order, asset_direction, spec_note)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
-        [tenantId, asset.name, asset.group, asset.is_active, asset.sort_order, asset.asset_direction || null]
+        [
+          tenantId,
+          asset.name,
+          asset.group,
+          asset.is_active,
+          asset.sort_order,
+          asset.asset_direction || null,
+          asset.spec_note || null,
+        ]
       );
       const assetTypeId = typeRes.rows[0].id;
 
@@ -94,7 +102,7 @@ async function getTenantAssets(tenantId) {
   if (!pool || !tenantId) return null;
 
   const typesRes = await pool.query(
-    `SELECT id, name, "group", sort_order, asset_direction
+    `SELECT id, name, "group", sort_order, asset_direction, spec_note
        FROM asset_types
       WHERE tenant_id = $1 AND is_active = true
       ORDER BY sort_order, id`,
@@ -131,6 +139,7 @@ async function getTenantAssets(tenantId) {
     group: t.group,
     sort_order: t.sort_order,
     asset_direction: t.asset_direction || null,
+    spec_note: t.spec_note || null,
     fields: fieldsByType.get(t.id) || [],
   }));
 }

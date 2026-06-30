@@ -57,30 +57,100 @@ Clear instructions for the designer:
   4. Paste it into Quillio → Settings → Design → Master Template
   5. Every future project will duplicate from this file automatically
 
-## BRAND KIT SETUP (optional, enhances template generation)
+## design.md — BRAND DNA AT ONBOARDING
 
-User uploads brand materials directly in app — no Drive folder required upfront:
+`design.md` is a **one-time onboarding mechanism**. It captures brand DNA at
+setup, informs generation or configuration of the master template, then steps
+back. It is not a recurring input, not a per-project configuration, and not
+something the copywriter touches during daily work. Once the master template is
+approved, the template carries everything forward — `design.md` sits quietly as a
+reference unless the brand refreshes or the team regenerates the master template
+from scratch.
 
-- Drag and drop or file picker: screenshots, brand guidelines PDF, logo files
-  (SVG/PNG), reference imagery
-- Quillio creates `/Quillio Brand Kit/` folder in Drive automatically and uploads
-  all assets there
-- Gemini vision extracts: primary colors, secondary colors, accent, CTA color,
-  typography style, visual style description, button style, spacing feel
+### Two paths to populate design.md
+
+**Generative path (small business, solo operator, new brand):**
+
+- User uploads brand inputs directly in app — no Drive folder required upfront:
+  website URL, product screenshots, existing campaign assets, brand guidelines
+  PDF, logo files (SVG/PNG), reference imagery.
+- Quillio creates a `/Quillio Brand Kit/` folder in Drive automatically and
+  uploads all assets there.
+- Gemini vision extracts visual language: primary/secondary/accent/CTA colors,
+  typography style, spatial density (dense vs airy), button style, spacing feel,
+  visual tone.
 - Quillio prompts for anything it couldn't extract: "I found your primary color
   and logo. What's your CTA button color?"
-- Generates `design.md` per tenant — stored in Postgres alongside `voice.md`
-- Logo file IDs stored in Postgres for placement in Figma frames
+- Quillio infers the brand because the brand doesn't yet exist in a documented,
+  portable form.
+
+**Ingestive path (enterprise, established brand system):**
+
+- The organization already has authoritative brand documentation — a Figma design
+  system, brand guideline PDFs, tone-of-voice docs, a messaging framework,
+  approved campaign assets.
+- Quillio does **not** regenerate what already exists. It ingests those documents
+  and maps them into `design.md` format.
+- The output is the same structured reference file — only the input method
+  differs. Enterprise onboarding is **ingestive, not generative**. Here
+  `design.md` is less a generation artifact and more a structured record of what
+  was ingested and how it maps to Quillio's architecture.
+
+The same logic applies to `voice.md`: a small business has Quillio extract brand
+voice from whatever copy examples they provide; an enterprise uploads existing
+tone-of-voice documentation and messaging framework, and Quillio structures it
+into `voice.md`. The brand already did the work — Quillio adopts it.
 
 `design.md` contains:
 
 - Brand name
 - Primary, secondary, accent, CTA, background colors (hex)
 - Headline font, body font
-- Visual style description
+- Visual style description (including spatial density: dense vs airy)
 - Button style and border radius
 - Image direction
 - Logo Drive file IDs (light and dark versions)
+- For the ingestive path: the mapping of existing design-system layers to
+  Quillio's text layer taxonomy
+
+`design.md` is stored in Postgres per tenant alongside `voice.md`; logo file IDs
+are stored for placement in Figma frames.
+
+### Master template generation — the one generative event
+
+`design.md` informs the generation of **one** master Figma file with all 30 asset
+type templates. This happens **once at setup** — a single generative event, not
+something that repeats per project or per campaign.
+
+- **Generative path:** Quillio produces brand-aware templates as a starting point.
+- **Ingestive path:** Quillio maps the existing design system onto its 30 asset
+  type taxonomy, connecting existing layers and structures to Quillio's naming
+  conventions.
+
+In both cases the next step is **human refinement**. The designer opens the
+master file and finishes it — adjusting colors, typography, spacing, visual
+direction. They are not building from scratch; they are finishing something
+already structurally correct and directionally on-brand. When the designer and
+Creative Manager sign off, that master file becomes the approved creative system
+for the team. Every project from that point draws from those approved templates.
+`design.md`'s active job is done; the master file is the source of truth
+indefinitely.
+
+This makes `design.md` a **design system generator** for teams that need one and
+a **design system connector** for teams that already have one. One setup event,
+indefinite leverage.
+
+### Tenant-level brand configuration
+
+For large organizations the master template may operate at **team level** rather
+than org level. At Salesforce there is the global Salesforce brand, then
+Agentforce as a sub-brand, then Agentforce Service as a more specific context.
+One team's master template is distinct from another's even within the same Slack
+workspace. This maps cleanly to the existing tenant architecture — the org
+installs the app once, and individual teams configure their own brand context
+(`voice.md`, `design.md`, master template) within their tenant. The Agentforce
+Service team can have a distinct tenant configuration from the Commerce Cloud
+team while sharing one Slack workspace.
 
 ## EVERY PROJECT AFTER SETUP
 
@@ -148,6 +218,57 @@ One-pager and battle card:
 - Document-style layout
 - Text layers per section matching the copy doc fields
 
+## TEXT LAYER NAMING CONVENTION — THE INTEGRATION SPEC
+
+The load-bearing piece of the Figma integration is consistent, predictable text
+layer naming across all templates: `[Headline]`, `[Subhead]`, `[Body]`, `[CTA]`,
+`[Legal]`, and so on. As long as those layer names follow the established
+taxonomy, designers have **complete freedom everywhere else** — they can bring
+their own visual direction, add motion, change the entire aesthetic. None of it
+touches the text layer structure. Quillio always knows where to write regardless
+of what surrounds those layers.
+
+This is a clean separation of concerns that mirrors real role structure:
+
+- Quillio owns content architecture
+- Designer owns visual execution
+- Neither steps on the other
+
+For enterprise teams with existing Figma design systems, the **layer mapping**
+step is where `design.md` does its critical work — identifying existing text
+layers and mapping them to Quillio's taxonomy. This step **requires designer
+review** to confirm or correct the mapping, and must be as lightweight as
+possible to avoid becoming an adoption blocker: surface suggested mappings for the
+designer to confirm or correct rather than requiring them to build the mapping
+from scratch. Large design systems with inconsistent historical layer naming are
+the known friction point.
+
+Teams without existing systems simply adopt the naming conventions Quillio
+establishes at master template generation — designers working in those templates
+from day one name layers correctly as a matter of workflow.
+
+## FILENAME PARSING
+
+Quillio can interpret Figma filenames to identify asset type and copy constraints
+without manual input. Standard ad unit dimensions are a finite, known set —
+`300x600` is always a half-page banner, `728x90` is always a leaderboard,
+`300x250` is always a medium rectangle. When dimensions appear in a filename
+Quillio already knows the asset type, applicable copy constraints, character
+limits, and expected text layer count.
+
+The variation space is trainable because patterns are consistent even when
+formatting is not:
+
+- Dimension formatting: `300x600`, `300X600`, `300-by-600`, `300_600px`,
+  `300x600px_v2`
+- Campaign name formatting: `state-of-marketing`, `state_of_marketing`,
+  `StateOfMarketing`, `SOM`
+- Version suffixes: `_FINAL`, `_v3`, `_R2`, `_approved`
+
+This is the same fuzzy matching and intent extraction already built into the
+brief parser, applied to a filename string instead of a paragraph — an extension
+of existing architecture, not a new capability to build from scratch.
+
 ## ONBOARDING — DESIGN SETUP STEP
 
 Add a design setup step to the onboarding flow after the voice guide step and
@@ -192,6 +313,34 @@ Content:
 9. Logo placement — pull from brand kit Drive folder
 10. Designer notification — doc link + Figma link after population
 11. /quillio-handoff — manually trigger copy population into an existing Figma file
+
+### Parallel track within Phase 4 — Enterprise onboarding (ingestive path)
+
+Runs alongside the build order above for teams that already have a brand system:
+
+1. Ingest existing Figma design systems and map layers to Quillio's text layer
+   taxonomy
+2. Populate `voice.md` from uploaded brand documentation — tone-of-voice docs,
+   messaging framework, approved copy examples
+3. Tenant-level configuration within shared Slack workspaces — distinct brand
+   context (`voice.md`, `design.md`, master template) per team
+4. Designer-reviewed layer mapping interface — surface suggested mappings for
+   confirmation rather than manual construction
+
+## COMPETITIVE POSITIONING
+
+| Capability | Gemini + Drive | Figma Plugin | Quillio |
+|---|---|---|---|
+| Brief intake in Slack | ✗ | ✗ | ✓ |
+| Asset-type-aware copy generation | ✗ | ✗ | ✓ |
+| Approval workflow routing | ✗ | ✗ | ✓ |
+| Figma file generation from master template | ✗ | Partial | ✓ |
+| Text layer sync | ✗ | ✗ | ✓ |
+| Bidirectional drift detection | ✗ | ✗ | ✓ |
+| Platform agnostic doc output | ✗ | ✗ | ✓ (roadmap) |
+| Access restricted to creative roles | ✗ | ✗ | ✓ |
+| Enterprise brand ingestion at onboarding | ✗ | ✗ | ✓ |
+| Tenant-level brand configuration | ✗ | ✗ | ✓ |
 
 ## DYNAMIC TIME-BASED THEMES
 

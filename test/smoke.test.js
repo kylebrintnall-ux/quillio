@@ -695,6 +695,15 @@ test('parseDoc treats a Hook field explainer as notes, not copy (insertion below
   assert.strictEqual(hook.deleteEnd, null, 'the explainer is never treated as drafted copy');
 });
 
+test('builtInFieldGuidance forces sentence case for Graphic Headline', () => {
+  const { builtInFieldGuidance } = require('../src/services/gemini');
+  assert.match(builtInFieldGuidance('Graphic Headline'), /sentence case/i);
+  assert.match(builtInFieldGuidance('graphic headline'), /sentence case/i); // case-insensitive
+  assert.match(builtInFieldGuidance('Subhead'), /supporting line/i);
+  assert.strictEqual(builtInFieldGuidance('Headline'), ''); // platform headline untouched
+  assert.strictEqual(builtInFieldGuidance('CTA Button'), '');
+});
+
 test('db/assets exposes seedTenantAssets + getTenantAssets', () => {
   const a = require('../src/db/assets');
   assert.strictEqual(typeof a.seedTenantAssets, 'function');

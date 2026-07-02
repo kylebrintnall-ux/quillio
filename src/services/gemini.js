@@ -462,13 +462,15 @@ function trimToCeiling(s, max) {
 
 // Built-in per-field creative guidance, keyed by normalized field name. Fills the
 // gap left by the retired Sheet "Notes" column for fields that need the same
-// instruction regardless of tenant. Subhead is the first: it must support the
-// headline, not repeat it. Returns '' when there's nothing built in. A tenant's
-// own field notes (if ever restored) take precedence over this.
+// instruction regardless of tenant. Returns '' when there's nothing built in. A
+// tenant's own field notes (if ever restored) take precedence over this.
 function builtInFieldGuidance(fieldName) {
   const name = String(fieldName || '').trim().toLowerCase();
   if (name === 'subhead') {
     return 'Secondary supporting line beneath the headline. Add context, specificity, or urgency — do NOT restate or reword the headline. Read as the next beat, not an echo.';
+  }
+  if (name === 'graphic headline') {
+    return 'Write in sentence case: capitalize only the first word and proper nouns (brand names, product names, acronyms like AI or SaaS) — NOT every word. e.g. "Resolve tickets faster with AI", not "Resolve Tickets Faster With AI".';
   }
   return '';
 }
@@ -742,4 +744,6 @@ module.exports = {
   generateAssetDrafts,
   generateVoiceGuide,
   describeImage,
+  // Exposed for unit tests only.
+  builtInFieldGuidance,
 };

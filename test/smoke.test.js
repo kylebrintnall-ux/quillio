@@ -641,6 +641,60 @@ test('parseDoc skips the Graphic Copy group heading and recovers grouped fields'
   assert.strictEqual(sub.charMax, 90);
 });
 
+test('fieldHint explains the visible-then-more mechanic for Hook fields only', () => {
+  const { fieldHint } = require('../src/destinations/googleDocs');
+  assert.ok(fieldHint({ fieldName: 'Hook (first 125 chars, before More)' }), 'Instagram hook gets a hint');
+  assert.ok(fieldHint({ fieldName: 'Hook (first 150 chars, before See more)' }), 'LinkedIn hook gets a hint');
+  assert.match(fieldHint({ fieldName: 'Hook' }), /more/i);
+  assert.strictEqual(fieldHint({ fieldName: 'Headline' }), null);
+  assert.strictEqual(fieldHint({ fieldName: 'Subhead' }), null);
+});
+
+test('parseDoc treats a Hook field explainer as notes, not copy (insertion below it)', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+  function makeDoc(paras) {
+    let idx = 1;
+    const content = paras.map((para) => {
+      const raw = (para.text || '') + '\n';
+      const startIndex = idx;
+      const endIndex = idx + raw.length;
+      idx = endIndex;
+      return {
+        startIndex,
+        endIndex,
+        paragraph: {
+          paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+          elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+        },
+      };
+    });
+    return { body: { content } };
+  }
+  const paras = [
+    { text: 'Organic Social — Instagram', style: 'HEADING_3' },
+    { text: 'Visual does the work.', italic: true },
+    { text: 'Caption [165]', bold: true },
+    { text: '' },
+    { text: 'Hook (first 125 chars, before More) [125]', bold: true },
+    { text: 'Only this opening runs before “…more.”', italic: true }, // the rendered explainer
+    { text: '' }, // draft slot — copy inserts here, below the explainer
+    { text: 'Graphic Copy', style: 'HEADING_4' },
+    { text: 'Graphic Headline [70]', bold: true },
+    { text: '' },
+    { text: 'Subhead [40-90]', bold: true },
+    { text: '' },
+  ];
+  const doc = makeDoc(paras);
+  const c = doc.body.content;
+  const fields = parseDoc(doc).assets[0].fields;
+  assert.deepStrictEqual(fields.map((f) => f.fieldName), ['Caption', 'Hook (first 125 chars, before More)', 'Graphic Headline', 'Subhead']);
+  const hook = fields.find((f) => f.fieldName === 'Hook (first 125 chars, before More)');
+  // The explainer is captured as notes; the draft insert point is BELOW it.
+  assert.match(hook.notes, /more/i);
+  assert.strictEqual(hook.insertIndex, c[5].endIndex, 'copy inserts below the explainer line');
+  assert.strictEqual(hook.deleteEnd, null, 'the explainer is never treated as drafted copy');
+});
+
 test('db/assets exposes seedTenantAssets + getTenantAssets', () => {
   const a = require('../src/db/assets');
   assert.strictEqual(typeof a.seedTenantAssets, 'function');

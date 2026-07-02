@@ -101,7 +101,7 @@ const RAW = [
     ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['Display Banner — Standard', 'Display', [
-    ['Graphic Headline', 0, 30, 'Graphic Copy'],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 20, 40, 'Graphic Copy'],
     ['Body Copy', 0, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
@@ -111,7 +111,7 @@ const RAW = [
     ['Long Headline', 0, 90],
     ['Description', 0, 90],
     ['Business Name', 0, 25],
-    ['Graphic Headline', 0, 30, 'Graphic Copy'],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 20, 40, 'Graphic Copy'],
     ['CTA Button', 0, 30, 'Graphic Copy'],
   ]],

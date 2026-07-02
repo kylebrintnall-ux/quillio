@@ -97,6 +97,21 @@ function makeTitle(brief, campaignTitle) {
 // Left indent (points) applied to fields nested under a group sub-heading.
 const GROUP_INDENT_PT = 18;
 
+// Optional writer-facing explainer rendered as an italic line under a field
+// label. Pattern-based (not hardcoded per asset) so it applies wherever the
+// field appears. "Hook" fields carry the platform's visible-then-"…more"
+// mechanic — the char limit is the visible portion; the full post runs longer.
+function fieldHint(field) {
+  const name = String(field.fieldName || '');
+  if (/^Hook\b/i.test(name)) {
+    return (
+      'Only this opening runs before the app collapses the rest behind “…more.” ' +
+      'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.'
+    );
+  }
+  return null;
+}
+
 function fieldLabel(field) {
   const min = Number(field.charMin) || 0;
   const max = Number(field.charMax) || 0;
@@ -268,6 +283,8 @@ async function createDocument({
       }
       const indent = group ? GROUP_INDENT_PT : 0;
       b.boldLabel(fieldLabel(field), { indent });
+      const hint = fieldHint(field);
+      if (hint) b.fieldNote(hint, { indent });
       b.blankLine({ indent });
     }
   }
@@ -691,8 +708,9 @@ module.exports = {
   generateDraft,
   getDocContent,
   // Exposed for unit tests only (not part of the destination interface used by
-  // the registry): char-limit bracket rendering, and doc re-parsing including
-  // the regeneration delete-range detection.
+  // the registry): char-limit bracket rendering, the field explainer, and doc
+  // re-parsing including the regeneration delete-range detection.
   fieldLabel,
+  fieldHint,
   parseDoc,
 };

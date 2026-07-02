@@ -112,8 +112,10 @@ class DocBuilder {
   // Italic + muted grey so it reads as guidance, distinct from drafted copy
   // (regular weight) and the asset meta line (plain italic). Parsers recognize
   // it by the italic style + its position right after the bold label.
-  fieldNote(text) {
+  fieldNote(text, { indent = 0 } = {}) {
     this._push(text, {
+      paragraphStyle: indent ? indentStyle(indent) : undefined,
+      paragraphFields: indent ? 'indentStart,indentFirstLine' : undefined,
       textStyle: {
         italic: true,
         foregroundColor: { color: { rgbColor: { red: 0.45, green: 0.45, blue: 0.45 } } },

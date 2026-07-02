@@ -8,11 +8,10 @@
 //     ~3000, but a post that long never performs — 500 is the working ceiling).
 //   • Organic Social — Instagram: Caption 2200 → 165 (keep it tight; detail
 //     lives beyond the fold, hook lives up top).
-//   • Graphic Headline 40 → 70 on the standard-creative assets (Meta single /
-//     carousel, Twitter/X, and all three organic). 70 matches X's media-headline
-//     max and reads fine on a full 1080²/1200×628 creative.
-//     Display Banner (30) and DV360 responsive (30) intentionally stay tighter —
-//     they render down to tiny/variable sizes where 70 chars won't fit legibly.
+//   • Graphic Headline 40/30 → 70 across all creative assets (Meta single /
+//     carousel, Twitter/X, all three organic, plus Display Banner and DV360
+//     responsive). 70 matches X's media-headline max and reads on a full
+//     creative; the writer still trims for the smallest format when needed.
 //
 // Design: data-driven + idempotent. Char-spec UPDATEs by field name, matched by
 // asset_types.name → every tenant carrying that asset is updated. Re-running is a
@@ -26,6 +25,8 @@ const CHANGES = [
   { name: 'Meta Single Image Ad', specs: { 'Graphic Headline': [0, 70] } },
   { name: 'Meta Carousel Ad', specs: { 'Graphic Headline': [0, 70] } },
   { name: 'Twitter/X Ad', specs: { 'Graphic Headline': [0, 70] } },
+  { name: 'Display Banner — Standard', specs: { 'Graphic Headline': [0, 70] } },
+  { name: 'Google DV360 / Responsive Display', specs: { 'Graphic Headline': [0, 70] } },
   { name: 'Organic Social — LinkedIn', specs: { 'Post Copy': [0, 500], 'Graphic Headline': [0, 70] } },
   { name: 'Organic Social — Instagram', specs: { 'Caption': [0, 165], 'Graphic Headline': [0, 70] } },
   { name: 'Organic Social — Twitter/X', specs: { 'Graphic Headline': [0, 70] } },

@@ -623,7 +623,10 @@ async function generateAssetDrafts({
   try {
     const text = await callGemini({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.8 },
+      // Cap headroom so a many-field asset (e.g. a carousel: 9–10 fields) can't
+      // truncate mid-JSON and fail the parse, which would push every field onto
+      // the slower single-field fallback path.
+      generationConfig: { temperature: 0.8, maxOutputTokens: 4096 },
     });
     parsed = JSON.parse(stripJsonFences(text));
   } catch (err) {
@@ -644,21 +647,33 @@ async function generateAssetDrafts({
     const ceiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
     // Missing from the batch, or over its limit → fall back to the robust
     // single-field generator (which rewrites and, if needed, hard-trims).
+    // One field's fallback failing (a Gemini timeout / rate-limit / error) must
+    // NOT abandon the whole asset — the many-field assets (carousels) fire the
+    // most fallback calls and so are the most exposed. Isolate each: on failure
+    // keep whatever the batch gave (or empty), and let the other fields proceed.
     if (!copy || (ceiling && copy.length > ceiling)) {
-      copy = await generateFieldDraft({
-        assetType,
-        channel,
-        fieldName: f.fieldName,
-        charMax: f.charMax,
-        toneNotes,
-        notes: f.notes,
-        funnelStage: f.funnelStage,
-        assetDirection,
-        summary,
-        writerPrompt,
-        direction,
-        voiceGuide,
-      });
+      try {
+        copy = await generateFieldDraft({
+          assetType,
+          channel,
+          fieldName: f.fieldName,
+          charMax: f.charMax,
+          toneNotes,
+          notes: f.notes,
+          funnelStage: f.funnelStage,
+          assetDirection,
+          summary,
+          writerPrompt,
+          direction,
+          voiceGuide,
+        });
+      } catch (err) {
+        console.warn(
+          `[gemini] field fallback failed for ${assetType} / ${f.fieldName}: ${err.message}`
+        );
+        // Keep the batch value if we had one; otherwise leave it empty (dropped
+        // downstream) rather than throwing away every field on this asset.
+      }
     }
     out.push({ fieldName: f.fieldName, copy });
   }

@@ -668,6 +668,7 @@ function tenantAssetsToSpecs(rows, assetFilter = []) {
         fieldName: f.field_name,
         charMin: parseInt(f.char_min, 10) || 0,
         charMax: parseInt(f.char_max, 10) || 0,
+        groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
         notes: '', // not stored in copy_fields (Sheet-only)
         funnelStage: '', // not stored in copy_fields (Sheet-only)
       })),

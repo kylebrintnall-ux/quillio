@@ -17,6 +17,15 @@ const BLACK_BORDER = {
   dashStyle: 'SOLID',
 };
 
+// Left-indent a paragraph by `pt` points (both the block and its first line, so
+// wrapped lines and the paragraph align). Used to nest grouped fields.
+function indentStyle(pt) {
+  return {
+    indentStart: { magnitude: pt, unit: 'PT' },
+    indentFirstLine: { magnitude: pt, unit: 'PT' },
+  };
+}
+
 class DocBuilder {
   constructor() {
     this.text = '';
@@ -81,6 +90,17 @@ class DocBuilder {
     });
   }
 
+  // A sub-group heading within an asset, e.g. "Graphic Copy" — the on-graphic
+  // copy fields (Graphic Headline / Subhead / CTA) rendered as one unit. Styled
+  // as HEADING_4 so parseDoc recognizes and skips it (it is NOT a field and must
+  // never be drafted into); the fields beneath it are indented for grouping.
+  groupLabel(text) {
+    this._push(text, {
+      paragraphStyle: { namedStyleType: 'HEADING_4' },
+      paragraphFields: 'namedStyleType',
+    });
+  }
+
   italic(text) {
     this._push(text, {
       textStyle: { italic: true },
@@ -102,9 +122,13 @@ class DocBuilder {
     });
   }
 
-  // A bold field label, e.g. "Headline [30]".
-  boldLabel(text) {
+  // A bold field label, e.g. "Headline [30]". `indent` (PT) shifts the paragraph
+  // right so fields grouped under a sub-heading (e.g. Graphic Copy) read as
+  // nested. Indentation is purely visual — parseDoc ignores it.
+  boldLabel(text, { indent = 0 } = {}) {
     this._push(text, {
+      paragraphStyle: indent ? indentStyle(indent) : undefined,
+      paragraphFields: indent ? 'indentStart,indentFirstLine' : undefined,
       textStyle: { bold: true },
       textFields: 'bold',
     });
@@ -122,8 +146,16 @@ class DocBuilder {
     });
   }
 
-  blankLine() {
-    this._push('');
+  // A blank paragraph — the draft-insertion point under a field label. When the
+  // field is grouped, indent it so the drafted copy inherits the group's
+  // indentation and stays visually nested.
+  blankLine({ indent = 0 } = {}) {
+    this._push(
+      '',
+      indent
+        ? { paragraphStyle: indentStyle(indent), paragraphFields: 'indentStart,indentFirstLine' }
+        : {}
+    );
   }
 
   // A disc-bullet list item. Records a createParagraphBullets request over the

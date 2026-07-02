@@ -554,6 +554,93 @@ test('defaultAssets is the 30-type v3 library with valid shape', () => {
   );
 });
 
+test('defaultAssets Graphic Copy group is contiguous and correctly placed', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const grouped = DEFAULT_ASSETS.filter((a) => a.fields.some((f) => f.group_label === 'Graphic Copy'));
+  assert.strictEqual(grouped.length, 14, '14 assets carry a Graphic Copy group');
+  for (const a of grouped) {
+    // Grouped fields must be one uninterrupted run so the Doc renders a single
+    // sub-heading (and the Figma population step maps them as a unit).
+    const idxs = a.fields.map((f, i) => (f.group_label === 'Graphic Copy' ? i : -1)).filter((i) => i >= 0);
+    for (let k = 1; k < idxs.length; k++) {
+      assert.strictEqual(idxs[k], idxs[k - 1] + 1, `${a.name}: Graphic Copy fields must be contiguous`);
+    }
+    const groupNames = idxs.map((i) => a.fields[i].field_name);
+    assert.ok(groupNames.includes('Subhead'), `${a.name}: Subhead in group`);
+    assert.ok(groupNames.includes('Graphic Headline'), `${a.name}: Graphic Headline in group`);
+  }
+  // Display Banner merged its two headlines — only Graphic Headline remains.
+  const disp = DEFAULT_ASSETS.find((a) => a.name === 'Display Banner — Standard');
+  assert.ok(!disp.fields.some((f) => f.field_name === 'Headline'), 'display banner has no plain Headline');
+  // The three organic assets gained a Graphic Headline (post + graphic model).
+  for (const n of ['Organic Social — LinkedIn', 'Organic Social — Instagram', 'Organic Social — Twitter/X']) {
+    const a = DEFAULT_ASSETS.find((x) => x.name === n);
+    assert.ok(a.fields.some((f) => f.field_name === 'Graphic Headline'), `${n}: has Graphic Headline`);
+  }
+});
+
+test('DocBuilder renders a Graphic Copy group heading (HEADING_4) with indented fields', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const b = new DocBuilder();
+  b.assetHeading('LinkedIn Single Image Ad');
+  b.groupLabel('Graphic Copy');
+  b.boldLabel('Graphic Headline [70]', { indent: 18 });
+  b.blankLine({ indent: 18 });
+  const reqs = b.buildRequests();
+  const styleReqs = reqs.filter((r) => r.updateParagraphStyle);
+  // The group heading uses HEADING_4 — the named style parseDoc skips.
+  const h4 = styleReqs.filter((r) => r.updateParagraphStyle.paragraphStyle.namedStyleType === 'HEADING_4');
+  assert.strictEqual(h4.length, 1, 'exactly one HEADING_4 group heading');
+  // The grouped label + blank draft slot carry a left indent.
+  const indented = styleReqs.filter((r) => r.updateParagraphStyle.paragraphStyle.indentStart);
+  assert.ok(indented.length >= 2, 'grouped label and blank line are indented');
+});
+
+test('parseDoc skips the Graphic Copy group heading and recovers grouped fields', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+  function makeDoc(paras) {
+    let idx = 1;
+    const content = paras.map((para) => {
+      const raw = (para.text || '') + '\n';
+      const startIndex = idx;
+      const endIndex = idx + raw.length;
+      idx = endIndex;
+      return {
+        startIndex,
+        endIndex,
+        paragraph: {
+          paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+          elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+        },
+      };
+    });
+    return { body: { content } };
+  }
+  const paras = [
+    { text: 'LinkedIn Single Image Ad', style: 'HEADING_3' },
+    { text: 'Direct. Benefit-led.', italic: true },
+    { text: 'Intro Text [600]', bold: true },
+    { text: '' },
+    { text: 'Headline [70]', bold: true },
+    { text: '' },
+    { text: 'Graphic Copy', style: 'HEADING_4' }, // group heading — must be skipped
+    { text: 'Graphic Headline [70]', bold: true },
+    { text: '' },
+    { text: 'Subhead [40-90]', bold: true },
+    { text: '' },
+    { text: 'CTA Button [20]', bold: true },
+    { text: '' },
+  ];
+  const fields = parseDoc(makeDoc(paras)).assets[0].fields;
+  const names = fields.map((f) => f.fieldName);
+  assert.deepStrictEqual(names, ['Intro Text', 'Headline', 'Graphic Headline', 'Subhead', 'CTA Button']);
+  assert.ok(!names.includes('Graphic Copy'), 'the group heading is never parsed as a field');
+  // Char limits are still recovered for fields that follow the group heading.
+  const sub = fields.find((f) => f.fieldName === 'Subhead');
+  assert.strictEqual(sub.charMin, 40);
+  assert.strictEqual(sub.charMax, 90);
+});
+
 test('db/assets exposes seedTenantAssets + getTenantAssets', () => {
   const a = require('../src/db/assets');
   assert.strictEqual(typeof a.seedTenantAssets, 'function');

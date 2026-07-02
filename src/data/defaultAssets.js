@@ -14,10 +14,13 @@
 //   • Landing pages: SEO fields (Meta Title / Meta Description / OG Title).
 //   • spec_note added to the multi-size display assets.
 //
-// Authored compactly as [name, group, [[fieldName, charMin, charMax], …]] and
-// normalized below into the seed shape (adds sort_order, is_active, field_type,
+// Authored compactly as [name, group, [[fieldName, charMin, charMax, groupLabel?], …]]
+// and normalized below into the seed shape (adds sort_order, is_active, field_type,
 // spec metadata, asset_direction and spec_note). field_type is 'text' for every
-// current field.
+// current field. The optional 4th field element is a group_label: consecutive
+// fields sharing one (e.g. 'Graphic Copy') render under a single indented
+// sub-heading in the Doc — the on-graphic copy (Graphic Headline, Subhead, and
+// CTA on paid/display) grouped so it reads as one unit and maps to Figma layers.
 
 const SPEC_SOURCE = 'quillio_default';
 const SPEC_VERSION = '1.0';
@@ -26,92 +29,91 @@ const RAW = [
   ['LinkedIn Single Image Ad', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 70],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
     ['LAN Description', 0, 70],
   ]],
   ['LinkedIn Carousel Ad', 'Paid Social', [
     ['Intro Text', 0, 600],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 70],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
     ['Card 1 Headline', 0, 45],
     ['Card 2 Headline', 0, 45],
     ['Card 3 Headline', 0, 45],
     ['Card 4 Headline', 0, 45],
     ['Card 5 Headline', 0, 45],
-    ['CTA Button', 0, 20],
   ]],
   ['LinkedIn Single Image Ad — Variant A', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 70],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['LinkedIn Single Image Ad — Variant B', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 70],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['LinkedIn Single Image Ad — Variant C', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 70],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['LinkedIn Single Image Ad — Variant D', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 70],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['Meta Single Image Ad', 'Paid Social', [
     ['Primary Text', 0, 125],
     ['Headline', 0, 40],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 40],
     ['Description', 0, 30],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 40, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['Meta Carousel Ad', 'Paid Social', [
     ['Primary Text', 0, 125],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 40],
+    ['Graphic Headline', 0, 40, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
     ['Card 1 Headline', 0, 45],
     ['Card 2 Headline', 0, 45],
     ['Card 3 Headline', 0, 45],
     ['Card 4 Headline', 0, 45],
     ['Card 5 Headline', 0, 45],
     ['Card Description', 0, 18],
-    ['CTA Button', 0, 20],
   ]],
   ['Twitter/X Ad', 'Paid Social', [
     ['Ad Copy', 0, 280],
     ['Headline', 0, 70],
-    ['Subhead', 40, 90],
-    ['Graphic Headline', 0, 40],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 40, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['Display Banner — Standard', 'Display', [
-    ['Headline', 0, 30],
-    ['Subhead', 20, 40],
-    ['Graphic Headline', 0, 30],
-    ['Body Copy', 0, 90],
-    ['CTA Button', 0, 20],
+    ['Graphic Headline', 0, 30, 'Graphic Copy'],
+    ['Subhead', 20, 40, 'Graphic Copy'],
+    ['Body Copy', 0, 90, 'Graphic Copy'],
+    ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['Google DV360 / Responsive Display', 'Display', [
     ['Short Headline', 0, 30],
-    ['Subhead', 20, 40],
-    ['Graphic Headline', 0, 30],
     ['Long Headline', 0, 90],
     ['Description', 0, 90],
     ['Business Name', 0, 25],
-    ['CTA Button', 0, 30],
+    ['Graphic Headline', 0, 30, 'Graphic Copy'],
+    ['Subhead', 20, 40, 'Graphic Copy'],
+    ['CTA Button', 0, 30, 'Graphic Copy'],
   ]],
   ['Demand Gen Nurture Email', 'Email', [
     ['Subject Line 1', 50, 75],
@@ -225,18 +227,21 @@ const RAW = [
   ['Organic Social — LinkedIn', 'Organic Social', [
     ['Post Copy', 0, 3000],
     ['Hook (first 150 chars, before See more)', 0, 150],
-    ['Subhead', 40, 90],
+    ['Graphic Headline', 0, 40, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
     ['Headline (if link)', 0, 70],
   ]],
   ['Organic Social — Instagram', 'Organic Social', [
     ['Caption', 0, 2200],
     ['Hook (first 125 chars, before More)', 0, 125],
-    ['Subhead', 40, 90],
+    ['Graphic Headline', 0, 40, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
     ['Alt Text', 0, 100],
   ]],
   ['Organic Social — Twitter/X', 'Organic Social', [
     ['Post Copy', 0, 280],
-    ['Subhead', 40, 90],
+    ['Graphic Headline', 0, 40, 'Graphic Copy'],
+    ['Subhead', 40, 90, 'Graphic Copy'],
   ]],
   ['Direct Mail — Box / Mailer', 'Direct Mail', [
     ['Exterior Front Headline', 0, 60],
@@ -338,12 +343,13 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   spec_version: SPEC_VERSION,
   asset_direction: DIRECTIONS[name] || '',
   spec_note: SPEC_NOTES[name] || null,
-  fields: fields.map(([field_name, char_min, char_max], j) => ({
+  fields: fields.map(([field_name, char_min, char_max, group_label], j) => ({
     field_name,
     char_min,
     char_max,
     field_type: 'text',
     sort_order: j + 1,
+    group_label: group_label || null,
   })),
 }));
 

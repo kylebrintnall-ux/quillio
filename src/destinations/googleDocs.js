@@ -94,6 +94,9 @@ function makeTitle(brief, campaignTitle) {
   return `${todayStamp()} — ${toTitleCase(base)}`;
 }
 
+// Left indent (points) applied to fields nested under a group sub-heading.
+const GROUP_INDENT_PT = 18;
+
 function fieldLabel(field) {
   const min = Number(field.charMin) || 0;
   const max = Number(field.charMax) || 0;
@@ -253,9 +256,19 @@ async function createDocument({
     const meta = [asset.channel, asset.toneNotes].filter(Boolean).join(' · ');
     const headerLine = direction || meta;
     if (headerLine) b.italic(headerLine);
+    // Fields render top-to-bottom. Consecutive fields sharing a group_label
+    // (e.g. "Graphic Copy") emit that sub-heading once, then render indented so
+    // the on-graphic copy reads as one nested unit.
+    let openGroup = null;
     for (const field of asset.fields) {
-      b.boldLabel(fieldLabel(field));
-      b.blankLine();
+      const group = field.groupLabel || null;
+      if (group !== openGroup) {
+        if (group) b.groupLabel(group);
+        openGroup = group;
+      }
+      const indent = group ? GROUP_INDENT_PT : 0;
+      b.boldLabel(fieldLabel(field), { indent });
+      b.blankLine({ indent });
     }
   }
 
@@ -328,6 +341,15 @@ function parseDoc(doc) {
       current = { assetType: text, channel: '', toneNotes: '', fields: [], gotMeta: false };
       assets.push(current);
       currentField = null; // a new asset ends the previous field's copy region
+      notesSeen = false;
+      continue;
+    }
+
+    // A group sub-heading (e.g. "Graphic Copy", rendered HEADING_4) is a layout
+    // label, not a field — skip it. It ends the previous field's copy region so
+    // the heading is never mistaken for drafted copy.
+    if (named === 'HEADING_4') {
+      currentField = null;
       notesSeen = false;
       continue;
     }
@@ -608,6 +630,13 @@ async function getDocContent(id, clients) {
     if (named === 'HEADING_3') {
       current = { name: text, asset_direction: '', fields: [] };
       result.assets.push(current);
+      field = null;
+      continue;
+    }
+
+    // A group sub-heading (e.g. "Graphic Copy", HEADING_4) is a layout label, not
+    // a field — skip it and end the previous field's copy region.
+    if (named === 'HEADING_4') {
       field = null;
       continue;
     }

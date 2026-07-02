@@ -65,8 +65,8 @@ async function seedTenantAssets(tenantId) {
       for (const field of asset.fields) {
         await client.query(
           `INSERT INTO copy_fields
-             (asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             (asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
             assetTypeId,
             field.field_name,
@@ -76,6 +76,7 @@ async function seedTenantAssets(tenantId) {
             field.sort_order,
             asset.spec_source,
             asset.spec_version,
+            field.group_label || null,
           ]
         );
       }
@@ -112,7 +113,7 @@ async function getTenantAssets(tenantId) {
 
   const typeIds = typesRes.rows.map((t) => t.id);
   const fieldsRes = await pool.query(
-    `SELECT asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version
+    `SELECT asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label
        FROM copy_fields
       WHERE asset_type_id = ANY($1::bigint[])
       ORDER BY sort_order, id`,
@@ -130,6 +131,7 @@ async function getTenantAssets(tenantId) {
       sort_order: row.sort_order,
       spec_source: row.spec_source,
       spec_version: row.spec_version,
+      group_label: row.group_label || null,
     });
   }
 

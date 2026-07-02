@@ -55,7 +55,8 @@ const TABLES = [
       char_min INTEGER DEFAULT 0,
       char_max INTEGER DEFAULT 0,
       field_type TEXT,
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      group_label TEXT
     )`,
   ],
   [

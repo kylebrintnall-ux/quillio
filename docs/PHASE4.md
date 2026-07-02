@@ -182,14 +182,22 @@ What the designer still owns:
 
 Paid social and display frames:
 
-- Text layers: `[Headline]`, `[Subhead]`, and `[CTA Button]`
-- Headline in large display type, realistically sized for the format
-- `[Subhead]` is the secondary supporting line beneath the headline (paid social
-  40–90 chars; display 20–40) — layer name must be exactly `[Subhead]` so the
-  Phase 4 population step matches it to the `Subhead` copy field by name
-- CTA as a styled button component
-- Image zone marked as `[Background]`
-- `[Logo]` placement in corner
+- On-graphic text layers — the **Graphic Copy** group: `[Graphic Headline]`,
+  `[Subhead]`, and `[CTA Button]` (organic social has `[Graphic Headline]` +
+  `[Subhead]`, no CTA). In the copy doc these render together under an indented
+  "Graphic Copy" sub-heading and carry `group_label = 'Graphic Copy'` in
+  `copy_fields`; the layer names must match the field names exactly so the Phase 4
+  population step maps the group as a unit.
+- `[Graphic Headline]` is the headline baked onto the creative; the platform's
+  clickable `[Headline]` (LinkedIn/Meta post headline) is a separate top-level
+  field, not part of the graphic.
+- `[Subhead]` is the secondary supporting line beneath the graphic headline (paid
+  social 40–90 chars; display 20–40) — supports the headline, never repeats it.
+- Static display banners are entirely on-graphic (one merged `[Graphic Headline]`,
+  no separate platform headline); responsive display (DV360) keeps its assembled
+  fields — Short/Long Headline, Description, Business Name — top-level.
+- Headline in large display type; CTA as a styled button component
+- Image zone marked as `[Background]`; `[Logo]` placement in corner
 - Placeholder: "Your headline goes here" / "A supporting line that adds context" /
   "Learn More"
 

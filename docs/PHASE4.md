@@ -182,12 +182,16 @@ What the designer still owns:
 
 Paid social and display frames:
 
-- Text layers: `[Headline]` and `[CTA Button]` only
+- Text layers: `[Headline]`, `[Subhead]`, and `[CTA Button]`
 - Headline in large display type, realistically sized for the format
+- `[Subhead]` is the secondary supporting line beneath the headline (paid social
+  40–90 chars; display 20–40) — layer name must be exactly `[Subhead]` so the
+  Phase 4 population step matches it to the `Subhead` copy field by name
 - CTA as a styled button component
 - Image zone marked as `[Background]`
 - `[Logo]` placement in corner
-- Placeholder: "Your headline goes here" / "Learn More"
+- Placeholder: "Your headline goes here" / "A supporting line that adds context" /
+  "Learn More"
 
 Email frames (600px wide):
 

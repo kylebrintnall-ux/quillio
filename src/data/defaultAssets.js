@@ -26,12 +26,14 @@ const RAW = [
   ['LinkedIn Single Image Ad', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 70],
     ['CTA Button', 0, 20],
     ['LAN Description', 0, 70],
   ]],
   ['LinkedIn Carousel Ad', 'Paid Social', [
     ['Intro Text', 0, 600],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 70],
     ['Card 1 Headline', 0, 45],
     ['Card 2 Headline', 0, 45],
@@ -43,36 +45,42 @@ const RAW = [
   ['LinkedIn Single Image Ad — Variant A', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 70],
     ['CTA Button', 0, 20],
   ]],
   ['LinkedIn Single Image Ad — Variant B', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 70],
     ['CTA Button', 0, 20],
   ]],
   ['LinkedIn Single Image Ad — Variant C', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 70],
     ['CTA Button', 0, 20],
   ]],
   ['LinkedIn Single Image Ad — Variant D', 'Paid Social', [
     ['Intro Text', 0, 600],
     ['Headline', 0, 70],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 70],
     ['CTA Button', 0, 20],
   ]],
   ['Meta Single Image Ad', 'Paid Social', [
     ['Primary Text', 0, 125],
     ['Headline', 0, 40],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 40],
     ['Description', 0, 30],
     ['CTA Button', 0, 20],
   ]],
   ['Meta Carousel Ad', 'Paid Social', [
     ['Primary Text', 0, 125],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 40],
     ['Card 1 Headline', 0, 45],
     ['Card 2 Headline', 0, 45],
@@ -85,17 +93,20 @@ const RAW = [
   ['Twitter/X Ad', 'Paid Social', [
     ['Ad Copy', 0, 280],
     ['Headline', 0, 70],
+    ['Subhead', 40, 90],
     ['Graphic Headline', 0, 40],
     ['CTA Button', 0, 20],
   ]],
   ['Display Banner — Standard', 'Display', [
     ['Headline', 0, 30],
+    ['Subhead', 20, 40],
     ['Graphic Headline', 0, 30],
     ['Body Copy', 0, 90],
     ['CTA Button', 0, 20],
   ]],
   ['Google DV360 / Responsive Display', 'Display', [
     ['Short Headline', 0, 30],
+    ['Subhead', 20, 40],
     ['Graphic Headline', 0, 30],
     ['Long Headline', 0, 90],
     ['Description', 0, 90],
@@ -214,15 +225,18 @@ const RAW = [
   ['Organic Social — LinkedIn', 'Organic Social', [
     ['Post Copy', 0, 3000],
     ['Hook (first 150 chars, before See more)', 0, 150],
+    ['Subhead', 40, 90],
     ['Headline (if link)', 0, 70],
   ]],
   ['Organic Social — Instagram', 'Organic Social', [
     ['Caption', 0, 2200],
     ['Hook (first 125 chars, before More)', 0, 125],
+    ['Subhead', 40, 90],
     ['Alt Text', 0, 100],
   ]],
   ['Organic Social — Twitter/X', 'Organic Social', [
     ['Post Copy', 0, 280],
+    ['Subhead', 40, 90],
   ]],
   ['Direct Mail — Box / Mailer', 'Direct Mail', [
     ['Exterior Front Headline', 0, 60],

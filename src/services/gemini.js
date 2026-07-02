@@ -460,6 +460,19 @@ function trimToCeiling(s, max) {
   return wordCut.replace(/[\s.,;:!\-–—]+$/, '').trim();
 }
 
+// Built-in per-field creative guidance, keyed by normalized field name. Fills the
+// gap left by the retired Sheet "Notes" column for fields that need the same
+// instruction regardless of tenant. Subhead is the first: it must support the
+// headline, not repeat it. Returns '' when there's nothing built in. A tenant's
+// own field notes (if ever restored) take precedence over this.
+function builtInFieldGuidance(fieldName) {
+  const name = String(fieldName || '').trim().toLowerCase();
+  if (name === 'subhead') {
+    return 'Secondary supporting line beneath the headline. Add context, specificity, or urgency — do NOT restate or reword the headline. Read as the next beat, not an echo.';
+  }
+  return '';
+}
+
 // Generate a single piece of draft copy for one asset field, honoring the
 // character limit and creative direction. Enforces the limit: if the draft is
 // over, it gets one corrective rewrite, then a hard trim as a last resort.
@@ -481,6 +494,7 @@ async function generateFieldDraft({
   const limitLine = ceiling
     ? `Character limit: ${ceiling}. Stay within this limit — write a COMPLETE, self-contained thought and finish it, even a few characters short; never run up to the limit and get cut off mid-sentence.`
     : 'Keep it concise — a complete, self-contained thought appropriate for the field.';
+  const fieldGuidance = notes || builtInFieldGuidance(fieldName);
 
   const prompt = [
     'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
@@ -494,7 +508,7 @@ async function generateFieldDraft({
     `Field: ${fieldName}`,
     funnelStage ? `Funnel stage: ${funnelStage}` : '',
     toneNotes ? `Tone notes: ${toneNotes}` : '',
-    notes ? `Field guidance: ${notes}` : '',
+    fieldGuidance ? `Field guidance: ${fieldGuidance}` : '',
     direction
       ? `REVISION direction from the user — apply this, overriding earlier choices where they conflict: ${direction}`
       : '',
@@ -567,9 +581,10 @@ async function generateAssetDrafts({
       const limit = ceiling
         ? `character limit ${ceiling} — stay within this limit`
         : 'concise';
+      const guidance = f.notes || builtInFieldGuidance(f.fieldName);
       const extra = [
         f.funnelStage ? `funnel: ${f.funnelStage}` : '',
-        f.notes ? `guidance: ${f.notes}` : '',
+        guidance ? `guidance: ${guidance}` : '',
       ]
         .filter(Boolean)
         .join('; ');

@@ -114,4 +114,11 @@ Approval state (once built for Team tier) should live in Postgres and the web ap
 
 ## 6. Related Backend Work (Cross-Reference)
 
-The **Subhead field addition** (asset spec library, Postgres schema, Gemini prompt, Google Doc template, Figma layer naming convention) is a prerequisite for population to work correctly on paid social, organic social, and display asset types, since Subhead did not previously exist as a generated field despite being added ad hoc to the Figma template during design review. See separate Claude Code prompt already drafted for this change.
+The **Subhead field addition** (asset spec library, Postgres schema, Gemini prompt, Google Doc template, Figma layer naming convention) is a prerequisite for population to work correctly on paid social, organic social, and display asset types, since Subhead did not previously exist as a generated field despite being added ad hoc to the Figma template during design review.
+
+**Status: shipped (July 2026).** Subhead is now a real field across the affected assets, grouped with the other on-graphic copy under a "Graphic Copy" sub-heading:
+- Asset library / seed (`src/data/defaultAssets.js`) + idempotent migration for already-seeded tenants (`scripts/migrateAddSubheadField.js`, and the grouping/limit follow-ups `migrateAddGraphicCopyGroup.js` / `migrateOrganicAndGraphicHeadlineSpecs.js`).
+- Postgres: `copy_fields.group_label` added; the on-graphic fields (Graphic Headline, Subhead, CTA on paid/display; Graphic Headline + Subhead on organic) render together and map as a unit.
+- Gemini prompt: Subhead carries built-in guidance (support the headline, don't repeat it); Graphic Headline drafts in sentence case.
+- Google Doc: Subhead renders under an indented "Graphic Copy" sub-heading; the re-parser skips the sub-heading so Generate First Draft still recovers every field.
+- Figma layer naming: `[Subhead]` documented in `PHASE4.md` for the population step.

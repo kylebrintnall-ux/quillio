@@ -1,5 +1,11 @@
 # PHASE 4 — FIGMA INTEGRATION SPEC
 
+> **See also: [`PHASE4_ADDENDUM.md`](./PHASE4_ADDENDUM.md)** — July 2026 design-session
+> decisions that refine and extend this spec: account-tier scope (prototype =
+> Lone Wolf only), the Figma onboarding flow, a one-to-many `templates` data
+> model, the Slack/web design-handoff mechanism, and the Hand Off guard
+> conditions. Where the two differ, the addendum is the newer decision.
+
 ## CORE MODEL: CUSTOM MASTER TEMPLATE
 
 The foundation of Quillio's design integration is the tenant's own custom master

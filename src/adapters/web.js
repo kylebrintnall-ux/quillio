@@ -10,14 +10,6 @@
 
 const pipeline = require('../core/pipeline');
 const { getClientsForTenant } = require('../google');
-const { saveProject } = require('../db/projects');
-
-// Pull a Drive folder id out of its webViewLink (…/folders/<id>). Returns null
-// when there's no URL or no match — saveProject just stores a null folder id.
-function folderIdFromUrl(url) {
-  const m = /\/folders\/([^/?#]+)/.exec(url || '');
-  return m ? m[1] : null;
-}
 
 // Run a brief end to end and return structured data for the browser. Mirrors
 // the Slack adapter's pipeline sequence (parse → enrich → build) minus all the
@@ -118,26 +110,9 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
     }
     throw err;
   }
-  const { doc, assetSpecs, projectFolderUrl } = docResult;
-
-  // 5. Persist the project to history (best-effort). A DB hiccup — or simply no
-  //    DATABASE_URL on the demo — must never fail an otherwise-good brief, so
-  //    any error is swallowed and the brief response is unaffected.
-  let projectId = null;
-  try {
-    const tenant = tenantContext.tenant || {};
-    const saved = await saveProject(tenant.id, {
-      name: campaignTitle,
-      drive_folder_id: folderIdFromUrl(projectFolderUrl),
-      drive_folder_url: projectFolderUrl,
-      copy_doc_id: doc.id,
-      copy_doc_url: doc.url,
-      status: 'not_started',
-    });
-    if (saved) projectId = saved.id;
-  } catch (err) {
-    console.error('[web] saveProject skipped:', err.message);
-  }
+  // Project persistence now lives in the shared pipeline (generateDoc), so both
+  // the web and Slack adapters record history identically — nothing to save here.
+  const { doc, assetSpecs, projectFolderUrl, projectId } = docResult;
 
   return {
     projectId,

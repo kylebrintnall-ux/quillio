@@ -15,6 +15,7 @@ const { normalize } = require('../utils/normalize');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide } = require('../db');
 const { getAssetDirections, getTenantAssets } = require('../db/assets');
+const { saveProject } = require('../db/projects');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
@@ -694,7 +695,7 @@ function tenantAssetsToSpecs(rows, assetFilter = []) {
 // source (the Google Sheet was fully retired) — and supplies asset_direction.
 // Throws if the tenant has no Postgres asset library (no DB / unseeded tenant):
 // Postgres is mandatory, there is no Sheet fallback.
-async function generateDoc(spec, folderId, clients, tenantId) {
+async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) {
   // Asset specs come exclusively from the tenant's Postgres library.
   const tenantAssets = await getTenantAssets(tenantId);
   if (!tenantAssets || tenantAssets.length === 0) {
@@ -780,7 +781,30 @@ async function generateDoc(spec, folderId, clients, tenantId) {
   // Make sure the subfolder call has settled before returning (best-effort).
   await assetsSubfolderPromise;
 
-  return { doc, assetSpecs, projectFolderUrl };
+  // Persist the project to history — shared by BOTH adapters so web and Slack
+  // briefs always appear in the web project list identically. Best-effort: a DB
+  // hiccup (or no DATABASE_URL on the demo) must never fail an otherwise-good
+  // brief, so any error is swallowed. slack_channel_id / slack_thread_ts come
+  // from projectMeta on the Slack path and are null for web (correct). drive
+  // folder id is the project folder we created (null if creation failed).
+  let projectId = null;
+  try {
+    const saved = await saveProject(tenantId, {
+      name: spec.campaignTitle || null,
+      drive_folder_id: projectFolderUrl ? docFolderId : null,
+      drive_folder_url: projectFolderUrl,
+      copy_doc_id: doc.id,
+      copy_doc_url: doc.url,
+      status: 'not_started',
+      slack_channel_id: projectMeta.slackChannelId || null,
+      slack_thread_ts: projectMeta.slackThreadTs || null,
+    });
+    if (saved) projectId = saved.id;
+  } catch (err) {
+    console.error('[pipeline] saveProject skipped:', err.message);
+  }
+
+  return { doc, assetSpecs, projectFolderUrl, projectId };
 }
 
 // Draft copy for every field of an existing doc. An optional `direction` string

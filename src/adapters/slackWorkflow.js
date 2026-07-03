@@ -159,7 +159,12 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         { brief, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
         effectiveFolderId,
         undefined, // Slack uses the shared env Google client
-        tenantId
+        tenantId,
+        // The live card's channel + ts become the project's Slack linkage so a
+        // future in-thread action (e.g. Hand Off to Design) can resolve the
+        // project by thread. Null when there's no live message (response_url
+        // fallback) — the project still persists, just without thread linkage.
+        { slackChannelId: live && live.channel, slackThreadTs: live && live.ts }
       );
     } catch (err) {
       if (pipeline.isFolderAccessError(err, effectiveFolderId)) {

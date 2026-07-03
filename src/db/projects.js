@@ -30,16 +30,34 @@ async function saveProject(tenantId, projectData = {}) {
     copy_doc_id = null,
     copy_doc_url = null,
     status = 'draft',
+    slack_channel_id = null,
+    slack_thread_ts = null,
   } = projectData;
 
   console.log(`[db/projects] saveProject → tenant=${tenantId} name=${JSON.stringify(name)} doc=${copy_doc_id || 'none'}`);
   try {
+    // Idempotent: a project is uniquely identified by its copy doc. If the
+    // pipeline runs twice for the same doc (a retry, or being invoked from more
+    // than one place), return the existing row instead of inserting a duplicate.
+    if (copy_doc_id) {
+      const existing = await pool.query(
+        'SELECT * FROM projects WHERE tenant_id = $1 AND copy_doc_id = $2 LIMIT 1',
+        [tenantId, copy_doc_id]
+      );
+      if (existing.rows[0]) {
+        console.log(
+          `[db/projects] saveProject → existing project id=${existing.rows[0].id} for doc=${copy_doc_id} (idempotent — no insert)`
+        );
+        return existing.rows[0];
+      }
+    }
+
     const res = await pool.query(
       `INSERT INTO projects
-         (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status]
+      [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts]
     );
     const saved = res.rows[0] || null;
     console.log(`[db/projects] saveProject OK → project id=${saved ? saved.id : 'null'} for tenant=${tenantId}`);

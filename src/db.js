@@ -145,6 +145,31 @@ async function saveTenantToken(tenantId, service, accessToken) {
   return true;
 }
 
+// Store a tenant's Figma OAuth tokens (Phase 4). Uses the dedicated figma_*
+// columns added in Stage 1.1, on the tenant_tokens row keyed by service='figma'.
+// `expiresAt` is a JS Date (absolute expiry) — Figma returns expires_in in
+// seconds and the caller converts. Upsert so re-connecting refreshes in place.
+// Returns true if the write ran, false if there's no DB. Tokens are never logged.
+async function saveFigmaTokens(tenantId, { accessToken, refreshToken, expiresAt } = {}) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping saveFigmaTokens');
+    return false;
+  }
+  await p.query(
+    `INSERT INTO tenant_tokens
+       (tenant_id, service, figma_access_token, figma_refresh_token, figma_token_expires_at, updated_at)
+       VALUES ($1, 'figma', $2, $3, $4, now())
+     ON CONFLICT (tenant_id, service) DO UPDATE
+       SET figma_access_token = EXCLUDED.figma_access_token,
+           figma_refresh_token = EXCLUDED.figma_refresh_token,
+           figma_token_expires_at = EXCLUDED.figma_token_expires_at,
+           updated_at = now()`,
+    [tenantId, accessToken || null, refreshToken || null, expiresAt || null]
+  );
+  return true;
+}
+
 // Set a tenant's default Drive folder id (onboarding). Returns true if the
 // write ran, false if there's no DB.
 async function setTenantDefaultFolder(tenantId, folderId) {
@@ -167,5 +192,6 @@ module.exports = {
   resolveTenant,
   createTenantIfMissing,
   saveTenantToken,
+  saveFigmaTokens,
   setTenantDefaultFolder,
 };

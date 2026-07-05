@@ -100,6 +100,7 @@ module.exports = {
   // URI defaults to the registered callback but stays env-overridable. The client
   // secret is added with the callback route (Stage 1.3).
   FIGMA_CLIENT_ID: process.env.FIGMA_CLIENT_ID && process.env.FIGMA_CLIENT_ID.trim(),
+  FIGMA_CLIENT_SECRET: process.env.FIGMA_CLIENT_SECRET && process.env.FIGMA_CLIENT_SECRET.trim(),
   FIGMA_REDIRECT_URI:
     (process.env.FIGMA_REDIRECT_URI && process.env.FIGMA_REDIRECT_URI.trim()) ||
     'https://quillio.co/auth/figma/callback',

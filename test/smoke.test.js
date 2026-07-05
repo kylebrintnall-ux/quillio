@@ -341,6 +341,7 @@ test('oauth router mounts and exposes its routes', () => {
     .sort();
   assert.deepStrictEqual(paths, [
     '/auth/figma',
+    '/auth/figma/callback',
     '/oauth/google',
     '/oauth/google/callback',
     '/oauth/slack',
@@ -373,6 +374,26 @@ test('oauth.js wires the Figma OAuth redirect (Phase 4, granular scopes)', () =>
   );
   assert.ok(/response_type.*code/.test(src), 'uses the authorization-code flow');
   assert.ok(/error=figma_failed/.test(src), 'redirects back with a sanitized error on misconfig');
+});
+
+test('oauth.js wires the Figma OAuth callback (token exchange + storage)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  // Current Figma OAuth token endpoint (granular-scope system), Basic auth.
+  assert.ok(/api\.figma\.com\/v1\/oauth\/token/.test(src), 'exchanges at the current Figma token endpoint');
+  assert.ok(/Authorization: `Basic \$\{basicAuth\}`/.test(src), 'uses HTTP Basic auth for the exchange');
+  assert.ok(/grant_type: 'authorization_code'/.test(src), 'authorization-code grant');
+  assert.ok(/consumeState\(req\.query\.state\)/.test(src), 'validates the CSRF state');
+  // expires_in (seconds) is converted to an absolute timestamp, not stored raw.
+  assert.ok(/expires_in/.test(src) && /Date\.now\(\) \+ Number\(expiresIn\) \* 1000/.test(src), 'converts expires_in seconds to a timestamp');
+  assert.ok(/saveFigmaTokens\(/.test(src), 'stores tokens via saveFigmaTokens');
+  assert.ok(/error=figma_failed/.test(src) && /connected=figma/.test(src), 'redirects on failure and success');
+});
+
+test('db exposes saveFigmaTokens and it degrades with no database', async () => {
+  const db = require('../src/db');
+  assert.strictEqual(typeof db.saveFigmaTokens, 'function');
+  // No DATABASE_URL in the test env → no-op returns false.
+  assert.strictEqual(await db.saveFigmaTokens('T0B8LPRDKHR', { accessToken: 'x' }), false);
 });
 
 // --- Week 11: onboarding + sign-in ---

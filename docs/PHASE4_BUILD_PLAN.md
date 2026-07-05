@@ -56,7 +56,7 @@ Open the neutral master template (`3KqH3AUiS35z4oo6Ysvt0V`) in Figma and set sha
 Add Figma token columns to `tenant_tokens`: `figma_access_token`, `figma_refresh_token`, `figma_token_expires_at`. Create the `templates` table: `id`, `workspace_id` (tenant), `name`, `figma_file_key`, `is_default`, `created_at` — one-to-many from the start even though most tenants use one template (per addendum §2). Add `template_id` FK and `figma_project_file_key` to the `projects` table. Migration script validated locally before Railway run, matching the `scripts/migrate*.js` pattern.
 
 **1.2 Figma OAuth — redirect route.**
-Build `/auth/figma` that redirects to Figma's OAuth authorization URL with scopes `files:read` and `files:write`, the Client ID, redirect URI, and a state parameter. Manual fetch, no passport.js — same pattern as Google/Slack OAuth.
+Build `/auth/figma` that redirects to Figma's OAuth authorization URL with the current granular scopes `current_user:read file_content:read file_metadata:read file_comments:write projects:read` (space-separated; Figma deprecated the old `files:read` / `files:write` scopes), the Client ID, redirect URI, and a state parameter. Manual fetch, no passport.js — same pattern as Google/Slack OAuth.
 
 **1.3 Figma OAuth — callback route.**
 Build `/auth/figma/callback` that exchanges the code for access + refresh tokens and stores them in `tenant_tokens`. Apply `.trim()` to all env var reads (the trailing-whitespace defense from Phase 3). Trigger 1.4 on success.

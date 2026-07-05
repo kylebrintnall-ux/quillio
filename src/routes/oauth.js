@@ -33,10 +33,13 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.profile',
 ].join(' ');
 
-// Figma OAuth (Phase 4). files:read to duplicate the master template and read
-// file contents; files:write to create project files. Space-separated per the
-// OAuth2 scope convention (same as GOOGLE_SCOPES above).
-const FIGMA_SCOPES = 'files:read files:write';
+// Figma OAuth (Phase 4). Figma deprecated the old files:read / files:write
+// scopes; these are the current granular scopes, matching the Quillio Figma app
+// config: read the connected user, read file content + metadata (duplicate and
+// read the master/project files), write file comments, and read projects.
+// Space-separated per the OAuth2 scope convention (same as GOOGLE_SCOPES above).
+const FIGMA_SCOPES =
+  'current_user:read file_content:read file_metadata:read file_comments:write projects:read';
 
 // The web app's demo tenant — used when /oauth/google isn't given a workspaceId.
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';

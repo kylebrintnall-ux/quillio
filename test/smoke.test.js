@@ -364,10 +364,13 @@ test('oauth.js wires the Google OAuth flow (per-user token storage)', () => {
   assert.ok(/connected=google/.test(src) && /error=google_failed/.test(src), 'redirects back to /app');
 });
 
-test('oauth.js wires the Figma OAuth redirect (Phase 4, files:read/write)', () => {
+test('oauth.js wires the Figma OAuth redirect (Phase 4, granular scopes)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
   assert.ok(/www\.figma\.com\/oauth/.test(src), 'redirects to the Figma consent screen');
-  assert.ok(/files:read files:write/.test(src), 'requests files:read + files:write scopes');
+  assert.ok(
+    /current_user:read file_content:read file_metadata:read file_comments:write projects:read/.test(src),
+    'requests the current granular Figma scopes'
+  );
   assert.ok(/response_type.*code/.test(src), 'uses the authorization-code flow');
   assert.ok(/error=figma_failed/.test(src), 'redirects back with a sanitized error on misconfig');
 });

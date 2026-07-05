@@ -396,6 +396,38 @@ test('db exposes saveFigmaTokens and it degrades with no database', async () => 
   assert.strictEqual(await db.saveFigmaTokens('T0B8LPRDKHR', { accessToken: 'x' }), false);
 });
 
+test('db exposes getFigmaTokens and it degrades with no database', async () => {
+  const db = require('../src/db');
+  assert.strictEqual(typeof db.getFigmaTokens, 'function');
+  // No DATABASE_URL in the test env → returns null.
+  assert.strictEqual(await db.getFigmaTokens('T0B8LPRDKHR'), null);
+});
+
+test('services/figma token utility: exports + refresh wiring (Phase 4 Stage 1.4)', () => {
+  const figma = require('../src/services/figma');
+  assert.strictEqual(typeof figma.ensureFigmaAccessToken, 'function');
+  assert.strictEqual(typeof figma.refreshFigmaToken, 'function');
+
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'figma.js'), 'utf8');
+  // Refresh at the current Figma token endpoint with the refresh_token grant.
+  assert.ok(/api\.figma\.com\/v1\/oauth\/token/.test(src), 'refreshes at the current Figma token endpoint');
+  assert.ok(/grant_type: 'refresh_token'/.test(src), 'uses the refresh_token grant');
+  assert.ok(/Authorization: `Basic \$\{basicAuth\}`/.test(src), 'HTTP Basic auth (client_id:client_secret)');
+  // Same expires_in seconds → absolute timestamp conversion as the 1.3 callback.
+  assert.ok(/Number\(expiresIn\) \* 1000/.test(src), 'converts expires_in seconds to a timestamp');
+  // Rotates the refresh token if returned, else keeps the existing one.
+  assert.ok(/data\.refresh_token\) \|\| refreshToken/.test(src), 'keeps the old refresh token if not rotated');
+  // Refreshes within a buffer before expiry, and persists via saveFigmaTokens.
+  assert.ok(/REFRESH_BUFFER_MS/.test(src), 'refreshes within a pre-expiry buffer');
+  assert.ok(/saveFigmaTokens\(/.test(src), 'persists via the saveFigmaTokens upsert');
+});
+
+test('ensureFigmaAccessToken returns null when the tenant has no stored Figma tokens', async () => {
+  // No DATABASE_URL → getFigmaTokens returns null → utility returns null (not connected).
+  const { ensureFigmaAccessToken } = require('../src/services/figma');
+  assert.strictEqual(await ensureFigmaAccessToken('T0B8LPRDKHR'), null);
+});
+
 // --- Week 11: onboarding + sign-in ---
 
 test('oauth.js requests the userinfo scopes for Sign in with Google', () => {

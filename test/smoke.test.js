@@ -340,6 +340,7 @@ test('oauth router mounts and exposes its routes', () => {
     .map((layer) => layer.route.path)
     .sort();
   assert.deepStrictEqual(paths, [
+    '/auth/figma',
     '/oauth/google',
     '/oauth/google/callback',
     '/oauth/slack',
@@ -361,6 +362,14 @@ test('oauth.js wires the Google OAuth flow (per-user token storage)', () => {
   assert.ok(/oauth2\.googleapis\.com\/token/.test(src), 'exchanges code at the Google token endpoint');
   assert.ok(/saveTenantToken\([^)]*'google'/.test(src), "stores the token under service='google'");
   assert.ok(/connected=google/.test(src) && /error=google_failed/.test(src), 'redirects back to /app');
+});
+
+test('oauth.js wires the Figma OAuth redirect (Phase 4, files:read/write)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  assert.ok(/www\.figma\.com\/oauth/.test(src), 'redirects to the Figma consent screen');
+  assert.ok(/files:read files:write/.test(src), 'requests files:read + files:write scopes');
+  assert.ok(/response_type.*code/.test(src), 'uses the authorization-code flow');
+  assert.ok(/error=figma_failed/.test(src), 'redirects back with a sanitized error on misconfig');
 });
 
 // --- Week 11: onboarding + sign-in ---

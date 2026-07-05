@@ -33,6 +33,11 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.profile',
 ].join(' ');
 
+// Figma OAuth (Phase 4). files:read to duplicate the master template and read
+// file contents; files:write to create project files. Space-separated per the
+// OAuth2 scope convention (same as GOOGLE_SCOPES above).
+const FIGMA_SCOPES = 'files:read files:write';
+
 // The web app's demo tenant — used when /oauth/google isn't given a workspaceId.
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
 
@@ -196,6 +201,29 @@ router.get('/oauth/google', (req, res) => {
   url.searchParams.set('scope', GOOGLE_SCOPES);
   url.searchParams.set('access_type', 'offline'); // ask for a refresh token
   url.searchParams.set('prompt', 'consent'); // force a refresh token every time
+  url.searchParams.set('state', state);
+  return res.redirect(url.toString());
+});
+
+// Step 1 (Figma, Phase 4) — start connecting a Figma account: issue a CSRF state
+// and redirect to Figma's OAuth consent screen. Mirrors the Google flow above;
+// the callback (code exchange + token storage in tenant_tokens) is Stage 1.3.
+router.get('/auth/figma', (req, res) => {
+  if (!config.FIGMA_CLIENT_ID || !config.FIGMA_REDIRECT_URI) {
+    console.error('[oauth] FIGMA_CLIENT_ID / FIGMA_REDIRECT_URI not configured');
+    return res.redirect('/app?error=figma_failed');
+  }
+
+  // `redirect=onboarding|settings` returns the user there after connecting.
+  const redirectTo = pickRedirect(req.query.redirect);
+  const state = crypto.randomBytes(16).toString('hex');
+  rememberState(state, { redirectTo });
+
+  const url = new URL('https://www.figma.com/oauth');
+  url.searchParams.set('client_id', config.FIGMA_CLIENT_ID);
+  url.searchParams.set('redirect_uri', config.FIGMA_REDIRECT_URI);
+  url.searchParams.set('scope', FIGMA_SCOPES);
+  url.searchParams.set('response_type', 'code');
   url.searchParams.set('state', state);
   return res.redirect(url.toString());
 });

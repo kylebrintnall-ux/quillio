@@ -93,6 +93,17 @@ module.exports = {
   SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET && process.env.SLACK_CLIENT_SECRET.trim(),
   SLACK_REDIRECT_URI: process.env.SLACK_REDIRECT_URI,
 
+  // Figma OAuth (Phase 4). Client id identifies the Quillio Figma app; the
+  // redirect URI must match the one registered in the Figma app config. Trimmed
+  // for the same trailing-whitespace reason as the Google/Slack creds above (a
+  // pasted "…\n" encodes to %0A and Figma rejects the auth request). The redirect
+  // URI defaults to the registered callback but stays env-overridable. The client
+  // secret is added with the callback route (Stage 1.3).
+  FIGMA_CLIENT_ID: process.env.FIGMA_CLIENT_ID && process.env.FIGMA_CLIENT_ID.trim(),
+  FIGMA_REDIRECT_URI:
+    (process.env.FIGMA_REDIRECT_URI && process.env.FIGMA_REDIRECT_URI.trim()) ||
+    'https://quillio.co/auth/figma/callback',
+
   // Secret used to sign web session cookies (express-session). Set in prod;
   // a random per-boot fallback is used when unset (sessions won't survive a
   // restart, which is fine for the keyless demo). Never logged.

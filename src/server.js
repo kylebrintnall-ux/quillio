@@ -72,10 +72,12 @@ app.use(
 );
 
 // Slack OAuth install flow (/oauth/slack, /oauth/slack/callback, /welcome) +
-// Google OAuth / sign-in (/oauth/google[, /callback]). Separate from the
-// slash-command/interactions handlers below. Rate-limit the /oauth/* surface
-// (20/hr/IP) — /welcome is not under /oauth so it stays unlimited.
+// Google OAuth / sign-in (/oauth/google[, /callback]) + Figma OAuth
+// (/auth/figma[, /callback], Phase 4). Separate from the slash-command/
+// interactions handlers below. Rate-limit the OAuth surfaces (20/hr/IP) —
+// /welcome is not under these prefixes so it stays unlimited.
 app.use('/oauth', oauthLimiter);
+app.use('/auth', oauthLimiter);
 app.use(oauthRoutes);
 
 // Static design-system assets (v8 design system): the StarCrush display font,

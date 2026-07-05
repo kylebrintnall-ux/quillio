@@ -30,6 +30,9 @@ const TABLES = [
       access_token TEXT,
       refresh_token TEXT,
       expires_at TIMESTAMPTZ,
+      figma_access_token TEXT,
+      figma_refresh_token TEXT,
+      figma_token_expires_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ DEFAULT now(),
       PRIMARY KEY (tenant_id, service)
     )`,
@@ -96,6 +99,21 @@ const TABLES = [
     )`,
   ],
   [
+    // Templates precede projects so the projects.template_id FK resolves. Phase 4:
+    // the one-to-many template registry (a tenant may hold more than one, though
+    // most use a single default). tenant_id references a tenant (tenants.id),
+    // named consistently with the rest of the schema.
+    'templates',
+    `CREATE TABLE IF NOT EXISTS templates (
+      id BIGSERIAL PRIMARY KEY,
+      tenant_id TEXT REFERENCES tenants(id),
+      name TEXT,
+      figma_file_key TEXT,
+      is_default BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )`,
+  ],
+  [
     'projects',
     `CREATE TABLE IF NOT EXISTS projects (
       id BIGSERIAL PRIMARY KEY,
@@ -108,6 +126,8 @@ const TABLES = [
       deck_id TEXT,
       deck_url TEXT,
       figma_file_key TEXT,
+      figma_project_file_key TEXT,
+      template_id BIGINT REFERENCES templates(id),
       notion_page_id TEXT,
       slack_channel_id TEXT,
       slack_thread_ts TEXT,

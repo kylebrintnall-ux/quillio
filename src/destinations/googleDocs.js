@@ -13,6 +13,8 @@
 const config = require('../config');
 const { getClients } = require('../google');
 const { DocBuilder } = require('./docBuilder');
+const { findHeaderTable } = require('./docHeaderTable');
+const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { generateAssetDrafts } = require('../services/gemini');
 
 // How many assets to draft concurrently (each asset is one batched Gemini call
@@ -157,53 +159,12 @@ async function resolveLinkLabel(drive, url) {
   }
 }
 
-// Creates the formatted Google Doc in the target Drive folder.
-// `assetSpecs` is the grouped asset library from Postgres (pipeline's
-// tenantAssetsToSpecs). `folderId` overrides the default folder when present;
-// `referenceLinks` adds a Reference Materials section. Returns the
-// destination-agnostic shape { id, url, title }.
-async function createDocument({
-  brief,
-  campaignTitle,
-  summary,
-  writerPrompt,
-  assetSpecs,
-  folderId,
-  referenceLinks = [],
-  referenceInsights = [],
-  clients,
-}) {
-  logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
-  // Diagnostic (counts only, never content): a missing Reference Materials /
-  // Reference Insights section traces back to one of these being 0 here.
-  console.log(
-    `[googleDocs] createDocument references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
-  );
-  const { drive, docs } = clients || (await getClients());
-  const title = makeTitle(brief, campaignTitle);
-
-  const created = await drive.files.create({
-    requestBody: {
-      name: title,
-      mimeType: 'application/vnd.google-apps.document',
-      parents: [folderId || config.DRIVE_FOLDER_ID],
-    },
-    fields: 'id, webViewLink',
-    supportsAllDrives: true,
-  });
-
-  const docId = created.data.id;
-
-  // Resolve reference link labels (Drive file names where possible) up front.
-  const resolvedLinks = [];
-  for (const url of referenceLinks) {
-    resolvedLinks.push(await resolveLinkLabel(drive, url));
-  }
-
-  const b = new DocBuilder();
-  b.title(title);
-  b.horizontalRule();
-
+// Appends the doc BODY (everything below the top header) onto `b`:
+// Campaign Summary, Writer Direction, optional Reference Insights / Reference
+// Materials, a horizontal rule, then one section per asset. Identical whether
+// the header above it is today's default (title + HR) or a stored header schema,
+// so the drafting pipeline still parses these sections the same way in both.
+function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights, assetSpecs }) {
   b.heading('Campaign Summary');
   b.italic(stripMarkdown(summary) || '(no summary)');
 
@@ -288,11 +249,102 @@ async function createDocument({
       b.blankLine({ indent });
     }
   }
+}
 
-  await docs.documents.batchUpdate({
-    documentId: docId,
-    requestBody: { requests: b.buildRequests() },
+// Creates the formatted Google Doc in the target Drive folder.
+// `assetSpecs` is the grouped asset library from Postgres (pipeline's
+// tenantAssetsToSpecs). `folderId` overrides the default folder when present;
+// `referenceLinks` adds a Reference Materials section. `headerSchema` (optional,
+// resolved per-tenant in the pipeline) renders a custom top-of-doc metadata
+// header via DocBuilder.renderHeader(); when absent/invalid the doc uses today's
+// exact default header (title + HR) unchanged. Returns { id, url, title }.
+async function createDocument({
+  brief,
+  campaignTitle,
+  summary,
+  writerPrompt,
+  assetSpecs,
+  folderId,
+  referenceLinks = [],
+  referenceInsights = [],
+  headerSchema = null,
+  clients,
+}) {
+  logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
+  // Diagnostic (counts only, never content): a missing Reference Materials /
+  // Reference Insights section traces back to one of these being 0 here.
+  console.log(
+    `[googleDocs] createDocument references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
+  );
+  const { drive, docs } = clients || (await getClients());
+  const title = makeTitle(brief, campaignTitle);
+
+  const created = await drive.files.create({
+    requestBody: {
+      name: title,
+      mimeType: 'application/vnd.google-apps.document',
+      parents: [folderId || config.DRIVE_FOLDER_ID],
+    },
+    fields: 'id, webViewLink',
+    supportsAllDrives: true,
   });
+
+  const docId = created.data.id;
+
+  // Resolve reference link labels (Drive file names where possible) up front.
+  const resolvedLinks = [];
+  for (const url of referenceLinks) {
+    resolvedLinks.push(await resolveLinkLabel(drive, url));
+  }
+
+  const bodyFields = { summary, writerPrompt, resolvedLinks, referenceInsights, assetSpecs };
+  const useSchema = isValidHeaderSchema(headerSchema);
+  console.log(`[googleDocs] doc header: ${useSchema ? 'tenant schema' : 'default (title + HR)'}`);
+
+  // Build the header. With a stored schema, DocBuilder.renderHeader() lays out its
+  // blocks; otherwise the default is today's exact header (title + HR) — byte-for-
+  // byte unchanged for existing tenants (the critical safety property).
+  const b = new DocBuilder();
+  if (useSchema) {
+    b.renderHeader(headerSchema);
+  } else {
+    b.title(title);
+    b.horizontalRule();
+  }
+
+  if (b.hasHeaderTable()) {
+    // Two-phase table header (a Docs table can't be built in one batchUpdate —
+    // see docHeaderTable.js). Insert the table, re-read to locate/fill it, then
+    // render the body BELOW it starting at the table's post-fill end index.
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: { requests: b.headerTableInsertRequests() },
+    });
+
+    let reread = (await docs.documents.get({ documentId: docId })).data;
+    let tableEl = findHeaderTable(reread);
+    if (!tableEl) throw new Error('header table not found after insert');
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: { requests: b.headerTableFillRequests(tableEl) },
+    });
+
+    reread = (await docs.documents.get({ documentId: docId })).data;
+    tableEl = findHeaderTable(reread);
+    const body = new DocBuilder(tableEl.endIndex);
+    appendBody(body, bodyFields);
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: { requests: body.buildRequests() },
+    });
+  } else {
+    // No table anywhere — header + body fold into a single batchUpdate.
+    appendBody(b, bodyFields);
+    await docs.documents.batchUpdate({
+      documentId: docId,
+      requestBody: { requests: b.buildRequests() },
+    });
+  }
 
   return { id: docId, url: created.data.webViewLink, title };
 }
@@ -708,9 +760,11 @@ module.exports = {
   generateDraft,
   getDocContent,
   // Exposed for unit tests only (not part of the destination interface used by
-  // the registry): char-limit bracket rendering, the field explainer, and doc
-  // re-parsing including the regeneration delete-range detection.
+  // the registry): char-limit bracket rendering, the field explainer, doc
+  // re-parsing including the regeneration delete-range detection, and the body
+  // builder (to lock the default-header fallback ordering).
   fieldLabel,
   fieldHint,
   parseDoc,
+  appendBody,
 };

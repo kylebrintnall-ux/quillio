@@ -109,6 +109,7 @@ const TABLES = [
       tenant_id TEXT REFERENCES tenants(id),
       name TEXT,
       figma_file_key TEXT,
+      doc_header_schema JSONB,
       is_default BOOLEAN DEFAULT false,
       created_at TIMESTAMPTZ DEFAULT now()
     )`,

@@ -7,7 +7,9 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
-    "gd": "node scripts/genHeaderTableTestDoc.js"
+    "gd": "node scripts/genHeaderTableTestDoc.js",
+    "gd2": "node scripts/genHeaderSchemaTestDoc.js",
+    "seed-header": "node scripts/seedHeaderSchema.js"
   },
   "engines": {
     "node": ">=18"

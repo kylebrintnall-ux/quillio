@@ -171,6 +171,90 @@ class DocBuilder {
     );
   }
 
+  // A plain text line (regular weight, left aligned) — the generic `text` header
+  // block. Empty string renders an empty paragraph.
+  text(str) {
+    this._push(String(str == null ? '' : str));
+    return this;
+  }
+
+  // A row of "label: value" pairs on one line, values bold — used for the
+  // `field_row` header block (e.g. Date / Version) and for a single-field `text`
+  // block that carries a label. Mirrors the table cell's visual language:
+  // "Label: " in regular weight, the value in bold, multiple pairs separated by a
+  // 4-space gap. Bold is applied per-value via recorded text ranges.
+  fieldRow(fields) {
+    const list = (fields || []).filter((f) => f && (f.label != null || f.value != null));
+    if (list.length === 0) {
+      this.blankLine();
+      return this;
+    }
+    let content = '';
+    const boldRanges = [];
+    list.forEach((f, i) => {
+      if (i > 0) content += '    '; // gap between pairs (matches the table cells)
+      content += `${f.label == null ? '' : f.label}: `;
+      const valStart = content.length;
+      const val = f.value == null ? '' : String(f.value);
+      content += val;
+      if (val) boldRanges.push([valStart, content.length]);
+    });
+    const range = this._push(content);
+    for (const [s, e] of boldRanges) {
+      this.textRequests.push({
+        updateTextStyle: {
+          range: { startIndex: range.startIndex + s, endIndex: range.startIndex + e },
+          textStyle: { bold: true },
+          fields: 'bold',
+        },
+      });
+    }
+    return this;
+  }
+
+  // Render a block-based header schema (see docHeaderSchema.js) by looping its
+  // blocks and dispatching each to the matching primitive. Reuses existing
+  // primitives where they fit; only text()/fieldRow() are new. A `table` block is
+  // recorded via headerTable() (two-phase — the caller orchestrates it, see
+  // createDocument). Unknown block types are skipped safely.
+  //
+  // The `fill` classification on fields is carried in the schema but not consumed
+  // here — rendering uses each field's stored `value` verbatim; auto-fill
+  // population is a later step.
+  renderHeader(schema) {
+    const blocks = (schema && schema.blocks) || [];
+    for (const block of blocks) {
+      switch (block && block.type) {
+        case 'heading':
+          this.heading(String(block.text || ''));
+          break;
+        case 'text':
+          if (block.label != null) this.fieldRow([{ label: block.label, value: block.value }]);
+          else this.text(String(block.text || ''));
+          break;
+        case 'field_row':
+          this.fieldRow(block.fields || []);
+          break;
+        case 'divider':
+          this.horizontalRule();
+          break;
+        case 'table':
+          this.headerTable(block.table);
+          break;
+        default:
+          // Unknown/edge block — skip rather than fail doc creation.
+          break;
+      }
+    }
+    return this;
+  }
+
+  // True once renderHeader() (or headerTable()) has recorded a pending header
+  // table — the signal to run the two-phase table flow instead of a single batch.
+  hasHeaderTable() {
+    return !!this.headerSchema;
+  }
+
   // A disc-bullet list item. Records a createParagraphBullets request over the
   // paragraph's range using the BULLET_DISC_CIRCLE_SQUARE preset (disc at the
   // top level). The bullet text carries no leading tabs, so the operation adds

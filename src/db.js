@@ -190,6 +190,58 @@ async function getFigmaTokens(tenantId) {
   };
 }
 
+// --- Doc-header template (doc-header-template work, step 2) ---
+// A tenant's copy-doc header layout is stored as a block-based JSON schema
+// (see destinations/docHeaderSchema.js) on the tenant's `templates` row. The
+// templates table is one-to-many (a tenant may hold several later), but for now
+// there's one schema per tenant — read/write the tenant's default (or only) row.
+
+// Read a tenant's stored doc-header schema. Returns the parsed JSON object, or
+// null if there's no DB, no tenant, or no stored schema (→ default header).
+async function getHeaderSchema(tenantId) {
+  const p = getPool();
+  if (!p || !tenantId) return null;
+  const res = await p.query(
+    `SELECT doc_header_schema FROM templates
+       WHERE tenant_id = $1 AND doc_header_schema IS NOT NULL
+       ORDER BY is_default DESC, id ASC
+       LIMIT 1`,
+    [tenantId]
+  );
+  const r = res.rows[0];
+  return (r && r.doc_header_schema) || null; // jsonb → already a JS object
+}
+
+// Store a tenant's doc-header schema onto its default template row (creating that
+// row if the tenant has none yet). One schema per tenant for now. Returns true if
+// the write ran, false if there's no DB. `schema` is a plain JS object.
+async function saveHeaderSchema(tenantId, schema, name) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping saveHeaderSchema');
+    return false;
+  }
+  if (!tenantId) return false;
+  const json = JSON.stringify(schema);
+  const existing = await p.query(
+    `SELECT id FROM templates WHERE tenant_id = $1 ORDER BY is_default DESC, id ASC LIMIT 1`,
+    [tenantId]
+  );
+  if (existing.rows[0]) {
+    await p.query('UPDATE templates SET doc_header_schema = $2::jsonb WHERE id = $1', [
+      existing.rows[0].id,
+      json,
+    ]);
+  } else {
+    await p.query(
+      `INSERT INTO templates (tenant_id, name, is_default, doc_header_schema)
+         VALUES ($1, $2, true, $3::jsonb)`,
+      [tenantId, name || 'Default', json]
+    );
+  }
+  return true;
+}
+
 // Set a tenant's default Drive folder id (onboarding). Returns true if the
 // write ran, false if there's no DB.
 async function setTenantDefaultFolder(tenantId, folderId) {
@@ -214,5 +266,7 @@ module.exports = {
   saveTenantToken,
   saveFigmaTokens,
   getFigmaTokens,
+  getHeaderSchema,
+  saveHeaderSchema,
   setTenantDefaultFolder,
 };

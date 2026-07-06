@@ -996,3 +996,122 @@ test('DocBuilder header-table requests are gated on headerTable(schema)', () => 
   // fill requests need a located table element; null tableEl → []
   assert.deepStrictEqual(b.headerTableFillRequests(null), []);
 });
+
+// --- Block-based doc header schema + renderHeader dispatch (step 2) ---
+
+test('docHeaderSchema: validity, table detection, and both seeds', () => {
+  const s = require('../src/destinations/docHeaderSchema');
+  assert.strictEqual(s.isValidHeaderSchema(null), false);
+  assert.strictEqual(s.isValidHeaderSchema({}), false);
+  assert.strictEqual(s.isValidHeaderSchema({ blocks: [] }), false);
+  assert.strictEqual(s.isValidHeaderSchema({ blocks: [{ type: 'divider' }] }), true);
+
+  assert.strictEqual(s.schemaHasTable(s.SEED_TABLE_HEADER), true);
+  assert.strictEqual(s.schemaHasTable(s.SEED_TEXT_HEADER), false);
+
+  assert.strictEqual(s.seedSchema('table'), s.SEED_TABLE_HEADER);
+  assert.strictEqual(s.seedSchema('text'), s.SEED_TEXT_HEADER);
+  assert.strictEqual(s.seedSchema('nope'), null);
+
+  // Every field/cell carries a fill classification.
+  const fills = new Set(Object.values(s.FILL));
+  for (const block of s.SEED_TEXT_HEADER.blocks) {
+    const fs = block.type === 'field_row' ? block.fields : block.label != null ? [block] : [];
+    for (const f of fs) assert.ok(fills.has(f.fill), `text seed fill valid: ${f.fill}`);
+  }
+});
+
+test('DocBuilder.fieldRow renders label:value with bold values only', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const b = new DocBuilder();
+  b.fieldRow([
+    { label: 'Date', value: '2026-07-05' },
+    { label: 'Version', value: 'v1' },
+  ]);
+  // One paragraph of text, "Date: 2026-07-05    Version: v1"
+  assert.ok(b.text.startsWith('Date: 2026-07-05    Version: v1'));
+  // Two bold runs, one per value; each covers exactly the value text.
+  const bolds = b.textRequests.filter((r) => r.updateTextStyle && r.updateTextStyle.textStyle.bold);
+  assert.strictEqual(bolds.length, 2);
+  for (const r of bolds) {
+    const { startIndex, endIndex } = r.updateTextStyle.range;
+    const slice = b.text.slice(startIndex - b.startIndex, endIndex - b.startIndex);
+    assert.ok(slice === '2026-07-05' || slice === 'v1', `bold covers a value, got "${slice}"`);
+  }
+});
+
+test('DocBuilder.renderHeader dispatches non-table blocks to a single batch', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { SEED_TEXT_HEADER } = require('../src/destinations/docHeaderSchema');
+  const b = new DocBuilder();
+  b.renderHeader(SEED_TEXT_HEADER);
+  assert.strictEqual(b.hasHeaderTable(), false); // no table → single-batch path
+  const reqs = b.buildRequests();
+  const inserted = reqs[0].insertText.text;
+  assert.ok(inserted.includes('MC Creative'), 'heading text present');
+  assert.ok(inserted.includes('Project: State of Support 2026'), 'label:value line present');
+  assert.ok(inserted.includes('Date: 2026-07-05    Version: v1'), 'field_row present');
+  // heading block → HEADING_2 paragraph style
+  const h2 = reqs.find(
+    (r) => r.updateParagraphStyle && r.updateParagraphStyle.paragraphStyle.namedStyleType === 'HEADING_2'
+  );
+  assert.ok(h2, 'heading block rendered as HEADING_2');
+});
+
+test('DocBuilder.renderHeader flags a table schema for the two-phase flow', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { SEED_TABLE_HEADER } = require('../src/destinations/docHeaderSchema');
+  const b = new DocBuilder();
+  b.renderHeader(SEED_TABLE_HEADER);
+  assert.strictEqual(b.hasHeaderTable(), true);
+  assert.strictEqual(b.headerTableInsertRequests().length, 1);
+  // Table structure isn't inserted as text — no body text accumulated yet.
+  assert.strictEqual(b.text, '');
+});
+
+test('db exposes getHeaderSchema/saveHeaderSchema; no-DB is a safe no-op', async () => {
+  const db = require('../src/db');
+  assert.strictEqual(typeof db.getHeaderSchema, 'function');
+  assert.strictEqual(typeof db.saveHeaderSchema, 'function');
+  // Without DATABASE_URL these must not throw and must degrade to null/false.
+  if (!process.env.DATABASE_URL) {
+    assert.strictEqual(await db.getHeaderSchema('T0B8LPRDKHR'), null);
+    assert.strictEqual(await db.saveHeaderSchema('T0B8LPRDKHR', { blocks: [] }, 'X'), false);
+  }
+});
+
+test('default header fallback = title (centered 18pt bold) + HR + Campaign Summary', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { appendBody } = require('../src/destinations/googleDocs');
+  // Mirror createDocument's no-schema branch exactly: title + HR, then appendBody.
+  const b = new DocBuilder();
+  b.title('2026-07-06 — Sample');
+  b.horizontalRule();
+  appendBody(b, {
+    summary: 'S',
+    writerPrompt: 'W',
+    resolvedLinks: [],
+    referenceInsights: [],
+    assetSpecs: [],
+  });
+  const reqs = b.buildRequests();
+
+  // The inserted text opens with the title line, then a blank HR paragraph, then
+  // the Campaign Summary heading — today's exact structure, unchanged.
+  assert.ok(b.text.startsWith('2026-07-06 — Sample\n\nCampaign Summary\n'), b.text.slice(0, 60));
+
+  // Title styled centered + bold 18pt (the title() primitive), before any heading.
+  const centered = reqs.find(
+    (r) => r.updateParagraphStyle && r.updateParagraphStyle.paragraphStyle.alignment === 'CENTER'
+  );
+  assert.ok(centered, 'title paragraph is centered');
+  const titleText = reqs.find(
+    (r) => r.updateTextStyle && r.updateTextStyle.textStyle.fontSize &&
+      r.updateTextStyle.textStyle.fontSize.magnitude === 18
+  );
+  assert.ok(titleText && titleText.updateTextStyle.textStyle.bold, 'title is bold 18pt');
+
+  // Campaign Summary + Writer Direction headings both present (drafting contract).
+  assert.ok(b.text.includes('Campaign Summary'));
+  assert.ok(b.text.includes('Writer Direction'));
+});

@@ -10,6 +10,12 @@
 // Note: Google Docs does not support inserting a real <hr> element via the API,
 // so a horizontal rule is rendered as an empty paragraph with a bottom border.
 
+const {
+  tableInsertRequests,
+  tableStyleRequests,
+  cellFillRequests,
+} = require('./docHeaderTable');
+
 const BLACK_BORDER = {
   color: { color: { rgbColor: { red: 0.6, green: 0.6, blue: 0.6 } } },
   width: { magnitude: 1, unit: 'PT' },
@@ -27,19 +33,24 @@ function indentStyle(pt) {
 }
 
 class DocBuilder {
-  constructor() {
+  // `startIndex` is where this builder's text is inserted (default 1 — the top of
+  // an empty doc). Pass a higher index to render a body AFTER something already in
+  // the doc (e.g. a header table), so all recorded ranges land at the right place.
+  constructor(startIndex = 1) {
+    this.startIndex = startIndex;
     this.text = '';
     this.paragraphRequests = [];
     this.textRequests = [];
     this.bulletRequests = [];
+    this.headerSchema = null;
   }
 
   // Append a paragraph (text + trailing newline) and record its styling.
   // Returns the [start, end) document index range of the inserted text.
   _push(content, { paragraphStyle, paragraphFields, textStyle, textFields } = {}) {
-    const start = 1 + this.text.length;
+    const start = this.startIndex + this.text.length;
     this.text += content + '\n';
-    const end = 1 + this.text.length; // includes the newline
+    const end = this.startIndex + this.text.length; // includes the newline
 
     const range = { startIndex: start, endIndex: end };
 
@@ -172,13 +183,46 @@ class DocBuilder {
     });
   }
 
-  // Returns the full ordered batchUpdate requests array.
+  // Returns the full ordered batchUpdate requests array. Inserts this builder's
+  // text at `startIndex` (all recorded style ranges are already relative to it),
+  // then applies paragraph/text/bullet styling over those ranges.
   buildRequests() {
     return [
-      { insertText: { location: { index: 1 }, text: this.text } },
+      { insertText: { location: { index: this.startIndex }, text: this.text } },
       ...this.paragraphRequests,
       ...this.textRequests,
       ...this.bulletRequests,
+    ];
+  }
+
+  // --- Structured metadata header table (doc-header-template work, step 1) ---
+  //
+  // Unlike the text blocks above, a Docs table can't be built in one batchUpdate:
+  // cell indices aren't known until the table exists (see docHeaderTable.js). So
+  // this records the schema, and rendering is two-phase — the caller:
+  //   1. applies headerTableInsertRequests()  (inserts the empty table),
+  //   2. re-reads the doc + locates the table (docHeaderTable.findHeaderTable),
+  //   3. applies headerTableFillRequests(tableEl)  (styles + fills the cells),
+  //   4. re-reads for the table's new end index and renders the body after it
+  //      (new DocBuilder(tableEndIndex)).
+  headerTable(schema) {
+    this.headerSchema = schema;
+    return this;
+  }
+
+  // Phase 1 requests: insert the empty header table at the top (index 1).
+  headerTableInsertRequests() {
+    return this.headerSchema ? tableInsertRequests(this.headerSchema) : [];
+  }
+
+  // Phase 2 requests: style the table + fill its cells, given the table element
+  // located in the re-read document. Structural styling first (index-stable),
+  // then reverse-order cell fills.
+  headerTableFillRequests(tableEl) {
+    if (!this.headerSchema || !tableEl) return [];
+    return [
+      ...tableStyleRequests(tableEl, this.headerSchema),
+      ...cellFillRequests(tableEl, this.headerSchema),
     ];
   }
 }

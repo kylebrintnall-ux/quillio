@@ -924,3 +924,75 @@ test('app route exposes POST /api/upload (multipart) and loads', () => {
   const router = require('../src/routes/app');
   assert.strictEqual(typeof router, 'function');
 });
+
+// --- Header-table primitive (doc-header-template work, step 1) ---
+// Only the pure request-builders are unit-testable without a live Google Doc;
+// the two-phase insert/re-read/fill flow is exercised by the dev harness
+// (scripts/genHeaderTableTestDoc.js) against real Docs.
+
+test('docHeaderTable exposes the header-table primitives', () => {
+  const h = require('../src/destinations/docHeaderTable');
+  for (const fn of ['tableInsertRequests', 'findHeaderTable', 'tableStyleRequests', 'cellFillRequests', 'renderCell']) {
+    assert.strictEqual(typeof h[fn], 'function', `exports ${fn}`);
+  }
+  assert.ok(h.SAMPLE_HEADER_SCHEMA && Array.isArray(h.SAMPLE_HEADER_SCHEMA.rows), 'exports a sample schema');
+});
+
+test('tableInsertRequests emits one insertTable matching the schema shape', () => {
+  const { tableInsertRequests, SAMPLE_HEADER_SCHEMA } = require('../src/destinations/docHeaderTable');
+  const reqs = tableInsertRequests(SAMPLE_HEADER_SCHEMA);
+  assert.strictEqual(reqs.length, 1);
+  assert.strictEqual(reqs[0].insertTable.rows, SAMPLE_HEADER_SCHEMA.rows.length);
+  assert.strictEqual(reqs[0].insertTable.columns, SAMPLE_HEADER_SCHEMA.columns);
+  assert.strictEqual(reqs[0].insertTable.location.index, 1);
+});
+
+test('renderCell bolds the wordmark and the field values (not the labels)', () => {
+  const { renderCell } = require('../src/destinations/docHeaderTable');
+
+  const wm = renderCell({ wordmark: 'MC Creative' });
+  assert.strictEqual(wm.text, 'MC Creative');
+  assert.strictEqual(wm.styleRuns.length, 1);
+  assert.strictEqual(wm.styleRuns[0].textStyle.bold, true);
+
+  const one = renderCell({ fields: [{ label: 'Project', value: 'State of Support 2026' }] });
+  assert.strictEqual(one.text, 'Project: State of Support 2026');
+  assert.strictEqual(one.styleRuns.length, 1);
+  // the bold run covers exactly the value, starting right after "Project: "
+  const run = one.styleRuns[0];
+  assert.strictEqual(one.text.slice(run.start, run.start + run.len), 'State of Support 2026');
+  assert.strictEqual(run.textStyle.bold, true);
+
+  // two fields in one cell (Date + Version) → two bold value runs
+  const two = renderCell({ fields: [{ label: 'Date', value: '2026-07-05' }, { label: 'Version', value: 'v1' }] });
+  assert.strictEqual(two.styleRuns.length, 2);
+  assert.strictEqual(two.text.slice(two.styleRuns[1].start, two.styleRuns[1].start + two.styleRuns[1].len), 'v1');
+
+  // empty cell → nothing
+  assert.deepStrictEqual(renderCell({ fields: [] }), { text: '', styleRuns: [] });
+});
+
+test('DocBuilder(startIndex) offsets recorded ranges (body-below-table case)', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const b = new DocBuilder(50);
+  b.heading('Campaign Summary');
+  const reqs = b.buildRequests();
+  // first request inserts at the given startIndex, not 1
+  assert.strictEqual(reqs[0].insertText.location.index, 50);
+  // a recorded paragraph range starts at that offset too
+  const para = reqs.find((r) => r.updateParagraphStyle);
+  assert.strictEqual(para.updateParagraphStyle.range.startIndex, 50);
+});
+
+test('DocBuilder header-table requests are gated on headerTable(schema)', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { SAMPLE_HEADER_SCHEMA } = require('../src/destinations/docHeaderTable');
+  // no schema set → no header requests
+  assert.deepStrictEqual(new DocBuilder().headerTableInsertRequests(), []);
+  assert.deepStrictEqual(new DocBuilder().headerTableFillRequests({ table: {} }), []);
+  // schema set → one insertTable request
+  const b = new DocBuilder().headerTable(SAMPLE_HEADER_SCHEMA);
+  assert.strictEqual(b.headerTableInsertRequests().length, 1);
+  // fill requests need a located table element; null tableEl → []
+  assert.deepStrictEqual(b.headerTableFillRequests(null), []);
+});

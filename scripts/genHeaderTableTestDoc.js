@@ -67,7 +67,6 @@ async function main() {
   const bodyStart = tableEl.endIndex;
 
   const body = new DocBuilder(bodyStart);
-  body.title('2026-07-05 — Sample Campaign');
   body.horizontalRule();
   body.heading('Campaign Summary');
   body.italic('A short campaign summary goes here.');

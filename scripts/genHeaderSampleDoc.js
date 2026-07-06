@@ -27,14 +27,16 @@ async function main() {
   }
 
   const clients = await getClients();
-  const { url } = await generateHeaderSampleDoc({
+  const { id, url } = await generateHeaderSampleDoc({
     headerSchema: schema,
     folderId: config.DRIVE_FOLDER_ID,
     clients,
   });
 
   console.log(`\n[gen3] boundary marker text: "${HEADER_BOUNDARY_MARKER}"`);
-  console.log(`[gen3] sample doc (${which} header):\n${url}\n`);
+  console.log(`[gen3] sample doc (${which} header):\n${url}`);
+  console.log(`\n[gen3] doc id:  ${id}`);
+  console.log(`[gen3] after editing the header, run:\n  npm run gd4 ${id}\n`);
   process.exit(0);
 }
 

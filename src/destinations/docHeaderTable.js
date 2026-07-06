@@ -25,8 +25,8 @@ const CELL_PAD = { magnitude: 5, unit: 'PT' };
 
 // Hardcoded sample modeled on the "MC Creative" creative-brief header
 // (PHASE4_BUILD_PLAN_EXTENSIONS.md §2):
-//   Left col:  wordmark, Project, Writer, (Date + Version)
-//   Right col: Product, (empty), Last edit by, (empty)
+//   Left col:  wordmark, Project, Writer
+//   Right col: Product, (Date + Version), Last edit by
 // A cell is either { wordmark } (large brand text) or { fields: [{label, value}] }
 // (labels regular weight, values bold). This is intentionally hardcoded — schema
 // extraction, storage, and UI are later steps.
@@ -37,15 +37,11 @@ const SAMPLE_HEADER_SCHEMA = {
     [{ wordmark: 'MC Creative' }, { fields: [{ label: 'Product', value: 'Agentforce Service' }] }],
     [
       { fields: [{ label: 'Project', value: 'State of Support 2026' }] },
-      { fields: [] },
+      { fields: [{ label: 'Date', value: '2026-07-05' }, { label: 'Version', value: 'v1' }] },
     ],
     [
       { fields: [{ label: 'Writer', value: 'Kyle Brintnall' }] },
       { fields: [{ label: 'Last edit by', value: 'Kyle Brintnall' }] },
-    ],
-    [
-      { fields: [{ label: 'Date', value: '2026-07-05' }, { label: 'Version', value: 'v1' }] },
-      { fields: [] },
     ],
   ],
 };

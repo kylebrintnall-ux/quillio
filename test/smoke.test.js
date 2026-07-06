@@ -1115,3 +1115,50 @@ test('default header fallback = title (centered 18pt bold) + HR + Campaign Summa
   assert.ok(b.text.includes('Campaign Summary'));
   assert.ok(b.text.includes('Writer Direction'));
 });
+
+// --- Onboarding header sample doc + boundary marker (step 3) ---
+
+test('docHeaderSample exports the marker, sample appender, and generator', () => {
+  const s = require('../src/destinations/docHeaderSample');
+  assert.strictEqual(typeof s.generateHeaderSampleDoc, 'function');
+  assert.strictEqual(typeof s.appendMarkerAndSample, 'function');
+  assert.strictEqual(typeof s.HEADER_BOUNDARY_MARKER, 'string');
+  assert.ok(s.HEADER_BOUNDARY_MARKER.length > 0);
+  // The marker must be distinctive (contains the fixed sentinel words).
+  assert.ok(s.HEADER_BOUNDARY_MARKER.includes('HEADER ENDS'));
+});
+
+test('boundaryMarker renders a centered, bold, grey paragraph with the exact text', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { HEADER_BOUNDARY_MARKER } = require('../src/destinations/docHeaderSample');
+  const b = new DocBuilder();
+  b.boundaryMarker(HEADER_BOUNDARY_MARKER);
+  // Exact marker text is present as its own paragraph.
+  assert.ok(b.text.startsWith(HEADER_BOUNDARY_MARKER + '\n'));
+  const reqs = b.buildRequests();
+  const centered = reqs.find(
+    (r) => r.updateParagraphStyle && r.updateParagraphStyle.paragraphStyle.alignment === 'CENTER'
+  );
+  assert.ok(centered, 'marker paragraph is centered');
+  const styled = reqs.find(
+    (r) => r.updateTextStyle && r.updateTextStyle.textStyle.bold && r.updateTextStyle.textStyle.foregroundColor
+  );
+  assert.ok(styled, 'marker text is bold + grey');
+});
+
+test('sample doc ordering: header ABOVE the marker, sample body BELOW it', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { SEED_TEXT_HEADER } = require('../src/destinations/docHeaderSchema');
+  const { appendMarkerAndSample, HEADER_BOUNDARY_MARKER } = require('../src/destinations/docHeaderSample');
+  // Mirror the text-header path: renderHeader then marker + sample in one builder.
+  const b = new DocBuilder();
+  b.renderHeader(SEED_TEXT_HEADER);
+  appendMarkerAndSample(b);
+
+  const markerAt = b.text.indexOf(HEADER_BOUNDARY_MARKER);
+  const headerAt = b.text.indexOf('MC Creative'); // from the header schema
+  const bodyAt = b.text.indexOf('Campaign Summary'); // from the sample body
+  assert.ok(headerAt >= 0 && markerAt >= 0 && bodyAt >= 0, 'all three regions present');
+  assert.ok(headerAt < markerAt, 'header renders above the marker');
+  assert.ok(markerAt < bodyAt, 'sample body renders below the marker');
+});

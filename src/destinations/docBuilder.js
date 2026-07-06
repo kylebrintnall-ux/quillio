@@ -119,6 +119,24 @@ class DocBuilder {
     });
   }
 
+  // A centered, bold, muted-grey line — used as a visible, system-looking
+  // boundary between an editable header and the sample body in the onboarding
+  // sample doc (docHeaderSample.js). Styled so it reads as a divider/instruction,
+  // not editable copy; the exact text is the stable marker a later re-read keys
+  // off (see HEADER_BOUNDARY_MARKER).
+  boundaryMarker(text) {
+    this._push(text, {
+      paragraphStyle: { alignment: 'CENTER' },
+      paragraphFields: 'alignment',
+      textStyle: {
+        bold: true,
+        foregroundColor: { color: { rgbColor: { red: 0.45, green: 0.45, blue: 0.45 } } },
+      },
+      textFields: 'bold,foregroundColor',
+    });
+    return this;
+  }
+
   // Per-field writing guidance (the Sheet's Notes), shown under the field label.
   // Italic + muted grey so it reads as guidance, distinct from drafted copy
   // (regular weight) and the asset meta line (plain italic). Parsers recognize

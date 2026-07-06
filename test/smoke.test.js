@@ -1162,3 +1162,168 @@ test('sample doc ordering: header ABOVE the marker, sample body BELOW it', () =>
   assert.ok(headerAt < markerAt, 'header renders above the marker');
   assert.ok(markerAt < bodyAt, 'sample body renders below the marker');
 });
+
+// --- Header re-read: Docs JSON -> block schema (step 4, the crux) ---
+// Synthetic documents.get() JSON so the parser is exercised without Google.
+
+const reader = require('../src/destinations/docHeaderReader');
+const { HEADER_BOUNDARY_MARKER } = require('../src/destinations/docHeaderSample');
+
+function _tr(content, style) {
+  return { textRun: { content, textStyle: style || {} } };
+}
+function _para({ named = 'NORMAL_TEXT', alignment = null, border = false, runs = [] } = {}) {
+  const elements = runs.map((r) =>
+    _tr(r.content, {
+      ...(r.bold ? { bold: true } : {}),
+      ...(r.fontSize ? { fontSize: { magnitude: r.fontSize, unit: 'PT' } } : {}),
+    })
+  );
+  elements.push(_tr('\n', {}));
+  const paragraphStyle = { namedStyleType: named };
+  if (alignment) paragraphStyle.alignment = alignment;
+  if (border) paragraphStyle.borderBottom = { width: { magnitude: 1, unit: 'PT' }, dashStyle: 'SOLID' };
+  return { paragraph: { paragraphStyle, elements } };
+}
+function _cell(runs, named) {
+  return { content: [_para({ named, runs })] };
+}
+function _emptyCell() {
+  return { content: [_para({ runs: [] })] };
+}
+function _markerPara() {
+  return _para({ alignment: 'CENTER', runs: [{ content: HEADER_BOUNDARY_MARKER, bold: true }] });
+}
+function _doc(content) {
+  return { body: { content } };
+}
+
+test('reader: pairsFromRuns pairs regular-label + bold-value runs', () => {
+  const pairs = reader.pairsFromRuns([
+    { text: 'Date: ', bold: false },
+    { text: '2026-07-05', bold: true },
+    { text: '    Version: ', bold: false },
+    { text: 'v1', bold: true },
+  ]);
+  assert.deepStrictEqual(pairs, [
+    { label: 'Date', value: '2026-07-05' },
+    { label: 'Version', value: 'v1' },
+  ]);
+});
+
+test('reader: pairsFromText fallback when bold was stripped', () => {
+  assert.deepStrictEqual(reader.pairsFromText('Date: 2026-07-05    Version: v1'), [
+    { label: 'Date', value: '2026-07-05' },
+    { label: 'Version', value: 'v1' },
+  ]);
+  // Prose with a colon is not a clean pair-line.
+  assert.strictEqual(reader.pairsFromText('Note this is a long sentence, really'), null);
+});
+
+test('reader: text/heading header parses in order, stops at the marker', () => {
+  const doc = _doc([
+    _para({ named: 'HEADING_2', runs: [{ content: 'MC Creative' }] }),
+    _para({ runs: [{ content: 'Project: ' }, { content: 'State of Support 2026', bold: true }] }),
+    _para({
+      runs: [
+        { content: 'Date: ' },
+        { content: '2026-07-05', bold: true },
+        { content: '    Version: ' },
+        { content: 'v1', bold: true },
+      ],
+    }),
+    _para({ runs: [{ content: 'Writer: ' }, { content: 'Kyle Brintnall', bold: true }] }),
+    _para({ border: true, runs: [] }),
+    _markerPara(),
+    // below the marker — must be ignored:
+    _para({ named: 'HEADING_2', runs: [{ content: 'Campaign Summary' }] }),
+  ]);
+  const schema = reader.parseHeaderSchema(doc);
+  assert.deepStrictEqual(
+    schema.blocks.map((b) => b.type),
+    ['heading', 'text', 'field_row', 'text', 'divider']
+  );
+  assert.deepStrictEqual(schema.blocks[0], { type: 'heading', text: 'MC Creative' });
+  assert.strictEqual(schema.blocks[1].label, 'Project');
+  assert.strictEqual(schema.blocks[1].value, 'State of Support 2026');
+  assert.strictEqual(schema.blocks[2].fields.length, 2);
+  assert.strictEqual(schema.blocks[2].fields[1].value, 'v1');
+});
+
+test('reader: table header parses cells (wordmark vs fields), no marker needed below', () => {
+  const tableEl = {
+    table: {
+      columns: 2,
+      tableStyle: {
+        tableColumnProperties: [
+          { width: { magnitude: 260, unit: 'PT' } },
+          { width: { magnitude: 260, unit: 'PT' } },
+        ],
+      },
+      tableRows: [
+        {
+          tableCells: [
+            _cell([{ content: 'MC Creative', bold: true, fontSize: 32 }]),
+            _cell([{ content: 'Product: ' }, { content: 'Agentforce Service', bold: true }]),
+          ],
+        },
+        {
+          tableCells: [
+            _cell([{ content: 'Project: ' }, { content: 'State of Support 2026', bold: true }]),
+            _emptyCell(),
+          ],
+        },
+      ],
+    },
+  };
+  const schema = reader.parseHeaderSchema(_doc([tableEl, _markerPara()]));
+  assert.strictEqual(schema.blocks.length, 1);
+  const t = schema.blocks[0];
+  assert.strictEqual(t.type, 'table');
+  assert.deepStrictEqual(t.table.colWidthsPt, [260, 260]);
+  assert.strictEqual(t.table.rows[0][0].wordmark, 'MC Creative');
+  assert.strictEqual(t.table.rows[0][1].fields[0].label, 'Product');
+  assert.strictEqual(t.table.rows[0][1].fields[0].value, 'Agentforce Service');
+  assert.strictEqual(t.table.rows[1][0].fields[0].value, 'State of Support 2026');
+  assert.deepStrictEqual(t.table.rows[1][1], { fields: [] }); // empty cell
+});
+
+test('reader round-trip: parse -> renderHeader reproduces the header text', () => {
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const doc = _doc([
+    _para({ named: 'HEADING_2', runs: [{ content: 'MC Creative' }] }),
+    _para({ runs: [{ content: 'Project: ' }, { content: 'State of Support 2026', bold: true }] }),
+    _para({
+      runs: [
+        { content: 'Date: ' },
+        { content: '2026-07-05', bold: true },
+        { content: '    Version: ' },
+        { content: 'v1', bold: true },
+      ],
+    }),
+    _markerPara(),
+  ]);
+  const schema = reader.parseHeaderSchema(doc);
+  const b = new DocBuilder();
+  b.renderHeader(schema);
+  assert.ok(b.text.includes('MC Creative'));
+  assert.ok(b.text.includes('Project: State of Support 2026'));
+  assert.ok(b.text.includes('Date: 2026-07-05    Version: v1'));
+  // No marker leaked into the reconstructed header.
+  assert.ok(!b.text.includes('HEADER ENDS'));
+});
+
+test('reader: an inserted horizontalRule element becomes a divider block', () => {
+  const hrPara = { paragraph: { paragraphStyle: {}, elements: [{ horizontalRule: {} }, _tr('\n', {})] } };
+  const schema = reader.parseHeaderSchema(
+    _doc([
+      _para({ named: 'HEADING_2', runs: [{ content: 'Brand' }] }),
+      hrPara,
+      _markerPara(),
+    ])
+  );
+  assert.deepStrictEqual(
+    schema.blocks.map((b) => b.type),
+    ['heading', 'divider']
+  );
+});

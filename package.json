@@ -10,6 +10,7 @@
     "gd": "node scripts/genHeaderTableTestDoc.js",
     "gd2": "node scripts/genHeaderSchemaTestDoc.js",
     "gd3": "node scripts/genHeaderSampleDoc.js",
+    "gd4": "node scripts/readHeaderDoc.js",
     "seed-header": "node scripts/seedHeaderSchema.js"
   },
   "engines": {

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "gd": "node scripts/genHeaderTableTestDoc.js"
   },
   "engines": {
     "node": ">=18"

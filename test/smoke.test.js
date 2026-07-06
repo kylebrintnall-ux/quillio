@@ -1327,3 +1327,19 @@ test('reader: an inserted horizontalRule element becomes a divider block', () =>
     ['heading', 'divider']
   );
 });
+
+test('reader: an emptied label cell ("Product:") is a field, not a wordmark', () => {
+  // Regression: a blank-for-human field whose value the user cleared leaves just
+  // "Label:" — must parse as a field with an empty value, not a brand wordmark.
+  assert.deepStrictEqual(reader.pairsFromText('Product:'), [{ label: 'Product', value: '' }]);
+
+  const cell = reader.parseCell(_cell([{ content: 'Product:' }]));
+  assert.ok(!('wordmark' in cell), 'not misread as a wordmark');
+  assert.strictEqual(cell.fields.length, 1);
+  assert.strictEqual(cell.fields[0].label, 'Product');
+  assert.strictEqual(cell.fields[0].value, '');
+
+  // A colon-less brand string still parses as a wordmark.
+  const wm = reader.parseCell(_cell([{ content: 'SVC Creative', bold: true, fontSize: 32 }]));
+  assert.strictEqual(wm.wordmark, 'SVC Creative');
+});

@@ -118,8 +118,11 @@ function pairsFromRuns(runs) {
 }
 
 // Fallback when bold was stripped: split a line into "Label: value" pairs on a
-// run of 3+ spaces (the renderer joins pairs with 4 spaces) or a tab. Returns
-// null if the line isn't cleanly all label:value pairs.
+// run of 3+ spaces (the renderer joins pairs with 4 spaces) or a tab. The value
+// MAY be empty — a user clears it for a blank-for-human field, leaving just
+// "Label:", which is a field (empty value), not a wordmark. Returns null only
+// when a segment has no "Label:" shape at all (no colon), so a colon-less brand
+// wordmark still falls through to the wordmark path.
 function pairsFromText(text) {
   const segs = String(text)
     .split(/\s{3,}|\t+/)
@@ -128,7 +131,7 @@ function pairsFromText(text) {
   if (!segs.length) return null;
   const pairs = [];
   for (const s of segs) {
-    const m = s.match(/^(.{1,40}?):\s+(.+)$/);
+    const m = s.match(/^(.{1,40}?):\s*(.*)$/);
     if (!m) return null;
     pairs.push({ label: m[1].trim(), value: m[2].trim() });
   }

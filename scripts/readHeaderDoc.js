@@ -22,12 +22,31 @@ const { readHeaderSchema } = require('../src/destinations/docHeaderReader');
 const { DocBuilder } = require('../src/destinations/docBuilder');
 const { findHeaderTable } = require('../src/destinations/docHeaderTable');
 const { isValidHeaderSchema } = require('../src/destinations/docHeaderSchema');
+const { SAMPLE_DOC_NAME } = require('../src/destinations/docHeaderSample');
 
 // Accept a raw id or any Docs URL.
 function extractDocId(arg) {
   const s = String(arg || '');
   const m = s.match(/\/document\/d\/([a-zA-Z0-9_-]+)/) || s.match(/^([a-zA-Z0-9_-]{20,})$/);
   return m ? m[1] : null;
+}
+
+// No id given (can't type/paste a long id) — find the most recently modified
+// sample doc (SAMPLE_DOC_NAME) in the configured folder. That's the one you just
+// edited, so `npm run gd4` with no argument "just works" after `npm run gd3`.
+async function findLatestSampleDoc(drive) {
+  const res = await drive.files.list({
+    q:
+      `name = '${SAMPLE_DOC_NAME}' and '${config.DRIVE_FOLDER_ID}' in parents ` +
+      `and mimeType = 'application/vnd.google-apps.document' and trashed = false`,
+    orderBy: 'modifiedTime desc',
+    pageSize: 1,
+    fields: 'files(id, name, modifiedTime)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const f = res.data.files && res.data.files[0];
+  return f ? f.id : null;
 }
 
 // Render a schema's header into a fresh doc (header only — no body), mirroring
@@ -64,13 +83,20 @@ async function renderHeaderToNewDoc(clients, schema, name) {
 }
 
 async function main() {
-  const docId = extractDocId(process.argv[2]);
-  if (!docId) {
-    console.error('[gen4] usage: readHeaderDoc.js <docId-or-URL>');
-    process.exit(1);
-  }
-
   const clients = await getClients();
+
+  let docId = extractDocId(process.argv[2]);
+  if (!docId) {
+    docId = await findLatestSampleDoc(clients.drive);
+    if (!docId) {
+      console.error(
+        `[gen4] no id given and no "${SAMPLE_DOC_NAME}" found — run npm run gd3 first, ` +
+          'or pass an id/URL: npm run gd4 <docId-or-URL>'
+      );
+      process.exit(1);
+    }
+    console.log(`[gen4] no id given — using your most recently edited "${SAMPLE_DOC_NAME}": ${docId}`);
+  }
 
   const schema = await readHeaderSchema(docId, clients);
   console.log('\n[gen4] parsed header schema:');

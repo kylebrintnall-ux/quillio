@@ -36,7 +36,8 @@ async function main() {
   console.log(`\n[gen3] boundary marker text: "${HEADER_BOUNDARY_MARKER}"`);
   console.log(`[gen3] sample doc (${which} header):\n${url}`);
   console.log(`\n[gen3] doc id:  ${id}`);
-  console.log(`[gen3] after editing the header, run:\n  npm run gd4 ${id}\n`);
+  console.log('[gen3] after editing the header in Google Docs, just run:  npm run gd4');
+  console.log('[gen3]   (no id needed — gd4 finds your most recently edited sample)\n');
   process.exit(0);
 }
 

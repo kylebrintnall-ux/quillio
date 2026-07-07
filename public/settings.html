@@ -132,6 +132,7 @@
       display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
     }
     .hdr-upload-card .btn { margin: 0; }
+    .hdr-upload-title { font-weight: 600; font-size: 14px; color: var(--ink); }
     .hdr-hint { color: rgba(26,26,46,0.55); font-size: 12px; margin: 0; }
     /* Branded bottom toast (ported from the app) — replaces the generic banner. */
     .toast {
@@ -424,22 +425,38 @@
         <section class="panel" id="panel-header">
           <div class="eyebrow">DOC HEADER</div>
           <h1>Doc Header</h1>
-          <p class="hdr-lede">Show Quillio the top of your copy docs and it reproduces that header on every doc it creates. Upload a screenshot of your header, tweak the fields, and lock it in.</p>
+          <p class="hdr-lede">Keep every copy doc on-brand. Quillio puts your team's header — logo, project, date, and the fields you use — at the top of every document it generates, formatted exactly the way you like.</p>
           <div id="hdr-error" class="error hidden"></div>
           <div id="hdr-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
 
+          <!-- LANDING: a header exists -> show its preview + Edit -->
           <div id="hdr-intro" class="hidden">
-            <div id="hdr-current" class="card hidden"></div>
-            <div class="hdr-upload-card">
-              <input type="file" id="hdr-file" accept=".jpg,.jpeg,.png,.webp" class="hidden" />
-              <button class="btn" id="hdr-upload-btn">Upload a header screenshot</button>
-              <div class="hdr-hint">JPEG / PNG / WebP · up to 10MB</div>
+            <div id="hdr-current" class="hidden">
+              <h2>Your header</h2>
+              <div id="hdr-current-preview" class="hdr-preview"></div>
+              <div class="btnrow">
+                <button class="btn" id="hdr-edit-btn">Edit header</button>
+              </div>
+            </div>
+            <!-- LANDING: no header yet -> empty state + set up -->
+            <div id="hdr-empty" class="hidden">
+              <div class="empty">No custom header yet — Quillio uses a simple default. Set up your own to match your team's docs.</div>
+              <div class="btnrow">
+                <button class="btn" id="hdr-setup-btn">Set up your header</button>
+              </div>
             </div>
           </div>
 
           <div id="hdr-extracting" class="note hidden"><span class="dot"></span><span>Reading your header…</span></div>
 
+          <!-- EDITOR: upload lives in here now -->
           <div id="hdr-editor-wrap" class="hidden">
+            <input type="file" id="hdr-file" accept=".jpg,.jpeg,.png,.webp" class="hidden" />
+            <div class="hdr-upload-card">
+              <div class="hdr-upload-title">Start from a screenshot</div>
+              <button class="btn secondary" id="hdr-upload-btn">Upload a header screenshot</button>
+              <div class="hdr-hint">JPEG / PNG / WebP · up to 10MB — Quillio reads the fields for you</div>
+            </div>
             <div class="hdr-cols">
               <div class="hdr-edit-col">
                 <h2>Fields</h2>
@@ -455,7 +472,7 @@
             </div>
             <div class="btnrow">
               <button class="btn" id="hdr-save">Lock in as my header</button>
-              <button class="btn secondary" id="hdr-reupload">Re-upload</button>
+              <button class="btn secondary" id="hdr-cancel">Cancel</button>
             </div>
           </div>
         </section>
@@ -816,45 +833,54 @@
       hdrToastTimer = setTimeout(function () { t.classList.remove('show'); }, 3000);
     }
 
+    var hdrCurrentSchema = null;
+
+    // Landing view: a preview of the saved header + Edit, or an empty-state.
     function hdrLoad() {
       clearError($('hdr-error')); hide($('hdr-editor-wrap')); show($('hdr-loading'));
       fetch('/api/header').then(function (r) { return r.json(); }).then(function (d) {
         hide($('hdr-loading')); show($('hdr-intro'));
-        var cur = $('hdr-current');
-        if (d && d.success && d.schema && d.schema.blocks && d.schema.blocks.length) {
-          cur.innerHTML = '';
-          cur.appendChild(el('div', 'k', 'Current header'));
-          cur.appendChild(el('div', 'v', d.schema.blocks.length + ' block(s): ' + d.schema.blocks.map(function (b) { return b.type; }).join(', ')));
-          var row = el('div', 'btnrow');
-          var editBtn = el('button', 'btn secondary', 'Edit current');
-          editBtn.type = 'button';
-          editBtn.addEventListener('click', function () { hdrOpenEditor(JSON.parse(JSON.stringify(d.schema))); });
-          row.appendChild(editBtn); cur.appendChild(row); show(cur);
-        } else { hide(cur); }
-      }).catch(function () { hide($('hdr-loading')); show($('hdr-intro')); });
+        var has = d && d.success && d.schema && d.schema.blocks && d.schema.blocks.length;
+        hdrCurrentSchema = has ? d.schema : null;
+        if (has) {
+          hdrBuildPreview($('hdr-current-preview'), hdrCurrentSchema);
+          show($('hdr-current')); hide($('hdr-empty'));
+        } else {
+          hide($('hdr-current')); show($('hdr-empty'));
+        }
+      }).catch(function () { hide($('hdr-loading')); show($('hdr-intro')); hide($('hdr-current')); show($('hdr-empty')); });
     }
 
     function hdrOpenEditor(schema) {
       hdrSchema = schema && schema.blocks ? schema : { version: 1, blocks: [] };
       hide($('hdr-intro')); show($('hdr-editor-wrap')); hdrRefresh();
     }
+    function hdrCloseEditor() { hide($('hdr-editor-wrap')); hdrLoad(); }
 
+    // Edit an existing header (work on a copy); Set up starts from blank.
+    $('hdr-edit-btn').addEventListener('click', function () {
+      hdrOpenEditor(hdrCurrentSchema ? JSON.parse(JSON.stringify(hdrCurrentSchema)) : { version: 1, blocks: [] });
+    });
+    $('hdr-setup-btn').addEventListener('click', function () { hdrOpenEditor({ version: 1, blocks: [] }); });
+    $('hdr-cancel').addEventListener('click', hdrCloseEditor);
+
+    // Upload now lives inside the editor: extract -> replace the editor's schema
+    // in place (stays in the editor so the user keeps refining).
     $('hdr-upload-btn').addEventListener('click', function () { $('hdr-file').click(); });
-    $('hdr-reupload').addEventListener('click', function () { $('hdr-file').click(); });
     $('hdr-file').addEventListener('change', function () {
       var fileInput = this;
       var f = fileInput.files && fileInput.files[0];
       if (!f) return;
-      clearError($('hdr-error')); hide($('hdr-intro')); hide($('hdr-editor-wrap')); show($('hdr-extracting'));
+      clearError($('hdr-error')); hide($('hdr-editor-wrap')); show($('hdr-extracting'));
       var fd = new FormData(); fd.append('screenshot', f);
       fetch('/api/header/extract', { method: 'POST', body: fd })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res) {
           hide($('hdr-extracting')); fileInput.value = '';
-          if (!res.ok || !res.j.success) { show($('hdr-intro')); showError($('hdr-error'), (res.j && res.j.error) || 'Extraction failed.'); return; }
+          if (!res.ok || !res.j.success) { show($('hdr-editor-wrap')); showError($('hdr-error'), (res.j && res.j.error) || 'Extraction failed.'); return; }
           hdrOpenEditor(res.j.schema);
         })
-        .catch(function () { hide($('hdr-extracting')); show($('hdr-intro')); showError($('hdr-error'), 'Extraction failed.'); });
+        .catch(function () { hide($('hdr-extracting')); show($('hdr-editor-wrap')); showError($('hdr-error'), 'Extraction failed.'); });
     });
 
     // Small editor-control builders.
@@ -991,9 +1017,9 @@
       });
       t.appendChild(tb); return t;
     }
-    function hdrRenderPreview() {
-      var host = $('hdr-preview'); host.innerHTML = '';
-      var blocks = (hdrSchema && hdrSchema.blocks) || [];
+    function hdrBuildPreview(host, schema) {
+      host.innerHTML = '';
+      var blocks = (schema && schema.blocks) || [];
       blocks.forEach(function (block) {
         if (block.type === 'heading') host.appendChild(el('div', 'pv-heading', block.text || ''));
         else if (block.type === 'divider') host.appendChild(el('hr', 'pv-hr'));
@@ -1004,6 +1030,7 @@
       });
       if (!blocks.length) host.appendChild(el('div', 'pv-empty', '(no header)'));
     }
+    function hdrRenderPreview() { hdrBuildPreview($('hdr-preview'), hdrSchema); }
 
     $('hdr-add-field').addEventListener('click', function () {
       if (!hdrSchema) hdrSchema = { version: 1, blocks: [] };
@@ -1018,6 +1045,7 @@
           btn.disabled = false;
           if (!res.ok || !res.j.success) { showError($('hdr-error'), (res.j && res.j.error) || 'Could not save.'); return; }
           hdrLockedToast();
+          hdrCloseEditor(); // back to the landing view, now showing the saved header
         })
         .catch(function () { btn.disabled = false; showError($('hdr-error'), 'Could not save.'); });
     });

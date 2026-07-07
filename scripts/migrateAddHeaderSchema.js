@@ -45,7 +45,18 @@ async function main() {
       await client.query(sql);
     }
     await client.query('COMMIT');
-    console.log('[migrate-header] done — templates.doc_header_schema (JSONB) ensured');
+
+    // Verify + report the column so a run is self-confirming.
+    const check = await client.query(
+      `SELECT data_type FROM information_schema.columns
+         WHERE table_name = 'templates' AND column_name = 'doc_header_schema'`
+    );
+    if (check.rows[0]) {
+      console.log(`[migrate-header] done — templates.doc_header_schema EXISTS (${check.rows[0].data_type})`);
+    } else {
+      console.error('[migrate-header] WARNING — column still not present after migration');
+      process.exit(1);
+    }
     process.exit(0);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});

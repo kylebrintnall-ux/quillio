@@ -119,11 +119,26 @@
     .hidden { display: none !important; }
 
     /* --- Doc Header setup (step 6b) --- */
-    .lede { color: var(--muted); margin: 4px 0 18px; max-width: 62ch; line-height: 1.5; }
-    .hint { color: var(--muted); font-size: 13px; margin-left: 10px; }
+    /* Intro copy in a glass container so it reads over the gradient. */
+    .hdr-lede {
+      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px;
+      color: rgba(26,26,46,0.78); line-height: 1.55; margin: 0 0 16px;
+    }
+    /* Upload area as a glass card: button + clearly-associated helper beneath. */
+    .hdr-upload-card {
+      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px; margin: 8px 0;
+      display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+    }
+    .hdr-upload-card .btn { margin: 0; }
+    .hdr-hint { color: rgba(26,26,46,0.55); font-size: 12px; margin: 0; }
     .hdr-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
     @media (max-width: 860px) { .hdr-cols { grid-template-columns: 1fr; } }
-    .hdr-block { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 0 0 10px; background: rgba(255,255,255,0.4); }
+    .hdr-block {
+      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px; margin: 0 0 10px;
+    }
     .hdr-block .bh { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
     .hdr-block .bh .bt { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
     .hdr-block .bh .ba { display: flex; gap: 4px; }
@@ -395,17 +410,17 @@
         <section class="panel" id="panel-header">
           <div class="eyebrow">DOC HEADER</div>
           <h1>Doc Header</h1>
-          <p class="lede">Show Quillio the top of your copy docs and it reproduces that header on every doc it creates. Upload a screenshot of your header, tweak the fields, and lock it in.</p>
+          <p class="hdr-lede">Show Quillio the top of your copy docs and it reproduces that header on every doc it creates. Upload a screenshot of your header, tweak the fields, and lock it in.</p>
           <div id="hdr-error" class="error hidden"></div>
           <div id="hdr-banner" class="banner hidden"></div>
           <div id="hdr-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
 
           <div id="hdr-intro" class="hidden">
             <div id="hdr-current" class="card hidden"></div>
-            <div class="btnrow">
+            <div class="hdr-upload-card">
               <input type="file" id="hdr-file" accept=".jpg,.jpeg,.png,.webp" class="hidden" />
               <button class="btn" id="hdr-upload-btn">Upload a header screenshot</button>
-              <span class="hint">JPEG / PNG / WebP · up to 10MB</span>
+              <div class="hdr-hint">JPEG / PNG / WebP · up to 10MB</div>
             </div>
           </div>
 

@@ -752,6 +752,64 @@ async function describeImage(base64Data, mimetype) {
   }
 }
 
+// Extract a doc-header STRUCTURE from a screenshot into the block schema
+// (doc-header-template work, step 5). Vision pass: given an image of the top of
+// a team's copy/brief doc, reproduce its header — labels, order, table structure
+// — as { version, blocks } (see destinations/docHeaderSchema.js), classifying
+// each field's fill (auto | static | blank). Honest scope: reproduce structure
+// and labels exactly, fill only what Quillio legitimately owns, never invent
+// values. Returns the RAW parsed object (caller normalizes) or null on any
+// failure (no key, timeout, bad image, unparseable) — best-effort, never throws.
+async function extractHeaderSchema(base64Data, mimetype) {
+  if (!base64Data) return null;
+  const prompt = [
+    'You are extracting the STRUCTURE of a document header from a screenshot, to reproduce it as a reusable template.',
+    'The image shows the TOP of a copy/brief document. Extract ONLY the header block(s) at the top (the title / metadata area).',
+    'IGNORE body content below the header — e.g. "Campaign Summary", paragraphs, or asset sections.',
+    '',
+    'Return a JSON object of exactly this shape (no markdown, no backticks):',
+    '{ "version": 1, "blocks": [ <block>, ... ] }',
+    '',
+    'Each block is one of:',
+    '  { "type": "heading", "text": "<large title/brand text>" }',
+    '  { "type": "text", "label": "<label>", "value": "<value>", "fill": "<auto|static|blank>" }   // a "Label: value" line',
+    '  { "type": "text", "text": "<plain line, no label>" }',
+    '  { "type": "field_row", "fields": [ { "label", "value", "fill" }, ... ] }                     // several label:value on one line',
+    '  { "type": "divider" }                                                                        // a horizontal rule',
+    '  { "type": "table", "table": { "columns": <n>, "rows": [ [ <cell>, ... ], ... ] } }           // a bordered/grid table',
+    '        where each cell is either { "wordmark": "<brand text>", "fill": "static" }',
+    '        or { "fields": [ { "label", "value", "fill" }, ... ] }   (an empty cell = { "fields": [] })',
+    '',
+    'Reproduce labels and text VERBATIM. Keep blocks, rows, and cells IN THE ORDER they appear.',
+    'If the header is a bordered/grid table, use a table block. If it is headings and lines, use heading/text/field_row/divider. Do NOT force a table if there is none.',
+    '',
+    'Classify every field/cell with "fill":',
+    '  "auto"   — a value Quillio can fill from its own data: project/campaign name, writer, date, version.',
+    '  "static" — fixed branding that never changes (e.g. the team wordmark / logo text).',
+    '  "blank"  — a field Quillio does NOT own (e.g. product, project owner, approver, reviewer, "last edit by"). Reproduce the LABEL but set "value" to "". Do NOT invent a value.',
+    '',
+    'Respond with valid JSON only.',
+  ].join('\n');
+
+  try {
+    const text = await callGemini({
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimetype || 'image/png', data: base64Data } },
+          ],
+        },
+      ],
+      generationConfig: { temperature: 0.2 },
+    });
+    return JSON.parse(stripJsonFences(text));
+  } catch (err) {
+    console.error(`[gemini] extractHeaderSchema failed: ${err.message}`);
+    return null;
+  }
+}
+
 module.exports = {
   parseBrief,
   enrichWithReferences,
@@ -759,6 +817,7 @@ module.exports = {
   generateAssetDrafts,
   generateVoiceGuide,
   describeImage,
+  extractHeaderSchema,
   // Exposed for unit tests only.
   builtInFieldGuidance,
 };

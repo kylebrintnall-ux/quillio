@@ -1343,3 +1343,70 @@ test('reader: an emptied label cell ("Product:") is a field, not a wordmark', ()
   const wm = reader.parseCell(_cell([{ content: 'SVC Creative', bold: true, fontSize: 32 }]));
   assert.strictEqual(wm.wordmark, 'SVC Creative');
 });
+
+// --- Gemini header extraction: normalize + best-effort (step 5) ---
+
+test('normalizeHeaderSchema coerces loose Gemini JSON into a safe schema', () => {
+  const { normalizeHeaderSchema, isValidHeaderSchema } = require('../src/destinations/docHeaderSchema');
+
+  // Junk in -> empty (invalid) out, never throws.
+  assert.deepStrictEqual(normalizeHeaderSchema(null), { version: 1, blocks: [] });
+  assert.deepStrictEqual(normalizeHeaderSchema({ blocks: 'nope' }), { version: 1, blocks: [] });
+  assert.strictEqual(isValidHeaderSchema(normalizeHeaderSchema({})), false);
+
+  const raw = {
+    blocks: [
+      { type: 'heading', text: '  MC Creative  ' },
+      { type: 'text', label: 'Project', value: 'X', fill: 'AUTO' }, // fill upper-cased
+      { type: 'text', label: 'Product', fill: 'weird' }, // no value, bad fill -> blank
+      { type: 'field_row', fields: [{ label: 'Date', value: '2026-07-05' }, { label: '', value: 'drop me' }] },
+      { type: 'divider' },
+      { type: 'bogus', text: 'skip' }, // unknown -> dropped
+      { type: 'heading', text: '   ' }, // empty -> dropped
+    ],
+  };
+  const s = normalizeHeaderSchema(raw);
+  assert.deepStrictEqual(
+    s.blocks.map((b) => b.type),
+    ['heading', 'text', 'text', 'field_row', 'divider']
+  );
+  assert.strictEqual(s.blocks[0].text, 'MC Creative'); // trimmed
+  assert.strictEqual(s.blocks[1].fill, 'auto'); // lower-cased
+  assert.strictEqual(s.blocks[2].value, ''); // missing value -> ''
+  assert.strictEqual(s.blocks[2].fill, 'blank'); // invalid fill -> blank
+  assert.strictEqual(s.blocks[3].fields.length, 1); // label-less field dropped
+});
+
+test('normalizeHeaderSchema normalizes a table (wordmark, fields, widths, empty cell)', () => {
+  const { normalizeHeaderSchema } = require('../src/destinations/docHeaderSchema');
+  const s = normalizeHeaderSchema({
+    blocks: [
+      {
+        type: 'table',
+        table: {
+          columns: 2,
+          colWidthsPt: [260, 260],
+          rows: [
+            [{ wordmark: 'SVC Creative' }, { fields: [{ label: 'Product', value: '', fill: 'blank' }] }],
+            [{ fields: [{ label: 'Writer', value: 'K', fill: 'auto' }] }, { fields: [] }],
+          ],
+        },
+      },
+    ],
+  });
+  const t = s.blocks[0];
+  assert.strictEqual(t.type, 'table');
+  assert.deepStrictEqual(t.table.colWidthsPt, [260, 260]);
+  assert.strictEqual(t.table.rows[0][0].wordmark, 'SVC Creative');
+  assert.strictEqual(t.table.rows[0][0].fill, 'static'); // wordmark defaults to static
+  assert.deepStrictEqual(t.table.rows[1][1], { fields: [] }); // empty cell preserved
+});
+
+test('gemini.extractHeaderSchema is exposed and best-effort (null without a key)', async () => {
+  const { extractHeaderSchema } = require('../src/services/gemini');
+  assert.strictEqual(typeof extractHeaderSchema, 'function');
+  assert.strictEqual(await extractHeaderSchema('', 'image/png'), null); // no data -> null
+  if (!process.env.GEMINI_API_KEY) {
+    assert.strictEqual(await extractHeaderSchema('ZmFrZQ==', 'image/png'), null); // no key -> null, no throw
+  }
+});

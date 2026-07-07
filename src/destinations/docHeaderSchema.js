@@ -110,11 +110,82 @@ function seedSchema(name) {
   return null;
 }
 
+// --- Normalization (Gemini extraction, step 5) ---
+// Gemini's raw JSON is untrusted: coerce it into the canonical schema so a
+// malformed/loose extraction can never reach the renderer. Unknown block types
+// and label-less fields are dropped; every field/cell gets a valid `fill`.
+// Returns { version: 1, blocks: [...] } — blocks may be empty (an invalid /
+// empty extraction), which isValidHeaderSchema() then reports as unusable.
+
+function normFill(v) {
+  const s = String(v || '').toLowerCase();
+  return s === 'auto' || s === 'static' || s === 'blank' ? s : FILL.BLANK;
+}
+
+function normField(f) {
+  const label = String((f && f.label) || '').trim();
+  if (!label) return null;
+  return { label, value: f && f.value != null ? String(f.value) : '', fill: normFill(f && f.fill) };
+}
+
+function normCell(c) {
+  if (c && c.wordmark != null && String(c.wordmark).trim()) {
+    return { wordmark: String(c.wordmark).trim(), fill: normFill(c.fill) === 'blank' ? FILL.STATIC : normFill(c.fill) };
+  }
+  const fields = ((c && c.fields) || []).map(normField).filter(Boolean);
+  return { fields };
+}
+
+function normTable(t) {
+  const rows = ((t && t.rows) || []).map((r) => (Array.isArray(r) ? r.map(normCell) : []));
+  const columns = Number(t && t.columns) || rows.reduce((m, r) => Math.max(m, r.length), 0) || 2;
+  const table = { columns, rows };
+  const widths = t && t.colWidthsPt;
+  if (Array.isArray(widths) && widths.some((w) => Number(w) > 0)) {
+    table.colWidthsPt = widths.map((w) => Number(w) || 0);
+  }
+  return table;
+}
+
+function normBlock(b) {
+  switch (b && b.type) {
+    case 'heading': {
+      const text = String(b.text || '').trim();
+      return text ? { type: 'heading', text } : null;
+    }
+    case 'text': {
+      if (b.label != null && String(b.label).trim()) {
+        const f = normField(b);
+        return f ? { type: 'text', label: f.label, value: f.value, fill: f.fill } : null;
+      }
+      const text = String(b.text || '').trim();
+      return text ? { type: 'text', text } : null;
+    }
+    case 'field_row': {
+      const fields = ((b && b.fields) || []).map(normField).filter(Boolean);
+      return fields.length ? { type: 'field_row', fields } : null;
+    }
+    case 'divider':
+      return { type: 'divider' };
+    case 'table':
+      return { type: 'table', table: normTable(b.table) };
+    default:
+      return null; // unknown/edge block — drop rather than render garbage
+  }
+}
+
+function normalizeHeaderSchema(raw) {
+  const rawBlocks = raw && Array.isArray(raw.blocks) ? raw.blocks : [];
+  const blocks = rawBlocks.map(normBlock).filter(Boolean);
+  return { version: 1, blocks };
+}
+
 module.exports = {
   FILL,
   BLOCK_TYPES,
   isValidHeaderSchema,
   schemaHasTable,
+  normalizeHeaderSchema,
   SEED_TABLE_HEADER,
   SEED_TEXT_HEADER,
   seedSchema,

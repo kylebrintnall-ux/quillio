@@ -92,8 +92,14 @@ function renderCell(cell) {
     if (i > 0) text += '    '; // gap between multiple fields in one cell (e.g. Date + Version)
     text += `${f.label}: `;
     const valStart = text.length;
-    text += String(f.value == null ? '' : f.value);
-    styleRuns.push({ start: valStart, len: text.length - valStart, textStyle: { bold: true }, fields: 'bold' });
+    const val = String(f.value == null ? '' : f.value);
+    text += val;
+    // Only bold a non-empty value. A blank-for-human field ("Product:") has an
+    // empty value → a zero-length range, which the Docs API rejects
+    // ("updateTextStyle: The range should not be empty").
+    if (val.length > 0) {
+      styleRuns.push({ start: valStart, len: val.length, textStyle: { bold: true }, fields: 'bold' });
+    }
   });
   return { text, styleRuns };
 }
@@ -156,6 +162,7 @@ function cellFillRequests(tableEl, schema) {
       const cellStart = tableEl.table.tableRows[r].tableCells[c].content[0].startIndex;
       reqs.push({ insertText: { location: { index: cellStart }, text } });
       for (const run of styleRuns) {
+        if (!(run.len > 0)) continue; // never emit an empty-range updateTextStyle
         reqs.push({
           updateTextStyle: {
             range: { startIndex: cellStart + run.start, endIndex: cellStart + run.start + run.len },

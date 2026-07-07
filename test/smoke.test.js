@@ -1454,3 +1454,28 @@ test('settings.html wires the Doc Header setup UI (step 6b)', () => {
   // The panel is included in the tab-switch set.
   assert.ok(/\['voice', 'header', 'workspace', 'account'\]/.test(html), 'header in tab switch');
 });
+
+test('header table: an empty-value field emits NO bold run (no empty Docs range)', () => {
+  const { renderCell, cellFillRequests } = require('../src/destinations/docHeaderTable');
+
+  // renderCell: blank value -> label text present, but zero style runs.
+  const cell = renderCell({ fields: [{ label: 'Product', value: '' }] });
+  assert.strictEqual(cell.text, 'Product: ');
+  assert.strictEqual(cell.styleRuns.length, 0);
+
+  // A mixed cell: filled value keeps its bold run, empty one does not.
+  const mixed = renderCell({ fields: [{ label: 'Date', value: '6/8/21' }, { label: 'Note', value: '' }] });
+  assert.strictEqual(mixed.styleRuns.length, 1);
+  assert.strictEqual(mixed.text.slice(mixed.styleRuns[0].start, mixed.styleRuns[0].start + mixed.styleRuns[0].len), '6/8/21');
+
+  // cellFillRequests over a table with empty-value cells must never produce an
+  // updateTextStyle whose range is empty (start === end) — the Docs API rejects it.
+  const tableEl = { table: { tableRows: [[0, 0].map(function () { return { content: [{ startIndex: 5 }] }; })].map(function () {
+    return { tableCells: [{ content: [{ startIndex: 5 }] }, { content: [{ startIndex: 40 }] }] };
+  }) } };
+  const schema = { columns: 2, rows: [[{ wordmark: 'MC Creative' }, { fields: [{ label: 'Product', value: '' }] }]] };
+  const reqs = cellFillRequests(tableEl, schema);
+  reqs.filter(function (r) { return r.updateTextStyle; }).forEach(function (r) {
+    assert.ok(r.updateTextStyle.range.endIndex > r.updateTextStyle.range.startIndex, 'no empty-range updateTextStyle');
+  });
+});

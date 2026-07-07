@@ -45,19 +45,34 @@ async function downloadImage(drive, fileId) {
   return { base64, mimeType: meta.data.mimeType || 'image/png', name: meta.data.name };
 }
 
+// Print the target folder (name + link) so it's obvious where to drop the
+// screenshot — best-effort, never blocks the run.
+async function logTargetFolder(drive) {
+  const id = config.DRIVE_FOLDER_ID;
+  let name = '';
+  try {
+    const meta = await drive.files.get({ fileId: id, fields: 'name', supportsAllDrives: true });
+    name = meta.data.name || '';
+  } catch {
+    /* ignore — still print the link */
+  }
+  console.log(`[gen5] target folder${name ? ` "${name}"` : ''}:`);
+  console.log(`       https://drive.google.com/drive/folders/${id}`);
+  console.log('       (drop your header screenshot here: share screenshot -> Google Drive -> this folder)');
+}
+
 async function main() {
   const clients = await getClients();
   const { drive } = clients;
+
+  await logTargetFolder(drive);
 
   let fileId = process.argv[2];
   let name = fileId;
   if (!fileId) {
     const img = await findLatestImage(drive);
     if (!img) {
-      console.error(
-        '[gen5] no image found in the folder. Save a screenshot of a header to your ' +
-          'Drive folder (share -> Google Drive -> the configured folder), then re-run.'
-      );
+      console.error('\n[gen5] no image found in that folder yet — drop a screenshot in (link above) and re-run.');
       process.exit(1);
     }
     fileId = img.id;

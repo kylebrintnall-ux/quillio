@@ -118,6 +118,31 @@
     .progress { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
     .hidden { display: none !important; }
 
+    /* --- Doc Header setup (step 6b) --- */
+    .lede { color: var(--muted); margin: 4px 0 18px; max-width: 62ch; line-height: 1.5; }
+    .hint { color: var(--muted); font-size: 13px; margin-left: 10px; }
+    .hdr-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+    @media (max-width: 860px) { .hdr-cols { grid-template-columns: 1fr; } }
+    .hdr-block { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 0 0 10px; background: rgba(255,255,255,0.4); }
+    .hdr-block .bh { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .hdr-block .bh .bt { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    .hdr-block .bh .ba { display: flex; gap: 4px; }
+    .hdr-iconbtn { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; line-height: 1; }
+    .hdr-iconbtn:hover { color: var(--ink, #1a1a2e); border-color: var(--accent); }
+    .hdr-field { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px; align-items: center; margin: 6px 0; }
+    .hdr-field input, .hdr-block > input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; box-sizing: border-box; }
+    .hdr-field select { padding: 7px 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; }
+    .hdr-addfield { margin-top: 6px; }
+    .hdr-preview { border: 1px solid var(--line); border-radius: 10px; padding: 18px; background: #fff; min-height: 120px; overflow-x: auto; }
+    .pv-heading { font-weight: 700; font-size: 20px; margin: 0 0 6px; }
+    .pv-line { margin: 3px 0; }
+    .pv-line .lbl { color: #444; }
+    .pv-hr { border: 0; border-top: 1px solid #bbb; margin: 10px 0; }
+    .pv-table { border-collapse: collapse; width: 100%; }
+    .pv-table td { border: 1px solid #808080; padding: 6px 8px; vertical-align: top; }
+    .pv-wordmark { font-weight: 700; font-size: 18px; }
+    .pv-empty { color: #999; font-style: italic; }
+
     @media (min-width: 720px) {
       .content { min-width: 0; }
     }
@@ -253,6 +278,7 @@
     <div class="layout">
       <div class="sidebar">
         <button class="tab active" data-tab="voice">Voice Guide</button>
+        <button class="tab" data-tab="header">Doc Header</button>
         <button class="tab" data-tab="workspace">Workspace</button>
         <button class="tab" data-tab="account">Account</button>
       </div>
@@ -365,6 +391,46 @@
             <button class="btn danger" id="signout-btn">Sign out</button>
           </div>
         </section>
+
+        <section class="panel" id="panel-header">
+          <div class="eyebrow">DOC HEADER</div>
+          <h1>Doc Header</h1>
+          <p class="lede">Show Quillio the top of your copy docs and it reproduces that header on every doc it creates. Upload a screenshot of your header, tweak the fields, and lock it in.</p>
+          <div id="hdr-error" class="error hidden"></div>
+          <div id="hdr-banner" class="banner hidden"></div>
+          <div id="hdr-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+
+          <div id="hdr-intro" class="hidden">
+            <div id="hdr-current" class="card hidden"></div>
+            <div class="btnrow">
+              <input type="file" id="hdr-file" accept=".jpg,.jpeg,.png,.webp" class="hidden" />
+              <button class="btn" id="hdr-upload-btn">Upload a header screenshot</button>
+              <span class="hint">JPEG / PNG / WebP · up to 10MB</span>
+            </div>
+          </div>
+
+          <div id="hdr-extracting" class="note hidden"><span class="dot"></span><span>Reading your header…</span></div>
+
+          <div id="hdr-editor-wrap" class="hidden">
+            <div class="hdr-cols">
+              <div class="hdr-edit-col">
+                <h2>Fields</h2>
+                <div id="hdr-blocks"></div>
+                <div class="btnrow hdr-addfield">
+                  <button class="btn secondary" id="hdr-add-field">+ Add field</button>
+                </div>
+              </div>
+              <div class="hdr-preview-col">
+                <h2>Preview</h2>
+                <div id="hdr-preview" class="hdr-preview"></div>
+              </div>
+            </div>
+            <div class="btnrow">
+              <button class="btn" id="hdr-save">Lock in as my header</button>
+              <button class="btn secondary" id="hdr-reupload">Re-upload</button>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   </main>
@@ -387,9 +453,10 @@
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
     function showTab(name) {
       tabs.forEach(function (t) { t.classList.toggle('active', t.getAttribute('data-tab') === name); });
-      ['voice', 'workspace', 'account'].forEach(function (n) {
+      ['voice', 'header', 'workspace', 'account'].forEach(function (n) {
         $('panel-' + n).classList.toggle('active', n === name);
       });
+      if (name === 'header') hdrEnsureLoaded();
     }
     tabs.forEach(function (t) { t.addEventListener('click', function () { showTab(t.getAttribute('data-tab')); }); });
 
@@ -701,6 +768,220 @@
       }
       document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
     })();
+
+    // --- Doc Header setup (step 6b) ----------------------------------------
+    var hdrSchema = null, hdrLoaded = false;
+    var FILLS = ['auto', 'static', 'blank'];
+
+    function hdrEnsureLoaded() { if (!hdrLoaded) { hdrLoaded = true; hdrLoad(); } }
+    function hdrRefresh() { hdrRenderBlocks(); hdrRenderPreview(); }
+    function hdrBanner(msg) { var b = $('hdr-banner'); b.textContent = msg; show(b); setTimeout(function () { hide(b); }, 4000); }
+
+    function hdrLoad() {
+      clearError($('hdr-error')); hide($('hdr-editor-wrap')); show($('hdr-loading'));
+      fetch('/api/header').then(function (r) { return r.json(); }).then(function (d) {
+        hide($('hdr-loading')); show($('hdr-intro'));
+        var cur = $('hdr-current');
+        if (d && d.success && d.schema && d.schema.blocks && d.schema.blocks.length) {
+          cur.innerHTML = '';
+          cur.appendChild(el('div', 'k', 'Current header'));
+          cur.appendChild(el('div', 'v', d.schema.blocks.length + ' block(s): ' + d.schema.blocks.map(function (b) { return b.type; }).join(', ')));
+          var row = el('div', 'btnrow');
+          var editBtn = el('button', 'btn secondary', 'Edit current');
+          editBtn.type = 'button';
+          editBtn.addEventListener('click', function () { hdrOpenEditor(JSON.parse(JSON.stringify(d.schema))); });
+          row.appendChild(editBtn); cur.appendChild(row); show(cur);
+        } else { hide(cur); }
+      }).catch(function () { hide($('hdr-loading')); show($('hdr-intro')); });
+    }
+
+    function hdrOpenEditor(schema) {
+      hdrSchema = schema && schema.blocks ? schema : { version: 1, blocks: [] };
+      hide($('hdr-intro')); show($('hdr-editor-wrap')); hdrRefresh();
+    }
+
+    $('hdr-upload-btn').addEventListener('click', function () { $('hdr-file').click(); });
+    $('hdr-reupload').addEventListener('click', function () { $('hdr-file').click(); });
+    $('hdr-file').addEventListener('change', function () {
+      var fileInput = this;
+      var f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      clearError($('hdr-error')); hide($('hdr-intro')); hide($('hdr-editor-wrap')); show($('hdr-extracting'));
+      var fd = new FormData(); fd.append('screenshot', f);
+      fetch('/api/header/extract', { method: 'POST', body: fd })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          hide($('hdr-extracting')); fileInput.value = '';
+          if (!res.ok || !res.j.success) { show($('hdr-intro')); showError($('hdr-error'), (res.j && res.j.error) || 'Extraction failed.'); return; }
+          hdrOpenEditor(res.j.schema);
+        })
+        .catch(function () { hide($('hdr-extracting')); show($('hdr-intro')); showError($('hdr-error'), 'Extraction failed.'); });
+    });
+
+    // Small editor-control builders.
+    function hdrInp(val, ph, on) {
+      var i = el('input'); i.type = 'text'; i.value = val == null ? '' : val; if (ph) i.placeholder = ph;
+      i.addEventListener('input', function () { on(i.value); }); return i;
+    }
+    function hdrFill(val, on) {
+      var s = el('select');
+      FILLS.forEach(function (fl) { var o = el('option', null, fl); o.value = fl; if (fl === val) o.selected = true; s.appendChild(o); });
+      s.addEventListener('change', function () { on(s.value); }); return s;
+    }
+    function hdrIcon(sym, title, on) {
+      var b = el('button', 'hdr-iconbtn', sym); b.type = 'button'; b.title = title;
+      b.addEventListener('click', on); return b;
+    }
+    function hdrFieldRow(field, h) {
+      var row = el('div', 'hdr-field');
+      row.appendChild(hdrInp(field.label, 'Label', h.label));
+      row.appendChild(hdrInp(field.value, 'Value', h.value));
+      row.appendChild(hdrFill(field.fill || 'blank', h.fill));
+      row.appendChild(hdrIcon('✕', 'Remove field', h.del));
+      return row;
+    }
+    function hdrAddBtn(title, on) {
+      var b = el('button', 'hdr-iconbtn', '+'); b.type = 'button'; b.title = title;
+      b.style.width = 'auto'; b.style.padding = '0 10px'; b.addEventListener('click', on); return b;
+    }
+
+    function hdrTableEditor(table) {
+      var wrap = el('div');
+      (table.rows || []).forEach(function (rowArr, ri) {
+        (rowArr || []).forEach(function (cell, ci) {
+          var box = el('div'); box.style.margin = '6px 0'; box.style.paddingLeft = '8px'; box.style.borderLeft = '2px solid var(--line)';
+          box.appendChild(el('div', 'bt', 'Row ' + (ri + 1) + ' · Col ' + (ci + 1)));
+          if (cell.wordmark != null) {
+            var r = el('div', 'hdr-field');
+            r.appendChild(hdrInp(cell.wordmark, 'Brand / wordmark', function (v) { cell.wordmark = v; hdrRenderPreview(); }));
+            r.appendChild(hdrFill(cell.fill || 'static', function (v) { cell.fill = v; hdrRenderPreview(); }));
+            box.appendChild(r);
+          } else {
+            (cell.fields || []).forEach(function (field, fi) {
+              box.appendChild(hdrFieldRow(field, {
+                label: function (v) { field.label = v; hdrRenderPreview(); },
+                value: function (v) { field.value = v; hdrRenderPreview(); },
+                fill: function (v) { field.fill = v; hdrRenderPreview(); },
+                del: function () { cell.fields.splice(fi, 1); hdrRefresh(); }
+              }));
+            });
+            box.appendChild(hdrAddBtn('Add field to cell', function () {
+              if (!cell.fields) cell.fields = [];
+              cell.fields.push({ label: 'Label', value: '', fill: 'blank' }); hdrRefresh();
+            }));
+          }
+          wrap.appendChild(box);
+        });
+      });
+      return wrap;
+    }
+
+    function hdrRenderBlocks() {
+      var host = $('hdr-blocks'); host.innerHTML = '';
+      (hdrSchema.blocks || []).forEach(function (block, bi) {
+        var card = el('div', 'hdr-block');
+        var bh = el('div', 'bh');
+        bh.appendChild(el('span', 'bt', String(block.type || '').replace('_', ' ')));
+        var ba = el('div', 'ba');
+        ba.appendChild(hdrIcon('↑', 'Move up', function () { hdrMove(bi, -1); }));
+        ba.appendChild(hdrIcon('↓', 'Move down', function () { hdrMove(bi, 1); }));
+        ba.appendChild(hdrIcon('✕', 'Remove block', function () { hdrSchema.blocks.splice(bi, 1); hdrRefresh(); }));
+        bh.appendChild(ba); card.appendChild(bh);
+
+        if (block.type === 'heading') {
+          card.appendChild(hdrInp(block.text, 'Heading text', function (v) { block.text = v; hdrRenderPreview(); }));
+        } else if (block.type === 'divider') {
+          card.appendChild(el('div', 'v', 'Horizontal rule'));
+        } else if (block.type === 'text' && block.label != null) {
+          card.appendChild(hdrFieldRow(block, {
+            label: function (v) { block.label = v; hdrRenderPreview(); },
+            value: function (v) { block.value = v; hdrRenderPreview(); },
+            fill: function (v) { block.fill = v; hdrRenderPreview(); },
+            del: function () { hdrSchema.blocks.splice(bi, 1); hdrRefresh(); }
+          }));
+        } else if (block.type === 'text') {
+          card.appendChild(hdrInp(block.text, 'Text', function (v) { block.text = v; hdrRenderPreview(); }));
+        } else if (block.type === 'field_row') {
+          (block.fields || []).forEach(function (field, fi) {
+            card.appendChild(hdrFieldRow(field, {
+              label: function (v) { field.label = v; hdrRenderPreview(); },
+              value: function (v) { field.value = v; hdrRenderPreview(); },
+              fill: function (v) { field.fill = v; hdrRenderPreview(); },
+              del: function () { block.fields.splice(fi, 1); hdrRefresh(); }
+            }));
+          });
+          card.appendChild(hdrAddBtn('Add field to row', function () {
+            if (!block.fields) block.fields = [];
+            block.fields.push({ label: 'Label', value: '', fill: 'blank' }); hdrRefresh();
+          }));
+        } else if (block.type === 'table') {
+          card.appendChild(hdrTableEditor(block.table || { rows: [] }));
+        }
+        host.appendChild(card);
+      });
+    }
+
+    function hdrMove(bi, dir) {
+      var to = bi + dir;
+      if (to < 0 || to >= hdrSchema.blocks.length) return;
+      var b = hdrSchema.blocks.splice(bi, 1)[0];
+      hdrSchema.blocks.splice(to, 0, b); hdrRefresh();
+    }
+
+    function hdrPvLine(fields) {
+      var d = el('div', 'pv-line');
+      (fields || []).forEach(function (f, i) {
+        if (i > 0) d.appendChild(document.createTextNode('  '));
+        d.appendChild(el('span', 'lbl', (f.label || '') + ': '));
+        d.appendChild(el('b', null, f.value || ''));
+      });
+      return d;
+    }
+    function hdrPvTable(table) {
+      var t = el('table', 'pv-table'); var tb = el('tbody');
+      (table.rows || []).forEach(function (rowArr) {
+        var tr = el('tr');
+        (rowArr || []).forEach(function (cell) {
+          var td = el('td');
+          if (cell.wordmark != null) td.appendChild(el('span', 'pv-wordmark', cell.wordmark || ''));
+          else if (cell.fields && cell.fields.length) td.appendChild(hdrPvLine(cell.fields));
+          else td.appendChild(el('span', 'pv-empty', ' '));
+          tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb); return t;
+    }
+    function hdrRenderPreview() {
+      var host = $('hdr-preview'); host.innerHTML = '';
+      var blocks = (hdrSchema && hdrSchema.blocks) || [];
+      blocks.forEach(function (block) {
+        if (block.type === 'heading') host.appendChild(el('div', 'pv-heading', block.text || ''));
+        else if (block.type === 'divider') host.appendChild(el('hr', 'pv-hr'));
+        else if (block.type === 'text' && block.label != null) host.appendChild(hdrPvLine([{ label: block.label, value: block.value }]));
+        else if (block.type === 'text') host.appendChild(el('div', 'pv-line', block.text || ''));
+        else if (block.type === 'field_row') host.appendChild(hdrPvLine(block.fields));
+        else if (block.type === 'table') host.appendChild(hdrPvTable(block.table || { rows: [] }));
+      });
+      if (!blocks.length) host.appendChild(el('div', 'pv-empty', '(no header)'));
+    }
+
+    $('hdr-add-field').addEventListener('click', function () {
+      if (!hdrSchema) hdrSchema = { version: 1, blocks: [] };
+      hdrSchema.blocks.push({ type: 'text', label: 'New field', value: '', fill: 'blank' }); hdrRefresh();
+    });
+    $('hdr-save').addEventListener('click', function () {
+      clearError($('hdr-error'));
+      var btn = this; btn.disabled = true;
+      fetch('/api/header', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schema: hdrSchema }) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          btn.disabled = false;
+          if (!res.ok || !res.j.success) { showError($('hdr-error'), (res.j && res.j.error) || 'Could not save.'); return; }
+          hdrBanner('Header locked in — new docs will use this format.');
+        })
+        .catch(function () { btn.disabled = false; showError($('hdr-error'), 'Could not save.'); });
+    });
   </script>
 </body>
 </html>

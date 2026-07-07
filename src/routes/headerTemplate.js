@@ -87,7 +87,7 @@ router.get('/api/header', requireAuth, async (req, res) => {
 // POST /api/header — validate + save the (edited) schema as the tenant standard.
 // Body: { schema }. The schema is normalized defensively before saving so the
 // client can never persist a malformed shape.
-router.post('/api/header', requireAuth, express.json({ limit: '256kb' }), async (req, res) => {
+router.post('/api/header', requireAuth, async (req, res) => {
   const incoming = req.body && req.body.schema;
   const schema = normalizeHeaderSchema(incoming);
   if (!isValidHeaderSchema(schema)) {

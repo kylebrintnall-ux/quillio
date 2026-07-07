@@ -1441,3 +1441,16 @@ test('server mounts the header-template router', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
   assert.ok(src.includes("require('./routes/headerTemplate')"), 'headerTemplate mounted in server.js');
 });
+
+test('settings.html wires the Doc Header setup UI (step 6b)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  assert.ok(html.includes('data-tab="header"'), 'Doc Header tab present');
+  assert.ok(html.includes('id="panel-header"'), 'header panel present');
+  assert.ok(html.includes('id="hdr-file"') && html.includes('accept=".jpg,.jpeg,.png,.webp"'), 'screenshot file input');
+  assert.ok(html.includes("fetch('/api/header/extract'"), 'calls extract endpoint');
+  assert.ok(html.includes("fetch('/api/header')"), 'loads current header');
+  assert.ok(html.includes('hdrRenderPreview'), 'has a live preview renderer');
+  assert.ok(html.includes("body: JSON.stringify({ schema: hdrSchema })"), 'saves the edited schema');
+  // The panel is included in the tab-switch set.
+  assert.ok(/\['voice', 'header', 'workspace', 'account'\]/.test(html), 'header in tab switch');
+});

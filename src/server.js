@@ -97,6 +97,9 @@ app.use(onboardingRoutes);
 // Settings page (/settings + /api/settings/* + /api/auth/signout). Auth-gated.
 app.use(require('./routes/settings'));
 
+// Doc-header template onboarding API (/api/header/*). Auth-gated per route.
+app.use(require('./routes/headerTemplate'));
+
 // Web app surface (/app + /api/brief + /api/draft). Non-Slack product surface;
 // runs the same core pipeline via the web adapter. Mounted before the
 // slash-command/interactions handlers; touches none of them.

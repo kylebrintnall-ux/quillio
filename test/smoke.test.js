@@ -1424,3 +1424,20 @@ test('normalizeHeaderSchema strips a trailing colon from labels (renderer adds i
   assert.strictEqual(s.blocks[1].fields[0].label, 'Date');
   assert.strictEqual(s.blocks[2].table.rows[0][0].fields[0].label, 'Writer');
 });
+
+// --- Doc-header onboarding API (step 6a) ---
+
+test('routes/headerTemplate loads and mounts as an express router', () => {
+  const router = require('../src/routes/headerTemplate');
+  assert.strictEqual(typeof router, 'function'); // an express Router is a function
+  // The header routes are registered on it.
+  const paths = (router.stack || []).map((l) => l.route && l.route.path).filter(Boolean);
+  assert.ok(paths.includes('/api/header/extract'), 'extract route present');
+  assert.ok(paths.includes('/api/header'), 'get/save route present');
+});
+
+test('server mounts the header-template router', () => {
+  // Requiring server wiring would boot the app; instead assert the file wires it.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  assert.ok(src.includes("require('./routes/headerTemplate')"), 'headerTemplate mounted in server.js');
+});

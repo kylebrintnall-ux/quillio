@@ -123,7 +123,10 @@ function normFill(v) {
 }
 
 function normField(f) {
-  const label = String((f && f.label) || '').trim();
+  // Drop a trailing colon the source may carry (e.g. Gemini returns "Task:") —
+  // the renderer appends ": " itself, so keeping it would double the colon.
+  // Matches how the Step-4 reader recovers labels.
+  const label = String((f && f.label) || '').replace(/\s*:\s*$/, '').trim();
   if (!label) return null;
   return { label, value: f && f.value != null ? String(f.value) : '', fill: normFill(f && f.fill) };
 }

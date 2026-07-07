@@ -1410,3 +1410,17 @@ test('gemini.extractHeaderSchema is exposed and best-effort (null without a key)
     assert.strictEqual(await extractHeaderSchema('ZmFrZQ==', 'image/png'), null); // no key -> null, no throw
   }
 });
+
+test('normalizeHeaderSchema strips a trailing colon from labels (renderer adds it)', () => {
+  const { normalizeHeaderSchema } = require('../src/destinations/docHeaderSchema');
+  const s = normalizeHeaderSchema({
+    blocks: [
+      { type: 'text', label: 'Task:', value: '', fill: 'blank' },
+      { type: 'field_row', fields: [{ label: 'Date:', value: '2026-07-05', fill: 'auto' }] },
+      { type: 'table', table: { columns: 1, rows: [[{ fields: [{ label: 'Writer :', value: 'K' }] }]] } },
+    ],
+  });
+  assert.strictEqual(s.blocks[0].label, 'Task');
+  assert.strictEqual(s.blocks[1].fields[0].label, 'Date');
+  assert.strictEqual(s.blocks[2].table.rows[0][0].fields[0].label, 'Writer');
+});

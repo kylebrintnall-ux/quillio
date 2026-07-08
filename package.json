@@ -12,7 +12,8 @@
     "gd3": "node scripts/genHeaderSampleDoc.js",
     "gd4": "node scripts/readHeaderDoc.js",
     "gd5": "node scripts/extractHeaderFromImage.js",
-    "seed-header": "node scripts/seedHeaderSchema.js"
+    "seed-header": "node scripts/seedHeaderSchema.js",
+    "migrate-header": "node scripts/migrateAddHeaderSchema.js"
   },
   "engines": {
     "node": ">=18"

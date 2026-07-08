@@ -227,7 +227,12 @@
       color: rgba(26,26,46,0.6); font-weight: normal; -webkit-tap-highlight-color: transparent;
     }
     .tab.active { background: var(--ink); border-color: var(--ink); color: var(--white); }
-    .panel h1, .eyebrow { display: none; } /* v8: single Settings title + tabs */
+    .eyebrow { display: none; } /* v8: single Settings title + tabs */
+    /* A simple per-section header so the copy below it reads with context. */
+    .panel h1 {
+      font-family: 'StarCrush', serif; font-size: 19px; color: var(--ink);
+      letter-spacing: 0.02em; margin: 0 0 14px; font-weight: normal;
+    }
     h2 { font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.5); margin: 22px 0 8px; }
 
     /* Voice terminal */
@@ -333,13 +338,13 @@
 
           <!-- view + edit -->
           <div id="voice-view" class="hidden">
-            <div class="terminal" id="voice-terminal"></div>
-            <textarea class="terminal hidden" id="voice-editor"></textarea>
-            <div class="btnrow">
+            <div class="btnrow" style="margin-top:0;margin-bottom:12px">
               <button class="btn secondary" id="voice-edit-btn">Edit</button>
               <button class="btn secondary" id="voice-download-btn">Download .md</button>
               <button class="btn secondary" id="voice-regen-btn">Regenerate</button>
             </div>
+            <div class="terminal" id="voice-terminal"></div>
+            <textarea class="terminal hidden" id="voice-editor"></textarea>
           </div>
 
           <!-- six-question flow -->
@@ -449,30 +454,24 @@
 
           <div id="hdr-extracting" class="note hidden"><span class="dot"></span><span>Reading your header…</span></div>
 
-          <!-- EDITOR: upload lives in here now -->
+          <!-- EDITOR: actions -> preview -> fields -> upload -->
           <div id="hdr-editor-wrap" class="hidden">
             <input type="file" id="hdr-file" accept=".jpg,.jpeg,.png,.webp" class="hidden" />
-            <div class="hdr-upload-card">
-              <div class="hdr-upload-title">Start from a screenshot</div>
-              <button class="btn secondary" id="hdr-upload-btn">Upload a header screenshot</button>
-              <div class="hdr-hint">JPEG / PNG / WebP · up to 10MB — Quillio reads the fields for you</div>
-            </div>
-            <div class="hdr-cols">
-              <div class="hdr-edit-col">
-                <h2>Fields</h2>
-                <div id="hdr-blocks"></div>
-                <div class="btnrow hdr-addfield">
-                  <button class="btn secondary" id="hdr-add-field">+ Add field</button>
-                </div>
-              </div>
-              <div class="hdr-preview-col">
-                <h2>Preview</h2>
-                <div id="hdr-preview" class="hdr-preview"></div>
-              </div>
-            </div>
-            <div class="btnrow">
+            <div class="btnrow" style="margin-top:0">
               <button class="btn" id="hdr-save">Lock in as my header</button>
               <button class="btn secondary" id="hdr-cancel">Cancel</button>
+            </div>
+            <h2>Preview</h2>
+            <div id="hdr-preview" class="hdr-preview"></div>
+            <h2>Fields</h2>
+            <div id="hdr-blocks"></div>
+            <div class="btnrow hdr-addfield">
+              <button class="btn secondary" id="hdr-add-field">+ Add field</button>
+            </div>
+            <div class="hdr-upload-card">
+              <div class="hdr-upload-title">Start over from a screenshot</div>
+              <button class="btn secondary" id="hdr-upload-btn">Upload a header screenshot</button>
+              <div class="hdr-hint">JPEG / PNG / WebP · up to 10MB — Quillio reads the fields for you</div>
             </div>
           </div>
         </section>

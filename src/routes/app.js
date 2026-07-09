@@ -14,7 +14,7 @@ const express = require('express');
 const multer = require('multer');
 const { resolveTenant } = require('../db');
 const { getProjects, getProject, setProjectStatus } = require('../db/projects');
-const { runWebBrief, runWebDraft, runWebProjectContent } = require('../adapters/web');
+const { runWebBrief, runWebDraft, runWebProjectContent, runWebReview } = require('../adapters/web');
 const { requireAuth } = require('../middleware/auth');
 const { briefLimiter, draftLimiter, uploadLimiter } = require('../middleware/rateLimit');
 const { clientErrorMessage } = require('../utils/errors');
@@ -202,6 +202,26 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
 // GET /api/draft/:jobId/status — poll a draft job. Unknown id → 404 (e.g. the
 // job expired or the server restarted; the client falls back to reading the doc).
 router.get('/api/draft/:jobId/status', sendJobStatus);
+
+// POST /api/review — START a copy review and return a job id. The work (Gemini
+// per-field eval + Drive comment writes) runs fire-and-forget; the client polls
+// the status endpoint below. Tenant comes from the session, never the client.
+router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
+  const docId = ((req.body && req.body.docId) || '').trim();
+  const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
+  if (!docId) {
+    return res.status(400).json({ success: false, error: 'docId is required' });
+  }
+  const jobId = startJob(`review doc=${docId}`, async () => {
+    const tenantContext = await resolveTenant(sessionTenant);
+    return runWebReview(docId, tenantContext);
+  });
+  console.log(`[web] /api/review start → job=${jobId} doc=${docId} tenant=${sessionTenant}`);
+  return res.status(202).json({ success: true, jobId });
+});
+
+// GET /api/review/:jobId/status — poll a review job.
+router.get('/api/review/:jobId/status', sendJobStatus);
 
 // Project status lifecycle (Week 12). Closed projects are hidden by default but
 // never deleted.

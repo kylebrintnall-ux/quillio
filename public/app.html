@@ -620,6 +620,18 @@
     .back-link:hover { color: var(--ink); }
     #screen-project .project-card-status { cursor: default; }
     .project-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+    /* Copy-review result panel (8b) — glass card with the two GIF states. */
+    .review-panel {
+      margin-top: 16px; padding: 18px; text-align: center;
+      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 16px;
+    }
+    .review-gif { width: 96px; height: 96px; image-rendering: pixelated; margin: 0 auto 10px; display: block; animation: popIn 0.45s cubic-bezier(0.34,1.56,0.64,1) both; }
+    .review-status { font-family: 'StarCrush', serif; font-size: 17px; letter-spacing: 0.02em; color: var(--ink); margin: 2px 0 8px; }
+    .review-digest { font-family: 'IBM Plex Sans', sans-serif; font-size: 13.5px; line-height: 1.5; color: rgba(26,26,46,0.72); }
+    .review-note { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: rgba(26,26,46,0.72); }
+    .review-panel.error { border-color: rgba(192,57,43,0.35); }
+    .review-panel.error .review-digest { color: #C0392B; }
     #screen-project .empty { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.5); color: rgba(26,26,46,0.65); }
     #screen-project .loading { color: rgba(26,26,46,0.7); }
 
@@ -769,8 +781,10 @@
       <div class="project-actions">
         <button class="cta-primary hidden" id="project-draft-btn">Generate First Draft</button>
         <span class="draft-status hidden" id="project-draft-status">✓ Draft complete</span>
+        <button class="cta-primary hidden" id="project-review-btn">Review Copy</button>
         <button class="cta-secondary" id="project-open-btn">Open in Drive</button>
       </div>
+      <div id="project-review-panel" class="review-panel hidden"></div>
       <div class="regen hidden" id="project-regen">
         <textarea class="regen-input" id="project-regen-input" placeholder="What should change? Give Quillio direction."></textarea>
         <button class="cta-primary" id="project-regen-btn">Regenerate</button>
@@ -1248,6 +1262,10 @@
     function draftErrorMessage(e) {
       return (e && e.message) || 'Network error — please try again.';
     }
+    // Review job → resolves with { reviewed, flagged, clean, hadCopy, digest, status }.
+    function reviewFetch(docId) {
+      return runJob('/api/review', { docId: docId, workspaceId: WORKSPACE_ID }, '/api/review');
+    }
     function draftedLabel(n) {
       return '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
     }
@@ -1656,6 +1674,8 @@
     var projectDraftBtn = document.getElementById('project-draft-btn');
     var projectDraftStatus = document.getElementById('project-draft-status');
     var projectRegen = document.getElementById('project-regen');
+    var projectReviewBtn = document.getElementById('project-review-btn');
+    var projectReviewPanel = document.getElementById('project-review-panel');
 
     // Does the loaded content already carry drafted copy in any field?
     function contentHasCopy(content) {
@@ -1687,6 +1707,14 @@
         if (p && p.copy_doc_id) show(projectDraftBtn);
         else hide(projectDraftBtn);
       }
+      // Review Copy is active only once there's drafted copy to review.
+      if (hasCopy && p && p.copy_doc_id) {
+        projectReviewBtn.disabled = false;
+        projectReviewBtn.textContent = 'Review Copy';
+        show(projectReviewBtn);
+      } else {
+        hide(projectReviewBtn);
+      }
     }
 
     async function openProject(p) {
@@ -1703,6 +1731,8 @@
       hide(projectDraftBtn);
       hide(projectDraftStatus);
       hide(projectRegen);
+      hide(projectReviewBtn);
+      hide(projectReviewPanel);
       document.getElementById('project-regen-input').value = '';
       hide(document.getElementById('project-draft-progress'));
       clearError(projectError);
@@ -1749,6 +1779,42 @@
     function openProjectInDrive() {
       var p = projectState.project;
       if (p && p.copy_doc_url) window.open(p.copy_doc_url, '_blank', 'noopener');
+    }
+
+    // Review Copy: run the review with the magnifying-glass GIF in-progress, then
+    // the copy-done GIF + qualitative status + digest (or a graceful error — the
+    // GIF never spins forever). Anchored comments land in the doc itself.
+    async function reviewProjectCopy() {
+      var p = projectState.project;
+      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to review.'); return; }
+      clearError(projectError);
+      projectReviewBtn.disabled = true;
+      projectReviewBtn.textContent = 'Reviewing…';
+      var panel = projectReviewPanel;
+      panel.className = 'review-panel';
+      panel.innerHTML = '<img class="review-gif" src="/assets/gifs/quillio-review.gif" alt=""><div class="review-note">Reviewing your copy…</div>';
+      show(panel);
+      try {
+        var result = await reviewFetch(p.copy_doc_id);
+        if (result && result.hadCopy === false) {
+          panel.innerHTML = '<div class="review-note">Nothing to review yet — generate a draft first.</div>';
+        } else {
+          panel.innerHTML =
+            '<img class="review-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">' +
+            '<div class="review-status"></div><div class="review-digest"></div>' +
+            '<div class="review-note" style="margin-top:8px">Notes are inline in the doc → <b>Open in Drive</b>.</div>';
+          panel.querySelector('.review-status').textContent = (result && result.status) || 'Review complete';
+          panel.querySelector('.review-digest').textContent = (result && result.digest) || '';
+        }
+        projectReviewBtn.disabled = false;
+        projectReviewBtn.textContent = 'Review again';
+      } catch (e) {
+        panel.className = 'review-panel error';
+        panel.innerHTML = '<div class="review-digest"></div>';
+        panel.querySelector('.review-digest').textContent = 'Review didn’t finish: ' + ((e && e.message) || 'please try again.');
+        projectReviewBtn.disabled = false;
+        projectReviewBtn.textContent = 'Review Copy';
+      }
     }
 
     async function generateProjectDraft() {
@@ -1821,6 +1887,7 @@
     document.getElementById('nav-settings').addEventListener('click', function () { window.location.href = '/settings'; });
     document.getElementById('project-back').addEventListener('click', loadHistory);
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
+    projectReviewBtn.addEventListener('click', reviewProjectCopy);
     projectDraftBtn.addEventListener('click', generateProjectDraft);
     document.getElementById('project-regen-btn').addEventListener('click', regenerateProjectDraft);
 

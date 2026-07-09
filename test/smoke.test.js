@@ -818,6 +818,8 @@ test('routes/app mounts and exposes its routes', () => {
     '/api/projects/:id',
     '/api/projects/:id/content',
     '/api/projects/:id/status',
+    '/api/review',
+    '/api/review/:jobId/status',
     '/api/upload',
     '/app',
   ]);
@@ -1649,4 +1651,13 @@ test('db exposes review-state helpers; no-DB is a safe no-op', async () => {
 test('reviewCopyFields returns [] for no fields (no Gemini call)', async () => {
   const { reviewCopyFields } = require('../src/services/gemini');
   assert.deepStrictEqual(await reviewCopyFields({ fields: [] }), []);
+});
+
+test('web review trigger (8b): adapter + route + project-view button wired', () => {
+  assert.strictEqual(typeof require('../src/adapters/web').runWebReview, 'function');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('id="project-review-btn"'), 'Review Copy button present');
+  assert.ok(html.includes('id="project-review-panel"'), 'review result panel present');
+  assert.ok(html.includes("fetch") && html.includes("'/api/review'"), 'calls /api/review');
+  assert.ok(html.includes('quillio-review.gif') && html.includes('quillio-copy-done.gif'), 'both GIF states');
 });

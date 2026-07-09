@@ -810,6 +810,90 @@ async function extractHeaderSchema(base64Data, mimetype) {
   }
 }
 
+// Review drafted copy field-by-field like a thoughtful editor (copy-review
+// feature). Judges each field's copy against (a) the brand reference (voice.md —
+// voice, tone, rules, banned words, CTA conventions) and (b) universal writing
+// craft, and returns a per-field comment ONLY where a material issue genuinely
+// warrants it (silence is the good outcome). On re-review, prior copy/comment
+// per field let it recognize the writer's improvements and not re-nag.
+//   fields: [{ assetType, fieldName, charMax, copy, priorCopy, priorComment }]
+// Returns [{ assetType, fieldName, comment }] (comment: string | null), one per
+// input field, same order. Throws on a hard failure so the caller can show an
+// error state (rather than silently posting nothing).
+async function reviewCopyFields({ fields, voiceGuide } = {}) {
+  const list = Array.isArray(fields) ? fields : [];
+  if (list.length === 0) return [];
+
+  const brand = String(voiceGuide || '').trim() || '(no brand guide provided — judge on universal writing craft only)';
+  const prompt = [
+    'You are a seasoned copy editor giving a thoughtful second pass on marketing copy — NOT a linter.',
+    '',
+    'BRAND REFERENCE — the single source of truth for this brand (voice, tone, rules, banned words, CTA conventions):',
+    brand,
+    '',
+    'For EACH field, judge its copy against (a) the brand reference above and (b) universal writing craft:',
+    'clarity, tightness, natural phrasing, grammar.',
+    '',
+    'MATERIALITY BAR: only flag an issue a skilled editor would genuinely raise because fixing it MATERIALLY improves',
+    'the copy. Ignore minor preferences and marginal nitpicks. At most the 1–2 most important notes per field.',
+    'SILENCE IS SUCCESS: if a field is strong and on-brand, return null for it. Do NOT manufacture feedback, and never',
+    'write affirmations ("this works well") — comment only on what is worth CHANGING. A clean field gets null.',
+    'Feedback must be specific, actionable, one or two sentences, and collegial.',
+    '',
+    'RE-REVIEW (when a field has priorCopy / priorComment from a previous pass), reason per field:',
+    '• copy CHANGED and now works → the writer improved it: return null (do not re-flag, do not congratulate).',
+    '• copy CHANGED but a genuine material issue remains → flag the CURRENT issue.',
+    '• copy UNCHANGED and previously flagged → the writer saw the note and kept it: return null (do not nag).',
+    'Only raise a NEW note on unchanged copy if it is genuinely material and was missed before — be conservative.',
+    '',
+    'Return ONLY a JSON array, one object per field in the SAME ORDER given, no prose outside it:',
+    '[{"assetType": string, "fieldName": string, "comment": string|null}]',
+    'comment = null means no material issue.',
+    '',
+    'FIELDS:',
+    JSON.stringify(
+      list.map((f) => ({
+        assetType: f.assetType,
+        fieldName: f.fieldName,
+        charMax: f.charMax || 0,
+        copy: f.copy || '',
+        priorCopy: f.priorCopy || null,
+        priorComment: f.priorComment || null,
+      })),
+      null,
+      2
+    ),
+  ].join('\n');
+
+  const text = await callGemini({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stripJsonFences(text));
+  } catch (err) {
+    throw new Error('Could not parse Gemini review JSON: ' + text.slice(0, 300));
+  }
+  if (!Array.isArray(parsed)) throw new Error('Gemini review did not return an array');
+
+  // Map results back to inputs by (assetType, fieldName); fall back to position.
+  const byKey = new Map();
+  parsed.forEach((r, i) => {
+    if (!r) return;
+    const key = `${String(r.assetType || '').trim().toLowerCase()}||${String(r.fieldName || '').trim().toLowerCase()}`;
+    byKey.set(key, r);
+    byKey.set(`__idx_${i}`, r);
+  });
+  return list.map((f, i) => {
+    const key = `${String(f.assetType || '').trim().toLowerCase()}||${String(f.fieldName || '').trim().toLowerCase()}`;
+    const r = byKey.get(key) || byKey.get(`__idx_${i}`) || {};
+    const comment = typeof r.comment === 'string' && r.comment.trim() ? r.comment.trim() : null;
+    return { assetType: f.assetType, fieldName: f.fieldName, comment };
+  });
+}
+
 module.exports = {
   parseBrief,
   enrichWithReferences,
@@ -818,6 +902,7 @@ module.exports = {
   generateVoiceGuide,
   describeImage,
   extractHeaderSchema,
+  reviewCopyFields,
   // Exposed for unit tests only.
   builtInFieldGuidance,
 };

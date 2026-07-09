@@ -287,6 +287,37 @@ async function saveNamingPattern(tenantId, pattern, name) {
   return true;
 }
 
+// --- Copy-review state (re-review intelligence) ---
+// Per copy doc, remember what the last review flagged and the copy state at that
+// time (per field), so a re-review can recognize the writer's changes. Stored as
+// one JSONB blob keyed by the doc id: { fields: { "<key>": { copy, comment } } }.
+
+// Read a doc's stored review state, or null (→ treated as a first review).
+async function getReviewState(docId) {
+  const p = getPool();
+  if (!p || !docId) return null;
+  const res = await p.query('SELECT state FROM doc_reviews WHERE copy_doc_id = $1 LIMIT 1', [docId]);
+  const r = res.rows[0];
+  return (r && r.state) || null; // jsonb → already a JS object
+}
+
+// Upsert a doc's review state. Best-effort: returns true if the write ran.
+async function saveReviewState(docId, state) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping saveReviewState');
+    return false;
+  }
+  if (!docId) return false;
+  await p.query(
+    `INSERT INTO doc_reviews (copy_doc_id, state, updated_at)
+       VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (copy_doc_id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()`,
+    [docId, JSON.stringify(state || {})]
+  );
+  return true;
+}
+
 // Set a tenant's default Drive folder id (onboarding). Returns true if the
 // write ran, false if there's no DB.
 async function setTenantDefaultFolder(tenantId, folderId) {
@@ -315,5 +346,7 @@ module.exports = {
   saveHeaderSchema,
   getNamingPattern,
   saveNamingPattern,
+  getReviewState,
+  saveReviewState,
   setTenantDefaultFolder,
 };

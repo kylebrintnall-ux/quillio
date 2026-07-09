@@ -1591,3 +1591,62 @@ test('settings.html wires the file-naming segment builder (step 7b)', () => {
   assert.ok(/type: 'dynamic', token: s\.token/.test(html), 'dynamic segment shape');
   assert.ok(/type: 'static', text: s\.text \|\| ''/.test(html), 'static segment shape');
 });
+
+// --- Copy-review engine (8a) ---
+
+test('copyReview: collects only non-empty copy fields', () => {
+  const cr = require('../src/services/copyReview');
+  const content = {
+    assets: [
+      { name: 'Paid Social', fields: [
+        { fieldName: 'Headline', charMax: 70, copy: 'Ship faster.' },
+        { fieldName: 'Body', charMax: 150, copy: '' },        // undrafted -> skip
+        { fieldName: 'CTA', charMax: 20, notes: 'guidance', copy: '   ' }, // whitespace -> skip
+      ] },
+      { name: 'Email', fields: [{ fieldName: 'Subject', charMax: 50, copy: 'Your report is ready' }] },
+    ],
+  };
+  const out = cr.collectCopyFields(content);
+  assert.deepStrictEqual(out.map((f) => `${f.assetType}:${f.fieldName}`), ['Paid Social:Headline', 'Email:Subject']);
+});
+
+test('copyReview: qualitative status is supportive, never a grade', () => {
+  const { qualitativeStatus } = require('../src/services/copyReview');
+  assert.strictEqual(qualitativeStatus(0, 0), 'Nothing to review yet');
+  assert.strictEqual(qualitativeStatus(0, 6), 'Looking strong ✨'); // all clean = silence
+  assert.strictEqual(qualitativeStatus(1, 8), 'A few things to tighten');
+  assert.ok(!/[A-F]\b|\d\/\d|score/i.test(qualitativeStatus(3, 6))); // no letter/number grade
+});
+
+test('copyReview: digest describes shape, not individual notes', () => {
+  const { buildDigest } = require('../src/services/copyReview');
+  assert.match(buildDigest([]), /to review yet/i);
+  assert.match(buildDigest([{ assetType: 'A', fieldName: 'H', comment: null }]), /all clean/i);
+  const d = buildDigest([
+    { assetType: 'A', fieldName: 'H', comment: 'tighten' },
+    { assetType: 'A', fieldName: 'B', comment: null },
+  ]);
+  assert.match(d, /1 clean, 1 with a note/);
+});
+
+test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {
+  assert.strictEqual(typeof require('../src/services/gemini').reviewCopyFields, 'function');
+  const g = require('../src/destinations/googleDocs');
+  assert.strictEqual(typeof g.clearReviewComments, 'function');
+  assert.strictEqual(typeof g.postReviewComments, 'function');
+  assert.strictEqual(g.REVIEW_PREFIX, '🪶 Quillio Review — ');
+});
+
+test('db exposes review-state helpers; no-DB is a safe no-op', async () => {
+  const db = require('../src/db');
+  assert.strictEqual(typeof db.getReviewState, 'function');
+  if (!process.env.DATABASE_URL) {
+    assert.strictEqual(await db.getReviewState('doc1'), null);
+    assert.strictEqual(await db.saveReviewState('doc1', { fields: {} }), false);
+  }
+});
+
+test('reviewCopyFields returns [] for no fields (no Gemini call)', async () => {
+  const { reviewCopyFields } = require('../src/services/gemini');
+  assert.deepStrictEqual(await reviewCopyFields({ fields: [] }), []);
+});

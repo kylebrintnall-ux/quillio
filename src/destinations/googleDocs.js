@@ -780,12 +780,87 @@ async function getDocContent(id, clients) {
   return result;
 }
 
+// --- Copy-review comments (Drive API v3) ---
+// Comments are anchored to exact copy via quotedFileContent (verified). Quillio's
+// review comments are branded + identified by this prefix so re-review can clear
+// the previous ones before posting the currently-warranted set.
+const REVIEW_PREFIX = '🪶 Quillio Review — ';
+
+// Delete all prior Quillio review comments on the doc (identified by the prefix).
+// Best-effort per comment; returns the count removed.
+async function clearReviewComments(docId, clients) {
+  const { drive } = clients || (await getClients());
+  let removed = 0;
+  let pageToken = null;
+  do {
+    const res = await drive.comments.list({
+      fileId: docId,
+      fields: 'nextPageToken, comments(id, content, deleted)',
+      pageSize: 100,
+      includeDeleted: false,
+      pageToken: pageToken || undefined,
+      supportsAllDrives: true,
+    });
+    const comments = (res.data.comments || []).filter(
+      (c) => !c.deleted && typeof c.content === 'string' && c.content.startsWith(REVIEW_PREFIX)
+    );
+    for (const c of comments) {
+      try {
+        await drive.comments.delete({ fileId: docId, commentId: c.id, supportsAllDrives: true });
+        removed++;
+      } catch (err) {
+        console.error(`[review] failed to delete comment ${c.id}: ${err.message}`);
+      }
+    }
+    pageToken = res.data.nextPageToken || null;
+  } while (pageToken);
+  return removed;
+}
+
+// Post branded review comments, each anchored to its field's copy via
+// quotedFileContent. `items`: [{ quote, content }]. Uniqueness guard: if the same
+// copy text appears in more than one field, only the first is anchored (Drive
+// would otherwise anchor every duplicate to the same first occurrence) — the
+// collision is logged and skipped rather than mis-anchored. Returns the count posted.
+async function postReviewComments(docId, items, clients) {
+  const { drive } = clients || (await getClients());
+  const seen = new Set();
+  let posted = 0;
+  for (const it of items || []) {
+    const quote = String(it.quote || '');
+    if (!quote.trim() || !it.content) continue;
+    if (seen.has(quote)) {
+      console.warn('[review] duplicate copy text — skipping a comment to avoid mis-anchoring');
+      continue;
+    }
+    seen.add(quote);
+    try {
+      await drive.comments.create({
+        fileId: docId,
+        fields: 'id',
+        supportsAllDrives: true,
+        requestBody: {
+          content: REVIEW_PREFIX + it.content,
+          quotedFileContent: { mimeType: 'text/plain', value: quote },
+        },
+      });
+      posted++;
+    } catch (err) {
+      console.error(`[review] failed to post comment: ${err.message}`);
+    }
+  }
+  return posted;
+}
+
 // The destination adapter contract.
 module.exports = {
   name: 'google-docs',
   createDocument,
   generateDraft,
   getDocContent,
+  clearReviewComments,
+  postReviewComments,
+  REVIEW_PREFIX,
   // Exposed for unit tests only (not part of the destination interface used by
   // the registry): char-limit bracket rendering, the field explainer, doc
   // re-parsing including the regeneration delete-range detection, and the body

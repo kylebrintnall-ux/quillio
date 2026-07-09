@@ -139,6 +139,16 @@ const TABLES = [
     )`,
   ],
   [
+    // Copy-review state: per copy doc, the last review's flagged notes + copy
+    // state, so a re-review can recognize the writer's changes.
+    'doc_reviews',
+    `CREATE TABLE IF NOT EXISTS doc_reviews (
+      copy_doc_id TEXT PRIMARY KEY,
+      state JSONB,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )`,
+  ],
+  [
     'project_assets',
     `CREATE TABLE IF NOT EXISTS project_assets (
       id BIGSERIAL PRIMARY KEY,

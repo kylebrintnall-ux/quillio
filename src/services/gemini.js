@@ -215,6 +215,40 @@ function stripJsonFences(text) {
     .trim();
 }
 
+// Resilient JSON-array extractor for "thinking" models (e.g. gemini-3.5-flash)
+// that can leak reasoning prose around — or fences around — the actual JSON.
+// Tries, in order: (1) parse the fence-stripped text directly; (2) if that
+// yields an object with an array-valued `results`/`items`/`fields` key, use it;
+// (3) slice from the first `[` to the last `]` and parse that. Returns the array
+// on success, or null if nothing parseable is found (so callers can retry).
+function extractJsonArray(text) {
+  const stripped = stripJsonFences(text);
+  const tryParse = (s) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return undefined;
+    }
+  };
+  // 1) Clean, direct parse.
+  const direct = tryParse(stripped);
+  if (Array.isArray(direct)) return direct;
+  // 2) Object wrapper around the array.
+  if (direct && typeof direct === 'object') {
+    for (const k of ['results', 'items', 'fields', 'reviews', 'data']) {
+      if (Array.isArray(direct[k])) return direct[k];
+    }
+  }
+  // 3) Prose around the array — slice the outermost [ … ].
+  const start = stripped.indexOf('[');
+  const end = stripped.lastIndexOf(']');
+  if (start !== -1 && end > start) {
+    const sliced = tryParse(stripped.slice(start, end + 1));
+    if (Array.isArray(sliced)) return sliced;
+  }
+  return null;
+}
+
 // Coerce a Gemini field to a readable string. If the model returns a nested
 // object (e.g. a structured writerPrompt), pretty-print it instead of letting
 // String() turn it into "[object Object]".
@@ -846,9 +880,13 @@ async function reviewCopyFields({ fields, voiceGuide } = {}) {
     '• copy UNCHANGED and previously flagged → the writer saw the note and kept it: return null (do not nag).',
     'Only raise a NEW note on unchanged copy if it is genuinely material and was missed before — be conservative.',
     '',
-    'Return ONLY a JSON array, one object per field in the SAME ORDER given, no prose outside it:',
+    'OUTPUT FORMAT — CRITICAL. Return ONLY a raw JSON array and NOTHING else:',
+    '• Do NOT include any reasoning, thinking, preamble, explanation, or trailing text.',
+    '• Do NOT wrap the JSON in markdown code fences (no ``` and no ```json).',
+    '• The response must START with "[" and END with "]" — the very first character is "[".',
+    'One object per field, in the SAME ORDER given:',
     '[{"assetType": string, "fieldName": string, "comment": string|null}]',
-    'comment = null means no material issue.',
+    'comment = null means no material issue. Emit exactly one object per input field.',
     '',
     'FIELDS:',
     JSON.stringify(
@@ -865,18 +903,46 @@ async function reviewCopyFields({ fields, voiceGuide } = {}) {
     ),
   ].join('\n');
 
-  const text = await callGemini({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-  });
+  // Force structured output: JSON mode (responseMimeType) + a response schema so
+  // the model returns a valid array and can't leak reasoning prose into the body.
+  // maxOutputTokens is generous because gemini-3.5-flash is a thinking model —
+  // internal reasoning eats the budget before the JSON is emitted otherwise.
+  const REVIEW_SCHEMA = {
+    type: 'ARRAY',
+    items: {
+      type: 'OBJECT',
+      properties: {
+        assetType: { type: 'STRING' },
+        fieldName: { type: 'STRING' },
+        comment: { type: 'STRING', nullable: true },
+      },
+      required: ['assetType', 'fieldName'],
+    },
+  };
 
-  let parsed;
-  try {
-    parsed = JSON.parse(stripJsonFences(text));
-  } catch (err) {
-    throw new Error('Could not parse Gemini review JSON: ' + text.slice(0, 300));
+  // Two attempts: JSON mode + the resilient extractor almost always succeed on
+  // the first try, but a thinking model can still occasionally return unparseable
+  // output — retry once before surfacing an error to the caller.
+  let parsed = null;
+  let lastText = '';
+  for (let attempt = 0; attempt < 2 && parsed == null; attempt += 1) {
+    lastText = await callGemini({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+        responseSchema: REVIEW_SCHEMA,
+      },
+    });
+    parsed = extractJsonArray(lastText);
+    if (parsed == null && attempt === 0) {
+      console.warn('[gemini] review JSON parse failed on attempt 1; retrying once');
+    }
   }
-  if (!Array.isArray(parsed)) throw new Error('Gemini review did not return an array');
+  if (parsed == null) {
+    throw new Error('Could not parse Gemini review JSON: ' + String(lastText).slice(0, 300));
+  }
 
   // Map results back to inputs by (assetType, fieldName); fall back to position.
   const byKey = new Map();

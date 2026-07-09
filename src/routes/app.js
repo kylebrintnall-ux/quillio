@@ -118,10 +118,14 @@ function sendJobStatus(req, res) {
 // no templating: the page talks to /api/brief and /api/draft itself.
 const APP_HTML = path.join(__dirname, '..', '..', 'public', 'app.html');
 router.get('/app', requireAuth, (req, res) => {
-  // The HTML shell must always revalidate — otherwise a phone serves a cached
-  // app.html and never sees newly shipped UI (versioned /assets + /fonts keep
-  // their long cache; only this shell is no-cache).
-  res.set('Cache-Control', 'no-cache');
+  // The HTML shell must never be cached — otherwise a phone serves a stale
+  // app.html and never sees newly shipped UI (e.g. the Review Copy button).
+  // no-store is stronger than no-cache: it forbids storing the shell at all,
+  // so there's no cached copy to serve. Pragma/Expires cover legacy + proxy
+  // caches. Versioned /assets + /fonts keep their long cache; only this shell.
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   res.status(200).sendFile(APP_HTML);
 });
 

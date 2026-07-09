@@ -35,7 +35,9 @@ function folderUrlFromId(id) {
 // GET /settings — the single-file settings UI.
 const SETTINGS_HTML = path.join(__dirname, '..', '..', 'public', 'settings.html');
 router.get('/settings', requireAuth, (req, res) => {
-  res.set('Cache-Control', 'no-cache'); // HTML shell always revalidates (no stale UI)
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0'); // never cache the shell (no stale UI)
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   res.status(200).sendFile(SETTINGS_HTML);
 });
 

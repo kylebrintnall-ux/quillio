@@ -657,10 +657,13 @@ async function generateAssetDrafts({
   try {
     const text = await callGemini({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      // Cap headroom so a many-field asset (e.g. a carousel: 9–10 fields) can't
+      // Headroom so a many-field asset (e.g. a carousel: 9–10 fields) can't
       // truncate mid-JSON and fail the parse, which would push every field onto
-      // the slower single-field fallback path.
-      generationConfig: { temperature: 0.8, maxOutputTokens: 4096 },
+      // the slower single-field fallback path. gemini-3.5-flash is a thinking
+      // model (reasoning tokens count against this budget), so 8192 keeps the
+      // cohesive batch draft intact instead of collapsing to the fallback path —
+      // which is what made regenerate crawl.
+      generationConfig: { temperature: 0.8, maxOutputTokens: 8192 },
     });
     parsed = JSON.parse(stripJsonFences(text));
   } catch (err) {
@@ -929,8 +932,13 @@ async function reviewCopyFields({ fields, voiceGuide } = {}) {
     lastText = await callGemini({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
+        // gemini-3.5-flash is a thinking model: reasoning tokens count against
+        // this budget too. 4096 fits the short all-clean case but a full review
+        // WITH many comments (long JSON array) + reasoning can exceed it and
+        // truncate mid-object, failing the parse. 8192 gives comfortable headroom
+        // for a 20+ field review where most fields get a note.
         temperature: 0.3,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 8192,
         responseMimeType: 'application/json',
         responseSchema: REVIEW_SCHEMA,
       },

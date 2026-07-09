@@ -1653,6 +1653,20 @@ test('reviewCopyFields returns [] for no fields (no Gemini call)', async () => {
   assert.deepStrictEqual(await reviewCopyFields({ fields: [] }), []);
 });
 
+test('review treats the brief audience as authoritative over voice.md default', () => {
+  // The review prompt must separate WHO (brief audience) from HOW (voice.md
+  // voice/tone/craft) and NOT flag copy for addressing the brief's audience.
+  const gsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  assert.ok(/briefContext/.test(gsrc), 'reviewCopyFields accepts briefContext');
+  assert.ok(/CAMPAIGN BRIEF/.test(gsrc), 'prompt has a campaign-brief block');
+  assert.ok(/AUDIENCE PRECEDENCE/.test(gsrc), 'prompt states audience precedence');
+  assert.ok(/Do NOT flag copy for addressing the brief's audience/.test(gsrc), 'no audience false-flag');
+  assert.ok(/brand-universal guidance/.test(gsrc), 'voice.md universals still applied');
+  // copyReview must pass the doc's summary + writer direction as the brief context.
+  const crsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'copyReview.js'), 'utf8');
+  assert.ok(/briefContext[\s\S]*content\.summary[\s\S]*writerDirection/.test(crsrc), 'copyReview wires briefContext');
+});
+
 test('web review trigger (8b): adapter + route + project-view button wired', () => {
   assert.strictEqual(typeof require('../src/adapters/web').runWebReview, 'function');
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');

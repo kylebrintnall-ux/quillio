@@ -109,8 +109,18 @@ async function runCopyReview(docId, tenantId, clients) {
     return { ...f, priorCopy: (p && p.copy) || null, priorComment: (p && p.comment) || null };
   });
 
+  // Brief context: the campaign's summary + writer direction carry the brief's
+  // stated audience/goal. Pass them so the review treats the BRIEF's audience as
+  // authoritative (voice.md's audience is only a default the brief overrides),
+  // while voice.md still governs voice/tone/craft. Already re-read from the doc —
+  // no new persisted state.
+  const briefContext = {
+    summary: (content && content.summary) || '',
+    writerDirection: (content && content.writerDirection) || '',
+  };
+
   // Gemini review (throws on hard failure → caller shows error).
-  const results = await reviewCopyFields({ fields: withPrior, voiceGuide });
+  const results = await reviewCopyFields({ fields: withPrior, voiceGuide, briefContext });
 
   // Clear prior Quillio comments, then post the currently-warranted ones anchored
   // to each field's copy.

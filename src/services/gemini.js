@@ -854,22 +854,54 @@ async function extractHeaderSchema(base64Data, mimetype) {
 // warrants it (silence is the good outcome). On re-review, prior copy/comment
 // per field let it recognize the writer's improvements and not re-nag.
 //   fields: [{ assetType, fieldName, charMax, copy, priorCopy, priorComment }]
+//   briefContext: { summary, writerDirection } — THIS campaign's summary + writer
+//     direction, which carry the brief's stated audience/goal. Optional.
 // Returns [{ assetType, fieldName, comment }] (comment: string | null), one per
 // input field, same order. Throws on a hard failure so the caller can show an
 // error state (rather than silently posting nothing).
-async function reviewCopyFields({ fields, voiceGuide } = {}) {
+async function reviewCopyFields({ fields, voiceGuide, briefContext } = {}) {
   const list = Array.isArray(fields) ? fields : [];
   if (list.length === 0) return [];
 
   const brand = String(voiceGuide || '').trim() || '(no brand guide provided — judge on universal writing craft only)';
+  // The brief governs WHO the copy targets (audience) for THIS campaign; voice.md
+  // governs HOW it should sound. A brand runs campaigns for varied audiences, so
+  // the brief's audience overrides voice.md's default audience.
+  const bc = briefContext || {};
+  const briefSummary = String(bc.summary || '').trim();
+  const briefDirection = String(bc.writerDirection || '').trim();
+  const hasBrief = !!(briefSummary || briefDirection);
+  const briefBlock = hasBrief
+    ? [
+        'CAMPAIGN BRIEF — this specific campaign. AUTHORITATIVE for WHO the copy targets (audience) and the campaign goal:',
+        briefSummary ? `Summary: ${briefSummary}` : '',
+        briefDirection ? `Writer direction: ${briefDirection}` : '',
+        '',
+      ].filter(Boolean)
+    : [];
+
   const prompt = [
     'You are a seasoned copy editor giving a thoughtful second pass on marketing copy — NOT a linter.',
     '',
-    'BRAND REFERENCE — the single source of truth for this brand (voice, tone, rules, banned words, CTA conventions):',
+    ...briefBlock,
+    'BRAND REFERENCE (voice.md) — AUTHORITATIVE for HOW the copy should sound: voice, tone, rules, banned words,',
+    'CTA conventions, the "Words That Work" list, sounding human. Its audience description is the brand DEFAULT:',
     brand,
     '',
-    'For EACH field, judge its copy against (a) the brand reference above and (b) universal writing craft:',
-    'clarity, tightness, natural phrasing, grammar.',
+    'AUDIENCE PRECEDENCE — read carefully:',
+    '• The CAMPAIGN BRIEF decides the target audience. If the brief states an audience, treat it as CORRECT.',
+    "• Do NOT flag copy for addressing the brief's audience, even when it differs from voice.md's default audience.",
+    "  Divergence from voice.md's default audience is NOT a defect — a brand runs campaigns for varied audiences.",
+    '  (e.g. if the brief targets marketing operations leaders, do not tell the writer to re-aim it at voice.md\'s',
+    '  default IT/service audience.)',
+    '• Only raise an audience note if the copy misaddresses the BRIEF\'s OWN audience (e.g. speaks to consumers when',
+    '  the brief says enterprise) — never merely because it diverges from voice.md\'s default.',
+    '• If the brief states no audience, voice.md\'s default audience applies.',
+    "• Regardless of audience, ALWAYS apply voice.md's brand-universal guidance (voice, tone, avoid buzzwords,",
+    '  Words That Work, sound human, craft).',
+    '',
+    'For EACH field, judge its copy against (a) voice.md\'s voice/tone/craft rules, (b) fit to the BRIEF\'s audience &',
+    'goal, and (c) universal writing craft: clarity, tightness, natural phrasing, grammar.',
     '',
     'MATERIALITY BAR: only flag an issue a skilled editor would genuinely raise because fixing it MATERIALLY improves',
     'the copy. Ignore minor preferences and marginal nitpicks. At most the 1–2 most important notes per field.',

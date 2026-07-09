@@ -41,7 +41,11 @@ module.exports = {
   PORT: process.env.PORT || 3000,
 
   GEMINI_API_KEY: process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim(),
-  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+  // Single source of truth for the Gemini model (every call goes through
+  // gemini.js callGemini). gemini-2.5-flash is deprecated (shutdown Oct 2026 and
+  // its bare alias 404s); gemini-3.5-flash is the current GA Flash model on the
+  // same v1beta generateContent endpoint. Override with GEMINI_MODEL if needed.
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
 
   // Service account: used for reading the specs Sheet, and for Drive/Docs
   // writes when OAuth2 is NOT configured (the Google Workspace / Shared Drive

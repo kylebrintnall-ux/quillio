@@ -79,7 +79,7 @@ env var. No workflow changes required.
 | `GOOGLE_CLIENT_SECRET` | ⬜ | OAuth2 client secret. Required only if using OAuth2 for Drive/Docs writes. |
 | `GOOGLE_REFRESH_TOKEN` | ⬜ | OAuth2 refresh token. **If set, all Drive/Docs writes run as this OAuth2 user** instead of the service account (the personal-Gmail path). If unset, the service account does the writes. |
 | `DESTINATION` | ⬜ | Output adapter id. Defaults to `google-docs`. |
-| `GEMINI_MODEL` | ⬜ | Gemini model id. Defaults to `gemini-2.5-flash`. |
+| `GEMINI_MODEL` | ⬜ | Gemini model id. Defaults to `gemini-3.5-flash`. |
 | `DRIVE_FOLDER_ID` | ⬜ | Folder docs are created in. Defaults to `1u12O9tkm0lZI8BAIfWErXAo88NWIOM0U`. |
 | `SLACK_SIGNING_SECRET` | ⬜ | If set, every incoming Slack request is signature-verified. |
 | `SLACK_BOT_TOKEN` | ⬜ | Bot token (`xoxb-…`). Enables posting/editing the status message in place via `chat.postMessage` / `chat.update` (the live "Building…" → result flow). |

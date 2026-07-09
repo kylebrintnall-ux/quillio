@@ -75,6 +75,17 @@ function safeFileRefs(refs) {
 const JOBS = new Map(); // jobId -> { status, result, error, ts }
 const JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
+// Hard ceiling on a single job's runtime. Every Gemini call is already bounded
+// (callGemini aborts at 45s), but the Google Docs/Drive calls in the draft path
+// use the googleapis client, which has NO default timeout — so a stalled
+// documents.get / batchUpdate would leave work() un-settled forever, and the job
+// would sit 'pending' until the client's own 8-min ceiling. This races every job
+// against a deadline so it ALWAYS settles: on timeout the job flips to 'failed'
+// with a clear message the client surfaces on its next poll (~3s), instead of an
+// endless spinner. The underlying work isn't cancellable, so it may finish in the
+// background, but the user gets a definite outcome and can retry. Env-overridable.
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS) || 4 * 60 * 1000; // 4 minutes
+
 function sweepJobs() {
   const now = Date.now();
   for (const [id, job] of JOBS) {
@@ -84,14 +95,24 @@ function sweepJobs() {
 
 // Start a job: register it as pending, run `work()` fire-and-forget, and record
 // its result/error on settle. Returns the new jobId. `label` is for logs only.
-function startJob(label, work) {
+function startJob(label, work, timeoutMs = JOB_TIMEOUT_MS) {
   sweepJobs();
   const jobId = crypto.randomUUID();
   JOBS.set(jobId, { status: 'pending', result: null, error: null, ts: Date.now() });
   const startedAt = Date.now();
   (async () => {
+    let timer;
+    // Race the work against a hard deadline so a hung (un-timed-out) call can't
+    // leave the job 'pending' forever. Promise.race can't cancel the work, so we
+    // clear the timer on settle to avoid a dangling handle.
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('This is taking longer than expected — please try again.')),
+        timeoutMs
+      );
+    });
     try {
-      const result = await work();
+      const result = await Promise.race([work(), deadline]);
       const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.log(`[web] job done → ${label} job=${jobId} in ${secs}s`);
       JOBS.set(jobId, { status: 'complete', result, error: null, ts: Date.now() });
@@ -99,6 +120,8 @@ function startJob(label, work) {
       const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.error(`[web] job failed → ${label} job=${jobId} after ${secs}s:`, err && err.stack ? err.stack : err);
       JOBS.set(jobId, { status: 'failed', result: null, error: err.message, ts: Date.now() });
+    } finally {
+      clearTimeout(timer);
     }
   })();
   return jobId;

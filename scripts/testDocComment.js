@@ -50,22 +50,21 @@ function isBold(p) {
   return !!(el && el.textRun.textStyle && el.textRun.textStyle.bold);
 }
 
-function collectCopyParagraphs(doc) {
+// Collect every non-empty body paragraph that can be a comment anchor: skip
+// headings and the header table (item.table). A single-line field label, a
+// drafted copy line, and a long body paragraph are all just paragraphs — so
+// this works whether or not the doc has been through Generate First Draft.
+function collectParagraphs(doc) {
   const out = [];
-  let lastLabel = null;
   for (const item of doc.body.content || []) {
+    if (item.table) continue; // skip the metadata header table
     if (!item.paragraph) continue;
     const p = item.paragraph;
     const named = p.paragraphStyle && p.paragraphStyle.namedStyleType;
+    if (named && /HEADING|TITLE/.test(named)) continue;
     const text = paragraphText(p).trim();
-    if (!text) { continue; }
-    if (named && /HEADING/.test(named)) { lastLabel = null; continue; }
-    if (isBold(p)) { lastLabel = text; continue; } // a field label
-    // A non-bold, non-heading paragraph with text right after a label = drafted copy.
-    if (lastLabel) {
-      out.push({ label: lastLabel, text: text, startIndex: item.startIndex, endIndex: item.endIndex });
-      lastLabel = null;
-    }
+    if (!text) continue;
+    out.push({ label: text.slice(0, 40), text: text, startIndex: item.startIndex, endIndex: item.endIndex });
   }
   return out;
 }
@@ -96,19 +95,21 @@ async function main() {
 
   const { docs } = await getClients();
   const doc = (await docs.documents.get({ documentId: docId })).data;
-  const paras = collectCopyParagraphs(doc);
-  if (!paras.length) { console.error('[comment-test] no drafted copy paragraphs found — run Generate First Draft first.'); process.exit(1); }
+  const paras = collectParagraphs(doc);
+  if (!paras.length) { console.error('[comment-test] no anchorable paragraphs found in this doc.'); process.exit(1); }
 
   const short = paras.slice().sort((a, b) => a.text.length - b.text.length)[0];
   const long = paras.slice().sort((a, b) => b.text.length - a.text.length)[0];
 
-  console.log(`\n[comment-test] SHORT field: "${short.label}" -> "${short.text}" (${short.text.length} chars)`);
+  console.log(`\n[comment-test] SHORT single-line paragraph: "${short.text}" (${short.text.length} chars)`);
   const c1 = await addComment(drive, docId, short.label, short);
   console.log('  created comment:', JSON.stringify(c1));
 
-  console.log(`\n[comment-test] LONG paragraph: "${long.label}" -> ${long.text.length} chars`);
-  const c2 = await addComment(drive, docId, long.label, long);
-  console.log('  created comment:', JSON.stringify(c2));
+  if (long !== short) {
+    console.log(`\n[comment-test] LONG paragraph: "${long.text.slice(0, 50)}…" (${long.text.length} chars)`);
+    const c2 = await addComment(drive, docId, long.label, long);
+    console.log('  created comment:', JSON.stringify(c2));
+  }
 
   console.log(`\n[comment-test] Open the doc and report WHERE each comment appears:`);
   console.log(`  https://docs.google.com/document/d/${docId}/edit`);

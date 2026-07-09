@@ -21,6 +21,7 @@ const router = express.Router();
 // GET /onboarding — the single-file onboarding UI.
 const ONBOARDING_HTML = path.join(__dirname, '..', '..', 'public', 'onboarding.html');
 router.get('/onboarding', (req, res) => {
+  res.set('Cache-Control', 'no-cache'); // HTML shell always revalidates (no stale UI)
   res.status(200).sendFile(ONBOARDING_HTML);
 });
 

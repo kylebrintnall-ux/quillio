@@ -118,6 +118,10 @@ function sendJobStatus(req, res) {
 // no templating: the page talks to /api/brief and /api/draft itself.
 const APP_HTML = path.join(__dirname, '..', '..', 'public', 'app.html');
 router.get('/app', requireAuth, (req, res) => {
+  // The HTML shell must always revalidate — otherwise a phone serves a cached
+  // app.html and never sees newly shipped UI (versioned /assets + /fonts keep
+  // their long cache; only this shell is no-cache).
+  res.set('Cache-Control', 'no-cache');
   res.status(200).sendFile(APP_HTML);
 });
 

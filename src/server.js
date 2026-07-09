@@ -17,6 +17,7 @@ const {
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
 const onboardingRoutes = require('./routes/onboarding');
+const { runSlackReview } = require('./adapters/slackReview');
 const {
   updateMessage,
   updateLive,
@@ -312,6 +313,22 @@ app.post('/slack/command', (req, res) => {
       console.error('Failed to report error to Slack:', e);
     }
   });
+});
+
+// --- Slash command: /quillio-review [optional Drive link] ---
+// Ack-first (Slack's 3s window), then run the review fire-and-forget. The runner
+// posts a live "Reviewing…" message and updates it in place on completion.
+app.post('/slack/review', (req, res) => {
+  if (!verifySlack(req)) {
+    return res.status(401).send('Invalid signature.');
+  }
+  res.status(200).end();
+
+  runSlackReview({
+    text: (req.body.text || '').trim(),
+    channelId: req.body.channel_id,
+    workspaceId: req.body.team_id,
+  }).catch((err) => console.error('[slack] /quillio-review failed:', err));
 });
 
 // --- Interactive button clicks (Generate First Draft / Skip) ---

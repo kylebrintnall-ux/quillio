@@ -97,6 +97,19 @@ async function getProject(tenantId, projectId) {
   return (res.rows && res.rows[0]) || null;
 }
 
+// Resolve the most recent project in a Slack channel (thread-context lookup for
+// /quillio-review — slash commands don't carry a thread_ts, so the channel's
+// latest project is the best-available context). Returns the row, or null.
+async function getProjectByChannel(tenantId, channelId) {
+  const pool = getPool();
+  if (!pool || !tenantId || !channelId) return null;
+  const res = await pool.query(
+    'SELECT * FROM projects WHERE tenant_id = $1 AND slack_channel_id = $2 ORDER BY created_at DESC LIMIT 1',
+    [tenantId, channelId]
+  );
+  return (res.rows && res.rows[0]) || null;
+}
+
 // Update a project's status (scoped to its tenant). Returns the updated row, or
 // null if there's no DB / no matching project. Callers validate the status.
 async function setProjectStatus(tenantId, projectId, status) {
@@ -110,4 +123,4 @@ async function setProjectStatus(tenantId, projectId, status) {
   return (res.rows && res.rows[0]) || null;
 }
 
-module.exports = { saveProject, getProjects, getProject, setProjectStatus };
+module.exports = { saveProject, getProjects, getProject, getProjectByChannel, setProjectStatus };

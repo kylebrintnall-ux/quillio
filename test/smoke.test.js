@@ -1661,3 +1661,16 @@ test('web review trigger (8b): adapter + route + project-view button wired', () 
   assert.ok(html.includes("fetch") && html.includes("'/api/review'"), 'calls /api/review');
   assert.ok(html.includes('quillio-review.gif') && html.includes('quillio-copy-done.gif'), 'both GIF states');
 });
+
+test('Slack review trigger (8c): runner, doc-id extract, endpoint, channel lookup', () => {
+  const sr = require('../src/adapters/slackReview');
+  assert.strictEqual(typeof sr.runSlackReview, 'function');
+  // Doc id from a pasted link or a bare id; null when neither.
+  assert.strictEqual(sr.docIdFromText('review https://docs.google.com/document/d/ABC123def456GHI789jkl/edit'), 'ABC123def456GHI789jkl');
+  assert.strictEqual(sr.docIdFromText(''), null);
+  // Channel lookup helper + the /slack/review endpoint are wired.
+  assert.strictEqual(typeof require('../src/db/projects').getProjectByChannel, 'function');
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  assert.ok(srv.includes("app.post('/slack/review'"), '/slack/review endpoint present');
+  assert.ok(srv.includes('runSlackReview'), 'runner wired into server');
+});

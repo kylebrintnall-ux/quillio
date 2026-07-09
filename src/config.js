@@ -87,6 +87,10 @@ module.exports = {
   // to post in channels the bot isn't a member of).
   SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN && process.env.SLACK_BOT_TOKEN.trim(),
 
+  // Public origin for absolute asset URLs (e.g. the review GIFs shown in Slack
+  // image blocks, which require a publicly reachable https URL).
+  PUBLIC_BASE_URL: (process.env.PUBLIC_BASE_URL && process.env.PUBLIC_BASE_URL.trim()) || 'https://quillio.co',
+
   // Slack OAuth (Phase 3 install flow). Client id/secret identify the Quillio
   // app; redirect URI must match the one registered in the Slack app config.
   SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_ID.trim(),

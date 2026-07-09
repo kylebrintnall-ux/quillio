@@ -1682,6 +1682,20 @@ test('Slack review trigger (8c): runner, doc-id extract, endpoint, channel looku
   // Doc id from a pasted link or a bare id; null when neither.
   assert.strictEqual(sr.docIdFromText('review https://docs.google.com/document/d/ABC123def456GHI789jkl/edit'), 'ABC123def456GHI789jkl');
   assert.strictEqual(sr.docIdFromText(''), null);
+  // Slack wraps a pasted URL as <url> / <url|label>, often with ?usp=drivesdk —
+  // the parser must unwrap it and extract the id (the pasted-link bug).
+  assert.strictEqual(
+    sr.docIdFromText('<https://docs.google.com/document/d/ABC123def456GHI789jkl/edit?usp=drivesdk>'),
+    'ABC123def456GHI789jkl'
+  );
+  assert.strictEqual(
+    sr.docIdFromText('<https://docs.google.com/document/d/ABC123def456GHI789jkl/edit|https://docs.google.com/document/d/ABC123def456GHI789jkl/edit>'),
+    'ABC123def456GHI789jkl'
+  );
+  // Review messages use an inline custom emoji, not a large image block.
+  const srsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackReview.js'), 'utf8');
+  assert.ok(!/type:\s*'image'/.test(srsrc), 'no image block in slack review');
+  assert.ok(/REVIEW_EMOJI|SLACK_REVIEW_EMOJI/.test(srsrc), 'inline emoji shortcode used');
   // Channel lookup helper + the /slack/review endpoint are wired.
   assert.strictEqual(typeof require('../src/db/projects').getProjectByChannel, 'function');
   const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');

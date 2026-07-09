@@ -91,9 +91,15 @@ module.exports = {
   // to post in channels the bot isn't a member of).
   SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN && process.env.SLACK_BOT_TOKEN.trim(),
 
-  // Public origin for absolute asset URLs (e.g. the review GIFs shown in Slack
-  // image blocks, which require a publicly reachable https URL).
+  // Public origin for absolute asset URLs (e.g. web app GIFs).
   PUBLIC_BASE_URL: (process.env.PUBLIC_BASE_URL && process.env.PUBLIC_BASE_URL.trim()) || 'https://quillio.co',
+
+  // Custom Slack emoji shortcode shown inline in the /quillio-review messages
+  // (both the in-progress and result states), instead of a large image block.
+  // Must match the emoji uploaded to the workspace. Include the surrounding
+  // colons; override with SLACK_REVIEW_EMOJI if the upload is named differently.
+  SLACK_REVIEW_EMOJI:
+    (process.env.SLACK_REVIEW_EMOJI && process.env.SLACK_REVIEW_EMOJI.trim()) || ':quillio-review:',
 
   // Slack OAuth (Phase 3 install flow). Client id/secret identify the Quillio
   // app; redirect URI must match the one registered in the Slack app config.

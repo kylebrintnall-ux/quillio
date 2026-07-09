@@ -16,7 +16,8 @@
     "migrate-header": "node scripts/migrateAddHeaderSchema.js",
     "seed-naming": "node scripts/seedNamingPattern.js",
     "migrate-naming": "node scripts/migrateAddNamingPattern.js",
-    "preview-naming": "node scripts/previewNamingPattern.js"
+    "preview-naming": "node scripts/previewNamingPattern.js",
+    "test-comment": "node scripts/testDocComment.js"
   },
   "engines": {
     "node": ">=18"

@@ -119,11 +119,12 @@
     .hidden { display: none !important; }
 
     /* --- Doc Header setup (step 6b) --- */
-    /* Intro copy in a glass container so it reads over the gradient. */
+    /* Passive descriptive copy — legible over the gradient but clearly NOT an
+       input: soft translucent wash, no input-style border, subtle left accent. */
     .hdr-lede {
-      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px;
-      color: rgba(26,26,46,0.78); line-height: 1.55; margin: 0 0 16px;
+      background: rgba(255,255,255,0.22); border: none; border-left: 3px solid rgba(201,168,76,0.6);
+      border-radius: 0 10px 10px 0; padding: 4px 16px; margin: 0 0 18px;
+      color: rgba(26,26,46,0.82); line-height: 1.55; font-size: 14.5px;
     }
     /* Upload area as a glass card: button + clearly-associated helper beneath. */
     .hdr-upload-card {
@@ -175,7 +176,7 @@
 
     /* --- File-naming pattern (§3, step 7b) --- */
     .hdr-divider { height: 1px; background: rgba(255,255,255,0.4); margin: 28px 0 20px; }
-    .naming-preview-label { font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.5); margin: 0 0 6px; }
+    .naming-preview-label { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.72); margin: 0 0 8px; }
     .naming-preview {
       background: #fff; border: 1.5px solid rgba(255,255,255,0.68); border-radius: 12px;
       padding: 12px 14px; margin: 0 0 16px; font-family: 'IBM Plex Mono', ui-monospace, monospace;
@@ -260,7 +261,7 @@
       font-family: 'StarCrush', serif; font-size: 19px; color: var(--ink);
       letter-spacing: 0.02em; margin: 0 0 14px; font-weight: normal;
     }
-    h2 { font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.5); margin: 22px 0 8px; }
+    h2 { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.72); margin: 22px 0 10px; }
 
     /* Voice terminal */
     .terminal {
@@ -506,20 +507,40 @@
           <div id="naming-section" class="hidden">
             <div class="hdr-divider"></div>
             <h2>File name</h2>
-            <p class="hdr-lede">Set how Quillio names the copy docs it creates. Build the name from segments — plain text you type, or a dynamic value like Campaign or Date — and drag to reorder. Anything you type is kept exactly.</p>
+            <p class="hdr-lede">Build your file name from chunks. Each chunk is either text you type — kept exactly — or a dynamic value like Campaign or Date that fills itself in. Stack them in any order, drag to rearrange, and lock it in. Every doc Quillio creates follows your format.</p>
             <div id="naming-error" class="error hidden"></div>
             <div id="naming-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
 
             <div id="naming-body" class="hidden">
-              <div class="naming-preview-label">Preview</div>
-              <div id="naming-preview" class="naming-preview"></div>
-
-              <div id="naming-segments"></div>
-              <div class="btnrow hdr-addfield">
-                <button class="btn secondary" id="naming-add">+ Add segment</button>
+              <!-- LOCKED: the saved format + Edit -->
+              <div id="naming-locked" class="hidden">
+                <div class="naming-preview-label">Your file name</div>
+                <div id="naming-locked-preview" class="naming-preview"></div>
+                <div class="btnrow">
+                  <button class="btn" id="naming-edit-btn">Edit file name</button>
+                </div>
               </div>
-              <div class="btnrow">
-                <button class="btn" id="naming-save">Lock in file name</button>
+
+              <!-- EMPTY: no format yet -->
+              <div id="naming-empty" class="hidden">
+                <div class="empty">No file-name format yet — Quillio uses its default. Set one up to name docs your way.</div>
+                <div class="btnrow">
+                  <button class="btn" id="naming-setup-btn">Set up file name</button>
+                </div>
+              </div>
+
+              <!-- EDITOR: the chunk builder -->
+              <div id="naming-editor" class="hidden">
+                <div class="naming-preview-label">Preview</div>
+                <div id="naming-preview" class="naming-preview"></div>
+                <div id="naming-segments"></div>
+                <div class="btnrow hdr-addfield">
+                  <button class="btn secondary" id="naming-add">+ Add chunk</button>
+                </div>
+                <div class="btnrow">
+                  <button class="btn" id="naming-save">Lock in file name</button>
+                  <button class="btn secondary" id="naming-cancel">Cancel</button>
+                </div>
               </div>
             </div>
           </div>
@@ -879,24 +900,37 @@
       return '';
     }
 
+    var namingSavedSegs = [];
+    function namingClone(s) {
+      return s.type === 'dynamic' ? { type: 'dynamic', token: s.token } : { type: 'static', text: (s.text != null ? String(s.text) : '') };
+    }
+
     function namingLoad() {
       clearError($('naming-error')); show($('naming-loading')); hide($('naming-body'));
       fetch('/api/naming').then(function (r) { return r.json(); }).then(function (d) {
         hide($('naming-loading')); show($('naming-body'));
         var segs = (d && d.success && d.pattern && Array.isArray(d.pattern.segments)) ? d.pattern.segments : [];
-        namingSegs = segs.map(function (s) {
-          return s.type === 'dynamic'
-            ? { type: 'dynamic', token: s.token }
-            : { type: 'static', text: (s.text != null ? String(s.text) : '') };
-        });
-        namingRender();
-      }).catch(function () { hide($('naming-loading')); show($('naming-body')); namingSegs = []; namingRender(); });
+        namingSavedSegs = segs.map(namingClone);
+        if (namingSavedSegs.length) namingShowLocked(); else namingShowEmpty();
+      }).catch(function () { hide($('naming-loading')); show($('naming-body')); namingSavedSegs = []; namingShowEmpty(); });
+    }
+
+    // Collapse-to-preview, mirroring the Doc Header sub-section.
+    function namingShowLocked() {
+      hide($('naming-empty')); hide($('naming-editor')); show($('naming-locked'));
+      namingBuildPreview($('naming-locked-preview'), namingSavedSegs);
+    }
+    function namingShowEmpty() { hide($('naming-locked')); hide($('naming-editor')); show($('naming-empty')); }
+    function namingShowEditor(segs) {
+      namingSegs = (segs || []).map(namingClone);
+      hide($('naming-locked')); hide($('naming-empty')); show($('naming-editor'));
+      namingRender();
     }
 
     function namingRender() {
       var host = $('naming-segments'); host.innerHTML = '';
       if (!namingSegs.length) {
-        host.appendChild(el('div', 'naming-empty', 'No segments yet — add plain text or a dynamic value to build your file name.'));
+        host.appendChild(el('div', 'naming-empty', 'No chunks yet — add plain text or a dynamic value to build your file name.'));
       }
       namingSegs.forEach(function (seg) { host.appendChild(namingRow(seg)); });
       namingPreview();
@@ -934,7 +968,7 @@
         row.appendChild(input);
       }
 
-      row.appendChild(hdrIcon('✕', 'Remove segment', function () {
+      row.appendChild(hdrIcon('✕', 'Remove chunk', function () {
         var i = namingSegs.indexOf(seg); if (i >= 0) namingSegs.splice(i, 1); namingRender();
       }));
       return row;
@@ -979,14 +1013,15 @@
       });
     }
 
-    function namingPreview() {
-      var host = $('naming-preview'); host.innerHTML = '';
-      if (!namingSegs.length) { host.appendChild(el('span', 'np-empty', '(file name)')); return; }
-      namingSegs.forEach(function (seg) {
+    function namingBuildPreview(host, segs) {
+      host.innerHTML = '';
+      if (!segs.length) { host.appendChild(el('span', 'np-empty', '(file name)')); return; }
+      segs.forEach(function (seg) {
         if (seg.type === 'dynamic') host.appendChild(el('span', 'np-dyn', namingSample(seg.token)));
         else host.appendChild(document.createTextNode(seg.text || ''));
       });
     }
+    function namingPreview() { namingBuildPreview($('naming-preview'), namingSegs); }
 
     function namingLockedToast() {
       var t = $('hdr-toast'); t.className = 'toast locked show'; t.innerHTML = '';
@@ -996,6 +1031,11 @@
       hdrToastTimer = setTimeout(function () { t.classList.remove('show'); }, 3000);
     }
 
+    $('naming-edit-btn').addEventListener('click', function () { namingShowEditor(namingSavedSegs); });
+    $('naming-setup-btn').addEventListener('click', function () { namingShowEditor([]); });
+    $('naming-cancel').addEventListener('click', function () {
+      if (namingSavedSegs.length) namingShowLocked(); else namingShowEmpty();
+    });
     $('naming-add').addEventListener('click', function () {
       namingSegs.push({ type: 'static', text: '' }); namingRender();
     });
@@ -1013,7 +1053,9 @@
         .then(function (res) {
           btn.disabled = false;
           if (!res.ok || !res.j.success) { showError($('naming-error'), (res.j && res.j.error) || 'Could not save.'); return; }
+          namingSavedSegs = namingSegs.map(namingClone);
           namingLockedToast();
+          namingShowLocked(); // collapse to the locked preview + Edit
         })
         .catch(function () { btn.disabled = false; showError($('naming-error'), 'Could not save.'); });
     });

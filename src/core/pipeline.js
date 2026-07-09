@@ -13,7 +13,7 @@ const {
 } = require('../services/gemini');
 const { normalize } = require('../utils/normalize');
 const { getDestination } = require('../destinations');
-const { getVoiceGuide, getHeaderSchema } = require('../db');
+const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
 const { getAssetDirections, getTenantAssets } = require('../db/assets');
 const { saveProject } = require('../db/projects');
 
@@ -769,14 +769,21 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) 
   // DB miss/error, or a tenant with no stored schema, yields null → createDocument
   // renders today's exact default header (title + HR), unchanged.
   let headerSchema = null;
+  let namingPattern = null;
   if (tenantId) {
     try {
       headerSchema = await getHeaderSchema(tenantId);
     } catch (err) {
       console.warn('[pipeline] header schema lookup failed — using default header:', err.message);
     }
+    try {
+      namingPattern = await getNamingPattern(tenantId);
+    } catch (err) {
+      console.warn('[pipeline] naming pattern lookup failed — using default naming:', err.message);
+    }
   }
   console.log(`[pipeline] doc header schema: ${headerSchema ? 'tenant (Postgres)' : 'default'}`);
+  console.log(`[pipeline] doc naming: ${namingPattern ? 'tenant pattern' : 'default'}`);
 
   // Build the doc in parallel with the Assets subfolder.
   const doc = await getDestination().createDocument({
@@ -789,6 +796,7 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) 
     referenceLinks: spec.referenceLinks,
     referenceInsights: spec.referenceInsights,
     headerSchema,
+    namingPattern,
     clients,
   });
 

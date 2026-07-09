@@ -13,7 +13,10 @@
     "gd4": "node scripts/readHeaderDoc.js",
     "gd5": "node scripts/extractHeaderFromImage.js",
     "seed-header": "node scripts/seedHeaderSchema.js",
-    "migrate-header": "node scripts/migrateAddHeaderSchema.js"
+    "migrate-header": "node scripts/migrateAddHeaderSchema.js",
+    "seed-naming": "node scripts/seedNamingPattern.js",
+    "migrate-naming": "node scripts/migrateAddNamingPattern.js",
+    "preview-naming": "node scripts/previewNamingPattern.js"
   },
   "engines": {
     "node": ">=18"

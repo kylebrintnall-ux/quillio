@@ -242,6 +242,51 @@ async function saveHeaderSchema(tenantId, schema, name) {
   return true;
 }
 
+// --- File-naming convention (§3) ---
+// Stored per tenant on the templates row (naming_pattern JSONB), same one-schema-
+// per-tenant model as the doc-header schema.
+
+// Read a tenant's stored file-naming pattern, or null (→ default naming).
+async function getNamingPattern(tenantId) {
+  const p = getPool();
+  if (!p || !tenantId) return null;
+  const res = await p.query(
+    `SELECT naming_pattern FROM templates
+       WHERE tenant_id = $1 AND naming_pattern IS NOT NULL
+       ORDER BY is_default DESC, id ASC
+       LIMIT 1`,
+    [tenantId]
+  );
+  const r = res.rows[0];
+  return (r && r.naming_pattern) || null; // jsonb → already a JS object
+}
+
+// Store a tenant's file-naming pattern onto its default template row (creating
+// that row if none). Returns true if the write ran, false if there's no DB.
+async function saveNamingPattern(tenantId, pattern, name) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping saveNamingPattern');
+    return false;
+  }
+  if (!tenantId) return false;
+  const json = JSON.stringify(pattern);
+  const existing = await p.query(
+    `SELECT id FROM templates WHERE tenant_id = $1 ORDER BY is_default DESC, id ASC LIMIT 1`,
+    [tenantId]
+  );
+  if (existing.rows[0]) {
+    await p.query('UPDATE templates SET naming_pattern = $2::jsonb WHERE id = $1', [existing.rows[0].id, json]);
+  } else {
+    await p.query(
+      `INSERT INTO templates (tenant_id, name, is_default, naming_pattern)
+         VALUES ($1, $2, true, $3::jsonb)`,
+      [tenantId, name || 'Default', json]
+    );
+  }
+  return true;
+}
+
 // Set a tenant's default Drive folder id (onboarding). Returns true if the
 // write ran, false if there's no DB.
 async function setTenantDefaultFolder(tenantId, folderId) {
@@ -268,5 +313,7 @@ module.exports = {
   getFigmaTokens,
   getHeaderSchema,
   saveHeaderSchema,
+  getNamingPattern,
+  saveNamingPattern,
   setTenantDefaultFolder,
 };

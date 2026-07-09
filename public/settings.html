@@ -173,6 +173,33 @@
     .pv-wordmark { font-weight: 700; font-size: 18px; }
     .pv-empty { color: #999; font-style: italic; }
 
+    /* --- File-naming pattern (§3, step 7b) --- */
+    .hdr-divider { height: 1px; background: rgba(255,255,255,0.4); margin: 28px 0 20px; }
+    .naming-preview-label { font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.5); margin: 0 0 6px; }
+    .naming-preview {
+      background: #fff; border: 1.5px solid rgba(255,255,255,0.68); border-radius: 12px;
+      padding: 12px 14px; margin: 0 0 16px; font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 13px; color: var(--ink); overflow-wrap: anywhere; min-height: 20px;
+    }
+    .naming-preview .np-dyn { color: #1a9a9a; }
+    .naming-preview .np-empty { color: #999; font-style: italic; }
+    .naming-seg {
+      display: flex; align-items: center; gap: 8px; margin: 0 0 8px;
+      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 12px; padding: 8px 10px;
+    }
+    .naming-seg.dragging { opacity: 0.65; box-shadow: 0 8px 24px rgba(0,0,0,0.22); }
+    .naming-drag {
+      flex: none; width: 26px; height: 30px; display: flex; align-items: center; justify-content: center;
+      color: rgba(26,26,46,0.4); font-size: 16px; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
+    }
+    .naming-seg select, .naming-seg input {
+      font: inherit; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; background: #fff;
+    }
+    .naming-seg .naming-type { flex: none; }
+    .naming-seg .naming-val { flex: 1 1 auto; min-width: 0; }
+    .naming-empty { color: rgba(26,26,46,0.6); font-size: 13px; margin: 4px 0 12px; }
+
     @media (min-width: 720px) {
       .content { min-width: 0; }
     }
@@ -472,6 +499,28 @@
               <div class="hdr-upload-title">Start over from a screenshot</div>
               <button class="btn secondary" id="hdr-upload-btn">Upload a header screenshot</button>
               <div class="hdr-hint">JPEG / PNG / WebP · up to 10MB — Quillio reads the fields for you</div>
+            </div>
+          </div>
+
+          <!-- FILE-NAMING pattern (§3) — companion sub-section -->
+          <div id="naming-section" class="hidden">
+            <div class="hdr-divider"></div>
+            <h2>File name</h2>
+            <p class="hdr-lede">Set how Quillio names the copy docs it creates. Build the name from segments — plain text you type, or a dynamic value like Campaign or Date — and drag to reorder. Anything you type is kept exactly.</p>
+            <div id="naming-error" class="error hidden"></div>
+            <div id="naming-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+
+            <div id="naming-body" class="hidden">
+              <div class="naming-preview-label">Preview</div>
+              <div id="naming-preview" class="naming-preview"></div>
+
+              <div id="naming-segments"></div>
+              <div class="btnrow hdr-addfield">
+                <button class="btn secondary" id="naming-add">+ Add segment</button>
+              </div>
+              <div class="btnrow">
+                <button class="btn" id="naming-save">Lock in file name</button>
+              </div>
             </div>
           </div>
         </section>
@@ -815,11 +864,165 @@
       document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
     })();
 
+    // --- File-naming pattern (§3, step 7b) — reorderable segment list --------
+    var namingSegs = [];
+    var NAMING_TOKENS = [['campaign', 'Campaign'], ['date', 'Date'], ['version', 'Version'], ['writer', 'Writer'], ['year', 'Year']];
+
+    function namingSample(token) {
+      var d = new Date();
+      var stamp = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+      if (token === 'campaign') return 'State of Service 2026';
+      if (token === 'date') return stamp;
+      if (token === 'year') return '' + d.getFullYear();
+      if (token === 'version') return 'v1';
+      if (token === 'writer') return 'Kyle Brintnall';
+      return '';
+    }
+
+    function namingLoad() {
+      clearError($('naming-error')); show($('naming-loading')); hide($('naming-body'));
+      fetch('/api/naming').then(function (r) { return r.json(); }).then(function (d) {
+        hide($('naming-loading')); show($('naming-body'));
+        var segs = (d && d.success && d.pattern && Array.isArray(d.pattern.segments)) ? d.pattern.segments : [];
+        namingSegs = segs.map(function (s) {
+          return s.type === 'dynamic'
+            ? { type: 'dynamic', token: s.token }
+            : { type: 'static', text: (s.text != null ? String(s.text) : '') };
+        });
+        namingRender();
+      }).catch(function () { hide($('naming-loading')); show($('naming-body')); namingSegs = []; namingRender(); });
+    }
+
+    function namingRender() {
+      var host = $('naming-segments'); host.innerHTML = '';
+      if (!namingSegs.length) {
+        host.appendChild(el('div', 'naming-empty', 'No segments yet — add plain text or a dynamic value to build your file name.'));
+      }
+      namingSegs.forEach(function (seg) { host.appendChild(namingRow(seg)); });
+      namingPreview();
+    }
+
+    function namingRow(seg) {
+      var row = el('div', 'naming-seg');
+      row.__seg = seg;
+
+      var handle = el('div', 'naming-drag', '⠿'); handle.title = 'Drag to reorder';
+      namingBindDrag(handle, row);
+      row.appendChild(handle);
+
+      var typeSel = el('select', 'naming-type');
+      [['static', 'Text'], ['dynamic', 'Dynamic']].forEach(function (o) {
+        var opt = el('option', null, o[1]); opt.value = o[0]; if (seg.type === o[0]) opt.selected = true; typeSel.appendChild(opt);
+      });
+      typeSel.addEventListener('change', function () {
+        if (typeSel.value === seg.type) return;
+        if (typeSel.value === 'dynamic') { seg.type = 'dynamic'; if (!seg.token) seg.token = 'campaign'; delete seg.text; }
+        else { seg.type = 'static'; if (seg.text == null) seg.text = ''; delete seg.token; }
+        namingRender();
+      });
+      row.appendChild(typeSel);
+
+      if (seg.type === 'dynamic') {
+        var tokenSel = el('select', 'naming-val');
+        NAMING_TOKENS.forEach(function (t) { var opt = el('option', null, t[1]); opt.value = t[0]; if (seg.token === t[0]) opt.selected = true; tokenSel.appendChild(opt); });
+        tokenSel.addEventListener('change', function () { seg.token = tokenSel.value; namingPreview(); });
+        row.appendChild(tokenSel);
+      } else {
+        var input = el('input', 'naming-val'); input.type = 'text'; input.value = seg.text || '';
+        input.placeholder = 'Type text (e.g. "SVC: ")';
+        input.addEventListener('input', function () { seg.text = input.value; namingPreview(); });
+        row.appendChild(input);
+      }
+
+      row.appendChild(hdrIcon('✕', 'Remove segment', function () {
+        var i = namingSegs.indexOf(seg); if (i >= 0) namingSegs.splice(i, 1); namingRender();
+      }));
+      return row;
+    }
+
+    // Order is read from the DOM after a drag; namingSegs values stay current via
+    // the input/select handlers, so reordering never loses edits.
+    function namingSyncFromDom() {
+      var rows = Array.prototype.slice.call($('naming-segments').querySelectorAll('.naming-seg'));
+      namingSegs = rows.map(function (n) { return n.__seg; }).filter(Boolean);
+    }
+
+    // Pointer-based drag (works on iOS Safari — HTML5 DnD does not). touch-action
+    // none + preventDefault on the handle stops the page scrolling mid-drag.
+    function namingBindDrag(handle, row) {
+      handle.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        var container = $('naming-segments');
+        row.classList.add('dragging');
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+        function onMove(ev) {
+          var y = ev.clientY;
+          var others = Array.prototype.slice.call(container.querySelectorAll('.naming-seg')).filter(function (n) { return n !== row; });
+          var placed = false;
+          for (var i = 0; i < others.length; i++) {
+            var r = others[i].getBoundingClientRect();
+            if (y < r.top + r.height / 2) { container.insertBefore(row, others[i]); placed = true; break; }
+          }
+          if (!placed) container.appendChild(row);
+          namingSyncFromDom(); namingPreview();
+        }
+        function onUp() {
+          row.classList.remove('dragging');
+          handle.removeEventListener('pointermove', onMove);
+          handle.removeEventListener('pointerup', onUp);
+          handle.removeEventListener('pointercancel', onUp);
+          namingSyncFromDom(); namingPreview();
+        }
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+        handle.addEventListener('pointercancel', onUp);
+      });
+    }
+
+    function namingPreview() {
+      var host = $('naming-preview'); host.innerHTML = '';
+      if (!namingSegs.length) { host.appendChild(el('span', 'np-empty', '(file name)')); return; }
+      namingSegs.forEach(function (seg) {
+        if (seg.type === 'dynamic') host.appendChild(el('span', 'np-dyn', namingSample(seg.token)));
+        else host.appendChild(document.createTextNode(seg.text || ''));
+      });
+    }
+
+    function namingLockedToast() {
+      var t = $('hdr-toast'); t.className = 'toast locked show'; t.innerHTML = '';
+      t.appendChild(el('span', 'tk', 'Quillio'));
+      t.appendChild(document.createTextNode('File name locked in — new docs use it.'));
+      if (hdrToastTimer) clearTimeout(hdrToastTimer);
+      hdrToastTimer = setTimeout(function () { t.classList.remove('show'); }, 3000);
+    }
+
+    $('naming-add').addEventListener('click', function () {
+      namingSegs.push({ type: 'static', text: '' }); namingRender();
+    });
+    $('naming-save').addEventListener('click', function () {
+      clearError($('naming-error'));
+      var btn = this; btn.disabled = true;
+      var pattern = {
+        version: 1,
+        segments: namingSegs.map(function (s) {
+          return s.type === 'dynamic' ? { type: 'dynamic', token: s.token } : { type: 'static', text: s.text || '' };
+        }),
+      };
+      fetch('/api/naming', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pattern: pattern }) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          btn.disabled = false;
+          if (!res.ok || !res.j.success) { showError($('naming-error'), (res.j && res.j.error) || 'Could not save.'); return; }
+          namingLockedToast();
+        })
+        .catch(function () { btn.disabled = false; showError($('naming-error'), 'Could not save.'); });
+    });
+
     // --- Doc Header setup (step 6b) ----------------------------------------
     var hdrSchema = null, hdrLoaded = false;
     var FILLS = ['auto', 'static', 'blank'];
 
-    function hdrEnsureLoaded() { if (!hdrLoaded) { hdrLoaded = true; hdrLoad(); } }
+    function hdrEnsureLoaded() { if (!hdrLoaded) { hdrLoaded = true; hdrLoad(); namingLoad(); } }
     function hdrRefresh() { hdrRenderBlocks(); hdrRenderPreview(); }
     var hdrToastTimer = null;
     function hdrLockedToast() {
@@ -838,7 +1041,7 @@
     function hdrLoad() {
       clearError($('hdr-error')); hide($('hdr-editor-wrap')); show($('hdr-loading'));
       fetch('/api/header').then(function (r) { return r.json(); }).then(function (d) {
-        hide($('hdr-loading')); show($('hdr-intro'));
+        hide($('hdr-loading')); show($('hdr-intro')); show($('naming-section'));
         var has = d && d.success && d.schema && d.schema.blocks && d.schema.blocks.length;
         hdrCurrentSchema = has ? d.schema : null;
         if (has) {
@@ -847,12 +1050,12 @@
         } else {
           hide($('hdr-current')); show($('hdr-empty'));
         }
-      }).catch(function () { hide($('hdr-loading')); show($('hdr-intro')); hide($('hdr-current')); show($('hdr-empty')); });
+      }).catch(function () { hide($('hdr-loading')); show($('hdr-intro')); show($('naming-section')); hide($('hdr-current')); show($('hdr-empty')); });
     }
 
     function hdrOpenEditor(schema) {
       hdrSchema = schema && schema.blocks ? schema : { version: 1, blocks: [] };
-      hide($('hdr-intro')); show($('hdr-editor-wrap')); hdrRefresh();
+      hide($('hdr-intro')); hide($('naming-section')); show($('hdr-editor-wrap')); hdrRefresh();
     }
     function hdrCloseEditor() { hide($('hdr-editor-wrap')); hdrLoad(); }
 

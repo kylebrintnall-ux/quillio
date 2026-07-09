@@ -110,6 +110,7 @@ const TABLES = [
       name TEXT,
       figma_file_key TEXT,
       doc_header_schema JSONB,
+      naming_pattern JSONB,
       is_default BOOLEAN DEFAULT false,
       created_at TIMESTAMPTZ DEFAULT now()
     )`,

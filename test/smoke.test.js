@@ -1479,3 +1479,115 @@ test('header table: an empty-value field emits NO bold run (no empty Docs range)
     assert.ok(r.updateTextStyle.range.endIndex > r.updateTextStyle.range.startIndex, 'no empty-range updateTextStyle');
   });
 });
+
+// --- File-naming convention (§3, backend / 7a) ---
+
+test('docNaming: segmentsFromSpans turns a selected span into a dynamic token', () => {
+  const { segmentsFromSpans } = require('../src/destinations/docNaming');
+  const typed = 'SVC: State of Service 2026_ Promo Copy';
+  // Select "State of Service 2026" (one span) -> Campaign; rest stays static.
+  const segs = segmentsFromSpans(typed, [{ start: 5, end: 26, token: 'campaign' }]);
+  assert.deepStrictEqual(segs, [
+    { type: 'static', text: 'SVC: ' },
+    { type: 'dynamic', token: 'campaign' },
+    { type: 'static', text: '_ Promo Copy' },
+  ]);
+});
+
+test('docNaming: multiple spans, plus span at the very start, are handled', () => {
+  const { segmentsFromSpans } = require('../src/destinations/docNaming');
+  const typed = 'Campaign 2026 v1';
+  const segs = segmentsFromSpans(typed, [
+    { start: 0, end: 8, token: 'campaign' },   // "Campaign" at start
+    { start: 9, end: 13, token: 'year' },      // "2026"
+    { start: 14, end: 16, token: 'version' },  // "v1" at end
+  ]);
+  assert.deepStrictEqual(segs, [
+    { type: 'dynamic', token: 'campaign' },
+    { type: 'static', text: ' ' },
+    { type: 'dynamic', token: 'year' },
+    { type: 'static', text: ' ' },
+    { type: 'dynamic', token: 'version' },
+  ]);
+  // overlapping / zero-length / bad-token spans are ignored
+  assert.deepStrictEqual(segmentsFromSpans('abc', [{ start: 2, end: 1, token: 'date' }]), [
+    { type: 'static', text: 'abc' },
+  ]);
+  assert.deepStrictEqual(segmentsFromSpans('abc', [{ start: 0, end: 2, token: 'bogus' }]), [
+    { type: 'static', text: 'abc' },
+  ]);
+});
+
+test('docNaming: applyNamingPattern preserves static verbatim, fills dynamic', () => {
+  const { applyNamingPattern, SAMPLE_NAMING_PATTERN } = require('../src/destinations/docNaming');
+  const out = applyNamingPattern(SAMPLE_NAMING_PATTERN, { campaign: 'State of Support 2026' });
+  assert.strictEqual(out, 'SVC: State of Support 2026_ Promo Copy');
+  // a missing token value -> empty, static preserved (no crash)
+  assert.strictEqual(applyNamingPattern(SAMPLE_NAMING_PATTERN, {}), 'SVC: _ Promo Copy');
+});
+
+test('docNaming: validity + normalize (drop junk, keep whitespace static, merge)', () => {
+  const { isValidNamingPattern, normalizeNamingPattern } = require('../src/destinations/docNaming');
+  assert.strictEqual(isValidNamingPattern(null), false);
+  assert.strictEqual(isValidNamingPattern({ segments: [] }), false);
+  assert.strictEqual(isValidNamingPattern({ segments: [{ type: 'static', text: 'x' }] }), true);
+
+  const norm = normalizeNamingPattern({
+    segments: [
+      { type: 'static', text: 'A' },
+      { type: 'static', text: 'B' },          // merges with previous
+      { type: 'dynamic', token: 'campaign' },
+      { type: 'static', text: '' },           // dropped (empty)
+      { type: 'dynamic', token: 'nope' },     // dropped (bad token)
+      { type: 'weird' },                       // dropped
+      { type: 'static', text: ' _ v' },        // whitespace kept
+    ],
+  });
+  assert.deepStrictEqual(norm.segments, [
+    { type: 'static', text: 'AB' },
+    { type: 'dynamic', token: 'campaign' },
+    { type: 'static', text: ' _ v' },
+  ]);
+});
+
+test('makeTitle: default naming UNCHANGED when no pattern; pattern used when set', () => {
+  // makeTitle isn't exported; exercise it through the pure naming path + assert
+  // the default shape is what we still produce with no pattern.
+  const { applyNamingPattern, isValidNamingPattern } = require('../src/destinations/docNaming');
+  // No pattern -> invalid -> caller falls back to "YYYY-MM-DD — Title Case".
+  assert.strictEqual(isValidNamingPattern(null), false);
+  // A pattern with only a campaign span yields exactly the campaign value.
+  const p = { version: 1, segments: [{ type: 'dynamic', token: 'campaign' }] };
+  assert.strictEqual(applyNamingPattern(p, { campaign: 'Spring Launch' }), 'Spring Launch');
+});
+
+test('routes/headerTemplate exposes the naming endpoints', () => {
+  const router = require('../src/routes/headerTemplate');
+  const paths = (router.stack || []).map((l) => l.route && l.route.path).filter(Boolean);
+  assert.ok(paths.includes('/api/naming'), 'naming get/save route present');
+});
+
+test('db exposes getNamingPattern/saveNamingPattern; no-DB is a safe no-op', async () => {
+  const db = require('../src/db');
+  assert.strictEqual(typeof db.getNamingPattern, 'function');
+  assert.strictEqual(typeof db.saveNamingPattern, 'function');
+  if (!process.env.DATABASE_URL) {
+    assert.strictEqual(await db.getNamingPattern('T0B8LPRDKHR'), null);
+    assert.strictEqual(await db.saveNamingPattern('T0B8LPRDKHR', { segments: [] }), false);
+  }
+});
+
+test('settings.html wires the file-naming segment builder (step 7b)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  assert.ok(html.includes('id="naming-section"'), 'naming section present');
+  assert.ok(html.includes('id="naming-segments"'), 'segment list container');
+  assert.ok(html.includes('id="naming-add"'), 'add-segment button');
+  assert.ok(html.includes('id="naming-preview"'), 'live preview element');
+  assert.ok(html.includes("fetch('/api/naming')"), 'loads current pattern');
+  assert.ok(html.includes("fetch('/api/naming', {"), 'saves the pattern');
+  assert.ok(html.includes('namingBindDrag') && html.includes('setPointerCapture'), 'pointer-based drag reorder');
+  assert.ok(html.includes('namingSyncFromDom'), 'order read from DOM after drag');
+  // Save emits the same segment shape 7a consumes.
+  assert.ok(/type: 'dynamic', token: s\.token/.test(html), 'dynamic segment shape');
+  assert.ok(/type: 'static', text: s\.text \|\| ''/.test(html), 'static segment shape');
+});

@@ -15,6 +15,7 @@ const { getClients } = require('../google');
 const { DocBuilder } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
+const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
 const { generateAssetDrafts } = require('../services/gemini');
 
 // How many assets to draft concurrently (each asset is one batched Gemini call
@@ -86,14 +87,37 @@ function cleanCampaignTitle(raw) {
   return t;
 }
 
-function makeTitle(brief, campaignTitle) {
-  // Prefer Gemini's (cleaned) campaign title; fall back to the first few words
-  // of the brief if it's empty. Either way: Title Case, with a YYYY-MM-DD prefix.
+// Today's exact default doc name: Title Case campaign with a YYYY-MM-DD prefix.
+function defaultTitle(brief, campaignTitle) {
   const base =
     cleanCampaignTitle(campaignTitle) ||
     String(brief).trim().split(/\s+/).filter(Boolean).slice(0, 8).join(' ') ||
     'Campaign';
   return `${todayStamp()} — ${toTitleCase(base)}`;
+}
+
+// Build the doc filename. With a stored per-tenant naming pattern, fill its
+// dynamic spans from real project data and keep the static text verbatim; with
+// no/invalid pattern, produce today's EXACT default name unchanged. `namingCtx`
+// supplies optional writer/version (campaign/date/year are derived here).
+function makeTitle(brief, campaignTitle, namingPattern, namingCtx) {
+  if (isValidNamingPattern(namingPattern)) {
+    const stamp = todayStamp();
+    const campaign =
+      cleanCampaignTitle(campaignTitle) ||
+      String(brief).trim().split(/\s+/).filter(Boolean).slice(0, 8).join(' ') ||
+      'Campaign';
+    const name = applyNamingPattern(namingPattern, {
+      campaign: toTitleCase(campaign),
+      date: stamp,
+      year: stamp.slice(0, 4),
+      version: (namingCtx && namingCtx.version) || 'v1',
+      writer: (namingCtx && namingCtx.writer) || '',
+    }).trim();
+    if (name) return name.slice(0, 200); // usable pattern result
+    // empty result (e.g. all-blank tokens) → fall through to the default
+  }
+  return defaultTitle(brief, campaignTitle);
 }
 
 // Left indent (points) applied to fields nested under a group sub-heading.
@@ -268,6 +292,8 @@ async function createDocument({
   referenceLinks = [],
   referenceInsights = [],
   headerSchema = null,
+  namingPattern = null,
+  namingContext = null,
   clients,
 }) {
   logMemory(`createDocument start — ${assetSpecs.length} asset(s), ${referenceLinks.length} link(s)`);
@@ -277,7 +303,8 @@ async function createDocument({
     `[googleDocs] createDocument references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
   );
   const { drive, docs } = clients || (await getClients());
-  const title = makeTitle(brief, campaignTitle);
+  const title = makeTitle(brief, campaignTitle, namingPattern, namingContext);
+  console.log(`[googleDocs] doc name: ${isValidNamingPattern(namingPattern) ? 'tenant pattern' : 'default'}`);
 
   const created = await drive.files.create({
     requestBody: {

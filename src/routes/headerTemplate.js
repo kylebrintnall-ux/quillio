@@ -22,7 +22,8 @@ const {
   normalizeHeaderSchema,
   isValidHeaderSchema,
 } = require('../destinations/docHeaderSchema');
-const { getHeaderSchema, saveHeaderSchema } = require('../db');
+const { normalizeNamingPattern, isValidNamingPattern } = require('../destinations/docNaming');
+const { getHeaderSchema, saveHeaderSchema, getNamingPattern, saveNamingPattern } = require('../db');
 
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
 
@@ -101,6 +102,37 @@ router.post('/api/header', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[web] POST /api/header failed:', e.message);
     return res.status(500).json({ success: false, error: 'Could not save header.' });
+  }
+});
+
+// --- File-naming convention (§3) ---
+
+// GET /api/naming — the tenant's stored naming pattern, or null.
+router.get('/api/naming', requireAuth, async (req, res) => {
+  try {
+    const pattern = await getNamingPattern(tenantOf(req));
+    return res.status(200).json({ success: true, pattern: pattern || null });
+  } catch (e) {
+    console.error('[web] GET /api/naming failed:', e.message);
+    return res.status(500).json({ success: false, error: 'Could not load naming pattern.' });
+  }
+});
+
+// POST /api/naming — validate + save the (edited) naming pattern. Normalized
+// defensively so the client can never persist a malformed pattern.
+router.post('/api/naming', requireAuth, async (req, res) => {
+  const pattern = normalizeNamingPattern(req.body && req.body.pattern);
+  if (!isValidNamingPattern(pattern)) {
+    return res.status(400).json({ success: false, error: 'Naming pattern is empty.' });
+  }
+  try {
+    const ok = await saveNamingPattern(tenantOf(req), pattern, 'Default');
+    if (!ok) return res.status(503).json({ success: false, error: 'No database configured — cannot save.' });
+    console.log(`[web] POST /api/naming → saved ${pattern.segments.length} segment(s)`);
+    return res.status(200).json({ success: true, pattern });
+  } catch (e) {
+    console.error('[web] POST /api/naming failed:', e.message);
+    return res.status(500).json({ success: false, error: 'Could not save naming pattern.' });
   }
 });
 

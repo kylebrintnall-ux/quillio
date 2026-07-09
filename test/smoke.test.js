@@ -1657,7 +1657,7 @@ test('web review trigger (8b): adapter + route + project-view button wired', () 
   assert.strictEqual(typeof require('../src/adapters/web').runWebReview, 'function');
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(html.includes('id="project-review-btn"'), 'Review Copy button present');
-  assert.ok(html.includes('id="project-review-panel"'), 'review result panel present');
+  assert.ok(html.includes('id="project-review-modal"'), 'review result overlay present');
   assert.ok(html.includes("fetch") && html.includes("'/api/review'"), 'calls /api/review');
   assert.ok(html.includes('quillio-review.gif') && html.includes('quillio-copy-done.gif'), 'both GIF states');
 });

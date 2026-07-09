@@ -780,14 +780,9 @@
 
       <div class="project-actions">
         <button class="cta-primary hidden" id="project-draft-btn">Generate First Draft</button>
-        <span class="draft-status hidden" id="project-draft-status">✓ Draft complete</span>
         <button class="cta-primary hidden" id="project-review-btn">Review Copy</button>
+        <button class="cta-primary hidden" id="project-regen-btn">Regenerate</button>
         <button class="cta-secondary" id="project-open-btn">Open in Drive</button>
-      </div>
-      <div id="project-review-panel" class="review-panel hidden"></div>
-      <div class="regen hidden" id="project-regen">
-        <textarea class="regen-input" id="project-regen-input" placeholder="What should change? Give Quillio direction."></textarea>
-        <button class="cta-primary" id="project-regen-btn">Regenerate</button>
       </div>
       <div id="project-draft-progress" class="note hidden"></div>
       <div id="project-error" class="error hidden"></div>
@@ -806,6 +801,31 @@
       <textarea class="modal-textarea" id="regen-modal-input" placeholder="Give Quillio direction — tone, length, what to emphasize, what to cut."></textarea>
       <button class="modal-btn" id="regen-modal-submit">Regenerate</button>
       <button class="modal-cancel" id="regen-modal-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Regenerate bottom-sheet modal (Project view) — direction input opens on
+       tap, so it isn't sitting open unprompted at the bottom of the view. -->
+  <div class="modal-overlay" id="project-regen-modal">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-title">What should change?</div>
+      <textarea class="modal-textarea" id="project-regen-modal-input" placeholder="Give Quillio direction — tone, length, what to emphasize, what to cut."></textarea>
+      <button class="modal-btn" id="project-regen-modal-submit">Regenerate</button>
+      <button class="modal-cancel" id="project-regen-modal-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Review result overlay (Project view) — same content/styling as the old
+       inline panel (GIF + status + digest + note), surfaced as a modal so it
+       doesn't clutter the action area. Card chrome is stripped since it sits on
+       the modal sheet; the inner .review-* typography is preserved. -->
+  <div class="modal-overlay" id="project-review-modal">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="review-panel" id="project-review-modal-body" style="margin:0;padding:0;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;border:none;"></div>
+      <button class="modal-btn hidden" id="project-review-modal-open" style="margin-top:18px;">Open in Drive</button>
+      <button class="modal-cancel" id="project-review-modal-close">Close</button>
     </div>
   </div>
 
@@ -1672,10 +1692,8 @@
     var projectFallback = document.getElementById('project-fallback');
     var projectError = document.getElementById('project-error');
     var projectDraftBtn = document.getElementById('project-draft-btn');
-    var projectDraftStatus = document.getElementById('project-draft-status');
-    var projectRegen = document.getElementById('project-regen');
+    var projectRegenBtn = document.getElementById('project-regen-btn');
     var projectReviewBtn = document.getElementById('project-review-btn');
-    var projectReviewPanel = document.getElementById('project-review-panel');
 
     // Does the loaded content already carry drafted copy in any field?
     function contentHasCopy(content) {
@@ -1689,30 +1707,31 @@
       return false;
     }
 
-    // Decide the draft affordance from whether copy already exists: drafted →
-    // show "✓ Draft complete" + the Regenerate section instead of the button;
-    // not drafted → offer the button (when there's a doc to draft into).
+    // Decide the draft affordance from whether copy already exists. There's no
+    // "Draft complete" pill — the drafted copy is visibly present in the view, so
+    // drafted → Regenerate + Review Copy; not drafted → the Generate button.
+    // Review Copy and Regenerate are gated ONLY on (hasCopy && copy_doc_id),
+    // independent of any status pill, so they reliably appear when copy exists.
     function setDraftAffordance(hasCopy) {
       var p = projectState.project;
+      var drafted = !!(hasCopy && p && p.copy_doc_id);
       if (hasCopy) {
         hide(projectDraftBtn);
-        show(projectDraftStatus);
-        if (p && p.copy_doc_id) show(projectRegen);
-        else hide(projectRegen);
       } else {
-        hide(projectDraftStatus);
-        hide(projectRegen);
         projectDraftBtn.disabled = false;
         projectDraftBtn.textContent = 'Generate First Draft';
         if (p && p.copy_doc_id) show(projectDraftBtn);
         else hide(projectDraftBtn);
       }
-      // Review Copy is active only once there's drafted copy to review.
-      if (hasCopy && p && p.copy_doc_id) {
+      if (drafted) {
+        projectRegenBtn.disabled = false;
+        projectRegenBtn.textContent = 'Regenerate';
+        show(projectRegenBtn);
         projectReviewBtn.disabled = false;
         projectReviewBtn.textContent = 'Review Copy';
         show(projectReviewBtn);
       } else {
+        hide(projectRegenBtn);
         hide(projectReviewBtn);
       }
     }
@@ -1729,11 +1748,9 @@
       // Hide every draft affordance until the content tells us whether the doc
       // already has copy (decided after the fetch below).
       hide(projectDraftBtn);
-      hide(projectDraftStatus);
-      hide(projectRegen);
+      hide(projectRegenBtn);
       hide(projectReviewBtn);
-      hide(projectReviewPanel);
-      document.getElementById('project-regen-input').value = '';
+      document.getElementById('project-regen-modal-input').value = '';
       hide(document.getElementById('project-draft-progress'));
       clearError(projectError);
 
@@ -1784,34 +1801,50 @@
     // Review Copy: run the review with the magnifying-glass GIF in-progress, then
     // the copy-done GIF + qualitative status + digest (or a graceful error — the
     // GIF never spins forever). Anchored comments land in the doc itself.
+    function openProjectReviewModal() {
+      document.getElementById('project-review-modal').classList.add('open');
+    }
+    function closeProjectReviewModal() {
+      document.getElementById('project-review-modal').classList.remove('open');
+    }
     async function reviewProjectCopy() {
       var p = projectState.project;
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to review.'); return; }
       clearError(projectError);
       projectReviewBtn.disabled = true;
       projectReviewBtn.textContent = 'Reviewing…';
-      var panel = projectReviewPanel;
-      panel.className = 'review-panel';
-      panel.innerHTML = '<img class="review-gif" src="/assets/gifs/quillio-review.gif" alt=""><div class="review-note">Reviewing your copy…</div>';
-      show(panel);
+      // Same content/styling as the old inline panel, surfaced as an overlay. It
+      // opens with the in-progress GIF and updates in place to the result (or a
+      // graceful error) — the GIF never spins forever.
+      var body = document.getElementById('project-review-modal-body');
+      var openBtn = document.getElementById('project-review-modal-open');
+      body.className = 'review-panel';
+      body.style.cssText = 'margin:0;padding:0;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;border:none;';
+      body.innerHTML = '<img class="review-gif" src="/assets/gifs/quillio-review.gif" alt=""><div class="review-note">Reviewing your copy…</div>';
+      hide(openBtn);
+      openProjectReviewModal();
       try {
         var result = await reviewFetch(p.copy_doc_id);
         if (result && result.hadCopy === false) {
-          panel.innerHTML = '<div class="review-note">Nothing to review yet — generate a draft first.</div>';
+          body.innerHTML = '<div class="review-note">Nothing to review yet — generate a draft first.</div>';
+          hide(openBtn);
         } else {
-          panel.innerHTML =
+          body.innerHTML =
             '<img class="review-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">' +
             '<div class="review-status"></div><div class="review-digest"></div>' +
             '<div class="review-note" style="margin-top:8px">Notes are inline in the doc → <b>Open in Drive</b>.</div>';
-          panel.querySelector('.review-status').textContent = (result && result.status) || 'Review complete';
-          panel.querySelector('.review-digest').textContent = (result && result.digest) || '';
+          body.querySelector('.review-status').textContent = (result && result.status) || 'Review complete';
+          body.querySelector('.review-digest').textContent = (result && result.digest) || '';
+          show(openBtn);
         }
         projectReviewBtn.disabled = false;
         projectReviewBtn.textContent = 'Review again';
       } catch (e) {
-        panel.className = 'review-panel error';
-        panel.innerHTML = '<div class="review-digest"></div>';
-        panel.querySelector('.review-digest').textContent = 'Review didn’t finish: ' + ((e && e.message) || 'please try again.');
+        body.className = 'review-panel error';
+        body.style.cssText = 'margin:0;padding:0;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;border:none;';
+        body.innerHTML = '<div class="review-digest"></div>';
+        body.querySelector('.review-digest').textContent = 'Review didn’t finish: ' + ((e && e.message) || 'please try again.');
+        hide(openBtn);
         projectReviewBtn.disabled = false;
         projectReviewBtn.textContent = 'Review Copy';
       }
@@ -1841,29 +1874,42 @@
     }
 
     // Regenerate (Screen 5) — re-run drafting with direction, then reload.
+    // Regenerate opens a modal for the direction (the input isn't shown until the
+    // button is tapped); Submit closes it and runs the generating sequence.
+    function openProjectRegenModal() {
+      var p = projectState.project;
+      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
+      document.getElementById('project-regen-modal').classList.add('open');
+      setTimeout(function () { document.getElementById('project-regen-modal-input').focus(); }, 400);
+    }
+    function closeProjectRegenModal() {
+      document.getElementById('project-regen-modal').classList.remove('open');
+    }
     async function regenerateProjectDraft() {
       var p = projectState.project;
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
-      var input = document.getElementById('project-regen-input');
-      var btn = document.getElementById('project-regen-btn');
+      var input = document.getElementById('project-regen-modal-input');
+      var direction = input.value.trim();
+      closeProjectRegenModal();
       var progress = document.getElementById('project-draft-progress');
       clearError(projectError);
-      btn.disabled = true;
-      btn.textContent = 'Regenerating…';
+      projectRegenBtn.disabled = true;
+      projectRegenBtn.textContent = 'Regenerating…';
       progress.innerHTML = DRAFTING_NOTE;
       show(progress);
       try {
-        await draftFetch(p.copy_doc_id, input.value.trim());
+        await draftFetch(p.copy_doc_id, direction);
         hide(progress);
-        btn.disabled = false;
-        btn.textContent = 'Regenerate';
+        projectRegenBtn.disabled = false;
+        projectRegenBtn.textContent = 'Regenerate';
+        input.value = '';
         // Reload the regenerated copy into the view.
         openProject(p);
       } catch (e) {
         hide(progress);
         showError(projectError, draftErrorMessage(e));
-        btn.disabled = false;
-        btn.textContent = 'Regenerate';
+        projectRegenBtn.disabled = false;
+        projectRegenBtn.textContent = 'Regenerate';
       }
     }
 
@@ -1889,7 +1935,17 @@
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
     projectReviewBtn.addEventListener('click', reviewProjectCopy);
     projectDraftBtn.addEventListener('click', generateProjectDraft);
-    document.getElementById('project-regen-btn').addEventListener('click', regenerateProjectDraft);
+    projectRegenBtn.addEventListener('click', openProjectRegenModal);
+    document.getElementById('project-regen-modal-submit').addEventListener('click', regenerateProjectDraft);
+    document.getElementById('project-regen-modal-cancel').addEventListener('click', closeProjectRegenModal);
+    document.getElementById('project-regen-modal').addEventListener('click', function (e) {
+      if (e.target === document.getElementById('project-regen-modal')) closeProjectRegenModal();
+    });
+    document.getElementById('project-review-modal-open').addEventListener('click', openProjectInDrive);
+    document.getElementById('project-review-modal-close').addEventListener('click', closeProjectReviewModal);
+    document.getElementById('project-review-modal').addEventListener('click', function (e) {
+      if (e.target === document.getElementById('project-review-modal')) closeProjectReviewModal();
+    });
 
     // --- Pixel clouds (v8 design system) -----------------------------------
     // Programmatic SVG pixel clouds drifting slowly across the sky. One shared

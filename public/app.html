@@ -1758,7 +1758,11 @@
       hide(projectFallback);
       show(projectLoading);
       try {
-        var res = await fetchWithTimeout('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID), {}, 20000);
+        // Cache-bust nonce: a project's content changes as soon as a draft is
+        // generated, so the refetch right after generation must not get a stale
+        // (cached) "no copy" body from any edge/CDN — otherwise the Review Copy
+        // button stays hidden until re-mount. A unique URL forces a fresh fetch.
+        var res = await fetchWithTimeout('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID) + '&_=' + Date.now(), {}, 20000);
         var data = await res.json();
         hide(projectLoading);
         if (!data || !data.success) {

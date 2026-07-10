@@ -262,6 +262,7 @@ const VALID_STATUSES = ['not_started', 'in_progress', 'finished', 'closed'];
 // unless ?include_closed=true. Without a DB this resolves to [].
 router.get('/api/projects', requireAuth, async (req, res) => {
   const includeClosed = req.query.include_closed === 'true';
+  res.set('Cache-Control', 'no-store'); // mutable list — never cache (fresh after create/status change)
   try {
     // Tenant comes from the authenticated session (req.user.tenant_id), never a
     // client-supplied param — prevents cross-tenant reads (audit HIGH 3). In demo
@@ -312,6 +313,10 @@ router.get('/api/projects/:id', requireAuth, async (req, res) => {
 // sections + per-field copy. A Docs read failure returns { success:false } so
 // the UI can fall back to "Content unavailable" + Open in Drive.
 router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
+  // Mutable state — never cache. Otherwise an edge/CDN (Cloudflare) can serve a
+  // pre-generation "no copy" body to the refetch right after a draft completes,
+  // so the Review Copy button stays hidden until the short edge cache expires.
+  res.set('Cache-Control', 'no-store');
   try {
     // Tenant from the session, not a client param (audit HIGH 3).
     const { tenant } = await resolveTenant(req.user && req.user.tenant_id);

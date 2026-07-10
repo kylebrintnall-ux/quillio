@@ -793,6 +793,12 @@
   <!-- Auto-dismissing confirmation toast -->
   <div class="toast" id="toast"></div>
 
+  <!-- Stale-shell banner: shown when the running app.html is older than the live
+       deploy (an edge cache serving old HTML). Tapping reloads to the fresh shell. -->
+  <div id="stale-shell-banner" onclick="location.reload(true)" style="display:none;position:fixed;top:0;left:0;right:0;z-index:300;background:#C0392B;color:#fff;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;text-align:center;padding:11px 14px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.25);">
+    A newer version is available — tap to reload.
+  </div>
+
   <!-- Regenerate bottom-sheet modal (Copy Done screen) -->
   <div class="modal-overlay" id="regen-modal">
     <div class="modal-sheet">
@@ -2008,6 +2014,26 @@
         });
       }
       document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
+    })();
+
+    // --- Stale-shell self-check ------------------------------------------------
+    // The server stamps this shell's build (the deploy commit) into __BUILD__. If
+    // the live deploy (/health) reports a DIFFERENT commit, this HTML is a stale
+    // copy an edge cache is still serving — surface a reload banner so the user is
+    // never silently stuck on old UI (e.g. a missing Review Copy button).
+    var APP_BUILD = '__BUILD__';
+    (function checkShellFresh() {
+      fetch('/health', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (h) {
+          var live = h && h.commit;
+          console.log('[app] shell build=' + APP_BUILD + ' live deploy=' + live);
+          if (live && live !== 'unknown' && APP_BUILD !== '__BUILD' + '__' && live !== APP_BUILD) {
+            var b = document.getElementById('stale-shell-banner');
+            if (b) b.style.display = 'block';
+          }
+        })
+        .catch(function () {});
     })();
   </script>
 </body>

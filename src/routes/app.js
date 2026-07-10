@@ -137,9 +137,17 @@ function sendJobStatus(req, res) {
   return res.status(200).json({ success: true, status: job.status, result: job.result, error: job.error });
 }
 
-// GET /app — the single-file web UI (HTML + CSS + vanilla JS). Static asset,
-// no templating: the page talks to /api/brief and /api/draft itself.
+// GET /app — the single-file web UI (HTML + CSS + vanilla JS). Served with the
+// deploy commit stamped into a __BUILD__ placeholder so the running shell knows
+// its own version and can detect when it's stale (an edge cache serving old HTML
+// despite no-store). The raw file is read once and cached in memory.
 const APP_HTML = path.join(__dirname, '..', '..', 'public', 'app.html');
+let APP_HTML_RAW = null;
+function renderAppHtml() {
+  if (APP_HTML_RAW == null) APP_HTML_RAW = require('fs').readFileSync(APP_HTML, 'utf8');
+  const build = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.SOURCE_VERSION || '').slice(0, 7) || 'dev';
+  return APP_HTML_RAW.split('__BUILD__').join(build);
+}
 router.get('/app', requireAuth, (req, res) => {
   // The HTML shell must never be cached — otherwise a phone serves a stale
   // app.html and never sees newly shipped UI (e.g. the Review Copy button).
@@ -149,7 +157,7 @@ router.get('/app', requireAuth, (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
-  res.status(200).sendFile(APP_HTML);
+  res.status(200).type('html').send(renderAppHtml());
 });
 
 // POST /api/upload — accept brief reference files (multipart form-data) and

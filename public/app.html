@@ -788,9 +788,10 @@
       <div id="project-fallback" class="empty hidden">Content unavailable. You can still open the doc in Drive.</div>
 
       <div class="project-actions">
-        <button class="cta-primary hidden" id="project-draft-btn">Generate First Draft</button>
         <button class="cta-primary hidden" id="project-review-btn">Review Copy</button>
-        <button class="cta-primary hidden" id="project-regen-btn">Regenerate</button>
+        <!-- ONE dynamic primary: Generate First Draft / Generate Selected (N) /
+             Regenerate / Regenerate Selected (N). Routes by draft state × selection. -->
+        <button class="cta-primary hidden" id="project-primary-btn">Generate First Draft</button>
         <button class="cta-secondary" id="project-open-btn">Open in Drive</button>
       </div>
       <div id="project-draft-progress" class="note hidden"></div>
@@ -864,7 +865,7 @@
       return true;
     }
     function clearFieldSelection() { selectedFields.clear(); }
-    function selectedTargets() { return Array.from(selectedFields.values()); }
+    function selectedScopedFields() { return Array.from(selectedFields.values()); }
     function selectedCount() { return selectedFields.size; }
 
     // --- Screen switching ---------------------------------------------------
@@ -1328,9 +1329,9 @@
     }
 
     // Draft job → resolves with { docId, fieldCount }.
-    function draftFetch(docId, direction, fields) {
+    function draftFetch(docId, direction, scopedFields) {
       var body = { docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' };
-      if (fields && fields.length) body.fields = fields; // scoped generate/regen
+      if (scopedFields && scopedFields.length) body.scopedFields = scopedFields; // scoped generate/regen
       return runJob('/api/draft', body, '/api/draft');
     }
     function draftErrorMessage(e) {
@@ -1521,13 +1522,13 @@
       if (!state.docId) { closeRegenModal(); showError(document.getElementById('copydone-error'), 'No document to draft.'); return; }
       var input = document.getElementById('regen-modal-input');
       var direction = input.value.trim();
-      var targets = selectedTargets(); // scoped regen when fields are selected
+      var scopedFields = selectedScopedFields(); // scoped regen when fields are selected
       closeRegenModal();
       showScreen('generating');
       startDraftBar(state.assets);
-      console.log('[app] regenerate start — docId=' + state.docId + ' direction=' + JSON.stringify(direction) + ' scoped=' + targets.length);
+      console.log('[app] regenerate start — docId=' + state.docId + ' direction=' + JSON.stringify(direction) + ' scoped=' + scopedFields.length);
       try {
-        var data = await draftFetch(state.docId, direction, targets);
+        var data = await draftFetch(state.docId, direction, scopedFields);
         console.log('[app] regenerate /api/draft returned:', data);
         finishDraftBar();
         input.value = '';
@@ -1748,8 +1749,7 @@
     var projectLoading = document.getElementById('project-loading');
     var projectFallback = document.getElementById('project-fallback');
     var projectError = document.getElementById('project-error');
-    var projectDraftBtn = document.getElementById('project-draft-btn');
-    var projectRegenBtn = document.getElementById('project-regen-btn');
+    var projectPrimaryBtn = document.getElementById('project-primary-btn');
     var projectReviewBtn = document.getElementById('project-review-btn');
 
     // Does the loaded content already carry drafted copy in any field?
@@ -1773,42 +1773,46 @@
       var p = projectState.project;
       var drafted = !!(hasCopy && p && p.copy_doc_id);
       projectState.hasCopy = drafted; // remembered so selection changes can relabel the button
-      if (hasCopy) {
-        hide(projectDraftBtn);
-      } else {
-        projectDraftBtn.disabled = false;
-        if (p && p.copy_doc_id) show(projectDraftBtn);
-        else hide(projectDraftBtn);
+      // ONE primary button, shown whenever there's a doc to act on (its label +
+      // click route switch on draft state below / in onProjectPrimary).
+      if (projectPrimaryBtn) {
+        projectPrimaryBtn.disabled = false;
+        if (p && p.copy_doc_id) show(projectPrimaryBtn);
+        else hide(projectPrimaryBtn);
       }
-      // Show Review BEFORE Regenerate and null-guard each, so a missing element
-      // reference can never strand the Review button (or throw mid-function).
+      // Review only once there's drafted copy. Null-guard so a missing element
+      // reference can never throw mid-function.
       if (drafted) {
         if (projectReviewBtn) {
           projectReviewBtn.disabled = false;
           projectReviewBtn.textContent = 'Review Copy';
           show(projectReviewBtn);
         }
-        if (projectRegenBtn) {
-          projectRegenBtn.disabled = false;
-          show(projectRegenBtn);
-        }
-      } else {
-        if (projectRegenBtn) hide(projectRegenBtn);
-        if (projectReviewBtn) hide(projectReviewBtn);
+      } else if (projectReviewBtn) {
+        hide(projectReviewBtn);
       }
-      refreshProjectPrimary(); // set the Generate/Regenerate label from the selection count
+      refreshProjectPrimary(); // set the primary's label from draft state × selection count
     }
 
     // The project view's ONE dynamic primary button reflects (draft state × how
     // many fields are selected): Generate First Draft / Generate Selected (N) /
     // Regenerate / Regenerate Selected (N). Highlighting shows WHICH; label HOW MANY.
     function refreshProjectPrimary() {
+      if (!projectPrimaryBtn) return;
       var n = selectedCount();
       if (projectState.hasCopy) {
-        if (projectRegenBtn) projectRegenBtn.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
-      } else if (projectDraftBtn) {
-        projectDraftBtn.textContent = n > 0 ? ('Generate Selected (' + n + ')') : 'Generate First Draft';
+        projectPrimaryBtn.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
+      } else {
+        projectPrimaryBtn.textContent = n > 0 ? ('Generate Selected (' + n + ')') : 'Generate First Draft';
       }
+    }
+
+    // ONE click handler routes by draft state: drafted → the Regenerate direction
+    // modal (scoped when fields are selected); undrafted → generate (scoped when
+    // fields are selected, whole-doc otherwise).
+    function onProjectPrimary() {
+      if (projectState.hasCopy) openProjectRegenModal();
+      else generateProjectDraft();
     }
 
     // The Copy Done screen is always drafted → its primary is Regenerate /
@@ -1831,8 +1835,7 @@
 
       // Hide every draft affordance until the content tells us whether the doc
       // already has copy (decided after the fetch below).
-      hide(projectDraftBtn);
-      hide(projectRegenBtn);
+      hide(projectPrimaryBtn);
       hide(projectReviewBtn);
       document.getElementById('project-regen-modal-input').value = '';
       hide(document.getElementById('project-draft-progress'));
@@ -1953,24 +1956,24 @@
     async function generateProjectDraft() {
       var p = projectState.project;
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
-      var targets = selectedTargets(); // scoped generate when fields are selected
+      var scopedFields = selectedScopedFields(); // scoped generate when fields are selected
       var progress = document.getElementById('project-draft-progress');
       clearError(projectError);
-      projectDraftBtn.disabled = true;
-      projectDraftBtn.textContent = targets.length ? 'Generating…' : 'Drafting…';
+      projectPrimaryBtn.disabled = true;
+      projectPrimaryBtn.textContent = scopedFields.length ? 'Generating…' : 'Drafting…';
       progress.innerHTML = DRAFTING_NOTE;
       show(progress);
       try {
-        await draftFetch(p.copy_doc_id, '', targets);
+        await draftFetch(p.copy_doc_id, '', scopedFields);
         hide(progress);
-        projectDraftBtn.textContent = 'Draft Generated';
+        projectPrimaryBtn.textContent = 'Draft Generated';
         // Reload the (now partly/fully) drafted copy into the view; openProject
         // clears the selection and re-renders field state + the dynamic button.
         openProject(p);
       } catch (e) {
         hide(progress);
         showError(projectError, draftErrorMessage(e));
-        projectDraftBtn.disabled = false;
+        projectPrimaryBtn.disabled = false;
         refreshProjectPrimary();
       }
     }
@@ -1992,18 +1995,18 @@
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
       var input = document.getElementById('project-regen-modal-input');
       var direction = input.value.trim();
-      var targets = selectedTargets(); // scoped regen when fields are selected
+      var scopedFields = selectedScopedFields(); // scoped regen when fields are selected
       closeProjectRegenModal();
       var progress = document.getElementById('project-draft-progress');
       clearError(projectError);
-      projectRegenBtn.disabled = true;
-      projectRegenBtn.textContent = 'Regenerating…';
+      projectPrimaryBtn.disabled = true;
+      projectPrimaryBtn.textContent = 'Regenerating…';
       progress.innerHTML = DRAFTING_NOTE;
       show(progress);
       try {
-        await draftFetch(p.copy_doc_id, direction, targets);
+        await draftFetch(p.copy_doc_id, direction, scopedFields);
         hide(progress);
-        projectRegenBtn.disabled = false;
+        projectPrimaryBtn.disabled = false;
         input.value = '';
         // Reload the regenerated copy into the view; openProject clears the
         // selection and re-renders field state + the dynamic button.
@@ -2011,7 +2014,7 @@
       } catch (e) {
         hide(progress);
         showError(projectError, draftErrorMessage(e));
-        projectRegenBtn.disabled = false;
+        projectPrimaryBtn.disabled = false;
         refreshProjectPrimary();
       }
     }
@@ -2038,8 +2041,7 @@
     document.getElementById('project-back').addEventListener('click', loadHistory);
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
     projectReviewBtn.addEventListener('click', reviewProjectCopy);
-    projectDraftBtn.addEventListener('click', generateProjectDraft);
-    projectRegenBtn.addEventListener('click', openProjectRegenModal);
+    projectPrimaryBtn.addEventListener('click', onProjectPrimary);
     document.getElementById('project-regen-modal-submit').addEventListener('click', regenerateProjectDraft);
     document.getElementById('project-regen-modal-cancel').addEventListener('click', closeProjectRegenModal);
     document.getElementById('project-regen-modal').addEventListener('click', function (e) {

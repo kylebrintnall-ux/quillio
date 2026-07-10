@@ -520,20 +520,22 @@ function ctxKey(assetType, fieldName) {
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, targets) {
+async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields) {
   const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
   const { summary, writerPrompt, assets } = parseDoc(doc);
 
-  // SCOPED generation/regeneration: when `targets` (a list of {assetType,
+  // SCOPED generation/regeneration: when `scopedFields` (a list of {assetType,
   // fieldName}) is present, draft ONLY those fields. Everything else — header,
   // other assets, and unselected fields — never enters the delete/insert lists,
-  // so it stays byte-identical. Absent/empty → whole-doc behavior, exactly as
+  // so no deleteContentRange, insertText, or updateTextStyle touches them and
+  // they stay BYTE-IDENTICAL. Absent/empty → whole-doc behavior, exactly as
   // before (backward-compatible). Matching is case-insensitive via ctxKey.
+  // (Named scopedFields, not `targets`, to avoid colliding with `assetTargets`.)
   const scopeKeys =
-    Array.isArray(targets) && targets.length > 0
-      ? new Set(targets.map((t) => ctxKey(t.assetType, t.fieldName)))
+    Array.isArray(scopedFields) && scopedFields.length > 0
+      ? new Set(scopedFields.map((t) => ctxKey(t.assetType, t.fieldName)))
       : null;
 
   // Build per-asset draft targets straight from the doc. The Google Sheet has

@@ -1743,16 +1743,22 @@ test('siblingContextBlock: context from non-empty siblings, else empty (cohesion
   assert.match(b, /do NOT rewrite/i); // siblings are context only
 });
 
-test('selective regen (Phase 1): fields threaded route -> adapter -> pipeline -> destination', () => {
+test('selective regen (Phase 1): scopedFields threaded route -> adapter -> pipeline -> destination', () => {
   const rd = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
   const route = rd('src/routes/app.js');
-  assert.ok(/body\.fields/.test(route), 'route reads body.fields');
-  assert.ok(/runWebDraft\(docId, tenantContext, direction/.test(route), 'route passes targets to runWebDraft');
-  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, targets\)/.test(rd('src/adapters/web.js')), 'adapter accepts targets');
-  assert.ok(/generateDraft\(docId, direction, clients, tenantId, targets\)/.test(rd('src/core/pipeline.js')), 'pipeline accepts targets');
+  assert.ok(/body\.scopedFields/.test(route), 'route reads body.scopedFields');
+  assert.ok(/runWebDraft\(docId, tenantContext, direction/.test(route), 'route passes scopedFields to runWebDraft');
+  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields\)/.test(rd('src/adapters/web.js')), 'adapter accepts scopedFields');
+  assert.ok(/generateDraft\(docId, direction, clients, tenantId, scopedFields\)/.test(rd('src/core/pipeline.js')), 'pipeline accepts scopedFields');
   const gd = rd('src/destinations/googleDocs.js');
-  assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, targets\)/.test(gd), 'destination accepts targets');
+  assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields\)/.test(gd), 'destination accepts scopedFields');
+  assert.ok(!/lookupDirection, targets\)/.test(gd), 'no bare `targets` param (avoids assetTargets collision)');
   assert.ok(/scopeKeys/.test(gd) && /generateFieldDraft\(/.test(gd), 'destination scoped branch uses per-field generator');
+  // Sibling copy is read BEFORE the delete phase (the getDocContent sibling read
+  // precedes generateDraft's "delete existing copy" phase in source order).
+  const idxSibling = gd.indexOf('scoped sibling-copy read');
+  const idxDelete = gd.indexOf('delete existing copy');
+  assert.ok(idxSibling > -1 && idxDelete > -1 && idxSibling < idxDelete, 'siblings read before delete phase');
 });
 
 test('selective regen (Phase 1): multi-select + dynamic button in the shared UI', () => {
@@ -1760,7 +1766,7 @@ test('selective regen (Phase 1): multi-select + dynamic button in the shared UI'
   assert.ok(/selectedFields/.test(html) && /toggleFieldSelection/.test(html), 'selection state present');
   assert.ok((html.match(/selectable: true/g) || []).length >= 2, 'both project view + Copy Done renderers are selectable');
   assert.ok(/Generate Selected \(/.test(html) && /Regenerate Selected \(/.test(html), 'dynamic scoped button labels');
-  assert.ok(/body\.fields = fields/.test(html), 'draftFetch sends scoped fields');
+  assert.ok(/body\.scopedFields = scopedFields/.test(html), 'draftFetch sends scopedFields');
 });
 
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {

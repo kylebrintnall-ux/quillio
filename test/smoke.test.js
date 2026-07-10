@@ -1773,6 +1773,10 @@ test('web review trigger (8b): adapter + route + project-view button wired', () 
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(html.includes('id="project-review-btn"'), 'Review Copy button present');
   assert.ok(html.includes('id="project-review-modal"'), 'review result overlay present');
+  // The brief-flow Copy Done screen must ALSO offer Review Copy (the common path),
+  // not just the project view — both go through the shared runReviewIntoModal.
+  assert.ok(html.includes('id="copydone-review-btn"'), 'Copy Done Review button present');
+  assert.ok(html.includes('reviewCopyDone') && html.includes('runReviewIntoModal'), 'copydone review wired via shared runner');
   assert.ok(html.includes("fetch") && html.includes("'/api/review'"), 'calls /api/review');
   assert.ok(html.includes('quillio-review.gif') && html.includes('quillio-copy-done.gif'), 'both GIF states');
 });

@@ -740,6 +740,7 @@
       <div id="copydone-error" class="error hidden"></div>
 
       <div class="output-ctas">
+        <button class="cta-primary" id="copydone-review-btn">Review Copy</button>
         <button class="cta-primary" id="copydone-regen-btn">Regenerate</button>
         <button class="cta-secondary" id="copydone-open-btn">Open in Drive</button>
       </div>
@@ -799,8 +800,6 @@
     A newer version is available — tap to reload.
   </div>
 
-  <!-- TEMP diagnostic strip: shows what setDraftAffordance computed. Remove once fixed. -->
-  <div id="dbg" style="display:none;position:fixed;top:0;left:0;right:0;z-index:350;background:rgba(10,10,20,0.94);color:#39FF14;font:11px/1.45 monospace;padding:8px 10px;white-space:pre-wrap;word-break:break-word;"></div>
 
   <!-- Regenerate bottom-sheet modal (Copy Done screen) -->
   <div class="modal-overlay" id="regen-modal">
@@ -1749,20 +1748,6 @@
         if (projectRegenBtn) hide(projectRegenBtn);
         if (projectReviewBtn) hide(projectReviewBtn);
       }
-      console.log('[app] setDraftAffordance drafted=' + drafted +
-        ' hasCopy=' + hasCopy + ' copy_doc_id=' + (p && p.copy_doc_id ? 'yes' : 'no') +
-        ' reviewBtn=' + (projectReviewBtn ? 'found' : 'NULL'));
-      // TEMP on-screen diagnostic (remove once fixed).
-      var dbgEl = document.getElementById('dbg');
-      if (dbgEl) {
-        dbgEl.style.display = 'block';
-        dbgEl.textContent =
-          'build=' + APP_BUILD + '  live=' + (window.LIVE_COMMIT || '?') + '\n' +
-          'drafted=' + drafted + '  hasCopy=' + hasCopy +
-          '  copy_doc_id=' + (p && p.copy_doc_id ? String(p.copy_doc_id).slice(0, 10) : 'MISSING') + '\n' +
-          'reviewBtn=' + (projectReviewBtn ? 'found' : 'NULL') +
-          '  reviewBtnHidden=' + (projectReviewBtn ? projectReviewBtn.classList.contains('hidden') : 'n/a');
-      }
     }
 
     async function openProject(p) {
@@ -1834,21 +1819,27 @@
     // Review Copy: run the review with the magnifying-glass GIF in-progress, then
     // the copy-done GIF + qualitative status + digest (or a graceful error — the
     // GIF never spins forever). Anchored comments land in the doc itself.
+    var reviewModalDocUrl = null;
     function openProjectReviewModal() {
       document.getElementById('project-review-modal').classList.add('open');
     }
     function closeProjectReviewModal() {
       document.getElementById('project-review-modal').classList.remove('open');
     }
-    async function reviewProjectCopy() {
-      var p = projectState.project;
-      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to review.'); return; }
-      clearError(projectError);
-      projectReviewBtn.disabled = true;
-      projectReviewBtn.textContent = 'Reviewing…';
-      // Same content/styling as the old inline panel, surfaced as an overlay. It
-      // opens with the in-progress GIF and updates in place to the result (or a
-      // graceful error) — the GIF never spins forever.
+    // The modal's Open in Drive opens whichever doc triggered the review (project
+    // view or brief-flow Copy Done), not just the project view's doc.
+    function openReviewModalDoc() {
+      if (reviewModalDocUrl) window.open(reviewModalDocUrl, '_blank', 'noopener');
+    }
+    // Shared review runner used by BOTH the project view AND the brief-flow Copy
+    // Done screen. Reviews `docId`, surfacing progress + result in the overlay. It
+    // opens with the in-progress GIF and updates in place to the result (or a
+    // graceful error) — the GIF never spins forever.
+    async function runReviewIntoModal(docId, docUrl, btn, errEl) {
+      if (!docId) { if (errEl) showError(errEl, 'No document to review.'); return; }
+      reviewModalDocUrl = docUrl || null;
+      if (errEl) clearError(errEl);
+      if (btn) { btn.disabled = true; btn.textContent = 'Reviewing…'; }
       var body = document.getElementById('project-review-modal-body');
       var openBtn = document.getElementById('project-review-modal-open');
       body.className = 'review-panel';
@@ -1857,7 +1848,7 @@
       hide(openBtn);
       openProjectReviewModal();
       try {
-        var result = await reviewFetch(p.copy_doc_id);
+        var result = await reviewFetch(docId);
         if (result && result.hadCopy === false) {
           body.innerHTML = '<div class="review-note">Nothing to review yet — generate a draft first.</div>';
           hide(openBtn);
@@ -1868,19 +1859,25 @@
             '<div class="review-note" style="margin-top:8px">Notes are inline in the doc → <b>Open in Drive</b>.</div>';
           body.querySelector('.review-status').textContent = (result && result.status) || 'Review complete';
           body.querySelector('.review-digest').textContent = (result && result.digest) || '';
-          show(openBtn);
+          if (reviewModalDocUrl) show(openBtn); else hide(openBtn);
         }
-        projectReviewBtn.disabled = false;
-        projectReviewBtn.textContent = 'Review again';
+        if (btn) { btn.disabled = false; btn.textContent = 'Review again'; }
       } catch (e) {
         body.className = 'review-panel error';
         body.style.cssText = 'margin:0;padding:0;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;border:none;';
         body.innerHTML = '<div class="review-digest"></div>';
         body.querySelector('.review-digest').textContent = 'Review didn’t finish: ' + ((e && e.message) || 'please try again.');
         hide(openBtn);
-        projectReviewBtn.disabled = false;
-        projectReviewBtn.textContent = 'Review Copy';
+        if (btn) { btn.disabled = false; btn.textContent = 'Review Copy'; }
       }
+    }
+    function reviewProjectCopy() {
+      var p = projectState.project;
+      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to review.'); return; }
+      runReviewIntoModal(p.copy_doc_id, p.copy_doc_url, projectReviewBtn, projectError);
+    }
+    function reviewCopyDone() {
+      runReviewIntoModal(state.docId, state.docUrl, document.getElementById('copydone-review-btn'), document.getElementById('copydone-error'));
     }
 
     async function generateProjectDraft() {
@@ -1952,6 +1949,7 @@
     fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
     document.getElementById('draft-btn').addEventListener('click', generateDraft);
     document.getElementById('open-btn').addEventListener('click', openInDrive);
+    document.getElementById('copydone-review-btn').addEventListener('click', reviewCopyDone);
     document.getElementById('copydone-regen-btn').addEventListener('click', openRegenModal);
     document.getElementById('copydone-open-btn').addEventListener('click', openInDrive);
     document.getElementById('regen-modal-submit').addEventListener('click', submitRegen);
@@ -1974,7 +1972,7 @@
     document.getElementById('project-regen-modal').addEventListener('click', function (e) {
       if (e.target === document.getElementById('project-regen-modal')) closeProjectRegenModal();
     });
-    document.getElementById('project-review-modal-open').addEventListener('click', openProjectInDrive);
+    document.getElementById('project-review-modal-open').addEventListener('click', openReviewModalDoc);
     document.getElementById('project-review-modal-close').addEventListener('click', closeProjectReviewModal);
     document.getElementById('project-review-modal').addEventListener('click', function (e) {
       if (e.target === document.getElementById('project-review-modal')) closeProjectReviewModal();

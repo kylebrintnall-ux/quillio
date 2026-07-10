@@ -1631,9 +1631,91 @@ test('copyReview: digest describes shape, not individual notes', () => {
   assert.match(d, /1 clean, 1 with a note/);
 });
 
+test('copyReview.reconcileComments: preserve, respect-resolved, fix, add (6 rows)', () => {
+  const { reconcileComments, fieldKey } = require('../src/services/copyReview');
+  const F = (assetType, fieldName, copy) => ({ assetType, fieldName, copy });
+  const k = fieldKey;
+
+  // Six fields, one per decision-table row.
+  const fields = [
+    F('A', 'unchanged-flagged', 'copy U'),      // row: unchanged + existing unresolved → KEEP
+    F('A', 'resolved-unchanged', 'copy R'),     // row: resolved + unchanged → RESPECT (no re-add)
+    F('A', 'unchanged-new', 'copy N'),          // row: unchanged + no comment + verdict → ADD
+    F('A', 'changed-fixed', 'copy X2'),         // row: changed + verdict null → REMOVE stale
+    F('A', 'changed-still', 'copy Y2'),         // row: changed + verdict → REPLACE
+    F('A', 'new-field', 'copy Z'),              // row: new field + verdict → ADD
+  ];
+  const priorFields = {
+    [k('A', 'unchanged-flagged')]: { copy: 'copy U', comment: 'tighten U', resolved: false },
+    [k('A', 'resolved-unchanged')]: { copy: 'copy R', comment: 'note R', resolved: false },
+    [k('A', 'unchanged-new')]: { copy: 'copy N', comment: null, resolved: false },
+    [k('A', 'changed-fixed')]: { copy: 'copy X1', comment: 'fix X', resolved: false },
+    [k('A', 'changed-still')]: { copy: 'copy Y1', comment: 'fix Y', resolved: false },
+    // new-field has no prior entry
+  };
+  const verdicts = [
+    { assetType: 'A', fieldName: 'unchanged-flagged', comment: null }, // no-nag; comment must still be KEPT
+    { assetType: 'A', fieldName: 'resolved-unchanged', comment: 'note R again' }, // must be IGNORED (dismissed)
+    { assetType: 'A', fieldName: 'unchanged-new', comment: 'new material note' },
+    { assetType: 'A', fieldName: 'changed-fixed', comment: null },
+    { assetType: 'A', fieldName: 'changed-still', comment: 'still an issue' },
+    { assetType: 'A', fieldName: 'new-field', comment: 'brand new' },
+  ];
+  const liveComments = [
+    { id: 'c-U', content: 'tighten U', resolved: false, quote: 'copy U' },
+    { id: 'c-R', content: 'note R', resolved: true, quote: 'copy R' },      // user resolved it
+    { id: 'c-X', content: 'fix X', resolved: false, quote: 'copy X1' },     // anchored to OLD text
+    { id: 'c-Y', content: 'fix Y', resolved: false, quote: 'copy Y1' },     // anchored to OLD text
+  ];
+
+  const r = reconcileComments({ fields, priorFields, verdicts, liveComments });
+
+  // KEEP: unchanged flagged comment is neither deleted nor re-added.
+  assert.ok(!r.toDelete.includes('c-U'), 'unchanged comment not deleted');
+  assert.ok(!r.toAdd.some((a) => a.quote === 'copy U'), 'unchanged comment not re-added');
+
+  // RESPECT RESOLVED: dismissed comment not deleted, not re-added despite a verdict.
+  assert.ok(!r.toDelete.includes('c-R'), 'resolved comment not deleted');
+  assert.ok(!r.toAdd.some((a) => a.quote === 'copy R'), 'resolved comment not resurrected');
+
+  // ADD new note on unchanged copy.
+  assert.ok(r.toAdd.some((a) => a.quote === 'copy N' && a.content === 'new material note'), 'new note added');
+
+  // REMOVE stale on changed+fixed; nothing re-added there.
+  assert.ok(r.toDelete.includes('c-X'), 'stale fixed comment removed');
+  assert.ok(!r.toAdd.some((a) => a.quote === 'copy X2'), 'fixed field gets no new comment');
+
+  // REPLACE on changed+still: delete old, add new anchored to new copy.
+  assert.ok(r.toDelete.includes('c-Y'), 'stale still-issue comment removed');
+  assert.ok(r.toAdd.some((a) => a.quote === 'copy Y2' && a.content === 'still an issue'), 're-flag anchored to new copy');
+
+  // ADD on a brand-new field.
+  assert.ok(r.toAdd.some((a) => a.quote === 'copy Z' && a.content === 'brand new'), 'new field flagged');
+
+  // State persists resolved flag for the dismissed field.
+  assert.strictEqual(r.nextState.fields[k('A', 'resolved-unchanged')].resolved, true);
+  // Active results: dismissed + fixed count as clean; the other 4 carry notes.
+  const active = r.results.filter((x) => x.comment).length;
+  assert.strictEqual(active, 4, 'four active notes (kept U, new N, replaced Y, new Z)');
+});
+
+test('copyReview.reconcileComments: persisted dismissal survives a vanished comment', () => {
+  const { reconcileComments, fieldKey } = require('../src/services/copyReview');
+  // Copy unchanged, previously resolved, but the resolved comment is gone from Drive.
+  const fields = [{ assetType: 'A', fieldName: 'f', copy: 'same copy' }];
+  const priorFields = { [fieldKey('A', 'f')]: { copy: 'same copy', comment: 'old', resolved: true } };
+  const verdicts = [{ assetType: 'A', fieldName: 'f', comment: 'would re-flag' }];
+  const r = reconcileComments({ fields, priorFields, verdicts, liveComments: [] });
+  assert.strictEqual(r.toAdd.length, 0, 'persisted dismissal blocks re-adding');
+  assert.strictEqual(r.nextState.fields[fieldKey('A', 'f')].resolved, true);
+});
+
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {
   assert.strictEqual(typeof require('../src/services/gemini').reviewCopyFields, 'function');
   const g = require('../src/destinations/googleDocs');
+  assert.strictEqual(typeof g.listReviewComments, 'function');
+  assert.strictEqual(typeof g.addReviewComment, 'function');
+  assert.strictEqual(typeof g.deleteReviewComment, 'function');
   assert.strictEqual(typeof g.clearReviewComments, 'function');
   assert.strictEqual(typeof g.postReviewComments, 'function');
   assert.strictEqual(g.REVIEW_PREFIX, '🪶 Quillio Review — ');

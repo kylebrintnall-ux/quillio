@@ -786,34 +786,85 @@ async function getDocContent(id, clients) {
 // the previous ones before posting the currently-warranted set.
 const REVIEW_PREFIX = '🪶 Quillio Review — ';
 
-// Delete all prior Quillio review comments on the doc (identified by the prefix).
-// Best-effort per comment; returns the count removed.
-async function clearReviewComments(docId, clients) {
+// List the live Quillio review comments on the doc (prefix-identified). Returns
+// [{ id, content, resolved, quote }] where `quote` is the copy the comment was
+// anchored to (quotedFileContent snapshot at post time) and `resolved` is true
+// when the user manually resolved it in Google Docs. RESOLVED COMMENTS ARE
+// INCLUDED — reconcile needs them to respect manual dismissals. `content` has the
+// REVIEW_PREFIX stripped. Non-Quillio comments are excluded by the prefix.
+async function listReviewComments(docId, clients) {
   const { drive } = clients || (await getClients());
-  let removed = 0;
+  const out = [];
   let pageToken = null;
   do {
     const res = await drive.comments.list({
       fileId: docId,
-      fields: 'nextPageToken, comments(id, content, deleted)',
+      fields: 'nextPageToken, comments(id, content, deleted, resolved, quotedFileContent/value)',
       pageSize: 100,
       includeDeleted: false,
       pageToken: pageToken || undefined,
       supportsAllDrives: true,
     });
-    const comments = (res.data.comments || []).filter(
-      (c) => !c.deleted && typeof c.content === 'string' && c.content.startsWith(REVIEW_PREFIX)
-    );
-    for (const c of comments) {
-      try {
-        await drive.comments.delete({ fileId: docId, commentId: c.id, supportsAllDrives: true });
-        removed++;
-      } catch (err) {
-        console.error(`[review] failed to delete comment ${c.id}: ${err.message}`);
-      }
+    for (const c of res.data.comments || []) {
+      if (c.deleted || typeof c.content !== 'string' || !c.content.startsWith(REVIEW_PREFIX)) continue;
+      out.push({
+        id: c.id,
+        content: c.content.slice(REVIEW_PREFIX.length),
+        resolved: !!c.resolved,
+        quote: (c.quotedFileContent && c.quotedFileContent.value) || '',
+      });
     }
     pageToken = res.data.nextPageToken || null;
   } while (pageToken);
+  return out;
+}
+
+// Post ONE branded review comment anchored to `quote` via quotedFileContent.
+// Returns the new comment id, or null on failure (logged). Empty quote/content
+// is a no-op (returns null).
+async function addReviewComment(docId, { quote, content } = {}, clients) {
+  const q = String(quote || '');
+  if (!q.trim() || !content) return null;
+  const { drive } = clients || (await getClients());
+  try {
+    const res = await drive.comments.create({
+      fileId: docId,
+      fields: 'id',
+      supportsAllDrives: true,
+      requestBody: {
+        content: REVIEW_PREFIX + content,
+        quotedFileContent: { mimeType: 'text/plain', value: q },
+      },
+    });
+    return (res.data && res.data.id) || null;
+  } catch (err) {
+    console.error(`[review] failed to add comment: ${err.message}`);
+    return null;
+  }
+}
+
+// Delete ONE comment by id. Best-effort; returns true if it was deleted.
+async function deleteReviewComment(docId, commentId, clients) {
+  if (!commentId) return false;
+  const { drive } = clients || (await getClients());
+  try {
+    await drive.comments.delete({ fileId: docId, commentId, supportsAllDrives: true });
+    return true;
+  } catch (err) {
+    console.error(`[review] failed to delete comment ${commentId}: ${err.message}`);
+    return false;
+  }
+}
+
+// Delete all prior Quillio review comments on the doc (identified by the prefix).
+// Best-effort; returns the count removed. NOTE: no longer used by the review flow
+// (reconcile preserves unresolved comments); kept for completeness / other uses.
+async function clearReviewComments(docId, clients) {
+  const comments = await listReviewComments(docId, clients);
+  let removed = 0;
+  for (const c of comments) {
+    if (await deleteReviewComment(docId, c.id, clients)) removed++;
+  }
   return removed;
 }
 
@@ -858,6 +909,9 @@ module.exports = {
   createDocument,
   generateDraft,
   getDocContent,
+  listReviewComments,
+  addReviewComment,
+  deleteReviewComment,
   clearReviewComments,
   postReviewComments,
   REVIEW_PREFIX,

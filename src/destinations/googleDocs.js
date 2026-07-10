@@ -16,7 +16,7 @@ const { DocBuilder } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
-const { generateAssetDrafts } = require('../services/gemini');
+const { generateAssetDrafts, generateFieldDraft } = require('../services/gemini');
 
 // How many assets to draft concurrently (each asset is one batched Gemini call
 // plus possible per-field fallbacks). Bounded to keep peak memory/CPU sane on an

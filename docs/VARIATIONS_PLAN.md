@@ -71,13 +71,23 @@ Flagged now, per the build rules:
 
 1. **Cohesion trade-off (Phase 1).** `generateAssetDrafts` batches a whole
    asset in one call for cross-field cohesion. A scoped regen of 2 fields in a
-   10-field asset can't use that batch as-is. **Decision:** scoped regen drafts
-   selected fields with the per-field generator (`generateFieldDraft`, which
-   already exists and takes `direction`, `charMax`, `assetDirection`, `summary`,
-   `writerPrompt`, `voiceGuide` and enforces the limit). We accept slightly
-   reduced cross-field cohesion for the regenerated fields in exchange for true
-   scoping — which is the point of the feature. (Whole-doc regen keeps the
-   cohesive batch path unchanged.)
+   10-field asset can't use that batch as-is. **Decision (signed off):** scoped
+   regen drafts selected fields with the per-field generator
+   (`generateFieldDraft`, which already exists and takes `direction`, `charMax`,
+   `assetDirection`, `summary`, `writerPrompt`, `voiceGuide` and enforces the
+   limit). We accept slightly reduced cross-field cohesion for the regenerated
+   fields in exchange for true scoping — the writer is already deliberately
+   breaking batch cohesion and is the cohesion check as they work the doc.
+   (Whole-doc regen keeps the cohesive batch path unchanged.)
+   - **Sibling context (fold into Phase 1 — cheap).** To recover most of the
+     cohesion without batch generation, pass the **current copy of the field's
+     sibling fields** (the other fields of the same asset) into the scoped
+     prompt as read-only context: *"This field sits alongside — Headline: '…';
+     CTA: '…'. Fit with them; do not rewrite them."* `parseDoc`/the doc read
+     already expose every sibling field's current copy at scope time, and
+     `generateFieldDraft` builds a plain prompt array, so this is a few lines and
+     no new API surface. Siblings are **context only** — never regenerated,
+     never written.
 
 2. **`getDocContent` on a multi-variant field (Phase 2).** After stacking N
    options, a field's "copy" is a multi-line block. **Contract we adopt:**
@@ -205,17 +215,28 @@ lightly marked.
 
 ### Downstream compatibility (the important part)
 - `getDocContent`: multi-variant field's `copy` = the whole marked block (no
-  schema change). Document this contract in code.
+  schema change). Document this contract in code. Detect the multi-variant state
+  by the option markers (`^\d+\.\s` lines, ≥2) so downstream can branch on it.
 - App field view: show the block; where a single char count is meaningless,
   show "N options" instead of a number (degrade gracefully). Field state
   reflects **whatever is in the doc** after the writer resolves.
-- Review/char-counts degrade gracefully while variants exist; correctness
-  returns once the writer deletes down to one.
+- **Review SKIPS multi-variant fields (decided).** Reviewing an unresolved
+  stack of options against char limits + voice produces confusing noise, so
+  `copyReview.collectCopyFields` **excludes** fields detected as multi-variant.
+  Optionally the digest/status notes it (e.g. *"3 fields have unresolved
+  variations — resolve to one to review them"*). Those fields are reviewed
+  normally once the writer deletes down to a single copy. (This skip is the
+  interim behavior; the Phase 3+ "variant-aware review" below eventually
+  replaces it — but only after Phase 3's labeled doorways exist to evaluate.)
+- Char-counts degrade gracefully while variants exist; correctness returns once
+  the writer deletes down to one.
 
 ### Tests
 - N-variant insert produces N marked, non-empty, non-bold lines under the label.
 - `parseDoc`/`getDocContent` round-trip: a stacked field parses as one copy
   block; a subsequent scoped regen's `deleteEnd` covers all variant lines.
+- `collectCopyFields` **excludes** a detected multi-variant field and **includes**
+  it again once resolved to a single line.
 - `count = 1` path identical to Phase 1.
 
 ### Verify (manual)
@@ -272,6 +293,29 @@ part of the option marker and is deleted when the writer resolves to a keeper.
 4 variations of a headline at **Roam wide** → 4 options labeled with **different**
 doorways, genuinely different approaches → same request at **Stay close** →
 refinements of the current angle.
+
+---
+
+## Phase 3+ — Variant-aware review (FUTURE — capture only, do NOT build)
+
+Recorded now so it isn't lost; **not part of the current build**. Depends on
+Phase 3's doorway-labeled variations existing.
+
+**Goal:** once a multi-variant field carries labeled doorways, a future review
+enhancement **evaluates the unresolved variants** and offers a second opinion at
+the choosing moment — e.g. *"Option 2 (Outcome) fits the voice guide best;
+Option 3's Question angle leans hypey."* The writer still makes the call.
+
+- Runs **only** on multi-variant fields (the ones Phase 2's review currently
+  skips), reading each variant's doorway label + copy.
+- Judges each variant against voice.md + the brief audience (same references as
+  the main review), and recommends a strongest option **with reasons** — advice,
+  not an auto-pick.
+- **This replaces the Phase 2 "skip multi-variant fields" behavior** — but only
+  *after* Phase 3 ships, because it needs the labeled doorways to evaluate
+  against. Until then, skipping is correct.
+- Single-copy (resolved) fields continue through the normal review/reconcile
+  path unchanged.
 
 ---
 

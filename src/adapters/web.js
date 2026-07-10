@@ -141,10 +141,12 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
 // tenantContext is accepted for a consistent signature (and future per-tenant
 // config); generateDraft re-reads the doc itself, so no tokens are needed today.
 // `direction` is optional user revision feedback threaded into the prompt.
-async function runWebDraft(docId, tenantContext = {}, direction) {
+// `targets` (optional [{assetType, fieldName}]) scopes the draft to only those
+// fields (selective generate/regenerate); undefined → whole doc, as before.
+async function runWebDraft(docId, tenantContext = {}, direction, targets) {
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
   const clients = await getClientsForTenant(tenantId);
-  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId);
+  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, targets);
   return { docId, title, fieldCount, url };
 }
 

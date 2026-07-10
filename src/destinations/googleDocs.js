@@ -520,11 +520,21 @@ function ctxKey(assetType, fieldName) {
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateDraft(id, direction, clients, voiceGuide, lookupDirection) {
+async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, targets) {
   const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
   const { summary, writerPrompt, assets } = parseDoc(doc);
+
+  // SCOPED generation/regeneration: when `targets` (a list of {assetType,
+  // fieldName}) is present, draft ONLY those fields. Everything else — header,
+  // other assets, and unselected fields — never enters the delete/insert lists,
+  // so it stays byte-identical. Absent/empty → whole-doc behavior, exactly as
+  // before (backward-compatible). Matching is case-insensitive via ctxKey.
+  const scopeKeys =
+    Array.isArray(targets) && targets.length > 0
+      ? new Set(targets.map((t) => ctxKey(t.assetType, t.fieldName)))
+      : null;
 
   // Build per-asset draft targets straight from the doc. The Google Sheet has
   // been retired — per-field Notes / Funnel Stage / channel / tone no longer
@@ -541,26 +551,78 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
         insertIndex: field.insertIndex,
         deleteEnd: field.deleteEnd,
       })),
-    }));
+    }))
+    // Scoped: drop assets with no selected field so we don't even iterate them.
+    .filter((a) => !scopeKeys || a.fields.some((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName))));
+
+  // Scoped drafts per field (not the cohesive whole-asset batch), so read the
+  // current copy of every field once to feed each field its siblings' copy as
+  // context (cohesion recovery). Best-effort — a read failure just omits siblings.
+  let copyByKey = null;
+  if (scopeKeys) {
+    try {
+      const content = await getDocContent(id, clients);
+      copyByKey = new Map();
+      for (const a of content.assets || []) {
+        for (const f of a.fields || []) copyByKey.set(ctxKey(a.name, f.fieldName), String(f.copy || ''));
+      }
+    } catch (err) {
+      console.warn('[googleDocs] scoped sibling-copy read failed (continuing without):', err.message);
+      copyByKey = new Map();
+    }
+  }
 
   // Draft each asset's fields together (one batched call per asset) so the copy
   // is cohesive. Assets run with bounded concurrency; one asset failing is
   // logged and skipped rather than aborting the whole run.
   const total = assetTargets.length;
-  logMemory(`generateDraft start — ${total} asset(s), concurrency ${DRAFT_CONCURRENCY}`);
+  logMemory(`generateDraft start — ${total} asset(s), concurrency ${DRAFT_CONCURRENCY}${scopeKeys ? ', scoped' : ''}`);
 
   const perAsset = await mapWithConcurrency(assetTargets, DRAFT_CONCURRENCY, async (a, idx) => {
-    console.log(`[googleDocs] generating asset ${idx + 1}/${total}: ${a.assetType}`);
+    const fieldsToDraft = scopeKeys
+      ? a.fields.filter((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName)))
+      : a.fields;
+    if (fieldsToDraft.length === 0) return [];
+    console.log(`[googleDocs] generating asset ${idx + 1}/${total}: ${a.assetType} (${fieldsToDraft.length} field(s))`);
     try {
-      const drafts = await generateAssetDrafts({
-        assetType: a.assetType,
-        assetDirection: a.assetDirection,
-        summary,
-        writerPrompt,
-        fields: a.fields,
-        direction,
-        voiceGuide,
-      });
+      let drafts;
+      if (scopeKeys) {
+        // Per-field generation with sibling context — each selected field sees the
+        // current copy of its siblings so scoped copy still hangs together.
+        drafts = [];
+        for (const f of fieldsToDraft) {
+          const siblings = a.fields
+            .filter((s) => s.fieldName !== f.fieldName)
+            .map((s) => ({ fieldName: s.fieldName, copy: (copyByKey.get(ctxKey(a.assetType, s.fieldName)) || '').trim() }))
+            .filter((s) => s.copy);
+          try {
+            const copy = await generateFieldDraft({
+              assetType: a.assetType,
+              fieldName: f.fieldName,
+              charMax: f.charMax,
+              assetDirection: a.assetDirection,
+              summary,
+              writerPrompt,
+              direction,
+              voiceGuide,
+              siblings,
+            });
+            if (copy) drafts.push({ fieldName: f.fieldName, copy });
+          } catch (err) {
+            console.warn(`[googleDocs] scoped field failed ${a.assetType}/${f.fieldName}: ${err.message}`);
+          }
+        }
+      } else {
+        drafts = await generateAssetDrafts({
+          assetType: a.assetType,
+          assetDirection: a.assetDirection,
+          summary,
+          writerPrompt,
+          fields: a.fields,
+          direction,
+          voiceGuide,
+        });
+      }
       const metaByName = new Map(
         a.fields.map((f) => [f.fieldName, { insertIndex: f.insertIndex, deleteEnd: f.deleteEnd }])
       );

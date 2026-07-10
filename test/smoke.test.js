@@ -1729,6 +1729,40 @@ test('copyReview.reconcileComments: persisted dismissal survives a vanished comm
   assert.strictEqual(r.nextState.fields[fieldKey('A', 'f')].resolved, true);
 });
 
+test('siblingContextBlock: context from non-empty siblings, else empty (cohesion recovery)', () => {
+  const { siblingContextBlock } = require('../src/services/gemini');
+  assert.strictEqual(siblingContextBlock(), '');
+  assert.strictEqual(siblingContextBlock([]), '');
+  assert.strictEqual(siblingContextBlock([{ fieldName: 'H', copy: '   ' }]), '');
+  const b = siblingContextBlock([
+    { fieldName: 'Headline', copy: 'Ship faster.' },
+    { fieldName: 'CTA', copy: 'Get started' },
+  ]);
+  assert.match(b, /Headline: Ship faster\./);
+  assert.match(b, /CTA: Get started/);
+  assert.match(b, /do NOT rewrite/i); // siblings are context only
+});
+
+test('selective regen (Phase 1): fields threaded route -> adapter -> pipeline -> destination', () => {
+  const rd = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const route = rd('src/routes/app.js');
+  assert.ok(/body\.fields/.test(route), 'route reads body.fields');
+  assert.ok(/runWebDraft\(docId, tenantContext, direction/.test(route), 'route passes targets to runWebDraft');
+  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, targets\)/.test(rd('src/adapters/web.js')), 'adapter accepts targets');
+  assert.ok(/generateDraft\(docId, direction, clients, tenantId, targets\)/.test(rd('src/core/pipeline.js')), 'pipeline accepts targets');
+  const gd = rd('src/destinations/googleDocs.js');
+  assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, targets\)/.test(gd), 'destination accepts targets');
+  assert.ok(/scopeKeys/.test(gd) && /generateFieldDraft\(/.test(gd), 'destination scoped branch uses per-field generator');
+});
+
+test('selective regen (Phase 1): multi-select + dynamic button in the shared UI', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(/selectedFields/.test(html) && /toggleFieldSelection/.test(html), 'selection state present');
+  assert.ok((html.match(/selectable: true/g) || []).length >= 2, 'both project view + Copy Done renderers are selectable');
+  assert.ok(/Generate Selected \(/.test(html) && /Regenerate Selected \(/.test(html), 'dynamic scoped button labels');
+  assert.ok(/body\.fields = fields/.test(html), 'draftFetch sends scoped fields');
+});
+
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {
   assert.strictEqual(typeof require('../src/services/gemini').reviewCopyFields, 'function');
   const g = require('../src/destinations/googleDocs');

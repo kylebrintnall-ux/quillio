@@ -228,10 +228,20 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
     return res.status(400).json({ success: false, error: 'docId is required' });
   }
 
-  const mode = direction ? `regenerate (${direction.length} chars)` : 'first draft';
+  // Optional scoping: only draft the named fields (selective generate/regen).
+  // Sanitize to [{assetType, fieldName}] strings; empty/absent → whole doc.
+  const targets = Array.isArray(body.fields)
+    ? body.fields
+        .filter((f) => f && typeof f.assetType === 'string' && typeof f.fieldName === 'string')
+        .map((f) => ({ assetType: f.assetType, fieldName: f.fieldName }))
+        .slice(0, 200)
+    : null;
+  const scoped = targets && targets.length > 0;
+
+  const mode = `${direction ? `regenerate (${direction.length} chars)` : 'first draft'}${scoped ? ` scoped ${targets.length}` : ''}`;
   const jobId = startJob(`draft doc=${docId} ${mode}`, async () => {
     const tenantContext = await resolveTenant(sessionTenant);
-    const out = await runWebDraft(docId, tenantContext, direction);
+    const out = await runWebDraft(docId, tenantContext, direction, scoped ? targets : undefined);
     return { docId: out.docId, fieldCount: out.fieldCount };
   });
   console.log(`[web] /api/draft start → job=${jobId} doc=${docId} tenant=${sessionTenant} mode=${mode}`);

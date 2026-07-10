@@ -465,6 +465,14 @@
     .field-char { font-size: 11px; color: rgba(26,26,46,0.35); font-variant-numeric: tabular-nums; }
     .field-char.over { color: #c0392b; font-weight: 600; }
     .field-char.placeholder { font-style: italic; }
+    /* Selective regen (Phase 1): tap a field to select it for scoped generate/regen. */
+    .asset-field.selectable { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 10px; padding-left: 10px; padding-right: 10px; margin: 0 -10px; transition: background 0.12s ease, box-shadow 0.12s ease; position: relative; }
+    .asset-field.selectable:active { background: rgba(201,168,76,0.08); }
+    .asset-field.selected { background: rgba(201,168,76,0.14); box-shadow: inset 0 0 0 1.5px rgba(201,168,76,0.85); }
+    .asset-field.selected .field-name { color: var(--ink); font-weight: 600; }
+    .field-check { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%; background: var(--gold); color: #1A1A2E; font-size: 12px; font-weight: 700; display: none; align-items: center; justify-content: center; line-height: 1; }
+    .asset-field.selected .field-check { display: flex; }
+    .asset-field.selectable.has-copy { padding-top: 12px; }
     .draft-status { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 600; color: #0A5C32; background: #C6F0D8; border: 1.5px solid #2ECC71; border-radius: 100px; padding: 6px 14px; display: inline-block; margin-bottom: 16px; }
 
     /* Fixed bottom CTA bar (output) */
@@ -842,6 +850,23 @@
 
     var WORKSPACE_ID = 'T0B8LPRDKHR';
 
+    // --- Selective regeneration selection (Phase 1) ------------------------
+    // Transient, client-only. Which fields are selected for a SCOPED
+    // generate/regenerate, keyed by (assetType, fieldName). Shared by the
+    // project view and the Copy Done screen so the two can't drift.
+    var selectedFields = new Map(); // key -> { assetType, fieldName }
+    function selKey(a, f) { return String(a || '').trim().toLowerCase() + '|' + String(f || '').trim().toLowerCase(); }
+    function isFieldSelected(a, f) { return selectedFields.has(selKey(a, f)); }
+    function toggleFieldSelection(a, f) {
+      var k = selKey(a, f);
+      if (selectedFields.has(k)) { selectedFields.delete(k); return false; }
+      selectedFields.set(k, { assetType: a, fieldName: f });
+      return true;
+    }
+    function clearFieldSelection() { selectedFields.clear(); }
+    function selectedTargets() { return Array.from(selectedFields.values()); }
+    function selectedCount() { return selectedFields.size; }
+
     // --- Screen switching ---------------------------------------------------
     var screens = {
       brief: document.getElementById('screen-brief'),
@@ -1105,6 +1130,7 @@
         var copy = f.copy != null ? String(f.copy) : '';
         var hasCopy = copy.trim().length > 0;
         var limit = charLimit(f); // '[70]' / '[40–60]' / ''
+        var fieldEl;
 
         if (hasCopy) {
           // Drafted field: name, the copy, then a meta row (live char count +
@@ -1120,6 +1146,7 @@
           if (limit) meta.appendChild(el('span', 'field-count', limit));
           row.appendChild(meta);
           card.appendChild(row);
+          fieldEl = row;
         } else {
           // Undrafted field: name + char limit, or a "Not yet drafted" note when
           // we're showing placeholders (post-draft empty field / project view).
@@ -1131,6 +1158,23 @@
             prow.appendChild(el('span', 'field-count', limit));
           }
           card.appendChild(prow);
+          fieldEl = prow;
+        }
+
+        // Multi-select (Phase 1): on the project view + Copy Done, tapping a field
+        // toggles it into the scoped-regen selection. Keyed by (assetType,
+        // fieldName). Reflects any pre-existing selection on re-render.
+        if (opts.selectable) {
+          var aName = asset.name;
+          var fName = f.fieldName;
+          fieldEl.classList.add('selectable');
+          fieldEl.appendChild(el('span', 'field-check', '✓'));
+          if (isFieldSelected(aName, fName)) fieldEl.classList.add('selected');
+          fieldEl.addEventListener('click', function () {
+            var on = toggleFieldSelection(aName, fName);
+            fieldEl.classList.toggle('selected', on);
+            if (typeof opts.onSelectionChange === 'function') opts.onSelectionChange();
+          });
         }
       });
       container.appendChild(card);
@@ -1284,8 +1328,10 @@
     }
 
     // Draft job → resolves with { docId, fieldCount }.
-    function draftFetch(docId, direction) {
-      return runJob('/api/draft', { docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' }, '/api/draft');
+    function draftFetch(docId, direction, fields) {
+      var body = { docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' };
+      if (fields && fields.length) body.fields = fields; // scoped generate/regen
+      return runJob('/api/draft', body, '/api/draft');
     }
     function draftErrorMessage(e) {
       return (e && e.message) || 'Network error — please try again.';
@@ -1402,7 +1448,7 @@
       var wrap = document.getElementById('copydone-assets');
       wrap.textContent = '';
       (assets || []).forEach(function (a) {
-        appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true });
+        appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true, selectable: true, onSelectionChange: refreshCopyDonePrimary });
       });
       var cards = wrap.querySelectorAll('.asset-card');
       for (var i = 0; i < cards.length; i++) {
@@ -1417,6 +1463,8 @@
       document.getElementById('copydone-title').textContent = state.campaignTitle || 'Your copy is ready';
       var fallback = document.getElementById('copydone-fallback');
       clearError(document.getElementById('copydone-error'));
+      clearFieldSelection(); // fresh screen → no stale selection
+      refreshCopyDonePrimary();
       var content = await fetchDocContent();
       if (!content) {
         document.getElementById('copydone-assets').textContent = '';
@@ -1473,12 +1521,13 @@
       if (!state.docId) { closeRegenModal(); showError(document.getElementById('copydone-error'), 'No document to draft.'); return; }
       var input = document.getElementById('regen-modal-input');
       var direction = input.value.trim();
+      var targets = selectedTargets(); // scoped regen when fields are selected
       closeRegenModal();
       showScreen('generating');
       startDraftBar(state.assets);
-      console.log('[app] regenerate start — docId=' + state.docId + ' direction=' + JSON.stringify(direction));
+      console.log('[app] regenerate start — docId=' + state.docId + ' direction=' + JSON.stringify(direction) + ' scoped=' + targets.length);
       try {
-        var data = await draftFetch(state.docId, direction);
+        var data = await draftFetch(state.docId, direction, targets);
         console.log('[app] regenerate /api/draft returned:', data);
         finishDraftBar();
         input.value = '';
@@ -1723,11 +1772,11 @@
     function setDraftAffordance(hasCopy) {
       var p = projectState.project;
       var drafted = !!(hasCopy && p && p.copy_doc_id);
+      projectState.hasCopy = drafted; // remembered so selection changes can relabel the button
       if (hasCopy) {
         hide(projectDraftBtn);
       } else {
         projectDraftBtn.disabled = false;
-        projectDraftBtn.textContent = 'Generate First Draft';
         if (p && p.copy_doc_id) show(projectDraftBtn);
         else hide(projectDraftBtn);
       }
@@ -1741,17 +1790,38 @@
         }
         if (projectRegenBtn) {
           projectRegenBtn.disabled = false;
-          projectRegenBtn.textContent = 'Regenerate';
           show(projectRegenBtn);
         }
       } else {
         if (projectRegenBtn) hide(projectRegenBtn);
         if (projectReviewBtn) hide(projectReviewBtn);
       }
+      refreshProjectPrimary(); // set the Generate/Regenerate label from the selection count
+    }
+
+    // The project view's ONE dynamic primary button reflects (draft state × how
+    // many fields are selected): Generate First Draft / Generate Selected (N) /
+    // Regenerate / Regenerate Selected (N). Highlighting shows WHICH; label HOW MANY.
+    function refreshProjectPrimary() {
+      var n = selectedCount();
+      if (projectState.hasCopy) {
+        if (projectRegenBtn) projectRegenBtn.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
+      } else if (projectDraftBtn) {
+        projectDraftBtn.textContent = n > 0 ? ('Generate Selected (' + n + ')') : 'Generate First Draft';
+      }
+    }
+
+    // The Copy Done screen is always drafted → its primary is Regenerate /
+    // Regenerate Selected (N).
+    function refreshCopyDonePrimary() {
+      var n = selectedCount();
+      var b = document.getElementById('copydone-regen-btn');
+      if (b) b.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
     }
 
     async function openProject(p) {
       projectState.project = p;
+      clearFieldSelection(); // fresh view → no stale selection
       showScreen('project');
       document.getElementById('project-title').textContent = p.name || 'Campaign';
       var badge = document.getElementById('project-status');
@@ -1807,7 +1877,7 @@
       projectContentEl.appendChild(el('div', 'assets-label', 'Assets'));
       var assets = content.assets || [];
       assets.forEach(function (a) {
-        appendAssetCard(projectContentEl, a, { showPlaceholder: true });
+        appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary });
       });
     }
 
@@ -1883,23 +1953,25 @@
     async function generateProjectDraft() {
       var p = projectState.project;
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
+      var targets = selectedTargets(); // scoped generate when fields are selected
       var progress = document.getElementById('project-draft-progress');
       clearError(projectError);
       projectDraftBtn.disabled = true;
-      projectDraftBtn.textContent = 'Drafting…';
+      projectDraftBtn.textContent = targets.length ? 'Generating…' : 'Drafting…';
       progress.innerHTML = DRAFTING_NOTE;
       show(progress);
       try {
-        await draftFetch(p.copy_doc_id);
+        await draftFetch(p.copy_doc_id, '', targets);
         hide(progress);
         projectDraftBtn.textContent = 'Draft Generated';
-        // Reload the now-drafted copy into the view.
+        // Reload the (now partly/fully) drafted copy into the view; openProject
+        // clears the selection and re-renders field state + the dynamic button.
         openProject(p);
       } catch (e) {
         hide(progress);
         showError(projectError, draftErrorMessage(e));
         projectDraftBtn.disabled = false;
-        projectDraftBtn.textContent = 'Generate First Draft';
+        refreshProjectPrimary();
       }
     }
 
@@ -1920,6 +1992,7 @@
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
       var input = document.getElementById('project-regen-modal-input');
       var direction = input.value.trim();
+      var targets = selectedTargets(); // scoped regen when fields are selected
       closeProjectRegenModal();
       var progress = document.getElementById('project-draft-progress');
       clearError(projectError);
@@ -1928,18 +2001,18 @@
       progress.innerHTML = DRAFTING_NOTE;
       show(progress);
       try {
-        await draftFetch(p.copy_doc_id, direction);
+        await draftFetch(p.copy_doc_id, direction, targets);
         hide(progress);
         projectRegenBtn.disabled = false;
-        projectRegenBtn.textContent = 'Regenerate';
         input.value = '';
-        // Reload the regenerated copy into the view.
+        // Reload the regenerated copy into the view; openProject clears the
+        // selection and re-renders field state + the dynamic button.
         openProject(p);
       } catch (e) {
         hide(progress);
         showError(projectError, draftErrorMessage(e));
         projectRegenBtn.disabled = false;
-        projectRegenBtn.textContent = 'Regenerate';
+        refreshProjectPrimary();
       }
     }
 

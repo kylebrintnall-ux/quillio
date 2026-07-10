@@ -510,6 +510,24 @@ function builtInFieldGuidance(fieldName) {
 }
 
 // Generate a single piece of draft copy for one asset field, honoring the
+// Build the "sibling fields" context block for scoped single-field generation.
+// `siblings` is [{ fieldName, copy }] — the current copy of the OTHER fields of
+// the same asset. Returns a prompt block (or '' when there's nothing useful) that
+// gives the field its surroundings so it stays cohesive without the whole-asset
+// batch call. Siblings are context only — never rewritten or emitted. Pure.
+function siblingContextBlock(siblings) {
+  const list = Array.isArray(siblings)
+    ? siblings.filter((s) => s && s.fieldName && s.copy && String(s.copy).trim())
+    : [];
+  if (list.length === 0) return '';
+  return [
+    'These are the OTHER fields of the same asset and their current copy (context only —',
+    'do NOT rewrite or output them). Write THIS field to sit cohesively alongside them —',
+    'same offer, angle, and voice:',
+    ...list.map((s) => `- ${s.fieldName}: ${String(s.copy).trim()}`),
+  ].join('\n');
+}
+
 // character limit and creative direction. Enforces the limit: if the draft is
 // over, it gets one corrective rewrite, then a hard trim as a last resort.
 async function generateFieldDraft({
@@ -525,6 +543,7 @@ async function generateFieldDraft({
   writerPrompt,
   direction,
   voiceGuide,
+  siblings,
 }) {
   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
   const limitLine = ceiling
@@ -548,6 +567,10 @@ async function generateFieldDraft({
     direction
       ? `REVISION direction from the user — apply this, overriding earlier choices where they conflict: ${direction}`
       : '',
+    // Cohesion recovery for scoped (single-field) generation: the current copy of
+    // this field's sibling fields, so it hangs together with them even though it's
+    // drafted alone rather than in the cohesive whole-asset batch.
+    siblingContextBlock(siblings),
     limitLine,
   ]
     .filter(Boolean)
@@ -1011,4 +1034,5 @@ module.exports = {
   reviewCopyFields,
   // Exposed for unit tests only.
   builtInFieldGuidance,
+  siblingContextBlock,
 };

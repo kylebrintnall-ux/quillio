@@ -799,6 +799,9 @@
     A newer version is available — tap to reload.
   </div>
 
+  <!-- TEMP diagnostic strip: shows what setDraftAffordance computed. Remove once fixed. -->
+  <div id="dbg" style="display:none;position:fixed;top:0;left:0;right:0;z-index:350;background:rgba(10,10,20,0.94);color:#39FF14;font:11px/1.45 monospace;padding:8px 10px;white-space:pre-wrap;word-break:break-word;"></div>
+
   <!-- Regenerate bottom-sheet modal (Copy Done screen) -->
   <div class="modal-overlay" id="regen-modal">
     <div class="modal-sheet">
@@ -1749,6 +1752,17 @@
       console.log('[app] setDraftAffordance drafted=' + drafted +
         ' hasCopy=' + hasCopy + ' copy_doc_id=' + (p && p.copy_doc_id ? 'yes' : 'no') +
         ' reviewBtn=' + (projectReviewBtn ? 'found' : 'NULL'));
+      // TEMP on-screen diagnostic (remove once fixed).
+      var dbgEl = document.getElementById('dbg');
+      if (dbgEl) {
+        dbgEl.style.display = 'block';
+        dbgEl.textContent =
+          'build=' + APP_BUILD + '  live=' + (window.LIVE_COMMIT || '?') + '\n' +
+          'drafted=' + drafted + '  hasCopy=' + hasCopy +
+          '  copy_doc_id=' + (p && p.copy_doc_id ? String(p.copy_doc_id).slice(0, 10) : 'MISSING') + '\n' +
+          'reviewBtn=' + (projectReviewBtn ? 'found' : 'NULL') +
+          '  reviewBtnHidden=' + (projectReviewBtn ? projectReviewBtn.classList.contains('hidden') : 'n/a');
+      }
     }
 
     async function openProject(p) {
@@ -2027,6 +2041,7 @@
         .then(function (r) { return r.json(); })
         .then(function (h) {
           var live = h && h.commit;
+          window.LIVE_COMMIT = live || '?';
           console.log('[app] shell build=' + APP_BUILD + ' live deploy=' + live);
           if (live && live !== 'unknown' && APP_BUILD !== '__BUILD' + '__' && live !== APP_BUILD) {
             var b = document.getElementById('stale-shell-banner');

@@ -264,7 +264,14 @@ const LANDING_HTML = `<!doctype html>
 </body>
 </html>`;
 app.get('/', (req, res) => res.status(200).type('html').send(LANDING_HTML));
-app.get('/health', (req, res) => res.status(200).json({ ok: true }));
+// /health also reports the deployed commit (Railway injects RAILWAY_GIT_COMMIT_SHA)
+// so we can tell exactly what's live vs. what a stale shell is serving. no-store so
+// the reading itself is never cached.
+app.get('/health', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const sha = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.SOURCE_VERSION || '';
+  res.status(200).json({ ok: true, commit: sha ? sha.slice(0, 7) : 'unknown' });
+});
 
 // NOTE: the legacy, UNAUTHENTICATED POST /api/voice-guide/generate endpoint was
 // removed here (security audit HIGH 1). It accepted a client-supplied tenantId

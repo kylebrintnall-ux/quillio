@@ -1723,17 +1723,26 @@
         if (p && p.copy_doc_id) show(projectDraftBtn);
         else hide(projectDraftBtn);
       }
+      // Show Review BEFORE Regenerate and null-guard each, so a missing element
+      // reference can never strand the Review button (or throw mid-function).
       if (drafted) {
-        projectRegenBtn.disabled = false;
-        projectRegenBtn.textContent = 'Regenerate';
-        show(projectRegenBtn);
-        projectReviewBtn.disabled = false;
-        projectReviewBtn.textContent = 'Review Copy';
-        show(projectReviewBtn);
+        if (projectReviewBtn) {
+          projectReviewBtn.disabled = false;
+          projectReviewBtn.textContent = 'Review Copy';
+          show(projectReviewBtn);
+        }
+        if (projectRegenBtn) {
+          projectRegenBtn.disabled = false;
+          projectRegenBtn.textContent = 'Regenerate';
+          show(projectRegenBtn);
+        }
       } else {
-        hide(projectRegenBtn);
-        hide(projectReviewBtn);
+        if (projectRegenBtn) hide(projectRegenBtn);
+        if (projectReviewBtn) hide(projectReviewBtn);
       }
+      console.log('[app] setDraftAffordance drafted=' + drafted +
+        ' hasCopy=' + hasCopy + ' copy_doc_id=' + (p && p.copy_doc_id ? 'yes' : 'no') +
+        ' reviewBtn=' + (projectReviewBtn ? 'found' : 'NULL'));
     }
 
     async function openProject(p) {

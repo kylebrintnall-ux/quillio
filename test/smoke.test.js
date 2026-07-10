@@ -1699,6 +1699,25 @@ test('copyReview.reconcileComments: preserve, respect-resolved, fix, add (6 rows
   assert.strictEqual(active, 4, 'four active notes (kept U, new N, replaced Y, new Z)');
 });
 
+test('copyReview.reconcileComments: fixed field is removed even when the quote no longer matches', () => {
+  // Repro of the bug: user fixed the copy, so the live comment's quotedFileContent
+  // (read back from Drive) equals NEITHER the new copy nor the stored priorCopy —
+  // Google orphaned the anchor. Content-matching must still find + delete it.
+  const { reconcileComments, fieldKey } = require('../src/services/copyReview');
+  const key = fieldKey('A', 'f');
+  const fields = [{ assetType: 'A', fieldName: 'f', copy: 'the fixed, better copy' }];
+  const priorFields = { [key]: { copy: 'the old flawed copy', comment: 'tighten this', resolved: false } };
+  const verdicts = [{ assetType: 'A', fieldName: 'f', comment: null }]; // Gemini: fixed
+  const liveComments = [
+    // Quote is stale/garbled (neither cur nor priorCopy); content is intact.
+    { id: 'c-stale', content: 'tighten this', resolved: false, quote: 'old fla' },
+  ];
+  const r = reconcileComments({ fields, priorFields, verdicts, liveComments });
+  assert.deepStrictEqual(r.toDelete, ['c-stale'], 'stale comment found via content and deleted');
+  assert.strictEqual(r.toAdd.length, 0, 'nothing re-added for a fixed field');
+  assert.strictEqual(r.nextState.fields[key].comment, null, 'state cleared for fixed field');
+});
+
 test('copyReview.reconcileComments: persisted dismissal survives a vanished comment', () => {
   const { reconcileComments, fieldKey } = require('../src/services/copyReview');
   // Copy unchanged, previously resolved, but the resolved comment is gone from Drive.

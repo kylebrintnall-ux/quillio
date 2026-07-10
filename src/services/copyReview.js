@@ -96,10 +96,16 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
     const c = v && typeof v.comment === 'string' && v.comment.trim() ? v.comment.trim() : null;
     verdictByKey.set(fieldKey(v.assetType, v.fieldName), c);
   }
-  // Index live comments by anchored quote (first wins — matches the post-time
-  // uniqueness guard for identical copy across fields).
+  // Index live comments two ways. CONTENT is the reliable key: Google does not
+  // change a comment's text when the doc is edited, so it still matches the stored
+  // priorComment after a fix. QUOTE (quotedFileContent.value) is a weak fallback
+  // only — after an edit Drive orphans/rewrites the anchor, so the readback value
+  // equals neither the new nor the old copy, which is why quote-only matching left
+  // fixed-field comments stranded. First occurrence wins for each key.
+  const byContent = new Map();
   const byQuote = new Map();
   for (const c of liveComments || []) {
+    if (typeof c.content === 'string' && !byContent.has(c.content)) byContent.set(c.content, c);
     if (!byQuote.has(c.quote)) byQuote.set(c.quote, c);
   }
 
@@ -108,6 +114,7 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
   const nextState = { fields: {} };
   const results = [];
   const activeQuotes = new Set(); // quotes that will carry a live comment after reconcile
+  const claimed = new Set(); // comment ids already bound to a field (no double-match)
   let kept = 0;
   let added = 0;
   let removed = 0;
@@ -131,9 +138,17 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
     const priorCopy = p.copy != null ? String(p.copy) : null;
     const changed = priorCopy == null ? true : cur !== priorCopy;
     const verdict = verdictByKey.has(key) ? verdictByKey.get(key) : null;
-    // Prefer a comment anchored to the CURRENT copy (unchanged); else the one
-    // anchored to the PRIOR copy (the stale comment after an edit).
-    const existing = byQuote.get(cur) || (priorCopy != null ? byQuote.get(priorCopy) : null) || null;
+    const priorComment = p.comment != null ? String(p.comment) : null;
+    // Match this field's existing comment. Content first (stable across edits, so
+    // it locates the stale comment on a FIXED field), then quote as a fallback for
+    // state-loss cases. Never bind one comment to two fields.
+    let existing =
+      (priorComment && byContent.get(priorComment)) ||
+      byQuote.get(cur) ||
+      (priorCopy != null ? byQuote.get(priorCopy) : null) ||
+      null;
+    if (existing && claimed.has(existing.id)) existing = null;
+    if (existing) claimed.add(existing.id);
 
     // Manual dismissal on UNCHANGED copy → respect it; never re-add. Honor a
     // persisted dismissal too, in case the resolved comment later disappeared.
@@ -156,7 +171,15 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
       }
     } else {
       // Copy changed → any matched comment is stale (anchored to old text).
-      if (existing) { toDelete.push(existing.id); removed += 1; }
+      if (existing) {
+        toDelete.push(existing.id);
+        removed += 1;
+      } else if (priorComment) {
+        // We previously flagged this field but can't find the comment now — it may
+        // have been orphaned/renamed by the edit or lost with state. Log it so a
+        // lingering comment on a fixed field is diagnosable.
+        console.warn(`[review] changed field "${key}" had a prior comment but no live match to remove`);
+      }
       if (verdict && planAdd(key, cur, verdict)) activeComment = verdict; // replace / re-flag
       // verdict null → issue fixed by the edit; stale comment already deleted.
     }

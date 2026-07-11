@@ -1761,6 +1761,36 @@ test('selective regen (Phase 1): scopedFields threaded route -> adapter -> pipel
   assert.ok(idxSibling > -1 && idxDelete > -1 && idxSibling < idxDelete, 'siblings read before delete phase');
 });
 
+test('structural guard: every gemini function googleDocs calls is actually imported', () => {
+  // Regression guard for the class of bug where generateFieldDraft was CALLED in
+  // the scoped path but never imported — a missing import throws only at runtime
+  // (when the function is called), so the suite (which never drives a scoped op
+  // with real Google clients) couldn't catch it. This checks it statically: any
+  // gemini export called by name in googleDocs.js must be in its import list.
+  const gemini = require('../src/services/gemini');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+
+  const m = src.match(/const\s*\{([^}]*)\}\s*=\s*require\(['"]\.\.\/services\/gemini['"]\)/);
+  assert.ok(m, 'googleDocs imports from services/gemini');
+  const imported = new Set(m[1].split(',').map((s) => s.trim()).filter(Boolean));
+
+  const geminiFns = Object.keys(gemini).filter((k) => typeof gemini[k] === 'function');
+  for (const fn of geminiFns) {
+    // Called as `fn(` but not as `x.fn(` and not part of a longer identifier.
+    const calledByName = new RegExp('(?<![\\w.])' + fn + '\\s*\\(').test(src);
+    const definedLocally = new RegExp('function\\s+' + fn + '\\s*\\(').test(src);
+    if (calledByName && !definedLocally) {
+      assert.ok(imported.has(fn), `googleDocs calls ${fn}() but does not import it from services/gemini`);
+    }
+  }
+
+  // Belt-and-suspenders for the two the whole-doc + scoped generateDraft paths use.
+  assert.ok(imported.has('generateAssetDrafts'), 'generateAssetDrafts imported (whole-doc path)');
+  assert.ok(imported.has('generateFieldDraft'), 'generateFieldDraft imported (scoped path)');
+  assert.strictEqual(typeof gemini.generateAssetDrafts, 'function', 'gemini exports generateAssetDrafts');
+  assert.strictEqual(typeof gemini.generateFieldDraft, 'function', 'gemini exports generateFieldDraft');
+});
+
 test('selective regen (Phase 1): multi-select + dynamic button in the shared UI', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(/selectedFields/.test(html) && /toggleFieldSelection/.test(html), 'selection state present');

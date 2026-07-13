@@ -1947,7 +1947,9 @@ test('variations (P2/P3): route sanitizes count (1-4) and distance whitelist; pa
 test('variations (P2/P3): per-field controls + affordance line in the shared UI', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(/buildVarControls/.test(html), 'per-field control builder present');
-  assert.ok(/var-count/.test(html) && /var-distance/.test(html), 'count + distance controls');
+  // Count is a slider (1–4); distance stays three discrete pills.
+  assert.ok(/class = 'var-range'|var-range/.test(html) && /type = 'range'/.test(html), 'count is a range slider');
+  assert.ok(/var-distance/.test(html), 'distance is a pill group');
   assert.ok(/setFieldMeta\([^)]*count/.test(html) && /setFieldMeta\([^)]*distance/.test(html), 'controls write per-field count + distance');
   assert.ok(/count: 1, distance: 'close'/.test(html), 'selection defaults to Phase-1 behavior');
   assert.ok(/e\.stopPropagation\(\)/.test(html), 'control clicks do not toggle the field');

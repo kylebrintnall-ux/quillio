@@ -479,12 +479,23 @@
     .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(201,168,76,0.4); }
     .asset-field.selected .var-controls { display: flex; }
     .var-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .var-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(26,26,46,0.45); min-width: 68px; }
+    /* Muted metadata label — matches IBM Plex Sans field/metadata labels, sentence
+       case, no tracked-out all-caps. */
+    .var-label { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.5); min-width: 68px; }
     .var-pills { display: flex; gap: 6px; flex-wrap: wrap; }
-    .var-pill { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.6); background: rgba(255,255,255,0.6); border: 1.5px solid rgba(26,26,46,0.12); border-radius: 100px; padding: 5px 12px; min-height: 32px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease; }
-    .var-count .var-pill { min-width: 34px; padding: 5px 0; text-align: center; font-variant-numeric: tabular-nums; }
+    .var-pill { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.6); background: rgba(255,255,255,0.6); border: 1.5px solid rgba(26,26,46,0.12); border-radius: 100px; padding: 5px 12px; min-height: 32px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease; }
     .var-pill:active { transform: scale(0.96); }
     .var-pill.on { background: var(--gold); border-color: var(--gold); color: #1A1A2E; }
+    /* Count slider (1–4, integer steps). Gradient fill (gold up to the thumb) is
+       set inline by JS. touch-action:none lets the thumb own horizontal drags on
+       iOS instead of the page stealing them for a scroll. */
+    .var-slider { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 150px; }
+    .var-range { -webkit-appearance: none; appearance: none; flex: 1; height: 5px; margin: 8px 0; border-radius: 100px; background: rgba(26,26,46,0.12); outline: none; cursor: pointer; touch-action: none; }
+    .var-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--gold); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(26,26,46,0.28); cursor: pointer; }
+    .var-range::-moz-range-thumb { width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%; background: var(--gold); box-shadow: 0 1px 4px rgba(26,26,46,0.28); cursor: pointer; }
+    .var-range::-moz-range-track { height: 5px; border-radius: 100px; background: rgba(26,26,46,0.12); }
+    .var-range:active::-webkit-slider-thumb { transform: scale(1.08); }
+    .var-value { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 600; color: var(--gold); font-variant-numeric: tabular-nums; min-width: 12px; text-align: center; }
     /* Multi-variant read-back badges on a drafted field. */
     .field-options { font-size: 11px; font-weight: 600; color: var(--gold); background: rgba(201,168,76,0.14); border-radius: 6px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
     .doorway-chip { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #1A1A2E; background: rgba(201,168,76,0.9); border-radius: 5px; padding: 2px 7px; margin-right: auto; }
@@ -1168,19 +1179,40 @@
         return group;
       }
 
-      // Variations count 1–4.
-      var countGroup = pillRow('Variations', 'var-count');
-      [1, 2, 3, 4].forEach(function (c) {
-        var pill = el('button', 'var-pill', String(c));
-        pill.type = 'button';
-        if (fieldMeta(aName, fName).count === c) pill.classList.add('on');
-        pill.addEventListener('click', function () {
-          setFieldMeta(aName, fName, { count: c });
-          countGroup.querySelectorAll('.var-pill').forEach(function (p) { p.classList.remove('on'); });
-          pill.classList.add('on');
-        });
-        countGroup.appendChild(pill);
+      // Variations count 1–4 — a compact slider with the current value shown.
+      var countRow = el('div', 'var-row');
+      countRow.appendChild(el('span', 'var-label', 'Variations'));
+      var slider = el('div', 'var-slider');
+      var range = document.createElement('input');
+      range.type = 'range';
+      range.min = '1'; range.max = '4'; range.step = '1';
+      range.className = 'var-range';
+      range.value = String(fieldMeta(aName, fName).count || 1);
+      range.setAttribute('aria-label', 'Number of variations');
+      var valueEl = el('span', 'var-value', range.value);
+      function paintRange() {
+        // Gold fill from the left up to the thumb; muted track after it.
+        var pct = ((Number(range.value) - 1) / 3) * 100;
+        range.style.background =
+          'linear-gradient(to right, var(--gold) 0%, var(--gold) ' + pct +
+          '%, rgba(26,26,46,0.12) ' + pct + '%, rgba(26,26,46,0.12) 100%)';
+        valueEl.textContent = range.value;
+      }
+      paintRange();
+      range.addEventListener('input', function () {
+        setFieldMeta(aName, fName, { count: Number(range.value) });
+        paintRange();
       });
+      // iOS: keep the slider's tap/drag from toggling the field or being hijacked
+      // as a page scroll. stopPropagation only — never preventDefault, which would
+      // kill the native thumb drag.
+      ['click', 'pointerdown', 'mousedown', 'touchstart'].forEach(function (ev) {
+        range.addEventListener(ev, function (e) { e.stopPropagation(); });
+      });
+      slider.appendChild(range);
+      slider.appendChild(valueEl);
+      countRow.appendChild(slider);
+      wrap.appendChild(countRow);
 
       // Conceptual distance.
       var distGroup = pillRow('Distance', 'var-distance');

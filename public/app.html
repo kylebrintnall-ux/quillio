@@ -843,7 +843,7 @@
   <div class="modal-overlay" id="regen-modal">
     <div class="modal-sheet">
       <div class="modal-handle"></div>
-      <div class="modal-title">What should change?</div>
+      <div class="modal-title" id="regen-modal-title">What should change?</div>
       <textarea class="modal-textarea" id="regen-modal-input" placeholder="Give Quillio direction — tone, length, what to emphasize, what to cut."></textarea>
       <button class="modal-btn" id="regen-modal-submit">Regenerate</button>
       <button class="modal-cancel" id="regen-modal-cancel">Cancel</button>
@@ -855,7 +855,7 @@
   <div class="modal-overlay" id="project-regen-modal">
     <div class="modal-sheet">
       <div class="modal-handle"></div>
-      <div class="modal-title">What should change?</div>
+      <div class="modal-title" id="project-regen-modal-title">What should change?</div>
       <textarea class="modal-textarea" id="project-regen-modal-input" placeholder="Give Quillio direction — tone, length, what to emphasize, what to cut."></textarea>
       <button class="modal-btn" id="project-regen-modal-submit">Regenerate</button>
       <button class="modal-cancel" id="project-regen-modal-cancel">Cancel</button>
@@ -1656,8 +1656,32 @@
       }
     }
 
+    // Set the regen modal's title + placeholder for the current selection. When
+    // any selected field asks for variations (count > 1 OR distance != 'close'),
+    // the doorway system already owns the angle — so steer the writer toward CRAFT
+    // notes (length, jargon, words to avoid), not "give me different angles,"
+    // which would compete with the assigned doorways. A plain Phase-1 scoped regen
+    // (all fields count 1 / Stay close) or a whole-doc regen keeps the original
+    // copy, where direction is the only steering. Copy only — direction is passed
+    // to the prompt unchanged.
+    function applyRegenModalCopy(titleId, inputId) {
+      var hasVariations = selectedScopedFields().some(function (f) {
+        return (f.count || 1) > 1 || (f.distance && f.distance !== 'close');
+      });
+      var title = document.getElementById(titleId);
+      var input = document.getElementById(inputId);
+      if (hasVariations) {
+        title.textContent = 'Anything else to steer these?';
+        input.placeholder = "e.g. shorter, less jargon, avoid the word 'storefront' — angle is already set by your distance.";
+      } else {
+        title.textContent = 'What should change?';
+        input.placeholder = 'Give Quillio direction — tone, length, what to emphasize, what to cut.';
+      }
+    }
+
     // --- Regenerate bottom-sheet modal (Copy Done) -------------------------
     function openRegenModal() {
+      applyRegenModalCopy('regen-modal-title', 'regen-modal-input');
       document.getElementById('regen-modal').classList.add('open');
       setTimeout(function () { document.getElementById('regen-modal-input').focus(); }, 400);
     }
@@ -2142,6 +2166,7 @@
     function openProjectRegenModal() {
       var p = projectState.project;
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
+      applyRegenModalCopy('project-regen-modal-title', 'project-regen-modal-input');
       document.getElementById('project-regen-modal').classList.add('open');
       setTimeout(function () { document.getElementById('project-regen-modal-input').focus(); }, 400);
     }

@@ -1957,6 +1957,20 @@ test('variations (P2/P3): per-field controls + affordance line in the shared UI'
   assert.ok(/isNumberedStack/.test(html) && /field-options/.test(html), 'stacked fields show "N options"');
 });
 
+test('variations (P2/P3): regen modal copy shifts to craft-notes when variations are set', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // The copy swap is driven by the selection's count/distance, applied on open.
+  assert.ok(/applyRegenModalCopy/.test(html), 'regen modal copy helper present');
+  assert.ok(/\(f\.count \|\| 1\) > 1 \|\| \(f\.distance && f\.distance !== 'close'\)/.test(html), 'keys on count>1 OR distance!=close');
+  // Variations case: steer toward craft, not angle.
+  assert.ok(/Anything else to steer these\?/.test(html), 'craft-notes title');
+  assert.ok(/angle is already set by your distance/.test(html), 'placeholder disclaims angle');
+  // Plain scoped / whole-doc case keeps the original steering copy.
+  assert.ok(/What should change\?/.test(html), 'default title retained');
+  // Applied on both the Copy Done and project-view modals.
+  assert.ok(/applyRegenModalCopy\('regen-modal-title'/.test(html) && /applyRegenModalCopy\('project-regen-modal-title'/.test(html), 'wired into both modals');
+});
+
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {
   assert.strictEqual(typeof require('../src/services/gemini').reviewCopyFields, 'function');
   const g = require('../src/destinations/googleDocs');

@@ -813,7 +813,6 @@
         <button class="cta-primary hidden" id="project-primary-btn">Generate First Draft</button>
         <button class="cta-secondary" id="project-open-btn">Open in Drive</button>
       </div>
-      <div id="project-draft-progress" class="note hidden"></div>
       <div id="project-error" class="error hidden"></div>
     </section>
 
@@ -1375,8 +1374,6 @@
 
     // Brief runs (~30-90s) and draft runs (~1 min) both outlast Railway's proxy
     // if held in one request, so the server starts a job and we poll its status.
-    var DRAFTING_NOTE = '<span class="dot"></span><span>Generating draft… this takes about a minute. Keep this tab open.</span>';
-
     function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
     // Browsers throw a TypeError for a failed fetch ("Load failed" on iOS Safari,
@@ -1955,7 +1952,6 @@
       hide(projectPrimaryBtn);
       hide(projectReviewBtn);
       document.getElementById('project-regen-modal-input').value = '';
-      hide(document.getElementById('project-draft-progress'));
       clearError(projectError);
 
       projectContentEl.textContent = '';
@@ -1987,6 +1983,9 @@
 
     function renderProjectContent(content) {
       projectContentEl.textContent = '';
+      // Remembered for the draft progress-bar estimate/labels (same GIF modal the
+      // brief flow uses), so scoped + whole-doc project ops share one treatment.
+      projectState.assetNames = (content.assets || []).map(function (a) { return a.name; });
 
       projectContentEl.appendChild(el('div', 'section-label', 'Campaign Summary'));
       projectContentEl.appendChild(el('div', 'section-body', content.summary || '—'));
@@ -2085,21 +2084,20 @@
       var p = projectState.project;
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
       var scopedFields = selectedScopedFields(); // scoped generate when fields are selected
-      var progress = document.getElementById('project-draft-progress');
       clearError(projectError);
-      projectPrimaryBtn.disabled = true;
-      projectPrimaryBtn.textContent = scopedFields.length ? 'Generating…' : 'Drafting…';
-      progress.innerHTML = DRAFTING_NOTE;
-      show(progress);
+      // Same GIF loading modal + progress bar as the whole-doc/brief-flow path —
+      // no separate treatment for scoped ops.
+      showScreen('generating');
+      startDraftBar(projectState.assetNames);
       try {
         await draftFetch(p.copy_doc_id, '', scopedFields);
-        hide(progress);
-        projectPrimaryBtn.textContent = 'Draft Generated';
+        finishDraftBar();
         // Reload the (now partly/fully) drafted copy into the view; openProject
-        // clears the selection and re-renders field state + the dynamic button.
+        // returns to the project screen and re-renders field state + the button.
         openProject(p);
       } catch (e) {
-        hide(progress);
+        stopDraftBar();
+        showScreen('project');
         showError(projectError, draftErrorMessage(e));
         projectPrimaryBtn.disabled = false;
         refreshProjectPrimary();
@@ -2125,22 +2123,21 @@
       var direction = input.value.trim();
       var scopedFields = selectedScopedFields(); // scoped regen when fields are selected
       closeProjectRegenModal();
-      var progress = document.getElementById('project-draft-progress');
       clearError(projectError);
-      projectPrimaryBtn.disabled = true;
-      projectPrimaryBtn.textContent = 'Regenerating…';
-      progress.innerHTML = DRAFTING_NOTE;
-      show(progress);
+      // Same GIF loading modal + progress bar as the whole-doc/brief-flow path —
+      // no separate treatment for scoped ops.
+      showScreen('generating');
+      startDraftBar(projectState.assetNames);
       try {
         await draftFetch(p.copy_doc_id, direction, scopedFields);
-        hide(progress);
-        projectPrimaryBtn.disabled = false;
+        finishDraftBar();
         input.value = '';
-        // Reload the regenerated copy into the view; openProject clears the
-        // selection and re-renders field state + the dynamic button.
+        // Reload the regenerated copy into the view; openProject returns to the
+        // project screen and re-renders field state + the dynamic button.
         openProject(p);
       } catch (e) {
-        hide(progress);
+        stopDraftBar();
+        showScreen('project');
         showError(projectError, draftErrorMessage(e));
         projectPrimaryBtn.disabled = false;
         refreshProjectPrimary();

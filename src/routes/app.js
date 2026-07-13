@@ -230,10 +230,17 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
 
   // Optional scoping: only draft the named fields (selective generate/regen).
   // Sanitize to [{assetType, fieldName}] strings; empty/absent → whole doc.
+  // count (1–4) and distance (close|explore|wide) are the optional per-field
+  // variation controls (Phase 2/3); absent/invalid → 1 / 'close' = Phase-1.
   const scopedFields = Array.isArray(body.scopedFields)
     ? body.scopedFields
         .filter((f) => f && typeof f.assetType === 'string' && typeof f.fieldName === 'string')
-        .map((f) => ({ assetType: f.assetType, fieldName: f.fieldName }))
+        .map((f) => ({
+          assetType: f.assetType,
+          fieldName: f.fieldName,
+          count: Math.max(1, Math.min(4, parseInt(f.count, 10) || 1)),
+          distance: ['close', 'explore', 'wide'].includes(f.distance) ? f.distance : 'close',
+        }))
         .slice(0, 200)
     : null;
   const scoped = scopedFields && scopedFields.length > 0;

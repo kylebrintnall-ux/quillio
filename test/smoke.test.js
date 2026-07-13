@@ -1784,11 +1784,14 @@ test('structural guard: every gemini function googleDocs calls is actually impor
     }
   }
 
-  // Belt-and-suspenders for the two the whole-doc + scoped generateDraft paths use.
+  // Belt-and-suspenders for the generateDraft paths: whole-doc batch, scoped
+  // single-field, and scoped variations (Phase 2/3).
   assert.ok(imported.has('generateAssetDrafts'), 'generateAssetDrafts imported (whole-doc path)');
   assert.ok(imported.has('generateFieldDraft'), 'generateFieldDraft imported (scoped path)');
+  assert.ok(imported.has('generateFieldVariations'), 'generateFieldVariations imported (variations path)');
   assert.strictEqual(typeof gemini.generateAssetDrafts, 'function', 'gemini exports generateAssetDrafts');
   assert.strictEqual(typeof gemini.generateFieldDraft, 'function', 'gemini exports generateFieldDraft');
+  assert.strictEqual(typeof gemini.generateFieldVariations, 'function', 'gemini exports generateFieldVariations');
 });
 
 test('selective regen (Phase 1): multi-select + dynamic button in the shared UI', () => {
@@ -1797,6 +1800,159 @@ test('selective regen (Phase 1): multi-select + dynamic button in the shared UI'
   assert.ok((html.match(/selectable: true/g) || []).length >= 2, 'both project view + Copy Done renderers are selectable');
   assert.ok(/Generate Selected \(/.test(html) && /Regenerate Selected \(/.test(html), 'dynamic scoped button labels');
   assert.ok(/body\.scopedFields = scopedFields/.test(html), 'draftFetch sends scopedFields');
+});
+
+// --- Phase 2/3: conceptual variations (doorways) ----------------------------
+
+test('variations (P3): assignDoorways is deterministic, distinct at explore/wide, obvious at close', () => {
+  const { assignDoorways } = require('../src/services/gemini');
+
+  // Stay close → the one obvious doorway, repeated (N executions of one angle).
+  assert.deepStrictEqual(assignDoorways('Headline', 'close', 3), ['Outcome', 'Outcome', 'Outcome']);
+  assert.deepStrictEqual(assignDoorways('Headline', 'close', 1), ['Outcome']);
+
+  // Explore/Roam-wide → N DISTINCT doorways.
+  for (const distance of ['explore', 'wide']) {
+    for (const count of [2, 3, 4]) {
+      const got = assignDoorways('Headline', distance, count);
+      assert.strictEqual(got.length, count, `${distance} x${count} returns count`);
+      assert.strictEqual(new Set(got).size, count, `${distance} x${count} doorways are distinct`);
+    }
+  }
+
+  // Distance applies at count=1: explore = nearest non-obvious, wide = far band.
+  assert.deepStrictEqual(assignDoorways('Headline', 'explore', 1), ['Pain']); // rank[1]
+  assert.deepStrictEqual(assignDoorways('Headline', 'wide', 1), ['Contrast']); // rank[4]
+
+  // Field-type aware: CTA has its own ranking (rank[4] = Proof at wide x1).
+  assert.deepStrictEqual(assignDoorways('CTA Text (Offer 1)', 'wide', 1), ['Proof']);
+
+  // Deterministic — same inputs, same output.
+  assert.deepStrictEqual(assignDoorways('Body', 'wide', 3), assignDoorways('Body', 'wide', 3));
+
+  // Roam-wide always includes the farthest doorway, Reframe, when count reaches it.
+  assert.ok(assignDoorways('Headline', 'wide', 3).includes('Reframe'));
+});
+
+test('variations (P3): buildVariationsPrompt assigns each row an explicit doorway', () => {
+  const { buildVariationsPrompt } = require('../src/services/gemini');
+  const prompt = buildVariationsPrompt({
+    assetType: 'Email', fieldName: 'Headline', charMax: 50, summary: 'S', writerPrompt: 'W',
+    voiceGuide: '', doorways: ['Pain', 'Proof', 'Reframe'], distance: 'wide',
+  });
+  // Each numbered row names its exact doorway (never "give me N different versions").
+  assert.ok(/\n1\. \(Pain\) —/.test(prompt), 'row 1 assigned Pain');
+  assert.ok(/\n2\. \(Proof\) —/.test(prompt), 'row 2 assigned Proof');
+  assert.ok(/\n3\. \(Reframe\) —/.test(prompt), 'row 3 assigned Reframe');
+  // All seven doorway definitions are present.
+  for (const d of ['Pain', 'Outcome', 'Contrast', 'Question', 'Proof', 'Identity', 'Reframe']) {
+    assert.ok(prompt.includes('- ' + d + ':'), 'defines doorway ' + d);
+  }
+  // The value prop from the brief is the reference point.
+  assert.ok(/THE VALUE PROP \(from the campaign brief\)/.test(prompt), 'value prop is the reference');
+  assert.ok(/JSON array of exactly 3 objects/.test(prompt), 'asks for N JSON objects');
+
+  // Stay close (all one door) adds the "N distinct executions of one angle" line.
+  const close = buildVariationsPrompt({
+    assetType: 'Email', fieldName: 'Headline', charMax: 50, summary: 'S', writerPrompt: 'W',
+    voiceGuide: '', doorways: ['Outcome', 'Outcome'], distance: 'close',
+  });
+  assert.ok(/DIFFERENT executions of that one angle/.test(close), 'close = same door, distinct executions');
+
+  // Wide regeneration injects the "go somewhere the current copy didn't" line.
+  const wideRegen = buildVariationsPrompt({
+    assetType: 'Email', fieldName: 'Headline', charMax: 50, summary: 'S', writerPrompt: 'W',
+    voiceGuide: '', doorways: ['Reframe'], distance: 'wide', currentCopy: 'Old angle here.',
+  });
+  assert.ok(/roam wide.*REGENERATION/s.test(wideRegen) && /Old angle here\./.test(wideRegen), 'wide regen avoids current angle');
+});
+
+test('variations (P2/P3): buildVariantBlock marks number iff count>1, label iff distance!=close', () => {
+  const { buildVariantBlock } = require('../src/destinations/googleDocs');
+
+  // close x1 → bare copy, identical to a Phase-1 draft (no marker at all).
+  assert.strictEqual(
+    buildVariantBlock([{ doorway: 'Outcome', copy: 'Ship faster.' }], { distance: 'close', charMax: 50 }),
+    'Ship faster.'
+  );
+  // explore/wide x1 → labeled, NO number (already resolved).
+  assert.strictEqual(
+    buildVariantBlock([{ doorway: 'Reframe', copy: 'What if?' }], { distance: 'wide', charMax: 50 }),
+    '(Reframe) What if?'
+  );
+  // close xN → numbered, NO labels.
+  assert.strictEqual(
+    buildVariantBlock([{ doorway: 'Outcome', copy: 'A' }, { doorway: 'Outcome', copy: 'B' }], { distance: 'close', charMax: 50 }),
+    '1. A\n2. B'
+  );
+  // explore/wide xN → numbered AND labeled.
+  assert.strictEqual(
+    buildVariantBlock([{ doorway: 'Pain', copy: 'A' }, { doorway: 'Proof', copy: 'B' }], { distance: 'wide', charMax: 50 }),
+    '1. (Pain) A\n2. (Proof) B'
+  );
+  // Long fields separate stacked options with a blank line.
+  assert.strictEqual(
+    buildVariantBlock([{ doorway: 'Pain', copy: 'A' }, { doorway: 'Proof', copy: 'B' }], { distance: 'wide', charMax: 400 }),
+    '1. (Pain) A\n\n2. (Proof) B'
+  );
+  // Empty / whitespace variations are dropped (never insert an empty marker line).
+  assert.strictEqual(buildVariantBlock([{ doorway: 'Pain', copy: '   ' }], { distance: 'wide' }), '');
+});
+
+test('variations (P2): review skips numbered stacks, keeps solo labeled + resolved fields', () => {
+  const { collectCopyFields, countUnresolvedVariations } = require('../src/services/copyReview');
+  const { isNumberedStack } = require('../src/utils/variants');
+
+  const stack = '1. (Pain) Drowning in tickets\n2. (Proof) 40% faster\n3. (Reframe) Not a cost center';
+  const solo = '(Reframe) What if support wasn\'t a cost center?';
+  const plain = 'Resolve tickets faster with AI.';
+  assert.ok(isNumberedStack(stack) && !isNumberedStack(solo) && !isNumberedStack(plain));
+
+  const content = { assets: [{ name: 'Email', fields: [
+    { fieldName: 'H1', charMax: 50, copy: stack },
+    { fieldName: 'H2', charMax: 50, copy: solo },
+    { fieldName: 'H3', charMax: 50, copy: plain },
+  ] }] };
+
+  const collected = collectCopyFields(content);
+  const names = collected.map((f) => f.fieldName);
+  assert.deepStrictEqual(names, ['H2', 'H3'], 'numbered stack skipped; solo + plain reviewed');
+  // Solo variation reviewed with its doorway label stripped (length/voice see the sentence).
+  assert.strictEqual(collected[0].copy, 'What if support wasn\'t a cost center?');
+  assert.strictEqual(countUnresolvedVariations(content), 1, 'one unresolved stack counted');
+
+  // Resolved down to one line (markers deleted) → reviewable again.
+  const resolved = { assets: [{ name: 'Email', fields: [{ fieldName: 'H1', charMax: 50, copy: 'Drowning in tickets' }] }] };
+  assert.deepStrictEqual(collectCopyFields(resolved).map((f) => f.fieldName), ['H1']);
+  assert.strictEqual(countUnresolvedVariations(resolved), 0);
+});
+
+test('variations (P1 regression): count=1 + close routes to the unchanged per-field generator', () => {
+  const gd = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  // The scoped loop branches on count/distance: variations only when count>1 OR distance!=close.
+  assert.ok(/meta\.count > 1 \|\| meta\.distance !== 'close'/.test(gd), 'routes to variations only above defaults');
+  assert.ok(/generateFieldVariations\(/.test(gd) && /generateFieldDraft\(/.test(gd), 'both generators wired in scoped branch');
+  assert.ok(/buildVariantBlock\(/.test(gd), 'variations are stacked via buildVariantBlock');
+});
+
+test('variations (P2/P3): route sanitizes count (1-4) and distance whitelist; payload threads through', () => {
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  assert.ok(/Math\.max\(1, Math\.min\(4, parseInt\(f\.count/.test(route), 'count clamped to 1..4');
+  assert.ok(/\['close', 'explore', 'wide'\]\.includes\(f\.distance\)/.test(route), 'distance whitelisted');
+  // scopedFields (now carrying count/distance) still threads route->adapter->pipeline->destination.
+  const gd = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  assert.ok(/scopeMeta/.test(gd) && /distance: t\.distance === 'explore'/.test(gd), 'destination reads per-field count/distance');
+});
+
+test('variations (P2/P3): per-field controls + affordance line in the shared UI', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(/buildVarControls/.test(html), 'per-field control builder present');
+  assert.ok(/var-count/.test(html) && /var-distance/.test(html), 'count + distance controls');
+  assert.ok(/setFieldMeta\([^)]*count/.test(html) && /setFieldMeta\([^)]*distance/.test(html), 'controls write per-field count + distance');
+  assert.ok(/count: 1, distance: 'close'/.test(html), 'selection defaults to Phase-1 behavior');
+  assert.ok(/e\.stopPropagation\(\)/.test(html), 'control clicks do not toggle the field');
+  assert.ok(/Tap any field to select it\./.test(html), 'affordance line present');
+  assert.ok(/isNumberedStack/.test(html) && /field-options/.test(html), 'stacked fields show "N options"');
 });
 
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {

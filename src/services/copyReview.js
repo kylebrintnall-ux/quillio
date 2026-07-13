@@ -20,6 +20,7 @@
 const { getDestination } = require('../destinations');
 const { reviewCopyFields } = require('./gemini');
 const { getVoiceGuide, getReviewState, saveReviewState } = require('../db');
+const { isNumberedStack, stripSoloLabel } = require('../utils/variants');
 
 // Repo voice.md fallback, loaded once (same source gemini.js uses for drafting).
 let repoVoice = null;
@@ -38,15 +39,34 @@ function fieldKey(assetType, fieldName) {
 }
 
 // Flatten getDocContent → the reviewable fields (non-empty copy only).
+// SKIPS fields that are an unresolved NUMBERED STACK (count > 1 variations): the
+// writer hasn't chosen between the options, so reviewing them against a char
+// limit + voice is noise. They become reviewable once resolved to a single line.
+// A SOLO labeled variation (`(Reframe) …`) is already resolved and IS reviewed —
+// its leading doorway tag is stripped so the length/voice check sees the sentence.
 function collectCopyFields(content) {
   const out = [];
   for (const asset of (content && content.assets) || []) {
     for (const f of asset.fields || []) {
-      const copy = String(f.copy || '').trim();
+      const raw = String(f.copy || '').trim();
+      if (!raw) continue;
+      if (isNumberedStack(raw)) continue; // unresolved options — skip until resolved
+      const copy = stripSoloLabel(raw).trim();
       if (copy) out.push({ assetType: asset.name, fieldName: f.fieldName, charMax: f.charMax || 0, copy });
     }
   }
   return out;
+}
+
+// Count fields still holding an unresolved numbered stack (for the digest note).
+function countUnresolvedVariations(content) {
+  let n = 0;
+  for (const asset of (content && content.assets) || []) {
+    for (const f of asset.fields || []) {
+      if (isNumberedStack(String(f.copy || ''))) n += 1;
+    }
+  }
+  return n;
 }
 
 // A supportive, non-numeric read of overall quality (never a grade/score).
@@ -199,9 +219,18 @@ async function runCopyReview(docId, tenantId, clients) {
   const dest = getDestination();
   const content = await dest.getDocContent(docId, clients);
   const fields = collectCopyFields(content);
+  const unresolvedVariations = countUnresolvedVariations(content);
+  // A gentle nudge appended to the digest when some fields are unresolved stacks.
+  const variationNote =
+    unresolvedVariations > 0
+      ? ` ${unresolvedVariations} field${unresolvedVariations === 1 ? ' has' : 's have'} unresolved variations — resolve to one to review ${unresolvedVariations === 1 ? 'it' : 'them'}.`
+      : '';
 
   if (fields.length === 0) {
-    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: false, digest: 'Nothing to review yet — this doc has no drafted copy.', status: 'Nothing to review yet' };
+    const base = unresolvedVariations > 0
+      ? 'No resolved copy to review yet.'
+      : 'Nothing to review yet — this doc has no drafted copy.';
+    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: unresolvedVariations > 0, digest: (base + variationNote).trim(), status: 'Nothing to review yet' };
   }
 
   // Voice guide: tenant override, else repo voice.md.
@@ -274,7 +303,7 @@ async function runCopyReview(docId, tenantId, clients) {
     flagged,
     clean: reviewed - flagged,
     hadCopy: true,
-    digest: buildDigest(recon.results),
+    digest: (buildDigest(recon.results) + variationNote).trim(),
     status: qualitativeStatus(flagged, reviewed),
   };
 }
@@ -283,6 +312,7 @@ module.exports = {
   runCopyReview,
   // exposed for unit tests
   collectCopyFields,
+  countUnresolvedVariations,
   qualitativeStatus,
   buildDigest,
   fieldKey,

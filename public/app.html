@@ -466,13 +466,32 @@
     .field-char.over { color: #c0392b; font-weight: 600; }
     .field-char.placeholder { font-style: italic; }
     /* Selective regen (Phase 1): tap a field to select it for scoped generate/regen. */
-    .asset-field.selectable { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 10px; padding-left: 10px; padding-right: 10px; margin: 0 -10px; transition: background 0.12s ease, box-shadow 0.12s ease; position: relative; }
+    .asset-field.selectable { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 10px; padding-left: 10px; padding-right: 10px; margin: 0 -10px; transition: background 0.12s ease, box-shadow 0.12s ease; position: relative; flex-wrap: wrap; }
     .asset-field.selectable:active { background: rgba(201,168,76,0.08); }
     .asset-field.selected { background: rgba(201,168,76,0.14); box-shadow: inset 0 0 0 1.5px rgba(201,168,76,0.85); }
     .asset-field.selected .field-name { color: var(--ink); font-weight: 600; }
     .field-check { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%; background: var(--gold); color: #1A1A2E; font-size: 12px; font-weight: 700; display: none; align-items: center; justify-content: center; line-height: 1; }
     .asset-field.selected .field-check { display: flex; }
     .asset-field.selectable.has-copy { padding-top: 12px; }
+    /* Variation controls (Phase 2/3): count + conceptual distance, per field.
+       Hidden until the field is selected; revealed inside the selected card. */
+    .field-select-hint { font-size: 12.5px; line-height: 1.55; color: rgba(26,26,46,0.5); font-style: italic; margin: 0 0 14px; }
+    .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(201,168,76,0.4); }
+    .asset-field.selected .var-controls { display: flex; }
+    .var-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .var-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(26,26,46,0.45); min-width: 68px; }
+    .var-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+    .var-pill { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.6); background: rgba(255,255,255,0.6); border: 1.5px solid rgba(26,26,46,0.12); border-radius: 100px; padding: 5px 12px; min-height: 32px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease; }
+    .var-count .var-pill { min-width: 34px; padding: 5px 0; text-align: center; font-variant-numeric: tabular-nums; }
+    .var-pill:active { transform: scale(0.96); }
+    .var-pill.on { background: var(--gold); border-color: var(--gold); color: #1A1A2E; }
+    /* Multi-variant read-back badges on a drafted field. */
+    .field-options { font-size: 11px; font-weight: 600; color: var(--gold); background: rgba(201,168,76,0.14); border-radius: 6px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
+    .doorway-chip { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #1A1A2E; background: rgba(201,168,76,0.9); border-radius: 5px; padding: 2px 7px; margin-right: auto; }
+    @media (max-width: 380px) {
+      .var-label { min-width: 100%; }
+      .var-distance .var-pill { flex: 1; text-align: center; }
+    }
     .draft-status { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 600; color: #0A5C32; background: #C6F0D8; border: 1.5px solid #2ECC71; border-radius: 100px; padding: 6px 14px; display: inline-block; margin-bottom: 16px; }
 
     /* Fixed bottom CTA bar (output) */
@@ -855,18 +874,41 @@
     // Transient, client-only. Which fields are selected for a SCOPED
     // generate/regenerate, keyed by (assetType, fieldName). Shared by the
     // project view and the Copy Done screen so the two can't drift.
-    var selectedFields = new Map(); // key -> { assetType, fieldName }
+    // value: { assetType, fieldName, count (1-4), distance ('close'|'explore'|'wide') }.
+    // count/distance are the per-field variation controls (Phase 2/3); a fresh
+    // selection defaults to 1 / 'close', which behaves exactly as Phase 1.
+    var selectedFields = new Map(); // key -> { assetType, fieldName, count, distance }
     function selKey(a, f) { return String(a || '').trim().toLowerCase() + '|' + String(f || '').trim().toLowerCase(); }
     function isFieldSelected(a, f) { return selectedFields.has(selKey(a, f)); }
+    function fieldMeta(a, f) { return selectedFields.get(selKey(a, f)) || { assetType: a, fieldName: f, count: 1, distance: 'close' }; }
     function toggleFieldSelection(a, f) {
       var k = selKey(a, f);
       if (selectedFields.has(k)) { selectedFields.delete(k); return false; }
-      selectedFields.set(k, { assetType: a, fieldName: f });
+      selectedFields.set(k, { assetType: a, fieldName: f, count: 1, distance: 'close' });
       return true;
+    }
+    function setFieldMeta(a, f, patch) {
+      var k = selKey(a, f);
+      var cur = selectedFields.get(k);
+      if (!cur) return;
+      selectedFields.set(k, Object.assign(cur, patch));
     }
     function clearFieldSelection() { selectedFields.clear(); }
     function selectedScopedFields() { return Array.from(selectedFields.values()); }
     function selectedCount() { return selectedFields.size; }
+
+    // Numbered-variation stack detection (mirror of src/utils/variants.js) — the
+    // app can't require server modules, so the regex lives here too.
+    function isNumberedStack(copy) {
+      var lines = String(copy || '').split('\n').filter(function (l) { return l.trim(); });
+      var n = 0;
+      for (var i = 0; i < lines.length; i++) { if (/^\s*\d+\.\s/.test(lines[i])) n++; }
+      return n >= 2;
+    }
+    function soloDoorway(copy) {
+      var m = String(copy || '').match(/^\s*\(([A-Za-z]+)\)\s+/);
+      return m ? m[1] : null;
+    }
 
     // --- Screen switching ---------------------------------------------------
     var screens = {
@@ -1105,6 +1147,60 @@
       return m ? m[1] : null;
     }
 
+    // Build the per-field variation control strip: a Variations count (1–4) and a
+    // conceptual Distance (Stay close / Explore / Roam wide). Both are per field,
+    // stored in the selection Map. Clicks stopPropagation so tapping a pill sets a
+    // value without toggling the field's selection off. Reflects current state.
+    var DISTANCES = [
+      { key: 'close', label: 'Stay close' },
+      { key: 'explore', label: 'Explore' },
+      { key: 'wide', label: 'Roam wide' },
+    ];
+    function buildVarControls(aName, fName) {
+      var wrap = el('div', 'var-controls');
+      wrap.addEventListener('click', function (e) { e.stopPropagation(); });
+
+      function pillRow(labelText, cls) {
+        var row = el('div', 'var-row');
+        row.appendChild(el('span', 'var-label', labelText));
+        var group = el('div', cls + ' var-pills');
+        row.appendChild(group);
+        wrap.appendChild(row);
+        return group;
+      }
+
+      // Variations count 1–4.
+      var countGroup = pillRow('Variations', 'var-count');
+      [1, 2, 3, 4].forEach(function (c) {
+        var pill = el('button', 'var-pill', String(c));
+        pill.type = 'button';
+        if (fieldMeta(aName, fName).count === c) pill.classList.add('on');
+        pill.addEventListener('click', function () {
+          setFieldMeta(aName, fName, { count: c });
+          countGroup.querySelectorAll('.var-pill').forEach(function (p) { p.classList.remove('on'); });
+          pill.classList.add('on');
+        });
+        countGroup.appendChild(pill);
+      });
+
+      // Conceptual distance.
+      var distGroup = pillRow('Distance', 'var-distance');
+      DISTANCES.forEach(function (d) {
+        var pill = el('button', 'var-pill', d.label);
+        pill.type = 'button';
+        pill.setAttribute('title', d.label);
+        if (fieldMeta(aName, fName).distance === d.key) pill.classList.add('on');
+        pill.addEventListener('click', function () {
+          setFieldMeta(aName, fName, { distance: d.key });
+          distGroup.querySelectorAll('.var-pill').forEach(function (p) { p.classList.remove('on'); });
+          pill.classList.add('on');
+        });
+        distGroup.appendChild(pill);
+      });
+
+      return wrap;
+    }
+
     // Append one asset card to `container`. Each field shows its name, char
     // limit, a live character count (red when over the limit), and the drafted
     // copy beneath it. Shared by Screen 3 (post-draft) and Screen 5.
@@ -1140,10 +1236,23 @@
           row.appendChild(el('span', 'field-name', f.fieldName));
           row.appendChild(el('div', 'field-copy', copy));
           var meta = el('div', 'field-meta');
-          var charText = f.charMax ? (copy.length + ' / ' + f.charMax) : (copy.length + ' chars');
-          var charSpan = el('span', 'field-char', charText);
-          if (f.charMax && copy.length > f.charMax) charSpan.classList.add('over');
-          meta.appendChild(charSpan);
+          var stack = isNumberedStack(copy);
+          var door = stack ? null : soloDoorway(copy);
+          if (stack) {
+            // Unresolved options — a single char count is meaningless; show the
+            // number of options instead (degrade gracefully until resolved).
+            var nOpts = copy.split('\n').filter(function (l) { return /^\s*\d+\.\s/.test(l); }).length;
+            meta.appendChild(el('span', 'field-options', nOpts + ' options'));
+          } else {
+            // Solo labeled variation: show the doorway chip; count the sentence
+            // without its leading "(Doorway) " tag so the number stays honest.
+            var counted = door ? copy.replace(/^\s*\([A-Za-z]+\)\s+/, '') : copy;
+            if (door) meta.appendChild(el('span', 'doorway-chip', door));
+            var charText = f.charMax ? (counted.length + ' / ' + f.charMax) : (counted.length + ' chars');
+            var charSpan = el('span', 'field-char', charText);
+            if (f.charMax && counted.length > f.charMax) charSpan.classList.add('over');
+            meta.appendChild(charSpan);
+          }
           if (limit) meta.appendChild(el('span', 'field-count', limit));
           row.appendChild(meta);
           card.appendChild(row);
@@ -1170,6 +1279,13 @@
           var fName = f.fieldName;
           fieldEl.classList.add('selectable');
           fieldEl.appendChild(el('span', 'field-check', '✓'));
+
+          // Per-field variation controls (count + conceptual distance), revealed
+          // only while the field is selected. Built once and shown/hidden via the
+          // .selected class, so toggling doesn't lose the chosen count/distance.
+          var controls = buildVarControls(aName, fName);
+          fieldEl.appendChild(controls);
+
           if (isFieldSelected(aName, fName)) fieldEl.classList.add('selected');
           fieldEl.addEventListener('click', function () {
             var on = toggleFieldSelection(aName, fName);
@@ -1448,6 +1564,7 @@
     function renderCopyDoneAssets(assets) {
       var wrap = document.getElementById('copydone-assets');
       wrap.textContent = '';
+      wrap.appendChild(fieldSelectHint());
       (assets || []).forEach(function (a) {
         appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true, selectable: true, onSelectionChange: refreshCopyDonePrimary });
       });
@@ -1878,10 +1995,21 @@
       projectContentEl.appendChild(el('div', 'section-body', content.writerDirection || '—'));
 
       projectContentEl.appendChild(el('div', 'assets-label', 'Assets'));
+      projectContentEl.appendChild(fieldSelectHint());
       var assets = content.assets || [];
       assets.forEach(function (a) {
         appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary });
       });
+    }
+
+    // The affordance line: fields aren't obviously tappable, so say so. Muted,
+    // shared by the project view and Copy Done. Returns a fresh node per call.
+    function fieldSelectHint() {
+      return el(
+        'p',
+        'field-select-hint',
+        'Tap any field to select it. Selected fields generate on their own — with their own variation count and conceptual distance.'
+      );
     }
 
     function openProjectInDrive() {

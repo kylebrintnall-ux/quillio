@@ -16,7 +16,7 @@ const { DocBuilder } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
-const { generateAssetDrafts, generateFieldDraft } = require('../services/gemini');
+const { generateAssetDrafts, generateFieldDraft, generateFieldVariations } = require('../services/gemini');
 
 // How many assets to draft concurrently (each asset is one batched Gemini call
 // plus possible per-field fallbacks). Bounded to keep peak memory/CPU sane on an
@@ -518,6 +518,31 @@ function ctxKey(assetType, fieldName) {
   return `${String(assetType).trim().toLowerCase()}|${String(fieldName).trim().toLowerCase()}`;
 }
 
+// Assemble N variations into the single copy block inserted under a field label.
+// Two independent markers: a NUMBER appears iff there's more than one option (a
+// stack to resolve between); a (Doorway) LABEL appears iff a non-'close' distance
+// was chosen (a meaningful door to name). So:
+//   close  ×1  → `copy`                     (bare — identical to a Phase-1 draft)
+//   wide   ×1  → `(Reframe) copy`           (labeled, no number — already resolved)
+//   close  ×N  → `1. copy` / `2. copy`      (numbered, one obvious door, no labels)
+//   wide   ×N  → `1. (Pain) copy` / `2. …`  (numbered + labeled stack)
+// Inserted bold:false/italic:false by the caller, so markers parse as copy — not
+// labels or notes. Long fields separate stacked options with a blank line.
+function buildVariantBlock(variations, { distance, charMax } = {}) {
+  const list = (variations || []).filter((v) => v && String(v.copy || '').trim());
+  if (list.length === 0) return '';
+  const numbered = list.length > 1;
+  const labeled = distance && distance !== 'close';
+  const longField = !(Number(charMax) > 0 && Number(charMax) <= 120);
+  const lines = list.map((v, i) => {
+    let prefix = '';
+    if (numbered) prefix += `${i + 1}. `;
+    if (labeled) prefix += `(${v.doorway}) `;
+    return prefix + String(v.copy).trim();
+  });
+  return lines.join(numbered && longField ? '\n\n' : '\n');
+}
+
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
 async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields) {
@@ -537,6 +562,19 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
     Array.isArray(scopedFields) && scopedFields.length > 0
       ? new Set(scopedFields.map((t) => ctxKey(t.assetType, t.fieldName)))
       : null;
+
+  // Per-field variation controls (Phase 2/3): count (how many options) and
+  // distance (which doorways are eligible). Absent → count 1 / 'close', which
+  // routes to the unchanged Phase-1 per-field path. Keyed by ctxKey.
+  const scopeMeta = new Map();
+  if (scopeKeys) {
+    for (const t of scopedFields) {
+      scopeMeta.set(ctxKey(t.assetType, t.fieldName), {
+        count: Math.max(1, Math.min(4, Number(t.count) || 1)),
+        distance: t.distance === 'explore' || t.distance === 'wide' ? t.distance : 'close',
+      });
+    }
+  }
 
   // Build per-asset draft targets straight from the doc. The Google Sheet has
   // been retired — per-field Notes / Funnel Stage / channel / tone no longer
@@ -597,19 +635,44 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
             .filter((s) => s.fieldName !== f.fieldName)
             .map((s) => ({ fieldName: s.fieldName, copy: (copyByKey.get(ctxKey(a.assetType, s.fieldName)) || '').trim() }))
             .filter((s) => s.copy);
+          const meta = scopeMeta.get(ctxKey(a.assetType, f.fieldName)) || { count: 1, distance: 'close' };
+          const wantsVariations = meta.count > 1 || meta.distance !== 'close';
           try {
-            const copy = await generateFieldDraft({
-              assetType: a.assetType,
-              fieldName: f.fieldName,
-              charMax: f.charMax,
-              assetDirection: a.assetDirection,
-              summary,
-              writerPrompt,
-              direction,
-              voiceGuide,
-              siblings,
-            });
-            if (copy) drafts.push({ fieldName: f.fieldName, copy });
+            if (wantsVariations) {
+              // Phase 2/3: N conceptually-distinct options via assigned doorways.
+              // Stacked into one copy block (buildVariantBlock), so it rides the
+              // existing two-phase write as a single {fieldName, copy}.
+              const variations = await generateFieldVariations({
+                assetType: a.assetType,
+                fieldName: f.fieldName,
+                charMax: f.charMax,
+                assetDirection: a.assetDirection,
+                summary,
+                writerPrompt,
+                direction,
+                voiceGuide,
+                distance: meta.distance,
+                count: meta.count,
+                currentCopy: copyByKey.get(ctxKey(a.assetType, f.fieldName)) || '',
+                siblings,
+              });
+              const copy = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax });
+              if (copy) drafts.push({ fieldName: f.fieldName, copy });
+            } else {
+              // Phase-1 path, unchanged: one bare draft, count 1 / Stay close.
+              const copy = await generateFieldDraft({
+                assetType: a.assetType,
+                fieldName: f.fieldName,
+                charMax: f.charMax,
+                assetDirection: a.assetDirection,
+                summary,
+                writerPrompt,
+                direction,
+                voiceGuide,
+                siblings,
+              });
+              if (copy) drafts.push({ fieldName: f.fieldName, copy });
+            }
           } catch (err) {
             console.warn(`[googleDocs] scoped field failed ${a.assetType}/${f.fieldName}: ${err.message}`);
           }
@@ -987,4 +1050,5 @@ module.exports = {
   fieldHint,
   parseDoc,
   appendBody,
+  buildVariantBlock,
 };

@@ -740,6 +740,230 @@ async function generateAssetDrafts({
   return out;
 }
 
+// --- Conceptual variations (Phase 3): doorways ------------------------------
+//
+// A "doorway" is a distinct ANGLE into the SAME value prop — not a reworded
+// version. Diversity is guaranteed structurally: assignDoorways() picks the N
+// distinct doorways in JS, and buildVariationsPrompt() names the exact doorway
+// for each numbered row, so the model is never asked to "be different" (which
+// makes LLMs cluster). The doorway changes the angle only; the brand voice
+// (voice.md) still governs tone + craft for every variation.
+const DOORWAYS = {
+  Pain: 'lead with the ache / cost of the status quo the product removes.',
+  Outcome: 'the after-state — who they become or what improves once they have it.',
+  Contrast: 'old way vs. new way; before vs. after.',
+  Question: 'open with a provocative question that frames the value prop.',
+  Proof: 'lead with a specific, concrete fact, number, or verifiable claim.',
+  Identity: 'speak to who the reader is or aspires to be.',
+  Reframe: "challenge the category's assumption; recast what the thing even is.",
+};
+
+// Per-field-type doorway ranking, most-obvious → least. Distance bands slice this:
+// close = rank[0]; explore = rank[1..3]; wide = rank[4..6] (always ends Reframe).
+const DOORWAY_RANKINGS = {
+  headline: ['Outcome', 'Pain', 'Proof', 'Question', 'Contrast', 'Identity', 'Reframe'],
+  body: ['Outcome', 'Proof', 'Pain', 'Contrast', 'Identity', 'Question', 'Reframe'],
+  cta: ['Outcome', 'Identity', 'Question', 'Pain', 'Proof', 'Contrast', 'Reframe'],
+  preheader: ['Question', 'Outcome', 'Pain', 'Proof', 'Contrast', 'Identity', 'Reframe'],
+  default: ['Outcome', 'Pain', 'Proof', 'Question', 'Contrast', 'Identity', 'Reframe'],
+};
+
+// Classify a field into a doorway-ranking bucket by name keyword. Order matters:
+// subhead/pre-header are checked before headline (so "subhead" isn't caught by a
+// headline match), and CTA first (it's the most specific).
+function doorwayRankingForField(fieldName) {
+  const n = String(fieldName || '').toLowerCase();
+  if (/\bcta\b|button|call to action/.test(n)) return DOORWAY_RANKINGS.cta;
+  if (/pre-?header|preheader|subhead/.test(n)) return DOORWAY_RANKINGS.preheader;
+  if (/headline|subject|hook|title/.test(n)) return DOORWAY_RANKINGS.headline;
+  if (/body|description|caption|paragraph|message/.test(n)) return DOORWAY_RANKINGS.body;
+  return DOORWAY_RANKINGS.default;
+}
+
+// Deterministically assign `count` doorways for a field at a given distance.
+// Pure — no randomness — so diversity is guaranteed and the assignment is
+// testable. Stay close → the one obvious doorway, repeated (N distinct
+// EXECUTIONS of a single angle). Explore/Roam-wide → N DISTINCT doorways drawn
+// from the band, spilling to the nearest neighbors outside it if count exceeds
+// the band size (max count is 4).
+function assignDoorways(fieldName, distance, count) {
+  const rank = doorwayRankingForField(fieldName);
+  const n = Math.max(1, Math.min(4, Number(count) || 1));
+  const d = distance === 'explore' || distance === 'wide' ? distance : 'close';
+
+  if (d === 'close') return Array(n).fill(rank[0]);
+
+  const band = d === 'explore' ? rank.slice(1, 4) : rank.slice(4, 7);
+  // Nearest doorways outside the band, to keep all N distinct when count > band.
+  const spill = d === 'explore' ? [...rank.slice(4), rank[0]] : [...rank.slice(1, 4)].reverse();
+  const pool = [...band, ...spill];
+  const out = [];
+  for (const dw of pool) {
+    if (out.length >= n) break;
+    if (!out.includes(dw)) out.push(dw);
+  }
+  return out;
+}
+
+// Build the variations prompt. `doorways` is the pre-assigned list (one per row);
+// the prompt names each explicitly so the model can't collapse them. Pure.
+function buildVariationsPrompt({
+  assetType,
+  fieldName,
+  charMax,
+  summary,
+  writerPrompt,
+  assetDirection,
+  voiceGuide,
+  doorways,
+  distance,
+  direction,
+  currentCopy,
+}) {
+  const n = doorways.length;
+  const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
+  const allSame = new Set(doorways).size === 1; // Stay close: one door, N executions
+  const limitLine = ceiling
+    ? `Character limit: ${ceiling} per variation. Each is a COMPLETE, self-contained thought within this hard maximum — finish the thought, even a few characters short.`
+    : 'Keep each variation concise — a complete, self-contained thought appropriate for the field.';
+
+  const doorwayDefs = Object.entries(DOORWAYS).map(([name, def]) => `- ${name}: ${def}`);
+  const assignmentRows = doorways.map((dw, i) => `${i + 1}. (${dw}) —`);
+
+  const sameAngleLine = allSame
+    ? [
+        `All ${n} variations use the SAME doorway (${doorways[0]}) — write ${n} genuinely`,
+        'DIFFERENT executions of that one angle (different hooks, specifics, structure),',
+        'never reworded near-duplicates.',
+        '',
+      ]
+    : [];
+
+  return [
+    `Write ONE marketing field as ${n} DISTINCT variation${n === 1 ? '' : 's'}. Each sells the`,
+    'SAME value proposition but enters through a DIFFERENT DOORWAY — a different angle of',
+    'attack — so the writer sees genuinely different strategic thinking, not reworded copy.',
+    '',
+    'THE VALUE PROP (from the campaign brief) — every variation sells THIS, its own way:',
+    `Campaign summary: ${summary}`,
+    `Creative direction: ${writerPrompt}`,
+    assetDirection ? `Asset creative direction (apply to ALL): ${assetDirection}` : null,
+    '',
+    ...brandVoiceLines(assetType, voiceGuide),
+    `Asset: ${assetType}`,
+    `Field: ${fieldName}`,
+    limitLine,
+    '',
+    'DOORWAYS — each is a different way IN to the value prop above. The doorway changes the',
+    'ANGLE only; the brand voice above still governs tone and craft for every one:',
+    ...doorwayDefs,
+    '',
+    ...sameAngleLine,
+    'YOUR ASSIGNMENT — write exactly one variation per row, using the EXACT doorway named for',
+    'that row. Do NOT drift between doorways and do NOT repeat an angle:',
+    ...assignmentRows,
+    '',
+    direction
+      ? `REVISION direction from the user — apply to EVERY variation, overriding earlier choices where they conflict: ${direction}`
+      : null,
+    distance === 'wide' && currentCopy
+      ? `This is a "roam wide" REGENERATION. The current copy took this angle: "${String(currentCopy).trim()}". Deliberately go somewhere it did NOT.`
+      : null,
+    '',
+    `Return ONLY a JSON array of exactly ${n} object${n === 1 ? '' : 's'}, in the SAME order as the rows`,
+    'above, each {"doorway": "<doorway name for that row>", "copy": "<copy>"}.',
+    'Valid JSON only — no markdown, no backticks, no commentary.',
+  ]
+    // Drop only ABSENT conditional lines (null); keep the intentional '' blanks
+    // that separate sections so the model reads a structured prompt, not a wall.
+    .filter((line) => line !== null && line !== undefined)
+    .join('\n');
+}
+
+// Generate N conceptually-distinct variations of one field. Returns
+// [{ doorway, copy }] (length ≤ count), each respecting the char limit. The
+// doorway on each result is the ASSIGNED one (authoritative — it drives the doc
+// label), not whatever the model echoes back. On a missing/oversized variation,
+// falls back to the robust single-field generator with the doorway injected as
+// direction, so one bad row never collapses the set.
+async function generateFieldVariations({
+  assetType,
+  fieldName,
+  charMax,
+  summary,
+  writerPrompt,
+  assetDirection,
+  voiceGuide,
+  direction,
+  distance,
+  count,
+  currentCopy,
+  siblings,
+}) {
+  const doorways = assignDoorways(fieldName, distance, count);
+  const n = doorways.length;
+  const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
+  const prompt = buildVariationsPrompt({
+    assetType,
+    fieldName,
+    charMax,
+    summary,
+    writerPrompt,
+    assetDirection,
+    voiceGuide,
+    doorways,
+    distance,
+    direction,
+    currentCopy,
+  });
+
+  let parsed = [];
+  try {
+    const text = await callGemini({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      // Higher temperature for angle spread; headroom for up to 4 long variations.
+      generationConfig: { temperature: 0.9, maxOutputTokens: 4096 },
+    });
+    const arr = JSON.parse(stripJsonFences(text));
+    if (Array.isArray(arr)) parsed = arr;
+  } catch (err) {
+    console.warn(`[gemini] variations parse failed for ${fieldName}: ${err.message}`);
+  }
+
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const doorway = doorways[i];
+    const row = parsed[i];
+    let copy = cleanDraft((row && (typeof row === 'string' ? row : row.copy)) || '');
+
+    // Missing or over the ceiling → fall back to the single-field generator with
+    // this doorway injected as revision direction (reuses its rewrite + trim).
+    if (!copy || (ceiling && copy.length > ceiling)) {
+      const doorwayDirection = [direction, `Use the "${doorway}" angle — ${DOORWAYS[doorway] || ''}`]
+        .filter(Boolean)
+        .join('. ');
+      try {
+        copy = await generateFieldDraft({
+          assetType,
+          fieldName,
+          charMax,
+          assetDirection,
+          summary,
+          writerPrompt,
+          direction: doorwayDirection,
+          voiceGuide,
+          siblings,
+        });
+      } catch (err) {
+        console.warn(`[gemini] variation fallback failed ${fieldName}/${doorway}: ${err.message}`);
+      }
+    }
+    if (copy && ceiling && copy.length > ceiling) copy = trimToCeiling(copy, ceiling);
+    if (copy) out.push({ doorway, copy });
+  }
+  return out;
+}
+
 // Generate a brand voice guide (markdown) from the onboarding questionnaire
 // answers. Optional `direction` (a revision instruction) and `previousGuide`
 // (the current voice.md) drive regeneration. Returns the raw markdown string.
@@ -1028,6 +1252,7 @@ module.exports = {
   enrichWithReferences,
   generateFieldDraft,
   generateAssetDrafts,
+  generateFieldVariations,
   generateVoiceGuide,
   describeImage,
   extractHeaderSchema,
@@ -1035,4 +1260,8 @@ module.exports = {
   // Exposed for unit tests only.
   builtInFieldGuidance,
   siblingContextBlock,
+  assignDoorways,
+  buildVariationsPrompt,
+  doorwayRankingForField,
+  DOORWAYS,
 };

@@ -476,7 +476,7 @@
     /* Variation controls (Phase 2/3): count + conceptual distance, per field.
        Hidden until the field is selected; revealed inside the selected card. */
     .field-select-hint { font-size: 12.5px; line-height: 1.55; color: rgba(26,26,46,0.5); font-style: italic; margin: 0 0 14px; }
-    .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 8px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed rgba(201,168,76,0.4); }
+    .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(201,168,76,0.4); }
     .asset-field.selected .var-controls { display: flex; }
     .var-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     /* Muted metadata label — matches IBM Plex Sans field/metadata labels, sentence
@@ -1314,12 +1314,11 @@
           // Per-field variation controls (count + conceptual distance), revealed
           // only while the field is selected. Built once and shown/hidden via the
           // .selected class, so toggling doesn't lose the chosen count/distance.
-          // Placed directly under the field label (before the copy) — the controls
-          // govern what gets generated, so they belong between the name and the
-          // output, not trailing below the stacked options.
+          // Placed at the BOTTOM of the card (below copy + char count, under a
+          // divider) so the field name and its copy stay paired — the more
+          // important adjacency — rather than wedging the controls between them.
           var controls = buildVarControls(aName, fName);
-          var label = fieldEl.querySelector('.field-name');
-          fieldEl.insertBefore(controls, label ? label.nextSibling : fieldEl.firstChild);
+          fieldEl.appendChild(controls);
 
           if (isFieldSelected(aName, fName)) fieldEl.classList.add('selected');
           fieldEl.addEventListener('click', function () {

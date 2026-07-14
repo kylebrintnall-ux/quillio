@@ -1247,6 +1247,166 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext } = {}) {
   });
 }
 
+// The doorway-fit guidance block (angle ↔ context) — shared by the prompt and
+// exposed for tests. Tells the review WHEN each doorway is strategically strong
+// vs. risky, so it can judge "is this the right angle" against funnel stage.
+const DOORWAY_FIT_GUIDE = [
+  '- Pain: strong when the audience actively feels the ache; risky in celebratory/',
+  '  awareness contexts or if it tips into fear-mongering.',
+  '- Outcome: broadly safe, benefit-led; rarely a strategic mismatch.',
+  '- Contrast (old way vs new): strong when a shared "old way" exists; weak without one.',
+  '- Question: strong TOP-of-funnel to stop the scroll; risky if gimmicky, or bottom-funnel',
+  '  where the reader wants directness over a rhetorical question.',
+  '- Proof (a number/claim): strong mid/bottom-funnel or where trust exists AND the claim is',
+  '  specific and verifiable; RISKY top-of-funnel with a cold audience that does not trust you',
+  '  yet, and risky whenever the number is vague or unsupported.',
+  '- Identity (speaks to who they are): strong for community/aspirational placements; risky if',
+  '  it presumes who the reader is, or on transactional copy.',
+  '- Reframe (challenge the category): strong for thought-leadership / organic social /',
+  '  differentiation; risky where clarity and directness matter most (CTAs, transactional).',
+];
+
+// Build the variant-review prompt for ONE stacked field. Pure — rendered from the
+// field's options (each carrying its assigned doorway). Exposed for tests.
+function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, voiceGuide, briefContext } = {}) {
+  const opts = Array.isArray(variations) ? variations : [];
+  const brand = String(voiceGuide || '').trim() || '(no brand guide provided — judge on universal writing craft only)';
+  const bc = briefContext || {};
+  const briefSummary = String(bc.summary || '').trim();
+  const briefDirection = String(bc.writerDirection || '').trim();
+  const briefBlock = briefSummary || briefDirection
+    ? [
+        'CAMPAIGN BRIEF — AUTHORITATIVE for audience + goal:',
+        briefSummary ? `Summary: ${briefSummary}` : '',
+        briefDirection ? `Writer direction: ${briefDirection}` : '',
+        '',
+      ].filter(Boolean)
+    : [];
+  const limitLine = Number(charMax) > 0
+    ? `Character limit: ${charMax} per option (a hard maximum).`
+    : 'Keep each option concise.';
+
+  return [
+    'You are a seasoned copy strategist AND editor giving a second pass on ONE marketing',
+    'field that currently holds several VARIATION OPTIONS the writer is choosing between.',
+    'Each option enters the SAME value prop through a different DOORWAY (angle), labeled in',
+    'the doc. For EACH option, give the writer a sharper read. You do NOT pick a winner —',
+    'the writer owns that decision.',
+    '',
+    ...briefBlock,
+    'BRAND REFERENCE (voice.md) — AUTHORITATIVE for HOW it should sound (voice, tone, banned',
+    'words, "Words That Work", sounding human). Governs CRAFT:',
+    '"""',
+    brand,
+    '"""',
+    '',
+    'THIS FIELD:',
+    `Asset: ${assetType}`,
+    `Field: ${fieldName}`,
+    limitLine,
+    'Infer the FUNNEL STAGE from the asset type + brief: organic social / brand awareness is',
+    'TOP-of-funnel (a cold, scrolling audience that does not trust you yet); a demo email or',
+    'landing-page CTA is BOTTOM-of-funnel. Funnel stage shapes which doorway fits.',
+    '',
+    'ASSESS EACH OPTION ON TWO AXES — STRATEGY FIRST, THEN CRAFT:',
+    '1. STRATEGY — is this DOORWAY the right ANGLE for this asset type, audience, and funnel',
+    '   stage? Use the doorway-fit guidance below. If the angle is a genuine mismatch, say why',
+    '   in one sentence. If the angle fits, strategy = null.',
+    '2. CRAFT — is the execution strong under voice.md (tone, banned words, tightness, sounds',
+    '   human, within the limit)? Same bar as any review. If clean, craft = null.',
+    '',
+    'DOORWAY-FIT GUIDANCE (angle ↔ context):',
+    ...DOORWAY_FIT_GUIDE,
+    '',
+    'MATERIALITY — READ CAREFULLY:',
+    '- Comment on an option ONLY where a skilled editor would genuinely intervene. MOST options',
+    '  come back clean (strategy null AND craft null). Returning null/null for EVERY option is a',
+    '  valid, common outcome — do NOT manufacture a note to fill each row.',
+    '- No affirmations, no "this is strong," no approving restatement of the angle. Only what is',
+    '  worth CHANGING.',
+    '- At most ONE strategy point and ONE craft point per option; each one sentence, collegial.',
+    '- You MUST evaluate every option — evaluating is not the same as commenting.',
+    '- An option with no doorway label (a "stay close" stack) → assess CRAFT only; leave strategy',
+    '  null.',
+    '',
+    'RE-REVIEW: if an option is unchanged from a prior pass and was already noted (priorComment),',
+    "return null (don't nag); if it changed and now works, null.",
+    '',
+    'OUTPUT — raw JSON array ONLY, one object per option IN ORDER, first char "[":',
+    '[{"index": 1, "doorway": "Contrast", "strategy": string|null, "craft": string|null}]',
+    '',
+    'OPTIONS:',
+    JSON.stringify(
+      opts.map((o) => ({
+        index: o.index,
+        doorway: o.doorway || null,
+        copy: o.copy || '',
+        priorComment: o.priorComment || null,
+      })),
+      null,
+      2
+    ),
+  ].join('\n');
+}
+
+// Review ONE unresolved numbered stack: assess each option on STRATEGY (is the
+// doorway the right angle for this asset/audience/funnel?) then CRAFT (voice.md),
+// per-variation, at the materiality bar. Returns [{ index, doorway, strategy,
+// craft }] with strategy/craft null when clean. It does NOT pick a winner.
+async function reviewVariationStack({ assetType, fieldName, charMax, variations, voiceGuide, briefContext } = {}) {
+  const opts = Array.isArray(variations) ? variations : [];
+  if (opts.length === 0) return [];
+
+  const prompt = buildVariantReviewPrompt({ assetType, fieldName, charMax, variations: opts, voiceGuide, briefContext });
+
+  const SCHEMA = {
+    type: 'ARRAY',
+    items: {
+      type: 'OBJECT',
+      properties: {
+        index: { type: 'INTEGER' },
+        doorway: { type: 'STRING', nullable: true },
+        strategy: { type: 'STRING', nullable: true },
+        craft: { type: 'STRING', nullable: true },
+      },
+      required: ['index'],
+    },
+  };
+
+  let parsed = null;
+  let lastText = '';
+  for (let attempt = 0; attempt < 2 && parsed == null; attempt += 1) {
+    lastText = await callGemini({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+        responseSchema: SCHEMA,
+      },
+    });
+    parsed = extractJsonArray(lastText);
+    if (parsed == null && attempt === 0) {
+      console.warn(`[gemini] variant-review JSON parse failed for ${fieldName}; retrying once`);
+    }
+  }
+  if (parsed == null) {
+    throw new Error('Could not parse Gemini variant-review JSON: ' + String(lastText).slice(0, 300));
+  }
+
+  const strOrNull = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const byIndex = new Map();
+  parsed.forEach((r, i) => {
+    if (!r) return;
+    if (r.index != null) byIndex.set(Number(r.index), r);
+    byIndex.set(`__idx_${i}`, r);
+  });
+  return opts.map((o, i) => {
+    const r = byIndex.get(o.index) || byIndex.get(`__idx_${i}`) || {};
+    return { index: o.index, doorway: o.doorway || null, strategy: strOrNull(r.strategy), craft: strOrNull(r.craft) };
+  });
+}
+
 module.exports = {
   parseBrief,
   enrichWithReferences,
@@ -1257,6 +1417,7 @@ module.exports = {
   describeImage,
   extractHeaderSchema,
   reviewCopyFields,
+  reviewVariationStack,
   // Exposed for unit tests only.
   builtInFieldGuidance,
   siblingContextBlock,
@@ -1264,4 +1425,6 @@ module.exports = {
   buildVariationsPrompt,
   doorwayRankingForField,
   DOORWAYS,
+  buildVariantReviewPrompt,
+  DOORWAY_FIT_GUIDE,
 };

@@ -1899,8 +1899,8 @@ test('variations (P2/P3): buildVariantBlock marks number iff count>1, label iff 
   assert.strictEqual(buildVariantBlock([{ doorway: 'Pain', copy: '   ' }], { distance: 'wide' }), '');
 });
 
-test('variations (P2): review skips numbered stacks, keeps solo labeled + resolved fields', () => {
-  const { collectCopyFields, countUnresolvedVariations } = require('../src/services/copyReview');
+test('variant review: singles vs stacks are routed apart; solo label stripped; resolved re-collects', () => {
+  const { collectCopyFields, collectVariationStacks } = require('../src/services/copyReview');
   const { isNumberedStack } = require('../src/utils/variants');
 
   const stack = '1. (Pain) Drowning in tickets\n2. (Proof) 40% faster\n3. (Reframe) Not a cost center';
@@ -1914,17 +1914,76 @@ test('variations (P2): review skips numbered stacks, keeps solo labeled + resolv
     { fieldName: 'H3', charMax: 50, copy: plain },
   ] }] };
 
-  const collected = collectCopyFields(content);
-  const names = collected.map((f) => f.fieldName);
-  assert.deepStrictEqual(names, ['H2', 'H3'], 'numbered stack skipped; solo + plain reviewed');
-  // Solo variation reviewed with its doorway label stripped (length/voice see the sentence).
-  assert.strictEqual(collected[0].copy, 'What if support wasn\'t a cost center?');
-  assert.strictEqual(countUnresolvedVariations(content), 1, 'one unresolved stack counted');
+  // collectCopyFields = SINGLE fields only (stacks route to the variant path).
+  const singles = collectCopyFields(content).map((f) => f.fieldName);
+  assert.deepStrictEqual(singles, ['H2', 'H3'], 'stack routed out; solo + plain are singles');
 
-  // Resolved down to one line (markers deleted) → reviewable again.
+  // The numbered stack is collected for the variant path with its options parsed.
+  const stacks = collectVariationStacks(content);
+  assert.strictEqual(stacks.length, 1, 'one stack collected');
+  assert.strictEqual(stacks[0].fieldName, 'H1');
+  assert.deepStrictEqual(stacks[0].variations.map((v) => v.doorway), ['Pain', 'Proof', 'Reframe']);
+  assert.strictEqual(stacks[0].variations[1].copy, '40% faster', 'variation copy = marker stripped');
+  assert.strictEqual(stacks[0].variations[1].line, '2. (Proof) 40% faster', 'variation line kept for anchoring');
+
+  // Solo variation reviewed as a single, doorway tag stripped for length/voice.
+  assert.strictEqual(collectCopyFields(content)[0].copy, 'What if support wasn\'t a cost center?');
+
+  // Resolved down to one line → it's a single again, no stack.
   const resolved = { assets: [{ name: 'Email', fields: [{ fieldName: 'H1', charMax: 50, copy: 'Drowning in tickets' }] }] };
   assert.deepStrictEqual(collectCopyFields(resolved).map((f) => f.fieldName), ['H1']);
-  assert.strictEqual(countUnresolvedVariations(resolved), 0);
+  assert.strictEqual(collectVariationStacks(resolved).length, 0);
+});
+
+test('variant review: parseNumberedStack handles labeled, unlabeled, and non-option lines', () => {
+  const { parseNumberedStack } = require('../src/utils/variants');
+  // Labeled (explore/wide) stack.
+  const labeled = parseNumberedStack('1. (Pain) A hurts\n2. (Reframe) B reframed');
+  assert.deepStrictEqual(labeled, [
+    { index: 1, doorway: 'Pain', copy: 'A hurts', line: '1. (Pain) A hurts' },
+    { index: 2, doorway: 'Reframe', copy: 'B reframed', line: '2. (Reframe) B reframed' },
+  ]);
+  // Stay-close stack: numbered, NO doorway label → doorway null (craft-only later).
+  const close = parseNumberedStack('1. First take\n2. Second take');
+  assert.deepStrictEqual(close.map((v) => v.doorway), [null, null]);
+  assert.strictEqual(close[0].copy, 'First take');
+});
+
+test('variant review: prompt names each doorway, includes fit guide + two-axis output', () => {
+  const { buildVariantReviewPrompt, DOORWAY_FIT_GUIDE } = require('../src/services/gemini');
+  const prompt = buildVariantReviewPrompt({
+    assetType: 'Organic Social — LinkedIn', fieldName: 'Graphic Headline', charMax: 70,
+    voiceGuide: '', briefContext: { summary: 'Resolve AI for CX leaders', writerDirection: 'Avoid hype' },
+    variations: [
+      { index: 1, doorway: 'Contrast', copy: 'Support used to mean more tickets.' },
+      { index: 2, doorway: 'Question', copy: 'What if 40% never reached a human?' },
+    ],
+  });
+  // Strategy-first, two-axis, no-winner framing.
+  assert.ok(/STRATEGY FIRST, THEN CRAFT/.test(prompt), 'assesses strategy then craft');
+  assert.ok(/do NOT pick a winner/i.test(prompt), 'does not choose for the writer');
+  // Each option's assigned doorway is in the prompt; the fit guide is present.
+  assert.ok(/"doorway": "Contrast"/.test(prompt) && /"doorway": "Question"/.test(prompt), 'options carry doorways');
+  assert.ok(DOORWAY_FIT_GUIDE.length >= 7 && /Proof \(a number\/claim\).*RISKY top-of-funnel/s.test(prompt), 'doorway-fit guide present');
+  // Materiality: most options null; per-axis nullable output.
+  assert.ok(/MOST options\s+come back clean/s.test(prompt), 'materiality: most come back clean');
+  assert.ok(/"strategy": string\|null, "craft": string\|null/.test(prompt), 'two-axis nullable output');
+  // Funnel-stage inference is instructed.
+  assert.ok(/Infer the FUNNEL STAGE/.test(prompt), 'infers funnel stage');
+});
+
+test('variant review: reconcile exposes claimedIds for the orphan sweep', () => {
+  const { reconcileComments } = require('../src/services/copyReview');
+  // A live comment bound to no current unit (its stack option was resolved away)
+  // must NOT appear in claimedIds → the runner sweeps it.
+  const out = reconcileComments({
+    fields: [{ assetType: 'Email', fieldName: 'H3', copy: 'Resolve tickets faster.' }],
+    priorFields: {},
+    verdicts: [],
+    liveComments: [{ id: 'orphan1', content: '🪶 Quillio Review — stale', resolved: false, quote: '2. (Proof) gone now' }],
+  });
+  assert.ok(Array.isArray(out.claimedIds), 'claimedIds returned');
+  assert.ok(!out.claimedIds.includes('orphan1'), 'unmatched comment is not claimed (will be swept)');
 });
 
 test('variations (P1 regression): count=1 + close routes to the unchanged per-field generator', () => {

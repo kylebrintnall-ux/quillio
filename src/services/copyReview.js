@@ -18,9 +18,9 @@
 //   6. Persist the new state; return a digest + qualitative status (no grade).
 
 const { getDestination } = require('../destinations');
-const { reviewCopyFields } = require('./gemini');
+const { reviewCopyFields, reviewVariationStack } = require('./gemini');
 const { getVoiceGuide, getReviewState, saveReviewState } = require('../db');
-const { isNumberedStack, stripSoloLabel } = require('../utils/variants');
+const { isNumberedStack, stripSoloLabel, parseNumberedStack } = require('../utils/variants');
 
 // Repo voice.md fallback, loaded once (same source gemini.js uses for drafting).
 let repoVoice = null;
@@ -38,10 +38,9 @@ function fieldKey(assetType, fieldName) {
   return `${String(assetType || '').trim().toLowerCase()}||${String(fieldName || '').trim().toLowerCase()}`;
 }
 
-// Flatten getDocContent → the reviewable fields (non-empty copy only).
-// SKIPS fields that are an unresolved NUMBERED STACK (count > 1 variations): the
-// writer hasn't chosen between the options, so reviewing them against a char
-// limit + voice is noise. They become reviewable once resolved to a single line.
+// Flatten getDocContent → the SINGLE-copy reviewable fields (non-empty). Numbered
+// STACKS are handled separately by the variant-aware path (collectVariationStacks
+// + reviewVariationStack), so they're routed out here, not reviewed as one blob.
 // A SOLO labeled variation (`(Reframe) …`) is already resolved and IS reviewed —
 // its leading doorway tag is stripped so the length/voice check sees the sentence.
 function collectCopyFields(content) {
@@ -50,7 +49,7 @@ function collectCopyFields(content) {
     for (const f of asset.fields || []) {
       const raw = String(f.copy || '').trim();
       if (!raw) continue;
-      if (isNumberedStack(raw)) continue; // unresolved options — skip until resolved
+      if (isNumberedStack(raw)) continue; // an unresolved stack → the variant path handles it
       const copy = stripSoloLabel(raw).trim();
       if (copy) out.push({ assetType: asset.name, fieldName: f.fieldName, charMax: f.charMax || 0, copy });
     }
@@ -58,15 +57,27 @@ function collectCopyFields(content) {
   return out;
 }
 
-// Count fields still holding an unresolved numbered stack (for the digest note).
-function countUnresolvedVariations(content) {
-  let n = 0;
+// getDocContent → the unresolved NUMBERED STACKS, each with its parsed options.
+// [{ assetType, fieldName, charMax, variations: [{ index, doorway, copy, line }] }].
+function collectVariationStacks(content) {
+  const out = [];
   for (const asset of (content && content.assets) || []) {
     for (const f of asset.fields || []) {
-      if (isNumberedStack(String(f.copy || ''))) n += 1;
+      const raw = String(f.copy || '').trim();
+      if (!raw || !isNumberedStack(raw)) continue;
+      const variations = parseNumberedStack(raw);
+      if (variations.length >= 2) {
+        out.push({ assetType: asset.name, fieldName: f.fieldName, charMax: f.charMax || 0, variations });
+      }
     }
   }
-  return n;
+  return out;
+}
+
+// Stable reconcile/state key for one variation of a stack. Content-matching in
+// reconcileComments tolerates index drift; this just has to be deterministic.
+function variationFieldName(fieldName, index, doorway) {
+  return `${fieldName} · option ${index}${doorway ? ` (${doorway})` : ''}`;
 }
 
 // A supportive, non-numeric read of overall quality (never a grade/score).
@@ -208,7 +219,17 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
     results.push({ assetType: f.assetType, fieldName: f.fieldName, comment: activeComment });
   }
 
-  return { toAdd, toDelete, nextState, results, counts: { kept, added, removed } };
+  // claimedIds = every live comment bound to a current review unit (kept OR
+  // slated for delete). Live comments NOT in this set belong to units that no
+  // longer exist — e.g. a stack the writer resolved down — and are swept.
+  return {
+    toAdd,
+    toDelete,
+    nextState,
+    results,
+    counts: { kept, added, removed },
+    claimedIds: [...claimed],
+  };
 }
 
 // Run a review pass on a doc. `clients` runs Drive/Docs as the tenant's user;
@@ -218,19 +239,11 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
 async function runCopyReview(docId, tenantId, clients) {
   const dest = getDestination();
   const content = await dest.getDocContent(docId, clients);
-  const fields = collectCopyFields(content);
-  const unresolvedVariations = countUnresolvedVariations(content);
-  // A gentle nudge appended to the digest when some fields are unresolved stacks.
-  const variationNote =
-    unresolvedVariations > 0
-      ? ` ${unresolvedVariations} field${unresolvedVariations === 1 ? ' has' : 's have'} unresolved variations — resolve to one to review ${unresolvedVariations === 1 ? 'it' : 'them'}.`
-      : '';
+  const singleFields = collectCopyFields(content); // resolved / solo-labeled fields
+  const stacks = collectVariationStacks(content); // unresolved numbered stacks
 
-  if (fields.length === 0) {
-    const base = unresolvedVariations > 0
-      ? 'No resolved copy to review yet.'
-      : 'Nothing to review yet — this doc has no drafted copy.';
-    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: unresolvedVariations > 0, digest: (base + variationNote).trim(), status: 'Nothing to review yet' };
+  if (singleFields.length === 0 && stacks.length === 0) {
+    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: false, digest: 'Nothing to review yet — this doc has no drafted copy.', status: 'Nothing to review yet' };
   }
 
   // Voice guide: tenant override, else repo voice.md.
@@ -242,7 +255,7 @@ async function runCopyReview(docId, tenantId, clients) {
   }
   if (!voiceGuide) voiceGuide = repoVoiceGuide();
 
-  // Prior state → attach priorCopy/priorComment per field for re-review reasoning.
+  // Prior state for re-review reasoning (keyed by fieldKey, incl. per-variation).
   let prior = null;
   try {
     prior = await getReviewState(docId);
@@ -250,42 +263,105 @@ async function runCopyReview(docId, tenantId, clients) {
     console.warn('[review] prior review state lookup failed — treating as first review:', err.message);
   }
   const priorFields = (prior && prior.fields) || {};
-  const withPrior = fields.map((f) => {
-    const p = priorFields[fieldKey(f.assetType, f.fieldName)];
-    return { ...f, priorCopy: (p && p.copy) || null, priorComment: (p && p.comment) || null };
-  });
+  const priorFor = (assetType, fieldName) => priorFields[fieldKey(assetType, fieldName)] || {};
 
   // Brief context: the campaign's summary + writer direction carry the brief's
-  // stated audience/goal. Pass them so the review treats the BRIEF's audience as
-  // authoritative (voice.md's audience is only a default the brief overrides),
-  // while voice.md still governs voice/tone/craft. Already re-read from the doc —
-  // no new persisted state.
+  // stated audience/goal. The BRIEF's audience is authoritative (voice.md's is a
+  // default it overrides); voice.md still governs voice/tone/craft. It also lets
+  // the variant review infer funnel stage. No new persisted state.
   const briefContext = {
     summary: (content && content.summary) || '',
     writerDirection: (content && content.writerDirection) || '',
   };
 
-  // Gemini review (throws on hard failure → caller shows error).
-  const verdicts = await reviewCopyFields({ fields: withPrior, voiceGuide, briefContext });
+  // --- Review UNITS. One per single field; one per stack VARIATION. Each unit's
+  // `copy` is what a comment anchors to and what change-detection compares: a
+  // single field's copy, or a variation's full "N. (Doorway) …" doc line (unique
+  // via its number). reconcile keys/persists on (assetType, fieldName). ---
+  const units = [];
+  for (const f of singleFields) {
+    units.push({ assetType: f.assetType, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy });
+  }
+  for (const st of stacks) {
+    for (const v of st.variations) {
+      units.push({
+        assetType: st.assetType,
+        fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
+        charMax: st.charMax,
+        copy: v.line,
+      });
+    }
+  }
 
-  // Reconcile against the doc's EXISTING comments + prior state instead of the old
-  // destructive clear-and-repost: preserve unresolved comments on unchanged copy,
-  // respect manually-resolved ones, remove only when the copy was fixed, add only
-  // genuinely new notes. A comment vanishes only on a fix or a manual resolve.
+  // --- Verdicts. Single fields → the batch review; each stack → its own focused
+  // variant review, run concurrently. ---
+  const singleInputs = singleFields.map((f) => {
+    const p = priorFor(f.assetType, f.fieldName);
+    return { assetType: f.assetType, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null };
+  });
+  const singleVerdicts = singleInputs.length
+    ? await reviewCopyFields({ fields: singleInputs, voiceGuide, briefContext })
+    : [];
+
+  const stackResults = await Promise.all(
+    stacks.map((st) => {
+      const options = st.variations.map((v) => {
+        const p = priorFor(st.assetType, variationFieldName(st.fieldName, v.index, v.doorway));
+        return { index: v.index, doorway: v.doorway, copy: v.copy, priorComment: p.comment || null };
+      });
+      return reviewVariationStack({ assetType: st.assetType, fieldName: st.fieldName, charMax: st.charMax, variations: options, voiceGuide, briefContext })
+        .then((res) => ({ st, res }))
+        .catch((err) => {
+          console.warn(`[review] variant review failed for ${st.fieldName}: ${err.message}`);
+          return { st, res: [] };
+        });
+    })
+  );
+
+  // Compose each variation's comment: STRATEGY first, then CRAFT; null when clean.
+  const variationVerdicts = [];
+  for (const { st, res } of stackResults) {
+    const byIndex = new Map((res || []).map((r) => [r.index, r]));
+    for (const v of st.variations) {
+      const r = byIndex.get(v.index) || {};
+      const parts = [r.strategy, r.craft].filter((s) => typeof s === 'string' && s.trim());
+      variationVerdicts.push({
+        assetType: st.assetType,
+        fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
+        comment: parts.length ? parts.join(' ') : null,
+      });
+    }
+  }
+  const verdicts = [...singleVerdicts, ...variationVerdicts];
+
+  // Reconcile over ALL units at once (content-keyed persistence: unchanged units
+  // keep their comment, fixed/changed ones are replaced, resolved/dismissed ones
+  // are respected).
   const liveComments = await dest.listReviewComments(docId, clients).catch((err) => {
     console.warn('[review] listReviewComments failed — treating as none:', err.message);
     return [];
   });
-  const recon = reconcileComments({ fields, priorFields, verdicts, liveComments });
+  const recon = reconcileComments({ fields: units, priorFields, verdicts, liveComments });
 
   for (const id of recon.toDelete) {
     await dest.deleteReviewComment(docId, id, clients);
+  }
+  // Orphan sweep: a live Quillio comment bound to no current unit belongs to a
+  // unit that no longer exists — a stack the writer resolved down, or a deleted
+  // field. Remove it so a variation's note disappears once its option is gone.
+  const claimed = new Set(recon.claimedIds);
+  const deleting = new Set(recon.toDelete);
+  let swept = 0;
+  for (const c of liveComments) {
+    if (!claimed.has(c.id) && !deleting.has(c.id)) {
+      if (await dest.deleteReviewComment(docId, c.id, clients)) swept += 1;
+    }
   }
   for (const a of recon.toAdd) {
     await dest.addReviewComment(docId, { quote: a.quote, content: a.content }, clients);
   }
 
-  // Persist next state (copy + comment + resolved per field) for the next re-review.
+  // Persist next state (copy + comment + resolved per unit) for the next re-review.
   try {
     await saveReviewState(docId, recon.nextState);
   } catch (err) {
@@ -296,14 +372,14 @@ async function runCopyReview(docId, tenantId, clients) {
   const flagged = recon.results.filter((r) => r.comment).length;
   console.log(
     `[review] doc=${docId} reviewed=${reviewed} flagged=${flagged} ` +
-      `kept=${recon.counts.kept} added=${recon.counts.added} removed=${recon.counts.removed}`
+      `kept=${recon.counts.kept} added=${recon.counts.added} removed=${recon.counts.removed} swept=${swept}`
   );
   return {
     reviewed,
     flagged,
     clean: reviewed - flagged,
     hadCopy: true,
-    digest: (buildDigest(recon.results) + variationNote).trim(),
+    digest: buildDigest(recon.results),
     status: qualitativeStatus(flagged, reviewed),
   };
 }
@@ -312,7 +388,8 @@ module.exports = {
   runCopyReview,
   // exposed for unit tests
   collectCopyFields,
-  countUnresolvedVariations,
+  collectVariationStacks,
+  variationFieldName,
   qualitativeStatus,
   buildDigest,
   fieldKey,

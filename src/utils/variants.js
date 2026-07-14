@@ -43,4 +43,31 @@ function stripSoloLabel(copy) {
   return s.replace(SOLO_LABEL, '');
 }
 
-module.exports = { isNumberedStack, soloDoorway, stripSoloLabel, NUMBERED_LINE, SOLO_LABEL };
+// One stack option line: "2. (Proof) 40% faster…" → { index, doorway, copy, line }.
+// The doorway group is optional (a Stay-close stack is numbered but unlabeled →
+// doorway = null). `copy` is the sentence with the marker stripped; `line` is the
+// full trimmed line (used to anchor a per-variation review comment to the doc).
+const NUMBERED_PARSE = /^\s*(\d+)\.\s+(?:\(([A-Za-z]+)\)\s+)?(.*\S)\s*$/;
+
+// Split a numbered stack into its options, in order. Non-option lines (blank
+// separators between long variants) are skipped. Returns [] when not a stack.
+function parseNumberedStack(copy) {
+  const out = [];
+  for (const raw of String(copy || '').split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(NUMBERED_PARSE);
+    if (!m) continue;
+    out.push({ index: Number(m[1]), doorway: m[2] ? m[2].trim() : null, copy: m[3].trim(), line });
+  }
+  return out;
+}
+
+module.exports = {
+  isNumberedStack,
+  soloDoorway,
+  stripSoloLabel,
+  parseNumberedStack,
+  NUMBERED_LINE,
+  SOLO_LABEL,
+};

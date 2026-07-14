@@ -1,8 +1,21 @@
 # Selective Regeneration & Conceptual Variations — Build Plan
 
-Status: **planning** (build phase-by-phase on approval; do not build ahead).
-Owner doc for the feature described in the feature brief. Read alongside
-`CLAUDE.md`, `ROADMAP.md`, and the code touchpoints listed below.
+Status: **SHIPPED.** Phase 1 (selective regeneration) and Phases 2 + 3 (variation
+count + conceptual distance) are live on `main`. **Phases 2 and 3 were built and
+shipped together, not sequentially** — see **§ As built** immediately below for how
+the shipped code differs from the plan. The phase descriptions further down are
+kept as the design record; where they and § As built disagree, **§ As built wins.**
+
+Commit map:
+- **Phase 1** — selective regeneration — `dd1ca27` (core), `953ca21`
+  (`scopedFields` rename + single dynamic primary button), `a885a59`
+  (`generateFieldDraft` import fix), `9e6b85e` (structural import guard test).
+- **Phase 2 + 3** — variation count + doorways, **merged into one build** —
+  `696bc40`, plus subsequent UI fixes: loading state (`dcbe790`), control-strip
+  styling/slider (`78556f2`), regen-modal copy (`150dad5`), control placement
+  (`1798c2a`).
+
+Owner doc for the feature. Read alongside `CLAUDE.md`, `ROADMAP.md`, and the code.
 
 ---
 
@@ -23,6 +36,117 @@ Regenerate today rebuilds the **entire** doc. This feature makes regeneration
 tweak). The app generates scoped options **into the doc** — no picker UI.
 Quillio supplies diverse thinking; the writer owns the final shape. The
 multi-variant state is **transient**: the writer deletes down to a keeper.
+
+---
+
+## § As built — reconciliation with the shipped code
+
+Authoritative record of what actually shipped. Where this disagrees with the
+phase plans below, this section wins.
+
+### Phases 2 and 3 were merged into one build (`696bc40`)
+
+The plan (§5) recommended shipping Phase 2 first, then Phase 3. We did **not** —
+they shipped together. **Rationale:** Phase 2 alone would have shipped *dark code*
+— a count control that defaults to 1 with no diversity mechanism behind it. The
+first time a writer set count > 1 they'd get near-clones (LLMs cluster without
+forced-distinct angles), meeting weak variation quality before the differentiator
+existed. Merging means the first `count > 1` a writer ever sees is already
+genuinely diverse.
+
+### Doorway assignment is deterministic — the LLM does not choose
+
+`assignDoorways(fieldName, distance, count)` in `src/services/gemini.js` picks the
+N doorways **in JS**, from the distance band of a per-field-type ranking (a pure,
+deterministic function — no randomness). `buildVariationsPrompt` then **names the
+exact doorway for each numbered row** ("1. (Pain) — … 2. (Proof) — …"). The model
+is never asked to "give me N different versions" — that is precisely what makes
+LLMs cluster. Structural assignment is what guarantees diversity. New generator:
+`generateFieldVariations(...) → [{ doorway, copy }]`, each ceiling-enforced; the
+returned `doorway` is the **assigned** one (authoritative for the doc label), not
+whatever the model echoes back. On a missing/oversized row it falls back to the
+single-field generator with the doorway injected as direction.
+
+The seven doorways: **Pain · Outcome · Contrast · Question · Proof · Identity ·
+Reframe.** Distance bands over the field's ranking: **Stay close** → `rank[0]`;
+**Explore** → `rank[1..3]`; **Roam wide** → `rank[4..6]` (always ends in Reframe).
+
+### Distance is measured against the VALUE PROP FROM THE BRIEF
+
+Not against voice.md, and not against the previous draft. **voice.md governs
+tone/craft only — it never varies**; doorways change the *angle* only. On
+regeneration, **Roam wide** additionally means "go somewhere the current copy did
+not" — the current copy is passed in and the prompt is told to avoid its angle.
+
+### Stay close at count > 1 → one doorway, N distinct executions
+
+All N variations use the **same** obvious doorway (`rank[0]`) with N genuinely
+different *executions* of that one angle — **not** spread across neighboring
+doorways. This preserves the Close / Explore / Wide ladder (spreading close across
+neighbors would blur it into Explore).
+
+### Doc marker rules — the solo-doorway rule
+
+Two independent markers, decided at doc-write time by `buildVariantBlock` in
+`src/destinations/googleDocs.js`: a **number** appears iff `count > 1`; a
+**(Doorway) label** appears iff `distance != "close"`.
+
+| distance | count | doc output | shape |
+| --- | --- | --- | --- |
+| close | 1 | `Your storefront is a sales floor…` | bare — identical to a Phase-1 draft |
+| explore / wide | 1 | `(Reframe) Your storefront is a sales floor…` | **labeled, no number** (already resolved) |
+| close | >1 | `1. …` `2. …` | numbered, **no labels** (one obvious door, N executions) |
+| explore / wide | >1 | `1. (Pain) …` `2. (Proof) …` | numbered **and** labeled |
+
+So a **solo** variation at Explore/Roam-wide carries its doorway tag *without* a
+number (there's nothing to resolve between); at Stay close + count 1 there's **no
+label at all** — it's just the obvious angle, no meaningful door to name. Numbered
+`1. (Pain) …` labels appear only at `count > 1`. Markers are inserted
+`bold:false, italic:false`, so `parseDoc` reads them as ordinary copy.
+
+### Review skip — numbered stacks only
+
+The copy review skips a field only when it holds an **unresolved numbered stack**
+(`count > 1`). A **solo labeled variation is already resolved and stays
+reviewable** — its leading `(Doorway)` tag is stripped before the length/voice
+check so the review sees just the sentence. Detection lives in
+**`src/utils/variants.js`**: `isNumberedStack` (≥2 numbered lines), `soloDoorway`,
+`stripSoloLabel`. `copyReview.collectCopyFields` skips numbered stacks and strips
+solo labels; the digest notes how many fields are unresolved. Once the writer
+deletes down to one line, the field is reviewable again.
+
+### Payload — `scopedFields`, not `fields`/`targets`
+
+The shipped param is `scopedFields: [{ assetType, fieldName, count?, distance? }]`
+(the plan drafted it as `fields`/`targets`; renamed to avoid colliding with the
+local `assetTargets` in `generateDraft`). `count` clamps to 1–4, `distance`
+whitelists `close|explore|wide`; absent/at-default = exactly Phase 1. Threaded
+route → adapter → pipeline → destination, each hop keeping it optional.
+
+### Per-field controls (per field, not per-regen)
+
+Count (a **1–4 slider**) and distance (**three pills**) are set **per field**, in
+the shared field renderer, revealed when a field is selected. A writer may want
+the **headline to Roam wide while the CTA Stays close** in the same regen. The
+regen modal's copy shifts to craft-notes guidance ("angle is already set by your
+distance") when any selected field asks for variations, so typed direction doesn't
+compete with the assigned doorways (`150dad5`).
+
+### Loading state — progress bar removed, phrases restored (`dcbe790`)
+
+The generation **progress bar was removed** (`startDraftBar`, `estimateDraftSec`,
+the per-asset "Drafting [asset]…" label) and replaced with the restored **44-line
+`GEN_PHRASES`** set, **shuffled on each run**. **Rationale:** the bar mislabeled
+assets on a scoped op (it walked the whole-doc asset list regardless of what was
+scoped) and never completed before the copy arrived — it made a completion promise
+Gemini latency can't keep, especially on a scoped single-field regen. The phrases
+make no promise; they just signal "working." **The brief screen's bar is
+untouched** — it has genuine sequential stages (parse → specs → Drive), so a bar
+is honest there.
+
+### Still unbuilt
+
+**Phase 3+ variant-aware review** (§ below) remains a future item — not built.
 
 ---
 
@@ -331,12 +455,11 @@ Option 3's Question angle leans hypey."* The writer still makes the call.
 - New API params are **optional and backward-compatible** — absent = today's
   whole-doc behavior. Slack path unchanged.
 
-## 5. Phasing note (recommendation)
+## 5. Phasing note — DECISION: merged (superseded)
 
-Phase 2 shipped *without* Phase 3 will produce N options that tend to **cluster**
-(LLMs converge without forced-distinct angles) — mechanically correct but
-underwhelming. Recommendation: keep the phases separate for build safety, but
-treat **Phase 2's `count > 1` as a mechanics milestone** and keep the **default
-count = 1** in the UI until Phase 3 lands, so users don't meet weak variation
-quality before the differentiator exists. Phase 3 is what makes the feature
-actually good.
+This section originally recommended shipping Phase 2 separately from Phase 3. That
+recommendation was **not** taken. Because Phase 2 without Phase 3 produces N
+options that **cluster** (LLMs converge without forced-distinct angles) — a count
+control with no diversity behind it is dark code — **Phases 2 and 3 were built and
+shipped together** in `696bc40`. The first `count > 1` a writer ever sees is
+already genuinely diverse. See **§ As built** for the shipped behavior.

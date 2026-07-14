@@ -1971,6 +1971,25 @@ test('variations (P2/P3): regen modal copy shifts to craft-notes when variations
   assert.ok(/applyRegenModalCopy\('regen-modal-title'/.test(html) && /applyRegenModalCopy\('project-regen-modal-title'/.test(html), 'wired into both modals');
 });
 
+test('generation loading: rotating shuffled phrases, no progress bar (one state, all paths)', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // Phrases restored as the draft loading state.
+  const m = html.match(/var GEN_PHRASES = \[([\s\S]*?)\];/);
+  assert.ok(m, 'GEN_PHRASES array present');
+  const count = m[1].split(',').filter((s) => /'/.test(s)).length;
+  assert.ok(count >= 40, 'the full phrase set is restored (~50), got ' + count);
+  // Cycled in RANDOM order, re-shuffled each run.
+  assert.ok(/function shuffle/.test(html) && /shuffle\(GEN_PHRASES\)/.test(html), 'phrases are shuffled per generation');
+  assert.ok(/function startGenerating/.test(html) && /function stopGenerating/.test(html), 'phrase cycler present');
+  assert.ok(/id="gen-message"/.test(html), 'gen-message element present');
+  // The GIF + modal stay; the progress bar / asset label / time estimate are gone.
+  assert.ok(/class="gen-gif"/.test(html), 'generation GIF kept');
+  assert.ok(!/draft-progress/.test(html), 'no draft progress bar/label/estimate');
+  assert.ok(!/startDraftBar|estimateDraftSec/.test(html), 'estimate-driven bar code removed');
+  // All four draft paths drive the one loading state (2 brief-flow + 2 project).
+  assert.ok((html.match(/startGenerating\(\)/g) || []).length >= 4, 'every draft path uses the phrase cycler');
+});
+
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {
   assert.strictEqual(typeof require('../src/services/gemini').reviewCopyFields, 'function');
   const g = require('../src/destinations/googleDocs');

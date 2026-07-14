@@ -538,6 +538,8 @@
       text-align: center; min-height: calc(100vh - 150px);
     }
     .gen-gif { width: 150px; height: 150px; image-rendering: pixelated; margin-bottom: 28px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) both; }
+    .gen-message { font-family: 'StarCrush', serif; font-size: 18px; letter-spacing: 0.03em; color: var(--ink); min-height: 64px; line-height: 1.45; padding: 0 16px; max-width: 420px; text-align: center; transition: opacity 0.3s ease, transform 0.3s ease; }
+    @media (prefers-reduced-motion: reduce) { .gen-message { transition: none; } }
 
     /* ── COPY DONE (v8) — reuses output-header / asset-card / output-ctas ── */
     #screen-copydone { padding-bottom: 150px; }
@@ -756,15 +758,13 @@
       </div>
     </section>
 
-    <!-- SCREEN 4 — GENERATING (magic quill + pixel progress bar) -->
+    <!-- SCREEN 4 — GENERATING (magic quill + rotating writer phrases). No progress
+         bar: Gemini latency (esp. a scoped single-field regen) isn't reliably
+         estimable, so a bar would promise a completion it can't keep. The phrases
+         just signal "working." -->
     <section id="screen-generating" class="screen">
       <img class="gen-gif" src="/assets/gifs/quillio_magic_v27.gif" alt="">
-      <div class="progress-panel">
-        <div class="progress-estimate" id="draft-progress-estimate">Estimated: ~30s</div>
-        <div class="progress-track" id="draft-progress-track"></div>
-        <div class="progress-label" id="draft-progress-label">Drafting…</div>
-        <div class="progress-sublabel" id="draft-progress-sublabel"></div>
-      </div>
+      <div class="gen-message" id="gen-message">Warming up the quill…</div>
     </section>
 
     <!-- SCREEN 5 — COPY DONE (drafted view) -->
@@ -1526,57 +1526,72 @@
     }
 
     // --- Screens 4 & 5: draft progress bar + copy-done ---------------------
-    // Asset types with longer copy take longer to draft; the rest are quick.
-    var COMPLEX_ASSET_RE = /email|landing|signage|one[\s-]?pager/i;
-    function estimateDraftSec(assetNames) {
-      if (!assetNames || !assetNames.length) return 24;
-      var total = 0;
-      for (var i = 0; i < assetNames.length; i++) {
-        total += COMPLEX_ASSET_RE.test(assetNames[i]) ? 15 : 8;
+    // Generation phrases: quippy, self-deprecating one-liners a copywriter will
+    // recognize. They cycle continuously (no progress bar) until the real draft
+    // job resolves — signaling "working" without promising a completion time the
+    // Gemini latency can't honor. Same treatment for every draft path (whole-doc
+    // and scoped), so there's no per-asset label to get wrong on a scoped op.
+    var GEN_PHRASES = [
+      'Kicking things off…', 'Warming up the quill…', 'Running low on ink…',
+      'Lowering your risk of carpal tunnel…', 'Making it sound human…',
+      'Generating first draft…', 'Asking the quill nicely…', 'Hang tight, words incoming…',
+      'Choosing between three synonyms for leverage…', 'Removing unnecessary jargon… mostly…',
+      'Finding the perfect em dash…', 'Spell-checking. Obviously.',
+      'Adding the Oxford comma. You\'re welcome.', 'Making it punchy. But not too punchy.',
+      'Cutting the word very. Twice.', 'Replacing synergy with something real…',
+      'Making sure it doesn\'t sound like a robot wrote it…', 'Putting the final period on it…',
+      'Deciding between punchy and punchier…', 'Removing the fourth exclamation point…',
+      'Making the CTA actually compelling…', 'Ensuring no sentence starts with Unfortunately…',
+      'Cutting the fluff. There was a lot of fluff.', 'Choosing words that earn their keep…',
+      'Rewriting the headline. Again.', 'Making sure it passes the so-what test…',
+      'Removing we are excited to announce…', 'Counting characters so you don\'t have to…',
+      'Replacing leverage with use. You\'re welcome.', 'Making the subject line actually get opened…',
+      'Ensuring the CTA doesn\'t say Learn More…', 'Cutting the passive voice. Most of it anyway.',
+      'Removing the word robust. Three times.', 'Tightening the opening line…',
+      'Making sure the hook actually hooks…', 'Swapping innovative for something true…',
+      'Removing the word seamless. Again.', 'Giving the CTA some backbone…',
+      'Checking that nothing is best-in-class…', 'Making sure it\'s direct without being rude…',
+      'Swapping unlock for something less sales-y…', 'Almost done. We promise.',
+      'Final pass. This one\'s for real.'
+    ];
+
+    function shuffle(arr) {
+      var a = arr.slice();
+      for (var i = a.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var t = a[i]; a[i] = a[j]; a[j] = t;
       }
-      return total;
+      return a;
     }
 
-    // Estimate-driven draft bar. The draft job only reports pending→complete, so
-    // the bar is paced by elapsed/estimate and the label walks
-    // "Drafting [asset]…" across the asset list by fraction; finishDraftBar()
-    // snaps to 100% on the real result.
-    var draftBarTimer = null;
-    function startDraftBar(assetNames) {
-      var names = (assetNames && assetNames.length) ? assetNames : ['your copy'];
-      var estimateSec = estimateDraftSec(assetNames);
-      var track = document.getElementById('draft-progress-track');
-      var estimateEl = document.getElementById('draft-progress-estimate');
-      var labelEl = document.getElementById('draft-progress-label');
-      var subEl = document.getElementById('draft-progress-sublabel');
-      buildTrack(track);
-      fillTrack(track, 0);
-      track.classList.remove('pulsing');
-      estimateEl.textContent = 'Estimated: ~' + Math.round(estimateSec) + 's';
-      labelEl.textContent = 'Drafting ' + names[0] + '…';
-      subEl.textContent = names.length > 1 ? (names.length + ' assets') : '';
-      var startTs = Date.now();
-      var lastIdx = 0;
-      if (draftBarTimer) clearInterval(draftBarTimer);
-      draftBarTimer = setInterval(function () {
-        var elapsed = (Date.now() - startTs) / 1000;
-        var frac = Math.min(elapsed / estimateSec, 0.96);
-        fillTrack(track, frac);
-        var idx = Math.min(names.length - 1, Math.floor((frac / 0.96) * names.length));
-        if (idx !== lastIdx) { lastIdx = idx; labelEl.textContent = 'Drafting ' + names[idx] + '…'; }
-        if (elapsed >= estimateSec) {
-          track.classList.add('pulsing');
-          labelEl.textContent = 'Almost there…';
-        }
-      }, 250);
+    // Cycle the phrases in RANDOM order (re-shuffled each run, so the writer
+    // doesn't see the same opening phrase every time). Fade between lines; the
+    // fade collapses to an instant swap under prefers-reduced-motion (CSS).
+    var genTimer = null;
+    function startGenerating() {
+      var msgEl = document.getElementById('gen-message');
+      if (!msgEl) return;
+      var picked = shuffle(GEN_PHRASES);
+      var idx = 0;
+      msgEl.style.transition = 'none';
+      msgEl.textContent = picked[0];
+      msgEl.style.opacity = 1;
+      msgEl.style.transform = 'translateY(0)';
+      if (genTimer) clearInterval(genTimer);
+      genTimer = setInterval(function () {
+        idx = (idx + 1) % picked.length;
+        msgEl.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+        msgEl.style.opacity = 0;
+        msgEl.style.transform = 'translateY(8px)';
+        setTimeout(function () {
+          msgEl.textContent = picked[idx];
+          msgEl.style.opacity = 1;
+          msgEl.style.transform = 'translateY(0)';
+        }, 300);
+      }, 3200);
     }
-    function stopDraftBar() {
-      if (draftBarTimer) { clearInterval(draftBarTimer); draftBarTimer = null; }
-    }
-    function finishDraftBar() {
-      stopDraftBar();
-      var track = document.getElementById('draft-progress-track');
-      if (track) { track.classList.remove('pulsing'); fillTrack(track, 1); }
+    function stopGenerating() {
+      if (genTimer) { clearInterval(genTimer); genTimer = null; }
     }
 
     // Brief auto-dismissing confirmation toast.
@@ -1629,22 +1644,22 @@
     async function generateDraft() {
       if (!state.docId) { showError(document.getElementById('output-error'), 'No document to draft.'); return; }
       showScreen('generating');
-      startDraftBar(state.assets);
+      startGenerating();
       console.log('[app] first draft start — docId=' + state.docId + ' projectId=' + state.projectId);
       try {
         var data = await draftFetch(state.docId);
         console.log('[app] first draft /api/draft returned:', data);
-        finishDraftBar();
+        stopGenerating();
         await loadCopyDone();
         if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
         showScreen('copydone');
         showToast(draftedLabel(data.fieldCount));
       } catch (e) {
-        stopDraftBar();
+        stopGenerating();
         var content = await fetchDocContent();
         if (content && contentHasAnyCopy(content)) {
           console.log('[app] first draft recovered — doc has copy despite the dropped request');
-          finishDraftBar();
+          stopGenerating();
           await loadCopyDone();
           if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
           showScreen('copydone');
@@ -1695,24 +1710,24 @@
       var scopedFields = selectedScopedFields(); // scoped regen when fields are selected
       closeRegenModal();
       showScreen('generating');
-      startDraftBar(state.assets);
+      startGenerating();
       console.log('[app] regenerate start — docId=' + state.docId + ' direction=' + JSON.stringify(direction) + ' scoped=' + scopedFields.length);
       try {
         var data = await draftFetch(state.docId, direction, scopedFields);
         console.log('[app] regenerate /api/draft returned:', data);
-        finishDraftBar();
+        stopGenerating();
         input.value = '';
         await loadCopyDone();
         showScreen('copydone');
         showToast('✓ Draft updated');
       } catch (e) {
         console.error('[app] regenerate /api/draft failed: ' + (e && e.name) + ' ' + (e && e.message));
-        stopDraftBar();
+        stopGenerating();
         // The connection can drop after the doc was written — re-read it.
         var content = await fetchDocContent();
         if (content && contentHasAnyCopy(content)) {
           console.log('[app] regenerate recovered — doc has copy despite the dropped request');
-          finishDraftBar();
+          stopGenerating();
           await loadCopyDone();
           input.value = '';
           showScreen('copydone');
@@ -2039,9 +2054,6 @@
 
     function renderProjectContent(content) {
       projectContentEl.textContent = '';
-      // Remembered for the draft progress-bar estimate/labels (same GIF modal the
-      // brief flow uses), so scoped + whole-doc project ops share one treatment.
-      projectState.assetNames = (content.assets || []).map(function (a) { return a.name; });
 
       projectContentEl.appendChild(el('div', 'section-label', 'Campaign Summary'));
       projectContentEl.appendChild(el('div', 'section-body', content.summary || '—'));
@@ -2144,15 +2156,15 @@
       // Same GIF loading modal + progress bar as the whole-doc/brief-flow path —
       // no separate treatment for scoped ops.
       showScreen('generating');
-      startDraftBar(projectState.assetNames);
+      startGenerating();
       try {
         await draftFetch(p.copy_doc_id, '', scopedFields);
-        finishDraftBar();
+        stopGenerating();
         // Reload the (now partly/fully) drafted copy into the view; openProject
         // returns to the project screen and re-renders field state + the button.
         openProject(p);
       } catch (e) {
-        stopDraftBar();
+        stopGenerating();
         showScreen('project');
         showError(projectError, draftErrorMessage(e));
         projectPrimaryBtn.disabled = false;
@@ -2184,16 +2196,16 @@
       // Same GIF loading modal + progress bar as the whole-doc/brief-flow path —
       // no separate treatment for scoped ops.
       showScreen('generating');
-      startDraftBar(projectState.assetNames);
+      startGenerating();
       try {
         await draftFetch(p.copy_doc_id, direction, scopedFields);
-        finishDraftBar();
+        stopGenerating();
         input.value = '';
         // Reload the regenerated copy into the view; openProject returns to the
         // project screen and re-renders field state + the dynamic button.
         openProject(p);
       } catch (e) {
-        stopDraftBar();
+        stopGenerating();
         showScreen('project');
         showError(projectError, draftErrorMessage(e));
         projectPrimaryBtn.disabled = false;

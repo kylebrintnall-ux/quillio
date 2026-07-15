@@ -161,11 +161,11 @@ async function runWebProjectContent(docId, tenantContext = {}) {
 // Run a copy review on a doc as the tenant's user. Returns the review result
 // ({ reviewed, flagged, clean, hadCopy, digest, status }). Throws on failure so
 // the route surfaces an error state (rather than a stuck review).
-async function runWebReview(docId, tenantContext = {}) {
+async function runWebReview(docId, tenantContext = {}, scopedFields) {
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
   const clients = await getClientsForTenant(tenantId);
   const { runCopyReview } = require('../services/copyReview');
-  return runCopyReview(docId, tenantId, clients);
+  return runCopyReview(docId, tenantId, clients, scopedFields);
 }
 
 module.exports = { runWebBrief, runWebDraft, runWebProjectContent, runWebReview };

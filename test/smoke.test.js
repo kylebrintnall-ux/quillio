@@ -1986,6 +1986,96 @@ test('variant review: reconcile exposes claimedIds for the orphan sweep', () => 
   assert.ok(!out.claimedIds.includes('orphan1'), 'unmatched comment is not claimed (will be swept)');
 });
 
+// --- Scoped review -----------------------------------------------------------
+
+test('scoped review: selectReviewTargets picks only selected fields, attaches siblings', () => {
+  const { selectReviewTargets, fieldKey } = require('../src/services/copyReview');
+  const content = { assets: [{ name: 'Email', fields: [
+    { fieldName: 'Headline', charMax: 60, copy: 'Ship faster.' },
+    { fieldName: 'Subhead', charMax: 80, copy: '(Reframe) Support is a design problem.' },
+    { fieldName: 'CTA', charMax: 20, copy: '1. (Outcome) Get started\n2. (Identity) Join builders' },
+  ] }] };
+
+  // Whole-doc: every unit, no siblings, not scoped.
+  const whole = selectReviewTargets(content, null);
+  assert.strictEqual(whole.scoped, false);
+  assert.deepStrictEqual(whole.singles.map((f) => f.fieldName), ['Headline', 'Subhead']);
+  assert.deepStrictEqual(whole.stacks.map((s) => s.fieldName), ['CTA']);
+  assert.ok(whole.singles.every((f) => !f.siblings), 'whole-doc has no sibling context');
+
+  // Scoped to Headline + CTA: only those; each carries its asset siblings.
+  const scopeKeys = new Set([fieldKey('Email', 'Headline'), fieldKey('Email', 'CTA')]);
+  const scoped = selectReviewTargets(content, scopeKeys);
+  assert.strictEqual(scoped.scoped, true);
+  assert.deepStrictEqual(scoped.singles.map((f) => f.fieldName), ['Headline'], 'only selected single');
+  assert.deepStrictEqual(scoped.stacks.map((s) => s.fieldName), ['CTA'], 'only selected stack');
+  assert.deepStrictEqual(scoped.singles[0].siblings.map((s) => s.fieldName), ['Subhead', 'CTA'], 'Headline sees its siblings');
+  // Sibling copy strips a solo doorway label (context = the sentence).
+  const subSib = scoped.singles[0].siblings.find((s) => s.fieldName === 'Subhead');
+  assert.strictEqual(subSib.copy, 'Support is a design problem.');
+});
+
+test('scoped review: orphan sweep never touches an UNSELECTED field\'s prior comment', () => {
+  const { orphanSweepIds, keyInScope, fieldKey } = require('../src/services/copyReview');
+  const scopeKeys = new Set([fieldKey('Email', 'Headline')]);
+  const priorFields = {
+    [fieldKey('Email', 'Subhead')]: { copy: 'x', comment: 'Reframe is hypey here.', resolved: false },
+    [fieldKey('Email', 'Headline')]: { copy: 'y', comment: 'Weak verb.', resolved: false },
+  };
+  const live = [
+    { id: 'c_subhead', content: 'Reframe is hypey here.', resolved: false, quote: 'x' },
+    { id: 'c_headline', content: 'Weak verb.', resolved: false, quote: 'y' },
+  ];
+  // Scoped run of Headline; Subhead's comment is unclaimed but OUT of scope → kept.
+  const scopedSweep = orphanSweepIds({ liveComments: live, claimedIds: ['c_headline'], toDelete: [], scopeKeys, priorFields });
+  assert.deepStrictEqual(scopedSweep, [], 'unselected Subhead comment is preserved');
+  // Whole-doc would sweep the same unclaimed comment.
+  const wholeSweep = orphanSweepIds({ liveComments: live, claimedIds: ['c_headline'], toDelete: [], scopeKeys: null, priorFields });
+  assert.deepStrictEqual(wholeSweep, ['c_subhead'], 'whole-doc sweeps a true orphan');
+  // A selected field's own variation key IS in scope (its resolved-away comment can be swept).
+  assert.ok(keyInScope(fieldKey('Email', 'Headline') + ' · option 2 (proof)', scopeKeys));
+  assert.ok(!keyInScope(fieldKey('Email', 'Subhead'), scopeKeys));
+});
+
+test('scoped review: field-review prompt gets asset context + tight cross-field flag', () => {
+  const { CROSS_FIELD_FLAG_RULE } = require('../src/services/gemini');
+  const gemini = require('../src/services/gemini');
+  // reviewCopyFields builds its prompt internally; assert the flag rule wording is
+  // interaction-only (not general sibling critique), and is exported for reuse.
+  const rule = CROSS_FIELD_FLAG_RULE.join('\n');
+  assert.ok(/duplication \/ redundancy \(the sibling makes the SAME point\)/.test(rule), 'fires on duplication');
+  assert.ok(/Do NOT flag a sibling's STANDALONE craft problem/.test(rule), 'not general sibling critique');
+  assert.ok(/Also worth a look:/.test(rule), 'appends the flag clause');
+  assert.strictEqual(typeof gemini.reviewCopyFields, 'function');
+});
+
+test('scoped review: variant prompt adds sibling context + a flag axis; non-scoped omits it', () => {
+  const { buildVariantReviewPrompt } = require('../src/services/gemini');
+  const base = { assetType: 'Email', fieldName: 'CTA', charMax: 20, voiceGuide: '', briefContext: {},
+    variations: [{ index: 1, doorway: 'Outcome', copy: 'Get started' }, { index: 2, doorway: 'Identity', copy: 'Join builders' }] };
+
+  const plain = buildVariantReviewPrompt(base);
+  assert.ok(!/ASSET CONTEXT/.test(plain), 'no sibling block without siblings');
+  assert.ok(!/"flag": string\|null/.test(plain), 'no flag axis without siblings');
+
+  const scoped = buildVariantReviewPrompt({ ...base, siblings: [{ fieldName: 'Headline', copy: 'Join the builders shipping faster.' }] });
+  assert.ok(/ASSET CONTEXT/.test(scoped) && /Headline: Join the builders/.test(scoped), 'sibling context present');
+  assert.ok(/"flag": string\|null/.test(scoped), 'flag axis in scoped output');
+  assert.ok(/COMMENT ONLY on the options below, never on a\s+sibling/.test(scoped), 'comment-only rule');
+});
+
+test('scoped review: threaded route -> adapter, sent from UI, dynamic Review button', () => {
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  assert.ok(/api\/review[\s\S]*?body\.scopedFields/.test(route), 'review route reads scopedFields');
+  assert.ok(/runWebReview\(docId, tenantContext, scoped \? scopedFields : undefined\)/.test(route), 'route threads scopedFields');
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  assert.ok(/runWebReview\(docId, tenantContext = \{\}, scopedFields\)/.test(web) && /runCopyReview\(docId, tenantId, clients, scopedFields\)/.test(web), 'adapter threads scopedFields');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(/function reviewFetch\(docId, scopedFields\)/.test(html) && /body\.scopedFields = scopedFields/.test(html), 'reviewFetch sends scopedFields');
+  assert.ok(/selectedScopedFields\(\); \/\/ scoped review/.test(html), 'review runner reads the selection');
+  assert.ok(/Review Selected \(/.test(html), 'dynamic Review Selected (N) label');
+});
+
 test('variations (P1 regression): count=1 + close routes to the unchanged per-field generator', () => {
   const gd = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
   // The scoped loop branches on count/distance: variations only when count>1 OR distance!=close.

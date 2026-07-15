@@ -1106,7 +1106,23 @@ async function extractHeaderSchema(base64Data, mimetype) {
 // Returns [{ assetType, fieldName, comment }] (comment: string | null), one per
 // input field, same order. Throws on a hard failure so the caller can show an
 // error state (rather than silently posting nothing).
-async function reviewCopyFields({ fields, voiceGuide, briefContext } = {}) {
+// The cross-field flag rule, shared by scoped field review and scoped variant
+// review. Fires ONLY on a relational interaction between the selected field and a
+// sibling — never on a sibling's standalone craft problem.
+const CROSS_FIELD_FLAG_RULE = [
+  'CROSS-FIELD FLAG — fire it TIGHT. Append " Also worth a look: <one short clause>." to the',
+  'selected field\'s comment ONLY when a SIBLING directly INTERACTS with the selected field:',
+  '  • contradiction (they disagree),',
+  '  • duplication / redundancy (the sibling makes the SAME point),',
+  '  • tonal clash (the sibling\'s register fights this field\'s).',
+  'Do NOT flag a sibling\'s STANDALONE craft problem (a weak verb, a long sentence) that does',
+  'not conflict with the selected field — that is not the writer\'s question; it waits for a',
+  'full review. At most ONE flag per field; one clause; no separate comment on the sibling.',
+  'Example: "…[note on the headline]. Also worth a look: the Subhead is making the same point',
+  'as option 2."',
+];
+
+async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = false } = {}) {
   const list = Array.isArray(fields) ? fields : [];
   if (list.length === 0) return [];
 
@@ -1162,6 +1178,17 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext } = {}) {
     '• copy UNCHANGED and previously flagged → the writer saw the note and kept it: return null (do not nag).',
     'Only raise a NEW note on unchanged copy if it is genuinely material and was missed before — be conservative.',
     '',
+    ...(scoped
+      ? [
+          'SCOPED REVIEW — the writer selected specific fields. Each field below is given WITH its',
+          'ASSET CONTEXT (its sibling fields\' current copy, in "siblings"). For each field:',
+          '• Judge it BOTH on its own AND against its siblings — does it fit the headline / subhead /',
+          '  CTA / body it sits with?',
+          '• COMMENT ONLY on the fields below. Do NOT write notes about sibling fields.',
+          ...CROSS_FIELD_FLAG_RULE,
+          '',
+        ]
+      : []),
     'OUTPUT FORMAT — CRITICAL. Return ONLY a raw JSON array and NOTHING else:',
     '• Do NOT include any reasoning, thinking, preamble, explanation, or trailing text.',
     '• Do NOT wrap the JSON in markdown code fences (no ``` and no ```json).',
@@ -1172,14 +1199,21 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext } = {}) {
     '',
     'FIELDS:',
     JSON.stringify(
-      list.map((f) => ({
-        assetType: f.assetType,
-        fieldName: f.fieldName,
-        charMax: f.charMax || 0,
-        copy: f.copy || '',
-        priorCopy: f.priorCopy || null,
-        priorComment: f.priorComment || null,
-      })),
+      list.map((f) => {
+        const entry = {
+          assetType: f.assetType,
+          fieldName: f.fieldName,
+          charMax: f.charMax || 0,
+          copy: f.copy || '',
+          priorCopy: f.priorCopy || null,
+          priorComment: f.priorComment || null,
+        };
+        // Sibling context (scoped review only) — read for fit + interaction, never commented.
+        if (scoped && Array.isArray(f.siblings) && f.siblings.length) {
+          entry.siblings = f.siblings.map((s) => ({ fieldName: s.fieldName, copy: s.copy }));
+        }
+        return entry;
+      }),
       null,
       2
     ),
@@ -1267,9 +1301,12 @@ const DOORWAY_FIT_GUIDE = [
 ];
 
 // Build the variant-review prompt for ONE stacked field. Pure — rendered from the
-// field's options (each carrying its assigned doorway). Exposed for tests.
-function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, voiceGuide, briefContext } = {}) {
+// field's options (each carrying its assigned doorway). `siblings` (scoped review)
+// is the asset context — the stack's non-variation neighbors — read for fit +
+// cross-field interaction, never commented. Exposed for tests.
+function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, voiceGuide, briefContext, siblings } = {}) {
   const opts = Array.isArray(variations) ? variations : [];
+  const sibs = Array.isArray(siblings) ? siblings.filter((s) => s && s.fieldName && String(s.copy || '').trim()) : [];
   const brand = String(voiceGuide || '').trim() || '(no brand guide provided — judge on universal writing craft only)';
   const bc = briefContext || {};
   const briefSummary = String(bc.summary || '').trim();
@@ -1332,8 +1369,24 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, v
     'RE-REVIEW: if an option is unchanged from a prior pass and was already noted (priorComment),',
     "return null (don't nag); if it changed and now works, null.",
     '',
-    'OUTPUT — raw JSON array ONLY, one object per option IN ORDER, first char "[":',
-    '[{"index": 1, "doorway": "Contrast", "strategy": string|null, "craft": string|null}]',
+    ...(sibs.length
+      ? [
+          'ASSET CONTEXT — this field\'s SIBLINGS in the same asset (their current copy). Read them',
+          'for fit and for cross-field INTERACTION. COMMENT ONLY on the options below, never on a',
+          'sibling. Siblings:',
+          ...sibs.map((s) => `  - ${s.fieldName}: ${String(s.copy).trim()}`),
+          '',
+          ...CROSS_FIELD_FLAG_RULE,
+          '(For a stack, put the flag in the "flag" field of the option it concerns — e.g. the',
+          'option that duplicates a sibling.)',
+          '',
+          'OUTPUT — raw JSON array ONLY, one object per option IN ORDER, first char "[":',
+          '[{"index": 1, "doorway": "Contrast", "strategy": string|null, "craft": string|null, "flag": string|null}]',
+        ]
+      : [
+          'OUTPUT — raw JSON array ONLY, one object per option IN ORDER, first char "[":',
+          '[{"index": 1, "doorway": "Contrast", "strategy": string|null, "craft": string|null}]',
+        ]),
     '',
     'OPTIONS:',
     JSON.stringify(
@@ -1351,13 +1404,14 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, v
 
 // Review ONE unresolved numbered stack: assess each option on STRATEGY (is the
 // doorway the right angle for this asset/audience/funnel?) then CRAFT (voice.md),
-// per-variation, at the materiality bar. Returns [{ index, doorway, strategy,
-// craft }] with strategy/craft null when clean. It does NOT pick a winner.
-async function reviewVariationStack({ assetType, fieldName, charMax, variations, voiceGuide, briefContext } = {}) {
+// per-variation, at the materiality bar. `siblings` (scoped review) adds asset
+// context + enables a tight cross-field `flag`. Returns [{ index, doorway,
+// strategy, craft, flag }], each axis null when clean. It does NOT pick a winner.
+async function reviewVariationStack({ assetType, fieldName, charMax, variations, voiceGuide, briefContext, siblings } = {}) {
   const opts = Array.isArray(variations) ? variations : [];
   if (opts.length === 0) return [];
 
-  const prompt = buildVariantReviewPrompt({ assetType, fieldName, charMax, variations: opts, voiceGuide, briefContext });
+  const prompt = buildVariantReviewPrompt({ assetType, fieldName, charMax, variations: opts, voiceGuide, briefContext, siblings });
 
   const SCHEMA = {
     type: 'ARRAY',
@@ -1368,6 +1422,7 @@ async function reviewVariationStack({ assetType, fieldName, charMax, variations,
         doorway: { type: 'STRING', nullable: true },
         strategy: { type: 'STRING', nullable: true },
         craft: { type: 'STRING', nullable: true },
+        flag: { type: 'STRING', nullable: true },
       },
       required: ['index'],
     },
@@ -1403,7 +1458,7 @@ async function reviewVariationStack({ assetType, fieldName, charMax, variations,
   });
   return opts.map((o, i) => {
     const r = byIndex.get(o.index) || byIndex.get(`__idx_${i}`) || {};
-    return { index: o.index, doorway: o.doorway || null, strategy: strOrNull(r.strategy), craft: strOrNull(r.craft) };
+    return { index: o.index, doorway: o.doorway || null, strategy: strOrNull(r.strategy), craft: strOrNull(r.craft), flag: strOrNull(r.flag) };
   });
 }
 
@@ -1427,4 +1482,5 @@ module.exports = {
   DOORWAYS,
   buildVariantReviewPrompt,
   DOORWAY_FIT_GUIDE,
+  CROSS_FIELD_FLAG_RULE,
 };

@@ -80,6 +80,70 @@ function variationFieldName(fieldName, index, doorway) {
   return `${fieldName} · option ${index}${doorway ? ` (${doorway})` : ''}`;
 }
 
+// Choose the review targets. Whole-doc (scopeKeys null) → every single + stack,
+// no sibling context. Scoped → only the selected fields, each carrying its ASSET
+// CONTEXT (its sibling fields' current copy) so the review can judge it in place
+// and flag cross-field interactions. Pure.
+function selectReviewTargets(content, scopeKeys) {
+  const singles = collectCopyFields(content);
+  const stacks = collectVariationStacks(content);
+  if (!scopeKeys) return { singles, stacks, scoped: false };
+
+  // Per-asset list of every non-empty field's { fieldName, copy } (for siblings).
+  const byAsset = new Map();
+  for (const asset of (content && content.assets) || []) {
+    const list = [];
+    for (const f of asset.fields || []) {
+      const raw = String(f.copy || '').trim();
+      if (raw) list.push({ fieldName: f.fieldName, copy: raw });
+    }
+    byAsset.set(asset.name, list);
+  }
+  const siblingsFor = (assetName, fieldName) =>
+    (byAsset.get(assetName) || [])
+      .filter((s) => s.fieldName !== fieldName)
+      .map((s) => ({ fieldName: s.fieldName, copy: stripSoloLabel(s.copy).trim() }));
+
+  const inScope = (assetType, fieldName) => scopeKeys.has(fieldKey(assetType, fieldName));
+  return {
+    scoped: true,
+    singles: singles
+      .filter((f) => inScope(f.assetType, f.fieldName))
+      .map((f) => ({ ...f, siblings: siblingsFor(f.assetType, f.fieldName) })),
+    stacks: stacks
+      .filter((st) => inScope(st.assetType, st.fieldName))
+      .map((st) => ({ ...st, siblings: siblingsFor(st.assetType, st.fieldName) })),
+  };
+}
+
+// Is a persisted-state key within the scope of this review? True for a selected
+// field's own key OR any of its variation keys ("…field · option N (Door)").
+// Used to (a) restrict the orphan sweep and (b) refresh only in-scope state.
+function keyInScope(key, scopeKeys) {
+  if (scopeKeys.has(key)) return true;
+  for (const sk of scopeKeys) {
+    if (key.startsWith(`${sk} · option`)) return true;
+  }
+  return false;
+}
+
+// Comment ids to sweep. Whole-doc: any live Quillio comment bound to no current
+// unit is a true orphan. Scoped: sweep ONLY orphans that belonged to an in-scope
+// field/variation (matched via prior state by content) — so an unselected field's
+// comment from a previous whole-doc review is never touched.
+function orphanSweepIds({ liveComments, claimedIds, toDelete, scopeKeys, priorFields }) {
+  const claimed = new Set(claimedIds);
+  const deleting = new Set(toDelete);
+  const candidates = (liveComments || []).filter((c) => !claimed.has(c.id) && !deleting.has(c.id));
+  if (!scopeKeys) return candidates.map((c) => c.id);
+  // Prior comments that belonged to in-scope keys — only these may be swept.
+  const inScopePriorComments = new Set();
+  for (const [key, entry] of Object.entries(priorFields || {})) {
+    if (entry && entry.comment && keyInScope(key, scopeKeys)) inScopePriorComments.add(String(entry.comment));
+  }
+  return candidates.filter((c) => inScopePriorComments.has(String(c.content))).map((c) => c.id);
+}
+
 // A supportive, non-numeric read of overall quality (never a grade/score).
 function qualitativeStatus(flagged, total) {
   if (total === 0) return 'Nothing to review yet';
@@ -236,14 +300,23 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
 // `tenantId` selects the voice guide. Returns
 //   { reviewed, flagged, clean, digest, status, hadCopy }.
 // Throws on a hard failure so callers can show an error state.
-async function runCopyReview(docId, tenantId, clients) {
+async function runCopyReview(docId, tenantId, clients, scopedFields) {
   const dest = getDestination();
   const content = await dest.getDocContent(docId, clients);
-  const singleFields = collectCopyFields(content); // resolved / solo-labeled fields
-  const stacks = collectVariationStacks(content); // unresolved numbered stacks
+
+  // Scoped review: when the writer selected fields, review ONLY those (each with
+  // its asset/sibling context) and comment only on them. Absent → whole-doc.
+  const scopeKeys =
+    Array.isArray(scopedFields) && scopedFields.length > 0
+      ? new Set(scopedFields.map((t) => fieldKey(t.assetType, t.fieldName)))
+      : null;
+  const { singles: singleFields, stacks, scoped } = selectReviewTargets(content, scopeKeys);
 
   if (singleFields.length === 0 && stacks.length === 0) {
-    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: false, digest: 'Nothing to review yet — this doc has no drafted copy.', status: 'Nothing to review yet' };
+    const digest = scoped
+      ? 'Nothing to review in the selected field(s) yet.'
+      : 'Nothing to review yet — this doc has no drafted copy.';
+    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: false, digest, status: 'Nothing to review yet' };
   }
 
   // Voice guide: tenant override, else repo voice.md.
@@ -297,10 +370,10 @@ async function runCopyReview(docId, tenantId, clients) {
   // variant review, run concurrently. ---
   const singleInputs = singleFields.map((f) => {
     const p = priorFor(f.assetType, f.fieldName);
-    return { assetType: f.assetType, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null };
+    return { assetType: f.assetType, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null, siblings: f.siblings || [] };
   });
   const singleVerdicts = singleInputs.length
-    ? await reviewCopyFields({ fields: singleInputs, voiceGuide, briefContext })
+    ? await reviewCopyFields({ fields: singleInputs, voiceGuide, briefContext, scoped })
     : [];
 
   const stackResults = await Promise.all(
@@ -309,7 +382,7 @@ async function runCopyReview(docId, tenantId, clients) {
         const p = priorFor(st.assetType, variationFieldName(st.fieldName, v.index, v.doorway));
         return { index: v.index, doorway: v.doorway, copy: v.copy, priorComment: p.comment || null };
       });
-      return reviewVariationStack({ assetType: st.assetType, fieldName: st.fieldName, charMax: st.charMax, variations: options, voiceGuide, briefContext })
+      return reviewVariationStack({ assetType: st.assetType, fieldName: st.fieldName, charMax: st.charMax, variations: options, voiceGuide, briefContext, siblings: st.siblings || [] })
         .then((res) => ({ st, res }))
         .catch((err) => {
           console.warn(`[review] variant review failed for ${st.fieldName}: ${err.message}`);
@@ -318,13 +391,14 @@ async function runCopyReview(docId, tenantId, clients) {
     })
   );
 
-  // Compose each variation's comment: STRATEGY first, then CRAFT; null when clean.
+  // Compose each variation's comment: STRATEGY, then CRAFT, then the cross-field
+  // FLAG (scoped only); null when all clean.
   const variationVerdicts = [];
   for (const { st, res } of stackResults) {
     const byIndex = new Map((res || []).map((r) => [r.index, r]));
     for (const v of st.variations) {
       const r = byIndex.get(v.index) || {};
-      const parts = [r.strategy, r.craft].filter((s) => typeof s === 'string' && s.trim());
+      const parts = [r.strategy, r.craft, r.flag].filter((s) => typeof s === 'string' && s.trim());
       variationVerdicts.push({
         assetType: st.assetType,
         fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
@@ -346,24 +420,40 @@ async function runCopyReview(docId, tenantId, clients) {
   for (const id of recon.toDelete) {
     await dest.deleteReviewComment(docId, id, clients);
   }
-  // Orphan sweep: a live Quillio comment bound to no current unit belongs to a
-  // unit that no longer exists — a stack the writer resolved down, or a deleted
-  // field. Remove it so a variation's note disappears once its option is gone.
-  const claimed = new Set(recon.claimedIds);
-  const deleting = new Set(recon.toDelete);
+  // Orphan sweep — remove a comment whose unit no longer exists (a resolved stack,
+  // a deleted field). Whole-doc: any unclaimed comment. Scoped: ONLY unclaimed
+  // comments that belonged to an in-scope field/variation, so an UNSELECTED
+  // field's comment from a previous whole-doc review is never touched.
+  const sweepIds = orphanSweepIds({
+    liveComments,
+    claimedIds: recon.claimedIds,
+    toDelete: recon.toDelete,
+    scopeKeys,
+    priorFields,
+  });
   let swept = 0;
-  for (const c of liveComments) {
-    if (!claimed.has(c.id) && !deleting.has(c.id)) {
-      if (await dest.deleteReviewComment(docId, c.id, clients)) swept += 1;
-    }
+  for (const id of sweepIds) {
+    if (await dest.deleteReviewComment(docId, id, clients)) swept += 1;
   }
   for (const a of recon.toAdd) {
     await dest.addReviewComment(docId, { quote: a.quote, content: a.content }, clients);
   }
 
-  // Persist next state (copy + comment + resolved per unit) for the next re-review.
+  // Persist next state. Whole-doc replaces the whole state (it saw everything).
+  // Scoped MERGES: carry every unselected field's prior state forward untouched,
+  // and refresh only the in-scope keys — so the next review still reconciles the
+  // fields this scoped pass didn't look at.
+  let nextState = recon.nextState;
+  if (scoped) {
+    const mergedFields = { ...priorFields };
+    for (const k of Object.keys(mergedFields)) {
+      if (keyInScope(k, scopeKeys)) delete mergedFields[k]; // drop stale in-scope entries
+    }
+    Object.assign(mergedFields, recon.nextState.fields); // install freshly-reviewed ones
+    nextState = { fields: mergedFields };
+  }
   try {
-    await saveReviewState(docId, recon.nextState);
+    await saveReviewState(docId, nextState);
   } catch (err) {
     console.warn('[review] saveReviewState skipped:', err.message);
   }
@@ -371,7 +461,7 @@ async function runCopyReview(docId, tenantId, clients) {
   const reviewed = recon.results.length;
   const flagged = recon.results.filter((r) => r.comment).length;
   console.log(
-    `[review] doc=${docId} reviewed=${reviewed} flagged=${flagged} ` +
+    `[review] doc=${docId}${scoped ? ` scoped ${singleFields.length + stacks.length}` : ''} reviewed=${reviewed} flagged=${flagged} ` +
       `kept=${recon.counts.kept} added=${recon.counts.added} removed=${recon.counts.removed} swept=${swept}`
   );
   return {
@@ -390,6 +480,9 @@ module.exports = {
   collectCopyFields,
   collectVariationStacks,
   variationFieldName,
+  selectReviewTargets,
+  orphanSweepIds,
+  keyInScope,
   qualitativeStatus,
   buildDigest,
   fieldKey,

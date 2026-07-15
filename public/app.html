@@ -1486,8 +1486,12 @@
       return (e && e.message) || 'Network error — please try again.';
     }
     // Review job → resolves with { reviewed, flagged, clean, hadCopy, digest, status }.
-    function reviewFetch(docId) {
-      return runJob('/api/review', { docId: docId, workspaceId: WORKSPACE_ID }, '/api/review');
+    // scopedFields (optional) scopes the review to the selected fields, with asset
+    // context; absent → whole-doc review.
+    function reviewFetch(docId, scopedFields) {
+      var body = { docId: docId, workspaceId: WORKSPACE_ID };
+      if (scopedFields && scopedFields.length) body.scopedFields = scopedFields;
+      return runJob('/api/review', body, '/api/review');
     }
     function draftedLabel(n) {
       return '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
@@ -1993,6 +1997,8 @@
       } else {
         projectPrimaryBtn.textContent = n > 0 ? ('Generate Selected (' + n + ')') : 'Generate First Draft';
       }
+      // Review button mirrors the primary: scoped when fields are selected.
+      if (projectReviewBtn) projectReviewBtn.textContent = n > 0 ? ('Review Selected (' + n + ')') : 'Review Copy';
     }
 
     // ONE click handler routes by draft state: drafted → the Regenerate direction
@@ -2009,6 +2015,8 @@
       var n = selectedCount();
       var b = document.getElementById('copydone-regen-btn');
       if (b) b.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
+      var rb = document.getElementById('copydone-review-btn');
+      if (rb) rb.textContent = n > 0 ? ('Review Selected (' + n + ')') : 'Review Copy';
     }
 
     async function openProject(p) {
@@ -2108,6 +2116,7 @@
     // graceful error) — the GIF never spins forever.
     async function runReviewIntoModal(docId, docUrl, btn, errEl) {
       if (!docId) { if (errEl) showError(errEl, 'No document to review.'); return; }
+      var scopedFields = selectedScopedFields(); // scoped review when fields are selected
       reviewModalDocUrl = docUrl || null;
       if (errEl) clearError(errEl);
       if (btn) { btn.disabled = true; btn.textContent = 'Reviewing…'; }
@@ -2119,7 +2128,7 @@
       hide(openBtn);
       openProjectReviewModal();
       try {
-        var result = await reviewFetch(docId);
+        var result = await reviewFetch(docId, scopedFields);
         if (result && result.hadCopy === false) {
           body.innerHTML = '<div class="review-note">Nothing to review yet — generate a draft first.</div>';
           hide(openBtn);

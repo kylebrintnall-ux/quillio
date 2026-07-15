@@ -263,16 +263,27 @@ router.get('/api/draft/:jobId/status', sendJobStatus);
 // per-field eval + Drive comment writes) runs fire-and-forget; the client polls
 // the status endpoint below. Tenant comes from the session, never the client.
 router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
-  const docId = ((req.body && req.body.docId) || '').trim();
+  const body = req.body || {};
+  const docId = (body.docId || '').trim();
   const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
   if (!docId) {
     return res.status(400).json({ success: false, error: 'docId is required' });
   }
-  const jobId = startJob(`review doc=${docId}`, async () => {
+  // Optional scoping: review only the named fields (with asset context). Sanitize
+  // to [{assetType, fieldName}]; empty/absent → whole-doc review, exactly as today.
+  const scopedFields = Array.isArray(body.scopedFields)
+    ? body.scopedFields
+        .filter((f) => f && typeof f.assetType === 'string' && typeof f.fieldName === 'string')
+        .map((f) => ({ assetType: f.assetType, fieldName: f.fieldName }))
+        .slice(0, 200)
+    : null;
+  const scoped = scopedFields && scopedFields.length > 0;
+
+  const jobId = startJob(`review doc=${docId}${scoped ? ` scoped ${scopedFields.length}` : ''}`, async () => {
     const tenantContext = await resolveTenant(sessionTenant);
-    return runWebReview(docId, tenantContext);
+    return runWebReview(docId, tenantContext, scoped ? scopedFields : undefined);
   });
-  console.log(`[web] /api/review start → job=${jobId} doc=${docId} tenant=${sessionTenant}`);
+  console.log(`[web] /api/review start → job=${jobId} doc=${docId} tenant=${sessionTenant}${scoped ? ` scoped ${scopedFields.length}` : ''}`);
   return res.status(202).json({ success: true, jobId });
 });
 

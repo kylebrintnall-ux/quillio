@@ -524,19 +524,21 @@
     .matrix-add:active { background: rgba(201,168,76,0.22); }
     /* Dark angle menu — mirrors the project status dropdown. Name in Star Crush,
        description in IBM Plex, both light on the dark ink card. */
-    /* max-height + internal scroll so a tall menu scrolls itself; overscroll-
-       behavior:contain stops the scroll from chaining to the page, and the body is
-       locked (.angle-menu-lock) while the menu is open so the page can't move. */
-    .angle-menu { position: fixed; z-index: 200; max-width: 320px; max-height: min(60vh, 440px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; background: rgba(26,26,46,0.96); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); display: none; }
+    /* Internal scroll so a menu taller than its slot scrolls itself; overscroll-
+       behavior:contain stops the scroll chaining to the page. max-height + the
+       above/below placement are set by JS (openAngleMenu) so the menu always fits
+       the viewport. The body is locked (.angle-menu-lock + a touchmove blocker in
+       JS) while it's open so the page can't move. */
+    .angle-menu { position: fixed; z-index: 200; max-width: 340px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; background: rgba(26,26,46,0.96); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); display: none; }
     body.angle-menu-lock { overflow: hidden; }
     .angle-menu.open { display: block; }
-    .angle-menu-item { display: flex; flex-direction: column; gap: 2px; padding: 11px 16px; cursor: pointer; transition: background 0.1s; -webkit-tap-highlight-color: transparent; }
+    .angle-menu-item { display: flex; flex-direction: column; gap: 1px; padding: 8px 16px; cursor: pointer; transition: background 0.1s; -webkit-tap-highlight-color: transparent; }
     .angle-menu-item + .angle-menu-item { border-top: 1px solid rgba(255,255,255,0.06); }
     .angle-menu-item:hover { background: rgba(255,255,255,0.08); }
     .angle-menu-item:active { background: rgba(255,255,255,0.14); }
     .angle-menu-item.on { background: rgba(201,168,76,0.16); }
-    .angle-menu-name { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.04em; color: var(--white); }
-    .angle-menu-desc { font-family: 'IBM Plex Sans', sans-serif; font-size: 11.5px; line-height: 1.35; color: rgba(255,255,255,0.55); }
+    .angle-menu-name { font-family: 'StarCrush', serif; font-size: 12.5px; letter-spacing: 0.04em; color: var(--white); }
+    .angle-menu-desc { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; line-height: 1.25; color: rgba(255,255,255,0.55); }
     /* Slide-rule rail — reused by the intensity control. Gold fill (up to the thumb)
        is set inline by JS. touch-action:none lets the thumb own horizontal drags on
        iOS instead of the page stealing them for a scroll. */
@@ -1283,19 +1285,63 @@
       angleMenuEl.querySelectorAll('.angle-menu-item').forEach(function (it) {
         it.classList.toggle('on', it.getAttribute('data-angle') === current);
       });
+
+      var margin = 10;
       var rect = trigger.getBoundingClientRect();
-      var menuW = 260;
-      angleMenuEl.style.top = (rect.bottom + 6) + 'px';
-      angleMenuEl.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - menuW - 8)) + 'px';
-      angleMenuEl.style.minWidth = Math.max(menuW, rect.width) + 'px';
+      var vh = window.innerHeight;
+      var menuW = Math.max(260, Math.round(rect.width));
+      var left = Math.max(margin, Math.min(rect.left, window.innerWidth - menuW - margin));
+
+      // Room above/below the trigger, each capped so the menu never touches the
+      // screen edges. Measure the natural content height with max-height cleared,
+      // then place the menu on the side that fits (or the roomier side, where it
+      // scrolls internally).
+      var below = vh - rect.bottom - margin;
+      var above = rect.top - margin;
+      angleMenuEl.style.left = left + 'px';
+      angleMenuEl.style.width = menuW + 'px';
+      angleMenuEl.style.maxHeight = 'none';
+      angleMenuEl.style.top = '-9999px';
+      angleMenuEl.style.bottom = 'auto';
+      angleMenuEl.classList.add('open'); // must be displayed to measure scrollHeight
+      var contentH = angleMenuEl.scrollHeight;
+
+      var openBelow;
+      if (contentH <= below) openBelow = true;        // fits below
+      else if (contentH <= above) openBelow = false;  // fits above
+      else openBelow = below >= above;                // neither fits → roomier side, scrolls
+      var avail = openBelow ? below : above;
+      angleMenuEl.style.maxHeight = Math.max(120, Math.min(contentH, avail)) + 'px';
+      if (openBelow) {
+        angleMenuEl.style.top = (rect.bottom + 6) + 'px';
+        angleMenuEl.style.bottom = 'auto';
+      } else {
+        angleMenuEl.style.top = 'auto';
+        angleMenuEl.style.bottom = (vh - rect.top + 6) + 'px';
+      }
       angleMenuEl.scrollTop = 0;
-      angleMenuEl.classList.add('open');
-      document.body.classList.add('angle-menu-lock'); // freeze the page behind it
+
+      // Freeze the page behind the menu. `overflow:hidden` handles desktop; the
+      // touchmove blocker handles touch (iOS ignores body overflow), allowing the
+      // gesture only when it's scrolling a menu that actually has overflow.
+      document.body.classList.add('angle-menu-lock');
+      document.addEventListener('touchmove', angleTouchLock, { passive: false });
       setTimeout(function () { document.addEventListener('click', closeAngleMenuOutside, { once: true }); }, 10);
+    }
+    // Block page scrolling while the menu is open. Touches outside the menu are
+    // always blocked; touches inside are allowed to scroll the menu ONLY when it
+    // has overflow (else blocked, so a non-scrolling menu can't chain to the page).
+    function angleTouchLock(e) {
+      if (angleMenuEl && angleMenuEl.contains(e.target)) {
+        if (angleMenuEl.scrollHeight <= angleMenuEl.clientHeight + 1) e.preventDefault();
+        return;
+      }
+      e.preventDefault();
     }
     function closeAngleMenu() {
       if (angleMenuEl) angleMenuEl.classList.remove('open');
       document.body.classList.remove('angle-menu-lock');
+      document.removeEventListener('touchmove', angleTouchLock, { passive: false });
       angleMenuPick = null;
     }
     function closeAngleMenuOutside(e) { if (angleMenuEl && !angleMenuEl.contains(e.target)) closeAngleMenu(); }

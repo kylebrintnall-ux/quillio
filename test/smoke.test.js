@@ -2173,8 +2173,8 @@ test('generation loading: rotating shuffled phrases, no progress bar (one state,
   assert.ok(m, 'GEN_PHRASES array present');
   const count = m[1].split(',').filter((s) => /'/.test(s)).length;
   assert.ok(count >= 40, 'the full phrase set is restored (~50), got ' + count);
-  // Cycled in RANDOM order, re-shuffled each run.
-  assert.ok(/function shuffle/.test(html) && /shuffle\(GEN_PHRASES\)/.test(html), 'phrases are shuffled per generation');
+  // Cycled in RANDOM order, re-shuffled each run (default phrase set = GEN_PHRASES).
+  assert.ok(/function shuffle/.test(html) && /shuffle\(phrases \|\| GEN_PHRASES\)/.test(html), 'phrases are shuffled per generation');
   assert.ok(/function startGenerating/.test(html) && /function stopGenerating/.test(html), 'phrase cycler present');
   assert.ok(/id="gen-message"/.test(html), 'gen-message element present');
   // The GIF + modal stay; the progress bar / asset label / time estimate are gone.
@@ -2183,6 +2183,35 @@ test('generation loading: rotating shuffled phrases, no progress bar (one state,
   assert.ok(!/startDraftBar|estimateDraftSec/.test(html), 'estimate-driven bar code removed');
   // All four draft paths drive the one loading state (2 brief-flow + 2 project).
   assert.ok((html.match(/startGenerating\(\)/g) || []).length >= 4, 'every draft path uses the phrase cycler');
+});
+
+test('riff (matrix step 2): progressive-disclosure panel + additive Riff action', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // Riff has its OWN shuffled phrase set (~12-15), reusing the same GIF modal.
+  const rm = html.match(/var RIFF_PHRASES = \[([\s\S]*?)\];/);
+  assert.ok(rm, 'RIFF_PHRASES array present');
+  const nPhrases = (rm[1].match(/…/g) || []).length; // each phrase ends with an ellipsis
+  assert.ok(nPhrases >= 12 && nPhrases <= 16, 'roughly 12-15 riff phrases, got ' + nPhrases);
+  assert.ok(/function startGenerating\(phrases\)/.test(html), 'startGenerating takes an optional phrase set');
+  assert.ok(/startGenerating\(RIFF_PHRASES\)/.test(html), 'riff uses the riff phrases');
+
+  // Progressive disclosure: controls are gated on .expanded (not .selected), and a
+  // chevron appears on a selected field.
+  assert.ok(/\.asset-field\.expanded \.var-controls \{ display: flex; \}/.test(html), 'controls revealed by expand, not select');
+  assert.ok(/\.asset-field\.selected \.field-expand \{ display: inline-flex; \}/.test(html), 'chevron shows on a selected field');
+  assert.ok(/fieldEl\.classList\.toggle\('expanded'\)/.test(html), 'chevron toggles the expanded panel');
+
+  // Riff button lives inside the panel and fires the append path for that field.
+  assert.ok(/class="riff-btn"|'riff-btn'/.test(html) && /onRiff\(\{ assetType: aName, fieldName: fName, count: m\.count, distance: m\.distance \}\)/.test(html), 'Riff button passes the field count/distance');
+  assert.ok(/async function runRiff\(docId, scopedField, reload\)/.test(html), 'runRiff present');
+  assert.ok(/draftFetch\(docId, '', \[scopedField\], \{ append: true \}\)/.test(html), 'runRiff appends (append:true)');
+  assert.ok(/if \(opts && opts\.append\) body\.append = true;/.test(html), 'draftFetch sends append');
+
+  // Both drafted screens supply a riff context (docId + in-place reload).
+  assert.ok((html.match(/riff: \{ docId:/g) || []).length >= 2, 'project view + Copy Done both wire riff');
+
+  // Regenerate stays destructive — never sends append.
+  assert.ok(!/regenerateProjectDraft[\s\S]*?append: true/.test(html.slice(0, html.indexOf('function runRiff'))), 'regenerate does not append');
 });
 
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {

@@ -477,7 +477,18 @@
        Hidden until the field is selected; revealed inside the selected card. */
     .field-select-hint { font-size: 12.5px; line-height: 1.55; color: rgba(26,26,46,0.5); font-style: italic; margin: 0 0 14px; }
     .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(201,168,76,0.4); }
-    .asset-field.selected .var-controls { display: flex; }
+    /* Progressive disclosure (Step 2): the controls are hidden behind a chevron on
+       a selected field, and revealed only once the writer expands it. */
+    .asset-field.expanded .var-controls { display: flex; }
+    .field-expand { display: none; align-items: center; gap: 6px; align-self: flex-start; margin-top: 10px; padding: 4px 2px; background: none; border: none; cursor: pointer; -webkit-tap-highlight-color: transparent; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; color: var(--gold); }
+    .asset-field.selected .field-expand { display: inline-flex; }
+    .field-expand .chev { display: inline-block; transition: transform 0.15s ease; }
+    .asset-field.expanded .field-expand .chev { transform: rotate(90deg); }
+    /* Riff button — the additive action inside a field's expanded panel. */
+    .riff-row { display: flex; margin-top: 4px; }
+    .riff-btn { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 700; color: #1A1A2E; background: var(--gold); border: none; border-radius: 100px; padding: 9px 18px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.1s ease, filter 0.12s ease; }
+    .riff-btn:active { transform: scale(0.97); }
+    .riff-btn:disabled { opacity: 0.5; cursor: default; }
     .var-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     /* Muted metadata label — matches IBM Plex Sans field/metadata labels, sentence
        case, no tracked-out all-caps. */
@@ -1166,7 +1177,7 @@
       { key: 'explore', label: 'Explore' },
       { key: 'wide', label: 'Roam wide' },
     ];
-    function buildVarControls(aName, fName) {
+    function buildVarControls(aName, fName, onRiff) {
       var wrap = el('div', 'var-controls');
       wrap.addEventListener('click', function (e) { e.stopPropagation(); });
 
@@ -1228,6 +1239,21 @@
         });
         distGroup.appendChild(pill);
       });
+
+      // Riff — the additive action. Fires the append path for THIS field using its
+      // count + distance; inserts a new batch below the field's current copy.
+      if (typeof onRiff === 'function') {
+        var riffRow = el('div', 'riff-row');
+        var riffBtn = el('button', 'riff-btn', 'Riff');
+        riffBtn.type = 'button';
+        riffBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var m = fieldMeta(aName, fName);
+          onRiff({ assetType: aName, fieldName: fName, count: m.count, distance: m.distance });
+        });
+        riffRow.appendChild(riffBtn);
+        wrap.appendChild(riffRow);
+      }
 
       return wrap;
     }
@@ -1311,19 +1337,31 @@
           fieldEl.classList.add('selectable');
           fieldEl.appendChild(el('span', 'field-check', '✓'));
 
-          // Per-field variation controls (count + conceptual distance), revealed
-          // only while the field is selected. Built once and shown/hidden via the
-          // .selected class, so toggling doesn't lose the chosen count/distance.
-          // Placed at the BOTTOM of the card (below copy + char count, under a
-          // divider) so the field name and its copy stay paired — the more
-          // important adjacency — rather than wedging the controls between them.
-          var controls = buildVarControls(aName, fName);
+          // Progressive disclosure (Step 2): a selected field shows a chevron; the
+          // count/distance controls + Riff button live behind it, revealed only on
+          // expand. Riff (opts.riff present on drafted screens) fires the append
+          // path for THIS field and reloads the screen in place.
+          var onRiff = opts.riff
+            ? function (sf) { runRiff(opts.riff.docId, sf, opts.riff.reload); }
+            : null;
+          var controls = buildVarControls(aName, fName, onRiff);
+
+          var expandBtn = el('button', 'field-expand');
+          expandBtn.type = 'button';
+          expandBtn.appendChild(el('span', 'chev', '▸'));
+          expandBtn.appendChild(el('span', null, 'Variations'));
+          expandBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            fieldEl.classList.toggle('expanded');
+          });
+          fieldEl.appendChild(expandBtn);
           fieldEl.appendChild(controls);
 
           if (isFieldSelected(aName, fName)) fieldEl.classList.add('selected');
           fieldEl.addEventListener('click', function () {
             var on = toggleFieldSelection(aName, fName);
             fieldEl.classList.toggle('selected', on);
+            if (!on) fieldEl.classList.remove('expanded'); // deselect collapses the panel
             if (typeof opts.onSelectionChange === 'function') opts.onSelectionChange();
           });
         }
@@ -1477,10 +1515,35 @@
     }
 
     // Draft job → resolves with { docId, fieldCount }.
-    function draftFetch(docId, direction, scopedFields) {
+    // opts.append (Variations Matrix Step 2 — Riff): additive write. Inserts a new
+    // batch BELOW the field's current copy instead of replacing it. Scoped-only.
+    function draftFetch(docId, direction, scopedFields, opts) {
       var body = { docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' };
       if (scopedFields && scopedFields.length) body.scopedFields = scopedFields; // scoped generate/regen
+      if (opts && opts.append) body.append = true; // Riff → append below existing copy
       return runJob('/api/draft', body, '/api/draft');
+    }
+
+    // Riff one field: append a new batch (numbered 1,2,3) below its current copy,
+    // using that field's count + distance. Same GIF modal as generation, riff
+    // phrases. `reload` re-renders the screen in place when the job finishes.
+    async function runRiff(docId, scopedField, reload) {
+      if (!docId || !scopedField) return;
+      showScreen('generating');
+      startGenerating(RIFF_PHRASES);
+      try {
+        await draftFetch(docId, '', [scopedField], { append: true });
+      } catch (e) {
+        // The append job is fire-and-forget; a dropped connection may still have
+        // written the batch. Reload to show whatever landed, then note the error.
+        stopGenerating();
+        if (typeof reload === 'function') await reload();
+        showToast('Riff didn’t finish — check the doc, then try again.');
+        return;
+      }
+      stopGenerating();
+      if (typeof reload === 'function') await reload();
+      showToast('✓ New variations added');
     }
     function draftErrorMessage(e) {
       return (e && e.message) || 'Network error — please try again.';
@@ -1571,14 +1634,26 @@
       return a;
     }
 
+    // Riffing (Step 2) reuses the same GIF loading modal but with its own phrase
+    // set — themed around riffing / trying angles / spinning up alternatives.
+    var RIFF_PHRASES = [
+      'Riffing on the value prop…', 'Chasing a fresher angle…', 'Spinning up alternatives…',
+      'Auditioning other ways in…', 'Trying the road not taken…', 'Loosening the tie, going wilder…',
+      'Remixing the same idea…', 'Coming at it sideways…', 'Finding a new way to say it…',
+      'Convinced there\'s a sharper line in here…', 'Pretending the first one wasn\'t fine…',
+      'Hunting the angle you actually meant…', 'Talking myself out of the obvious take…',
+      'Writing it three ways, just to be sure…'
+    ];
+
     // Cycle the phrases in RANDOM order (re-shuffled each run, so the writer
     // doesn't see the same opening phrase every time). Fade between lines; the
     // fade collapses to an instant swap under prefers-reduced-motion (CSS).
+    // `phrases` defaults to GEN_PHRASES; the Riff flow passes RIFF_PHRASES.
     var genTimer = null;
-    function startGenerating() {
+    function startGenerating(phrases) {
       var msgEl = document.getElementById('gen-message');
       if (!msgEl) return;
-      var picked = shuffle(GEN_PHRASES);
+      var picked = shuffle(phrases || GEN_PHRASES);
       var idx = 0;
       msgEl.style.transition = 'none';
       msgEl.textContent = picked[0];
@@ -1617,7 +1692,8 @@
       wrap.textContent = '';
       wrap.appendChild(fieldSelectHint());
       (assets || []).forEach(function (a) {
-        appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true, selectable: true, onSelectionChange: refreshCopyDonePrimary });
+        appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true, selectable: true, onSelectionChange: refreshCopyDonePrimary,
+          riff: { docId: state.docId, reload: async function () { await loadCopyDone(); showScreen('copydone'); } } });
       });
       var cards = wrap.querySelectorAll('.asset-card');
       for (var i = 0; i < cards.length; i++) {
@@ -2076,7 +2152,8 @@
       projectContentEl.appendChild(fieldSelectHint());
       var assets = content.assets || [];
       assets.forEach(function (a) {
-        appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary });
+        appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary,
+          riff: { docId: (projectState.project && projectState.project.copy_doc_id) || null, reload: function () { return openProject(projectState.project); } } });
       });
     }
 

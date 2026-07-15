@@ -56,38 +56,61 @@ coexist with it. Once you open the matrix, it encodes both (which angles =
 variety; total count = amount). Keeping the pills alongside would be the same
 redundancy that made "Distance" confusing.
 
-### The matrix itself
+### The matrix itself — add-a-row dropdown model
 
-Seven **angles** (renamed from "doorways" — internal shorthand; the writer picks
-angles):
+The seven **angles** (renamed from "doorways" — internal shorthand):
 
   Pain · Outcome · Proof · Question · Contrast · Identity · Reframe
 
-Each angle is a ROW with TWO controls:
+**The matrix does NOT show seven always-visible rows.** That was an earlier idea,
+rejected for density — seven rows each with two controls is too heavy, especially
+on mobile (where Quillio is developed; see platform note). Instead, the matrix
+**starts empty and grows to fit the intent** — the "ramp not trapdoor" principle
+finally landing cleanly.
 
-1. **Count** — a stepper (0–N). How many of this angle.
-2. **Intensity** — a notched slide-rule with three labeled stops:
-   **Safe / Bold / Wild.** How hard to push this angle.
+**How it works:**
+- The panel opens with ONE blank row showing "+ Add angle" text inside it, ready
+  to fill.
+- Tap it → a DROPDOWN lets the writer pick which angle (Pain, Outcome, etc.). That
+  becomes a configured row.
+- Want another angle? Add another row, pick a different angle. The writer builds up
+  exactly the angles they want — nothing more.
 
-So each angle is independently metered for both *quantity* and *how far it's
-pushed*. A single generation could be: "3 Pain at Safe, 2 Reframe at Wild, 1
-Contrast at Bold." Nobody else's tool offers per-angle intensity — this is the
-distinctive control.
+**Each configured row has:**
+1. An **angle dropdown** (which angle this row is)
+2. A **count** (how many of this angle)
+3. An **intensity control** — the notched slide-rule with three stops:
+   **Safe / Bold / Wild** (NOT pills — the slide-rule, per the design decision
+   below). How hard to push this angle.
+4. A **remove** control (✕) to delete the row.
+
+Collapsed, a row reads roughly: `[Pain ▾]  [count]  [Safe|Bold|Wild slider]  ✕`
+
+**Same angle allowed twice.** The dropdown does NOT grey out already-used angles.
+A writer can add "Pain at Safe" AND "Pain at Wild" as two separate rows — that's
+how per-angle intensity works (same door, different push). Repeats are intentional.
+
+**Why this beats seven-always-visible rows:**
+- Resting state is one row / an add button — calm on mobile, not a wall of steppers.
+- The count-ceiling worry softens — building up 15 options means deliberately
+  adding rows, not fat-fingering a slider to 15.
+- Density scales with intent — a writer who wants one wild reframe adds one row; a
+  writer who wants a big spread adds several.
 
 **Intensity replaces the old whole-batch distance idea.** The shipped system had
 one Variety setting (Stay close / Explore / Roam wide) applied to the entire
-batch. Intensity is now PER ANGLE — you can keep Pain safe while pushing Reframe
-to the edge, in the same generation.
+batch. Intensity is now PER ROW — you can keep Pain safe while pushing Reframe to
+the edge, in the same generation.
 
-**Why a notched slide-rule, not pills and not a free slider:** For the old
-*distance* dimension we deliberately chose three discrete pills over a slider,
-because a continuous distance value was ambiguous ("what does 60% far mean?").
-Intensity reverses that call ON PURPOSE — intensity is a natural gradient (like
-the temperature meter in Google AI Studio; "a bit more intense" is a real felt
-quantity in a way "a bit more different angle" was not). But a fully free slider
-brings back the "what does halfway produce?" ambiguity. The notched slide-rule
-is the middle path: it FEELS like a continuous dial but SNAPS to three legible,
-named values (Safe / Bold / Wild). Best of both.
+**Why a notched slide-rule for intensity, not pills and not a free slider:** For
+the old *distance* dimension we deliberately chose three discrete pills over a
+slider, because a continuous distance value was ambiguous ("what does 60% far
+mean?"). Intensity reverses that call ON PURPOSE — intensity is a natural gradient
+(like the temperature meter in Google AI Studio; "a bit more intense" is a real
+felt quantity in a way "a bit more different angle" was not). But a fully free
+slider brings back the "what does halfway produce?" ambiguity. The notched
+slide-rule is the middle path: it FEELS like a continuous dial but SNAPS to three
+legible, named values (Safe / Bold / Wild). Best of both.
 
 Most rows rest at count 0; a writer only touches the angles they want.
 
@@ -132,11 +155,14 @@ existing ones.
   the original line, then a batch (1, 2, 3), then another batch (1, 2, 3), etc.
   NOTE: this REVERSES the "numbering continues 4,5,6" idea in the earlier draft of
   this doc — the seed-and-burst mental model makes restart-at-1 the right call.
-- **Batch separation — see Open Thread.** Repeated 1,2,3 / 1,2,3 down a field
-  could read as confusing without something marking where one burst ends and the
-  next begins. Options: let them stack (writer sorts it), a thin divider, or a
-  small batch label. Alternative: group by ANGLE (all Pain together, all Reframe
-  together) instead of by batch. Decide at the UI/display step.
+- **Batch separation (DECIDED): a faint label per batch — "Riff 1", "Riff 2", …**
+  Each batch sits under its own faint label so repeated 1,2,3 / 1,2,3 reads as two
+  distinct riffs, not a numbering error. Every batch — INCLUDING a single-option
+  batch — sits under its own "Riff N" label and carries doorway tags consistently.
+  This also fixes the earlier inconsistency where the first riff produced a lone
+  UNLABELED "1." while later riffs produced labeled "1. (Contrast)". From now on
+  ALL riffed options carry their doorway tag and sit under a Riff N label,
+  regardless of batch size.
 - **Resolving down stays manual, in the doc.** The writer deletes what they don't
   want, keeps what they do, whenever they want. The doc is where the writer
   resolves; the app feeds options in.

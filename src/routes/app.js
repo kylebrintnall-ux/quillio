@@ -249,7 +249,7 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
                 .filter((r) => r && typeof r.angle === 'string')
                 .map((r) => ({
                   angle: r.angle,
-                  count: Math.max(1, Math.min(5, parseInt(r.count, 10) || 1)),
+                  count: Math.max(1, Math.min(10, parseInt(r.count, 10) || 1)),
                   intensity: typeof r.intensity === 'string' ? r.intensity : 'Safe',
                 }))
                 .slice(0, 20)

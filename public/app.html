@@ -488,8 +488,9 @@
     /* Riff button — the additive action inside a field's expanded panel. Star
        Crush, gold fill, ink text — matches the app's action buttons (not a slab):
        sized to content, centered. */
-    .riff-row { display: flex; justify-content: center; margin-top: 16px; }
-    .riff-btn { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--ink); background: var(--gold); border: none; border-radius: 100px; padding: 11px 30px; cursor: pointer; -webkit-tap-highlight-color: transparent; box-shadow: 0 3px 12px rgba(201,168,76,0.35); transition: transform 0.1s ease, filter 0.12s ease, box-shadow 0.12s ease; }
+    .riff-row { display: flex; margin-top: 16px; }
+    /* Full-width so it anchors the panel stably at any matrix size. */
+    .riff-btn { width: 100%; font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--ink); background: var(--gold); border: none; border-radius: 100px; padding: 13px 30px; cursor: pointer; -webkit-tap-highlight-color: transparent; box-shadow: 0 3px 12px rgba(201,168,76,0.35); transition: transform 0.1s ease, filter 0.12s ease, box-shadow 0.12s ease; }
     .riff-btn:hover { filter: brightness(1.04); box-shadow: 0 4px 15px rgba(201,168,76,0.45); }
     .riff-btn:active { transform: scale(0.97); }
     .riff-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
@@ -497,7 +498,6 @@
        On-brand: each row is a translucent glass chip; text is ink (Star Crush for
        display bits, IBM Plex for controls); gold is fill/accent ONLY (rail, thumb,
        the "+", the caret) — never body text on the light card. */
-    .matrix-title { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.04em; color: var(--ink); margin: 2px 0 12px; }
     .matrix { display: flex; flex-direction: column; gap: 10px; }
     /* The row is a translucent glass chip — it sits ON the (already light) asset
        card, so its white is kept low to let the blue bleed through, like the
@@ -511,7 +511,7 @@
     .matrix-angle-caret { width: 12px; height: 8px; flex-shrink: 0; background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23C9A84C' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); }
     .matrix-controls { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; }
     .matrix-count { display: inline-flex; align-items: center; gap: 2px; background: rgba(255,255,255,0.82); border: 1.5px solid rgba(26,26,46,0.14); border-radius: 10px; padding: 2px; box-shadow: 0 1px 3px rgba(26,26,46,0.10); }
-    .matrix-step { font-family: 'IBM Plex Sans', sans-serif; font-size: 17px; font-weight: 700; color: var(--ink); background: none; border: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; line-height: 1; }
+    .matrix-step { display: inline-flex; align-items: center; justify-content: center; font-family: 'IBM Plex Sans', sans-serif; font-size: 17px; font-weight: 700; color: var(--ink); background: none; border: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; line-height: 1; padding: 0; }
     .matrix-step:active { background: rgba(26,26,46,0.08); }
     .matrix-count-val { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 20px; text-align: center; }
     .matrix-intensity { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-width: 0; }
@@ -524,7 +524,11 @@
     .matrix-add:active { background: rgba(201,168,76,0.22); }
     /* Dark angle menu — mirrors the project status dropdown. Name in Star Crush,
        description in IBM Plex, both light on the dark ink card. */
-    .angle-menu { position: fixed; z-index: 200; max-width: 320px; background: rgba(26,26,46,0.96); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.35); display: none; }
+    /* max-height + internal scroll so a tall menu scrolls itself; overscroll-
+       behavior:contain stops the scroll from chaining to the page, and the body is
+       locked (.angle-menu-lock) while the menu is open so the page can't move. */
+    .angle-menu { position: fixed; z-index: 200; max-width: 320px; max-height: min(60vh, 440px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; background: rgba(26,26,46,0.96); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); display: none; }
+    body.angle-menu-lock { overflow: hidden; }
     .angle-menu.open { display: block; }
     .angle-menu-item { display: flex; flex-direction: column; gap: 2px; padding: 11px 16px; cursor: pointer; transition: background 0.1s; -webkit-tap-highlight-color: transparent; }
     .angle-menu-item + .angle-menu-item { border-top: 1px solid rgba(255,255,255,0.06); }
@@ -1240,13 +1244,13 @@
     var INTENSITIES = ['Safe', 'Bold', 'Wild']; // slide-rule stops 0 · 1 · 2
     // Angle name + one-line description, shown in the dark angle menu (below).
     var ANGLE_INFO = [
-      { name: 'Pain', desc: 'the problem they feel' },
-      { name: 'Outcome', desc: 'where they want to be' },
-      { name: 'Contrast', desc: 'one way vs. another' },
-      { name: 'Question', desc: "what they're wondering" },
-      { name: 'Proof', desc: 'the evidence for it' },
-      { name: 'Identity', desc: 'who they are' },
-      { name: 'Reframe', desc: 'a new way to see it' },
+      { name: 'Pain', desc: 'The problem they feel' },
+      { name: 'Outcome', desc: 'Where they want to be' },
+      { name: 'Contrast', desc: 'One way vs. another' },
+      { name: 'Question', desc: "What they're wondering" },
+      { name: 'Proof', desc: 'The evidence for it' },
+      { name: 'Identity', desc: 'Who they are' },
+      { name: 'Reframe', desc: 'A new way to see it' },
     ];
 
     // Dark angle-picker menu — mirrors the project status dropdown (a fixed dark
@@ -1284,10 +1288,16 @@
       angleMenuEl.style.top = (rect.bottom + 6) + 'px';
       angleMenuEl.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - menuW - 8)) + 'px';
       angleMenuEl.style.minWidth = Math.max(menuW, rect.width) + 'px';
+      angleMenuEl.scrollTop = 0;
       angleMenuEl.classList.add('open');
+      document.body.classList.add('angle-menu-lock'); // freeze the page behind it
       setTimeout(function () { document.addEventListener('click', closeAngleMenuOutside, { once: true }); }, 10);
     }
-    function closeAngleMenu() { if (angleMenuEl) angleMenuEl.classList.remove('open'); angleMenuPick = null; }
+    function closeAngleMenu() {
+      if (angleMenuEl) angleMenuEl.classList.remove('open');
+      document.body.classList.remove('angle-menu-lock');
+      angleMenuPick = null;
+    }
     function closeAngleMenuOutside(e) { if (angleMenuEl && !angleMenuEl.contains(e.target)) closeAngleMenu(); }
     // The variations matrix (Step 3b). Replaces the old count-slider + distance-
     // pills. Opens with a single "+ Add angle" row; each configured row is an angle
@@ -1307,7 +1317,8 @@
         return node;
       }
 
-      wrap.appendChild(el('div', 'matrix-title', 'Riff with variations'));
+      // No panel title — the "▾ Variations" chevron above already labels this; the
+      // panel opens straight into the matrix rows.
       var matrix = el('div', 'matrix');
       wrap.appendChild(matrix);
       var riffBtn = null;
@@ -1375,7 +1386,7 @@
         minus.type = 'button'; plus.type = 'button';
         var cnt = el('span', 'matrix-count-val', String(r.count));
         function setCount(n) {
-          n = Math.max(1, Math.min(5, n));
+          n = Math.max(1, Math.min(10, n));
           updateRow(aName, fName, i, { count: n });
           cnt.textContent = String(n);
           syncRiffBtn(); // count changed → refresh the button total

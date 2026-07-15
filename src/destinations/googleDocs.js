@@ -558,7 +558,7 @@ function normalizeVarControls(t) {
     for (const r of rows) {
       const angle = r && ANGLE_NAMES.has(String(r.angle)) ? String(r.angle) : null;
       if (!angle) continue;
-      const count = Math.max(1, Math.min(5, Number(r.count) || 1));
+      const count = Math.max(1, Math.min(10, Number(r.count) || 1));
       const intensity = r && INTENSITY_NAMES.has(String(r.intensity)) ? String(r.intensity) : 'Safe';
       matrix.push({ doorway: angle, intensity, count });
     }

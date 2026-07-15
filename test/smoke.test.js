@@ -2283,7 +2283,7 @@ test('variations (P2/P3): route sanitizes count (1-4) and distance whitelist; pa
   assert.ok(/scopeMeta/.test(gd) && /distance: t\.distance === 'explore'/.test(gd), 'destination reads per-field count/distance');
 });
 
-test('matrix 3b: the add-a-row variations matrix (angles, count 1–5, intensity slide-rule)', () => {
+test('matrix 3b: the add-a-row variations matrix (angles, count 1–10, intensity slide-rule)', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.ok(/buildVarControls/.test(html), 'matrix builder present');
   // The 7 angles + the 3 intensity stops (mirror the backend taxonomy).
@@ -2292,11 +2292,11 @@ test('matrix 3b: the add-a-row variations matrix (angles, count 1–5, intensity
   // Add-a-row model: opens with "+ Add angle"; the count/distance UI is gone.
   assert.ok(/matrix-add/.test(html) && /\+ Add angle/.test(html), 'add-a-row affordance');
   assert.ok(!/var-distance/.test(html) && !/setFieldMeta/.test(html), 'old count-slider + distance-pills removed');
-  // Each configured row = angle trigger (custom dark menu) + 1–5 stepper +
+  // Each configured row = angle trigger (custom dark menu) + 1–10 stepper +
   // Safe/Bold/Wild slide-rule + remove.
   assert.ok(/openAngleMenu\(trigger, r\.angle, function \(angle\)/.test(html) && /updateRow\(aName, fName, i, \{ angle: angle \}\)/.test(html), 'angle picked via the dark menu sets the row angle');
-  assert.ok(/var ANGLE_INFO = \[/.test(html) && /the problem they feel/.test(html), 'angle menu carries name + description');
-  assert.ok(/matrix-count/.test(html) && /n = Math\.max\(1, Math\.min\(5, n\)\)/.test(html), 'count stepper clamped 1–5');
+  assert.ok(/var ANGLE_INFO = \[/.test(html) && /The problem they feel/.test(html), 'angle menu carries name + description');
+  assert.ok(/matrix-count/.test(html) && /n = Math\.max\(1, Math\.min\(10, n\)\)/.test(html), 'count stepper clamped 1–10');
   assert.ok(/className = 'var-range'/.test(html) && /range\.min = '0'; range\.max = '2'/.test(html), 'intensity is a 3-stop slide-rule');
   assert.ok(/matrix-tick/.test(html), 'Safe/Bold/Wild tick labels present');
   assert.ok(/matrix-x/.test(html) && /removeRow\(aName, fName, i\)/.test(html), 'remove control');

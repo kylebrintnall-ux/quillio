@@ -5,7 +5,14 @@ system (Phases 1–3, shipped). It replaces the per-field Amount slider + Variet
 pills with a single, deeper control: the **variations matrix**.
 
 This doc is the spec to build against. It captures the design and, critically,
-pins down the four open threads that must be decided before any code is written.
+pins down the open threads that must be decided before each piece is built.
+
+**Platform note:** Quillio is developed and tested on mobile (iPhone), but the
+primary users are mostly on DESKTOP. So the matrix is designed mobile-first
+(hardest case, smallest screen) but has real room to spread out on desktop — the
+density that feels tight on a phone relaxes on a wide screen (e.g. two columns of
+angle rows, or count + intensity sitting inline rather than stacked). Build
+mobile-first; let it breathe on desktop.
 
 ---
 
@@ -56,18 +63,44 @@ angles):
 
   Pain · Outcome · Proof · Question · Contrast · Identity · Reframe
 
-Each angle is a row with a count stepper (0–N). The writer sets how many of each.
-Most rows rest at 0; a writer only touches the angles they want.
+Each angle is a ROW with TWO controls:
 
-- **Range is uncapped** (or a high ceiling — see open thread). Some writers want
-  1–2 variations; others want 10–15 across angles. The tool doesn't impose an
-  arbitrary limit; the writer decides.
-- **Repeats are intentional.** "3 Reframe" is valid — three reframe executions,
-  different wording, same door. This is the writer's choice, not a clustering
-  failure. (Contrast with the shipped system, where repeats past 7 doorways were
-  a *problem* to prevent. Here, the writer owns the decision.)
-- The button + a live summary always show the truth: "Generate 6 angles · Pain,
-  Contrast×2, Reframe×3."
+1. **Count** — a stepper (0–N). How many of this angle.
+2. **Intensity** — a notched slide-rule with three labeled stops:
+   **Safe / Bold / Wild.** How hard to push this angle.
+
+So each angle is independently metered for both *quantity* and *how far it's
+pushed*. A single generation could be: "3 Pain at Safe, 2 Reframe at Wild, 1
+Contrast at Bold." Nobody else's tool offers per-angle intensity — this is the
+distinctive control.
+
+**Intensity replaces the old whole-batch distance idea.** The shipped system had
+one Variety setting (Stay close / Explore / Roam wide) applied to the entire
+batch. Intensity is now PER ANGLE — you can keep Pain safe while pushing Reframe
+to the edge, in the same generation.
+
+**Why a notched slide-rule, not pills and not a free slider:** For the old
+*distance* dimension we deliberately chose three discrete pills over a slider,
+because a continuous distance value was ambiguous ("what does 60% far mean?").
+Intensity reverses that call ON PURPOSE — intensity is a natural gradient (like
+the temperature meter in Google AI Studio; "a bit more intense" is a real felt
+quantity in a way "a bit more different angle" was not). But a fully free slider
+brings back the "what does halfway produce?" ambiguity. The notched slide-rule
+is the middle path: it FEELS like a continuous dial but SNAPS to three legible,
+named values (Safe / Bold / Wild). Best of both.
+
+Most rows rest at count 0; a writer only touches the angles they want.
+
+- **Count ceiling — see open thread.** Some writers want 1–2 variations; others
+  want 10–15 across angles. Leaning toward a high-but-real ceiling (e.g. per-angle
+  cap so a fat-fingered stepper can't fire an enormous generation), not truly
+  uncapped. Decide before building the matrix UI.
+- **Repeats are intentional.** "3 Reframe at Wild" is valid — three wild reframe
+  executions, different wording, same angle. The writer's choice, not a clustering
+  failure. (Contrast with the shipped system, where repeats past 7 doorways were a
+  *problem* to prevent. Here the writer owns it.)
+- The button + a live summary always show the truth: e.g. "Generate 6 · 3 Pain
+  (Safe), 2 Reframe (Wild), 1 Contrast (Bold)."
 
 ### Angle-awareness per field type
 
@@ -80,19 +113,33 @@ BUT the *meaning* of an angle changes with copy length — see Open Thread 2.
 
 ### Append model (resolves "generate more without losing the keepers")
 
-Each matrix run **appends**. The writer opens the matrix, sets angles + counts,
-generates → a set stacks under the field. They open the matrix again, set it
-however they like (same, different, doesn't matter), generate → that set appends
-**below** the existing ones.
+Each matrix run **appends**. The writer opens the matrix, sets angles + counts +
+intensities, generates → a batch stacks under the field. They open the matrix
+again, set it however they like, generate → that batch appends **below** the
+existing ones.
 
 - **No reconciliation.** The matrix does not remember or dedupe against what's
   already stacked. It runs and tacks on. Want fresh angles? Set different ones.
-  Want more of the same? Set the same. The tool doesn't decide — the writer's
-  matrix input is the whole intent, every run.
-- **Numbering continues** — 7, 8, 9… down the growing stack.
+  Want more of the same? Set the same. The writer's matrix input is the whole
+  intent, every run.
+- **The original line is the SEED.** The variations aren't copies or tweaks of the
+  original copy — they're genuinely different angles. But they all grow OUT of
+  that one original line as the starting point. The original is the root; each
+  batch below is what sprouted from it.
+- **Each batch restarts numbering at 1.** Because each "riff" is a fresh burst of
+  alternatives grown from the same seed, every batch is its own self-contained set
+  (1, 2, 3), all tracing back to the original line above. Down the field you see:
+  the original line, then a batch (1, 2, 3), then another batch (1, 2, 3), etc.
+  NOTE: this REVERSES the "numbering continues 4,5,6" idea in the earlier draft of
+  this doc — the seed-and-burst mental model makes restart-at-1 the right call.
+- **Batch separation — see Open Thread.** Repeated 1,2,3 / 1,2,3 down a field
+  could read as confusing without something marking where one burst ends and the
+  next begins. Options: let them stack (writer sorts it), a thin divider, or a
+  small batch label. Alternative: group by ANGLE (all Pain together, all Reframe
+  together) instead of by batch. Decide at the UI/display step.
 - **Resolving down stays manual, in the doc.** The writer deletes what they don't
-  want and keeps what they do, whenever they want. Consistent with the core
-  philosophy: the doc is where the writer resolves; the app feeds options in.
+  want, keeps what they do, whenever they want. The doc is where the writer
+  resolves; the app feeds options in.
 
 This is a real architectural change — see Open Thread 1.
 
@@ -108,23 +155,40 @@ range, Phase 1 deletes it bottom-to-top, Phase 2 re-inserts. Re-regen deletes th
 whole stack and writes new. This assumes every generation *supersedes* the last.
 
 The append model needs an **additive** write: leave everything in place, insert a
-new set below the existing copy, continue numbering. That's a genuinely different
-operation from the delete→insert path.
+new batch below the existing copy. That's a genuinely different operation from the
+delete→insert path. **This is STEP 1 (the write path) — built first, in isolation,
+no UI.**
+
+**Numbering (decided): each batch restarts at 1.** Because batches are seed-and-
+burst (see Append model above), the append write numbers each new batch from 1,
+not continuing from the previous batch's max. The original seed line is left
+byte-identical.
+
+Starting-state handling (all keep the existing content byte-identical — the append
+write NEVER renumbers or mutates existing lines):
+- Field has existing copy (bare line, solo labeled, or a prior batch) → new batch
+  inserts BELOW it, numbered 1, 2, 3.
+- Field is empty / undrafted → new batch inserts as 1, 2, 3 (behaves like a first
+  draft).
 
 So a field with a stack now has TWO generative actions:
 - **Regenerate** — replace what's there (existing destructive behavior)
 - **Riff with variations** — append a new matrix run below what's there
 
-**Decision needed:**
+**Decision needed (STEP 2 — UI, later):**
 - These CANNOT be the same button — one destroys, one adds. They must be visually
   distinct so a writer never nukes a stack they were building, or appends when
   they meant to replace.
 - Where does each live in the field card? What do they look like?
 - Does "Regenerate" still open the direction modal? Does "Riff" open the matrix?
   (Leaning: Regenerate → direction modal as today; Riff → matrix.)
-- Implementation: the append write needs a new path in `googleDocs.generateDraft`
-  (or a sibling function) that inserts-after rather than delete-then-insert. The
-  insert index is the end of the field's current copy block; no delete phase.
+
+**Implementation (STEP 1):** the append write needs a new path in
+`googleDocs.generateDraft` (extend with an `append` flag, not a sibling function —
+~90% shared path) that inserts-after rather than delete-then-insert. The insert
+index is the end of the field's current copy block. No delete phase — append
+fields are pushed with `deleteEnd: null` so they structurally cannot enter the
+deletions list (the guarantee is enforced by the data, not a suppression flag).
 
 ### Thread 2 — Short-copy vs long-copy angle semantics
 

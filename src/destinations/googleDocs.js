@@ -1020,10 +1020,21 @@ async function getDocContent(id, clients) {
 
     // Riff batch header (Step 3) — structural divider, never copy. Skip it WITHOUT
     // ending the field, so the batch options below it still accumulate into this
-    // field's copy. The faint "Riff N" divider itself is rendered in the app from
-    // 3b; here it's simply excluded from copy (the named-style check fires before
-    // the bold-label and copy branches, so it can never be read as an option).
-    if (named === 'HEADING_6') continue;
+    // field's copy. The header is EXCLUDED from copy (the named-style check fires
+    // before the bold-label and copy branches, so it can never be read as an
+    // option), but its position + number are recorded on field.riffMarks so the
+    // app can render a faint "Riff N" divider before that batch's first option —
+    // with the doc-accurate number (gap-safe: a surviving Riff 3 renders as 3).
+    // beforeLine is the index (in the \n-split of field.copy) of the first option
+    // that follows this header.
+    if (named === 'HEADING_6') {
+      if (field) {
+        const rm = text.match(/^Riff\s+(\d+)/i);
+        const beforeLine = field.copy ? field.copy.split('\n').length : 0;
+        field.riffMarks.push({ beforeLine, riffN: rm ? Number(rm[1]) : field.riffMarks.length + 1 });
+      }
+      continue;
+    }
 
     if (!current) continue;
 
@@ -1048,7 +1059,7 @@ async function getDocContent(id, clients) {
         charMax = Math.max(...vals);
         if (vals.length >= 2) charMin = Math.min(...vals);
       }
-      field = { fieldName, charMin, charMax, notes: '', copy: '' };
+      field = { fieldName, charMin, charMax, notes: '', copy: '', riffMarks: [] };
       current.fields.push(field);
       continue;
     }

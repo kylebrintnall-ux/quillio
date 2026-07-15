@@ -2283,15 +2283,25 @@ test('variations (P2/P3): route sanitizes count (1-4) and distance whitelist; pa
   assert.ok(/scopeMeta/.test(gd) && /distance: t\.distance === 'explore'/.test(gd), 'destination reads per-field count/distance');
 });
 
-test('variations (P2/P3): per-field controls + affordance line in the shared UI', () => {
+test('matrix 3b: the add-a-row variations matrix (angles, count 1–5, intensity slide-rule)', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  assert.ok(/buildVarControls/.test(html), 'per-field control builder present');
-  // Count is a slider (1–4); distance stays three discrete pills.
-  assert.ok(/class = 'var-range'|var-range/.test(html) && /type = 'range'/.test(html), 'count is a range slider');
-  assert.ok(/var-distance/.test(html), 'distance is a pill group');
-  assert.ok(/setFieldMeta\([^)]*count/.test(html) && /setFieldMeta\([^)]*distance/.test(html), 'controls write per-field count + distance');
-  assert.ok(/count: 1, distance: 'close'/.test(html), 'selection defaults to Phase-1 behavior');
-  assert.ok(/e\.stopPropagation\(\)/.test(html), 'control clicks do not toggle the field');
+  assert.ok(/buildVarControls/.test(html), 'matrix builder present');
+  // The 7 angles + the 3 intensity stops (mirror the backend taxonomy).
+  assert.ok(/var ANGLES = \['Pain', 'Outcome', 'Proof', 'Question', 'Contrast', 'Identity', 'Reframe'\]/.test(html), '7 angles offered');
+  assert.ok(/var INTENSITIES = \['Safe', 'Bold', 'Wild'\]/.test(html), '3 intensity stops');
+  // Add-a-row model: opens with "+ Add angle"; the count/distance UI is gone.
+  assert.ok(/matrix-add/.test(html) && /\+ Add angle/.test(html), 'add-a-row affordance');
+  assert.ok(!/var-distance/.test(html) && !/setFieldMeta/.test(html), 'old count-slider + distance-pills removed');
+  // Each configured row = angle trigger (custom dark menu) + 1–5 stepper +
+  // Safe/Bold/Wild slide-rule + remove.
+  assert.ok(/openAngleMenu\(trigger, r\.angle, function \(angle\)/.test(html) && /updateRow\(aName, fName, i, \{ angle: angle \}\)/.test(html), 'angle picked via the dark menu sets the row angle');
+  assert.ok(/var ANGLE_INFO = \[/.test(html) && /the problem they feel/.test(html), 'angle menu carries name + description');
+  assert.ok(/matrix-count/.test(html) && /n = Math\.max\(1, Math\.min\(5, n\)\)/.test(html), 'count stepper clamped 1–5');
+  assert.ok(/className = 'var-range'/.test(html) && /range\.min = '0'; range\.max = '2'/.test(html), 'intensity is a 3-stop slide-rule');
+  assert.ok(/matrix-tick/.test(html), 'Safe/Bold/Wild tick labels present');
+  assert.ok(/matrix-x/.test(html) && /removeRow\(aName, fName, i\)/.test(html), 'remove control');
+  // iOS: inner controls stop propagation so a tap/drag never toggles the field.
+  assert.ok(/function shield\(node\)/.test(html) && /e\.stopPropagation\(\)/.test(html), 'inner controls shielded');
   assert.ok(/Tap any field to select it\./.test(html), 'affordance line present');
   assert.ok(/isNumberedStack/.test(html) && /field-options/.test(html), 'stacked fields show "N options"');
 });
@@ -2345,8 +2355,9 @@ test('riff (matrix step 2): progressive-disclosure panel + additive Riff action'
   assert.ok(/\.asset-field\.selected \.field-expand \{ display: inline-flex; \}/.test(html), 'chevron shows on a selected field');
   assert.ok(/fieldEl\.classList\.toggle\('expanded'\)/.test(html), 'chevron toggles the expanded panel');
 
-  // Riff button lives inside the panel and fires the append path for that field.
-  assert.ok(/class="riff-btn"|'riff-btn'/.test(html) && /onRiff\(\{ assetType: aName, fieldName: fName, count: m\.count, distance: m\.distance \}\)/.test(html), 'Riff button passes the field count/distance');
+  // Riff button lives inside the panel and fires the append path for that field,
+  // now carrying the variations matrix (Step 3b) rather than count/distance.
+  assert.ok(/class="riff-btn"|'riff-btn'/.test(html) && /variations: rows\.map\(function \(r\) \{ return \{ angle: r\.angle, count: r\.count, intensity: r\.intensity \}; \}\)/.test(html), 'Riff button sends the matrix rows');
   assert.ok(/async function runRiff\(docId, scopedField, reload\)/.test(html), 'runRiff present');
   assert.ok(/draftFetch\(docId, '', \[scopedField\], \{ append: true \}\)/.test(html), 'runRiff appends (append:true)');
   assert.ok(/if \(opts && opts\.append\) body\.append = true;/.test(html), 'draftFetch sends append');
@@ -2356,6 +2367,56 @@ test('riff (matrix step 2): progressive-disclosure panel + additive Riff action'
 
   // Regenerate stays destructive — never sends append.
   assert.ok(!/regenerateProjectDraft[\s\S]*?append: true/.test(html.slice(0, html.indexOf('function runRiff'))), 'regenerate does not append');
+});
+
+test('matrix 3b: getDocContent exposes doc-accurate riffMarks for the app dividers', () => {
+  const { getDocContent } = require('../src/destinations/googleDocs');
+
+  // A field with a seed + two batches; batch numbers 1 then 3 (Riff 2 was deleted
+  // in the doc). riffMarks must carry the DOC's numbers, not a resequenced 1,2.
+  const paras = [
+    { text: 'Email', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true },
+    { text: 'Original seed line' }, //             copy line 0
+    { text: 'Riff 1', style: 'HEADING_6' },
+    { text: '1. (Pain) A' }, //                    copy line 1
+    { text: '2. (Outcome) B' }, //                 copy line 2
+    { text: 'Riff 3', style: 'HEADING_6' }, //     gap: Riff 2 deleted
+    { text: '1. (Contrast) C' }, //                copy line 3
+    { text: '' },
+  ];
+  const doc = makeMatrixDoc(paras);
+  const clients = { docs: { documents: { get: async () => ({ data: doc }) } } };
+  return getDocContent('doc', clients).then((content) => {
+    const f = content.assets[0].fields[0];
+    // Copy still excludes the headers (unchanged from 3a).
+    assert.strictEqual(f.copy, 'Original seed line\n1. (Pain) A\n2. (Outcome) B\n1. (Contrast) C');
+    // Doc-accurate batch markers: Riff 1 before copy-line 1, Riff 3 before line 3.
+    assert.deepStrictEqual(f.riffMarks, [{ beforeLine: 1, riffN: 1 }, { beforeLine: 3, riffN: 3 }]);
+  });
+});
+
+test('matrix 3b: Riff sends the matrix; Regenerate stays name-only; dividers render from riffMarks', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // State carries the matrix rows; the mutators exist.
+  assert.ok(/\{ assetType: a, fieldName: f, rows: \[\] \}/.test(html), 'selection carries matrix rows');
+  assert.ok(/function addRow/.test(html) && /function updateRow/.test(html) && /function removeRow/.test(html), 'row mutators present');
+
+  // Riff sends variations:[{angle,count,intensity}] — 3a's contract.
+  assert.ok(/variations: rows\.map\(function \(r\) \{ return \{ angle: r\.angle, count: r\.count, intensity: r\.intensity \}; \}\)/.test(html), 'Riff payload is the matrix');
+  // No separate summary line — the total rides on the button as "Riff (N)", and
+  // the button disables with zero rows.
+  assert.ok(!/matrix-summary/.test(html) && !/'Generate ' \+ total/.test(html), 'redundant summary line removed');
+  assert.ok(/riffBtn\.textContent = total \? 'Riff \(' \+ total \+ '\)' : 'Riff'/.test(html), 'total shown on the Riff button');
+  assert.ok(/riffBtn\.disabled = rows\.length === 0/.test(html), 'Riff disabled with 0 rows');
+
+  // Regenerate path strips to {assetType, fieldName} — never the matrix rows.
+  assert.ok(/function selectedScopedFields\(\)/.test(html) && /return \{ assetType: v\.assetType, fieldName: v\.fieldName \};/.test(html), 'Regenerate sends name-only');
+
+  // Riff N dividers render before each batch, from riffMarks, with the doc number.
+  assert.ok(/function fieldCopyEl\(copy, riffMarks\)/.test(html), 'copy renderer takes riffMarks');
+  assert.ok(/'Riff ' \+ byLine\[i\]/.test(html) && /riff-divider-label/.test(html), 'renders "Riff N" divider before each batch');
 });
 
 test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {

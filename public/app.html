@@ -480,13 +480,15 @@
     /* Progressive disclosure (Step 2): the controls are hidden behind a chevron on
        a selected field, and revealed only once the writer expands it. */
     .asset-field.expanded .var-controls { display: flex; }
-    .field-expand { display: none; align-items: center; gap: 6px; align-self: flex-start; margin-top: 10px; padding: 4px 2px; background: none; border: none; cursor: pointer; -webkit-tap-highlight-color: transparent; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; color: var(--gold); }
+    .field-expand { display: none; align-items: center; gap: 7px; align-self: flex-start; margin-top: 10px; padding: 6px 12px; background: rgba(201,168,76,0.12); border: 1.5px solid rgba(201,168,76,0.55); border-radius: 100px; cursor: pointer; -webkit-tap-highlight-color: transparent; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 700; color: var(--ink); transition: background 0.12s ease, border-color 0.12s ease; }
     .asset-field.selected .field-expand { display: inline-flex; }
-    .field-expand .chev { display: inline-block; transition: transform 0.15s ease; }
+    .field-expand:active { background: rgba(201,168,76,0.22); }
+    .field-expand .chev { display: inline-block; color: #8A6A15; font-weight: 700; transition: transform 0.15s ease; }
     .asset-field.expanded .field-expand .chev { transform: rotate(90deg); }
     /* Riff button — the additive action inside a field's expanded panel. */
-    .riff-row { display: flex; margin-top: 4px; }
-    .riff-btn { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 700; color: #1A1A2E; background: var(--gold); border: none; border-radius: 100px; padding: 9px 18px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.1s ease, filter 0.12s ease; }
+    .riff-row { display: flex; margin-top: 12px; }
+    .riff-btn { width: 100%; font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 700; letter-spacing: 0.01em; color: #1A1A2E; background: var(--gold); border: none; border-radius: 12px; padding: 13px 18px; cursor: pointer; -webkit-tap-highlight-color: transparent; box-shadow: 0 2px 10px rgba(201,168,76,0.4); transition: transform 0.1s ease, filter 0.12s ease, box-shadow 0.12s ease; }
+    .riff-btn:hover { filter: brightness(1.04); box-shadow: 0 3px 14px rgba(201,168,76,0.5); }
     .riff-btn:active { transform: scale(0.97); }
     .riff-btn:disabled { opacity: 0.5; cursor: default; }
     .var-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -506,9 +508,9 @@
     .var-range::-moz-range-thumb { width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%; background: var(--gold); box-shadow: 0 1px 4px rgba(26,26,46,0.28); cursor: pointer; }
     .var-range::-moz-range-track { height: 5px; border-radius: 100px; background: rgba(26,26,46,0.12); }
     .var-range:active::-webkit-slider-thumb { transform: scale(1.08); }
-    .var-value { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 600; color: var(--gold); font-variant-numeric: tabular-nums; min-width: 12px; text-align: center; }
+    .var-value { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 12px; text-align: center; }
     /* Multi-variant read-back badges on a drafted field. */
-    .field-options { font-size: 11px; font-weight: 600; color: var(--gold); background: rgba(201,168,76,0.14); border-radius: 6px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
+    .field-options { font-size: 11px; font-weight: 700; color: #7A5E12; background: rgba(201,168,76,0.22); border-radius: 6px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
     .doorway-chip { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #1A1A2E; background: rgba(201,168,76,0.9); border-radius: 5px; padding: 2px 7px; margin-right: auto; }
     @media (max-width: 380px) {
       .var-label { min-width: 100%; }

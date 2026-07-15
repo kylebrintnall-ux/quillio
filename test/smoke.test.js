@@ -1899,6 +1899,148 @@ test('variations (P2/P3): buildVariantBlock marks number iff count>1, label iff 
   assert.strictEqual(buildVariantBlock([{ doorway: 'Pain', copy: '   ' }], { distance: 'wide' }), '');
 });
 
+// --- Variations Matrix, Step 3a: the "Riff N" HEADING_6 batch header ----------
+// The header is a structural divider above an appended batch. The parser guard is
+// the paragraph's namedStyleType (HEADING_6), NOT its text — so even a header that
+// reads like an option can never be parsed as copy. These tests pin: (1) the
+// header is never read as a field or a copy option, (2) getDocContent excludes it,
+// (3) a re-riff numbers max+1 (gap-safe), (4) a destructive-regen delete range
+// spans the headers so the whole stack is wiped.
+
+// Build a synthetic Google-Docs doc: each paragraph carries start/endIndex, a
+// namedStyleType, and a textRun with its bold/italic style. Body starts at 1 and
+// every paragraph includes its trailing "\n". Shared by the four matrix tests.
+function makeMatrixDoc(paras) {
+  let idx = 1;
+  const content = paras.map((para) => {
+    const raw = (para.text || '') + '\n';
+    const startIndex = idx;
+    const endIndex = idx + raw.length;
+    idx = endIndex;
+    return {
+      startIndex,
+      endIndex,
+      paragraph: {
+        paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+        elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+      },
+    };
+  });
+  return { body: { content } };
+}
+
+test('matrix 3a: a "Riff N" HEADING_6 header is never parsed as a field or copy option', () => {
+  const { parseDoc, getDocContent } = require('../src/destinations/googleDocs');
+
+  const paras = [
+    { text: 'Campaign Summary', style: 'HEADING_2' },
+    { text: 'the summary', italic: true },
+    { text: 'Writer Direction', style: 'HEADING_2' },
+    { text: 'the direction', italic: true },
+    { text: 'Email', style: 'HEADING_3' },
+    { text: 'Paid · warm', italic: true }, //          asset direction line
+    { text: 'Headline [50]', bold: true }, //          field label (para 6)
+    { text: 'Original seed line' }, //                 seed copy (para 7)
+    { text: 'Riff 1', style: 'HEADING_6' }, //         batch header (para 8) — NOT copy
+    { text: '1. (Pain) Drowning in tickets' }, //      option (para 9)
+    { text: '2. (Reframe) Not a cost center' }, //     option (para 10, last non-empty)
+    { text: '' }, //                                    trailing blank (para 11)
+  ];
+  const doc = makeMatrixDoc(paras);
+  const c = doc.body.content;
+  const { assets } = parseDoc(doc);
+
+  // Exactly ONE field recovered — the header did not spawn a phantom "Riff 1" field.
+  assert.strictEqual(assets.length, 1);
+  assert.strictEqual(assets[0].fields.length, 1, 'header never creates a field');
+  const field = assets[0].fields[0];
+  assert.strictEqual(field.fieldName, 'Headline');
+
+  // The header did NOT reset the field: options below it still belong to the field,
+  // so deleteEnd reaches the LAST option (para 10), spanning the header (para 8).
+  assert.strictEqual(field.deleteEnd, c[10].endIndex, 'delete range reaches the last option');
+  assert.ok(field.deleteEnd > c[8].endIndex, 'delete range spans the Riff 1 header');
+
+  // getDocContent excludes the header from copy (seed + both options, no "Riff 1").
+  const doc2 = makeMatrixDoc(paras);
+  // getDocContent is async and reads via a docs client; stub one that returns our doc.
+  const clients = { docs: { documents: { get: async () => ({ data: doc2 }) } } };
+  return getDocContent('doc-id', clients).then((content) => {
+    const cf = content.assets[0].fields[0];
+    assert.strictEqual(
+      cf.copy,
+      'Original seed line\n1. (Pain) Drowning in tickets\n2. (Reframe) Not a cost center',
+      'header excluded from copy'
+    );
+    assert.ok(!/Riff\s*1/.test(cf.copy), '"Riff 1" never appears in field copy');
+  });
+});
+
+test('matrix 3a: parseDoc records maxRiffN so a re-riff numbers batch max+1', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+
+  const paras = [
+    { text: 'Email', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true },
+    { text: 'Original seed line' },
+    { text: 'Riff 1', style: 'HEADING_6' },
+    { text: '1. (Pain) A' },
+    { text: 'Riff 2', style: 'HEADING_6' },
+    { text: '1. (Reframe) B' },
+    { text: '' },
+  ];
+  const field = parseDoc(makeMatrixDoc(paras)).assets[0].fields[0];
+  assert.strictEqual(field.maxRiffN, 2, 'highest existing Riff batch number');
+  assert.strictEqual((field.maxRiffN || 0) + 1, 3, 'next riff is 3');
+});
+
+test('matrix 3a: max+1 is gap-safe — Riff 1 + Riff 3 (no Riff 2) → next is 4, not 3', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+
+  // Simulates a writer manually deleting the Riff 2 block. Counting headers would
+  // give 2 → next 3, colliding with the surviving Riff 3. max+1 gives 4.
+  const paras = [
+    { text: 'Email', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true },
+    { text: 'Original seed line' },
+    { text: 'Riff 1', style: 'HEADING_6' },
+    { text: '1. (Pain) A' },
+    { text: 'Riff 3', style: 'HEADING_6' },
+    { text: '1. (Reframe) C' },
+    { text: '' },
+  ];
+  const field = parseDoc(makeMatrixDoc(paras)).assets[0].fields[0];
+  assert.strictEqual(field.maxRiffN, 3, 'max of existing Riff numbers');
+  assert.strictEqual((field.maxRiffN || 0) + 1, 4, 'next riff avoids colliding with Riff 3');
+});
+
+test('matrix 3a: destructive-regen delete range spans every Riff header in the stack', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+
+  const paras = [
+    { text: 'Email', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true }, //   field label (para 1)
+    { text: 'Original seed line' }, //          seed (para 2)
+    { text: 'Riff 1', style: 'HEADING_6' }, //  header (para 3)
+    { text: '1. (Pain) A' }, //                 option (para 4)
+    { text: '2. (Proof) B' }, //                option (para 5)
+    { text: 'Riff 2', style: 'HEADING_6' }, //  header (para 6)
+    { text: '1. (Reframe) C' }, //              option (para 7, last non-empty)
+    { text: '' }, //                            trailing blank (para 8)
+  ];
+  const doc = makeMatrixDoc(paras);
+  const c = doc.body.content;
+  const field = parseDoc(doc).assets[0].fields[0];
+
+  // insertIndex = end of the label; deleteEnd = end of the LAST option. The single
+  // [insertIndex, deleteEnd] range therefore covers both Riff headers (para 3 + 6)
+  // and every option, so a destructive Regenerate wipes the whole stack cleanly.
+  assert.strictEqual(field.insertIndex, c[1].endIndex);
+  assert.strictEqual(field.deleteEnd, c[7].endIndex, 'delete range reaches the last option');
+  assert.ok(field.deleteEnd > c[3].endIndex && field.deleteEnd > c[6].endIndex, 'range spans both headers');
+  assert.ok(field.insertIndex < c[3].startIndex, 'range starts above the first header');
+});
+
 test('variant review: singles vs stacks are routed apart; solo label stripped; resolved re-collects', () => {
   const { collectCopyFields, collectVariationStacks } = require('../src/services/copyReview');
   const { isNumberedStack } = require('../src/utils/variants');
@@ -2109,8 +2251,10 @@ test('append: additive write inserts below, never deletes (deleteEnd:null guaran
   // The no-delete guarantee is in the DATA: append fields carry deleteEnd:null and
   // insert at the field's current copy end (deleteEnd, or insertIndex when empty).
   assert.ok(/const insertAt = f\.deleteEnd != null \? f\.deleteEnd : f\.insertIndex;/.test(gd), 'insert index = end of current copy block');
-  assert.ok(/drafts\.push\(\{ fieldName: f\.fieldName, copy: block, insertIndex: insertAt, deleteEnd: null \}\)/.test(gd), 'append pushes deleteEnd:null');
-  assert.ok(/startIndex: 1/.test(gd), 'append batch numbered from 1');
+  assert.ok(/drafts\.push\(\{ fieldName: f\.fieldName, copy: block, insertIndex: insertAt, deleteEnd: null, riffN \}\)/.test(gd), 'append pushes deleteEnd:null (+ riffN for the batch header)');
+  assert.ok(/startIndex: 1, labeled: true/.test(gd), 'append batch numbered from 1 and always labeled');
+  // Step 3: the batch is prefaced by a faint "Riff N" HEADING_6 header; N = max+1.
+  assert.ok(/const riffN = \(f\.maxRiffN \|\| 0\) \+ 1;/.test(gd), 'riff batch number is max existing +1');
   // …and the deletions filter keys on deleteEnd != null, so a deleteEnd:null field
   // can NEVER produce a deleteContentRange.
   assert.ok(/\.filter\(\(d\) => d\.deleteEnd != null && d\.deleteEnd > d\.insertIndex\)/.test(gd), 'deletions require deleteEnd != null');

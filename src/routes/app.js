@@ -240,6 +240,20 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
           fieldName: f.fieldName,
           count: Math.max(1, Math.min(4, parseInt(f.count, 10) || 1)),
           distance: ['close', 'explore', 'wide'].includes(f.distance) ? f.distance : 'close',
+          // Variations Matrix (Step 3): optional per-angle rows. Passed through
+          // loosely — googleDocs validates angle/intensity names + caps count 1–5
+          // authoritatively (normalizeVarControls). A valid matrix overrides
+          // count/distance downstream; absent → the legacy path is unchanged.
+          variations: Array.isArray(f.variations)
+            ? f.variations
+                .filter((r) => r && typeof r.angle === 'string')
+                .map((r) => ({
+                  angle: r.angle,
+                  count: Math.max(1, Math.min(5, parseInt(r.count, 10) || 1)),
+                  intensity: typeof r.intensity === 'string' ? r.intensity : 'Safe',
+                }))
+                .slice(0, 20)
+            : undefined,
         }))
         .slice(0, 200)
     : null;

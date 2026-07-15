@@ -758,6 +758,15 @@ const DOORWAYS = {
   Reframe: "challenge the category's assumption; recast what the thing even is.",
 };
 
+// Intensity (Variations Matrix, Step 3) — HOW HARD to push a row's angle. Like
+// `distance`, it steers GENERATION only and never appears in the doc label. The
+// matrix carries one intensity per row, so a single generation can mix them.
+const INTENSITIES = {
+  Safe: 'the proven, on-strategy execution of this angle — the version a seasoned copywriter ships without a second look. Play the hits; no surprises.',
+  Bold: 'push past the obvious take — sharper language, a less expected way into the same angle, more voice. Still on-brief, but it takes a real position.',
+  Wild: 'take a swing — break the expected pattern for this angle with surprising phrasing or structure, a line that makes someone stop. High-risk/high-reward; still sells the same value prop, from an unexpected height.',
+};
+
 // Per-field-type doorway ranking, most-obvious → least. Distance bands slice this:
 // close = rank[0]; explore = rank[1..3]; wide = rank[4..6] (always ends Reframe).
 const DOORWAY_RANKINGS = {
@@ -816,28 +825,63 @@ function buildVariationsPrompt({
   assetDirection,
   voiceGuide,
   doorways,
+  rows,
   distance,
   direction,
   currentCopy,
 }) {
-  const n = doorways.length;
+  // Normalize to one spec shape: [{ doorway, intensity|null }]. The matrix path
+  // passes `rows` (per-angle intensity); the legacy path passes bare `doorways`
+  // (intensity null → renders identically to before). Intensity, like distance,
+  // is generation-only and never shown in the assignment label's door.
+  const spec = Array.isArray(rows) && rows.length
+    ? rows.map((r) => ({ doorway: r.doorway, intensity: INTENSITIES[r.intensity] ? r.intensity : null }))
+    : (doorways || []).map((d) => ({ doorway: d, intensity: null }));
+  const doorwayList = spec.map((s) => s.doorway);
+  const n = spec.length;
   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
-  const allSame = new Set(doorways).size === 1; // Stay close: one door, N executions
+  const allSame = new Set(doorwayList).size === 1; // Stay close: one door, N executions
+  const anyIntensity = spec.some((s) => s.intensity);
   const limitLine = ceiling
     ? `Character limit: ${ceiling} per variation. Each is a COMPLETE, self-contained thought within this hard maximum — finish the thought, even a few characters short.`
     : 'Keep each variation concise — a complete, self-contained thought appropriate for the field.';
 
   const doorwayDefs = Object.entries(DOORWAYS).map(([name, def]) => `- ${name}: ${def}`);
-  const assignmentRows = doorways.map((dw, i) => `${i + 1}. (${dw}) —`);
+  const intensityDefs = anyIntensity ? Object.entries(INTENSITIES).map(([name, def]) => `- ${name}: ${def}`) : [];
+  const assignmentRows = spec.map(
+    (s, i) => `${i + 1}. (${s.doorway}${s.intensity ? ` · ${s.intensity}` : ''}) —`
+  );
 
   const sameAngleLine = allSame
     ? [
-        `All ${n} variations use the SAME doorway (${doorways[0]}) — write ${n} genuinely`,
+        `All ${n} variations use the SAME doorway (${doorwayList[0]}) — write ${n} genuinely`,
         'DIFFERENT executions of that one angle (different hooks, specifics, structure),',
         'never reworded near-duplicates.',
         '',
       ]
     : [];
+
+  // Intensity block + assignment framing. Matrix runs (per-row intensity) name
+  // both the door and the push, and ALLOW a repeated door at different intensities
+  // (Pain·Safe + Pain·Wild is intentional). Legacy runs keep the original framing.
+  const intensityBlock = anyIntensity
+    ? [
+        'INTENSITY — how hard to push each row\'s angle. Changes the RISK and energy, not the door',
+        'or the value prop; the brand voice above still governs tone and craft:',
+        ...intensityDefs,
+        '',
+      ]
+    : [];
+  const assignmentInstruction = anyIntensity
+    ? [
+        'YOUR ASSIGNMENT — write exactly one variation per row, using the EXACT doorway AND intensity',
+        'named for that row. A repeated doorway at a different intensity is INTENTIONAL — make those',
+        'genuinely different in risk and execution, not reworded:',
+      ]
+    : [
+        'YOUR ASSIGNMENT — write exactly one variation per row, using the EXACT doorway named for',
+        'that row. Do NOT drift between doorways and do NOT repeat an angle:',
+      ];
 
   return [
     `Write ONE marketing field as ${n} DISTINCT variation${n === 1 ? '' : 's'}. Each sells the`,
@@ -858,9 +902,9 @@ function buildVariationsPrompt({
     'ANGLE only; the brand voice above still governs tone and craft for every one:',
     ...doorwayDefs,
     '',
+    ...intensityBlock,
     ...sameAngleLine,
-    'YOUR ASSIGNMENT — write exactly one variation per row, using the EXACT doorway named for',
-    'that row. Do NOT drift between doorways and do NOT repeat an angle:',
+    ...assignmentInstruction,
     ...assignmentRows,
     '',
     direction
@@ -897,11 +941,19 @@ async function generateFieldVariations({
   direction,
   distance,
   count,
+  rows,
   currentCopy,
   siblings,
 }) {
-  const doorways = assignDoorways(fieldName, distance, count);
-  const n = doorways.length;
+  // Matrix path (Step 3): explicit per-angle rows [{ doorway, intensity }] drive
+  // generation directly, bypassing assignDoorways (the writer chose the angles).
+  // Legacy path: assignDoorways derives the doorways from distance + count, with
+  // null intensity so the prompt reads exactly as before.
+  const spec = Array.isArray(rows) && rows.length
+    ? rows.map((r) => ({ doorway: r.doorway, intensity: r.intensity || null }))
+    : assignDoorways(fieldName, distance, count).map((d) => ({ doorway: d, intensity: null }));
+  const doorways = spec.map((s) => s.doorway);
+  const n = spec.length;
   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
   const prompt = buildVariationsPrompt({
     assetType,
@@ -911,7 +963,7 @@ async function generateFieldVariations({
     writerPrompt,
     assetDirection,
     voiceGuide,
-    doorways,
+    rows: spec,
     distance,
     direction,
     currentCopy,
@@ -1480,6 +1532,7 @@ module.exports = {
   buildVariationsPrompt,
   doorwayRankingForField,
   DOORWAYS,
+  INTENSITIES,
   buildVariantReviewPrompt,
   DOORWAY_FIT_GUIDE,
   CROSS_FIELD_FLAG_RULE,

@@ -16,7 +16,12 @@ const { DocBuilder } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
-const { generateAssetDrafts, generateFieldDraft, generateFieldVariations } = require('../services/gemini');
+const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, DOORWAYS, INTENSITIES } = require('../services/gemini');
+
+// Allowed matrix names (Variations Matrix, Step 3), sourced from gemini so there's
+// one taxonomy. Used to validate a scoped field's `variations` rows.
+const ANGLE_NAMES = new Set(Object.keys(DOORWAYS));
+const INTENSITY_NAMES = new Set(Object.keys(INTENSITIES));
 
 // How many assets to draft concurrently (each asset is one batched Gemini call
 // plus possible per-field fallbacks). Bounded to keep peak memory/CPU sane on an
@@ -450,6 +455,24 @@ function parseDoc(doc) {
       continue;
     }
 
+    // Riff batch header (Variations Matrix, Step 3) — a faint HEADING_6 divider
+    // above an appended variation batch ("Riff 1", "Riff 2", …). The named-style
+    // check fires BEFORE the bold-label and copy branches below, so the header is
+    // structurally NEVER read as a field label or a copy option (the guard is the
+    // paragraph style, not its text). It deliberately does NOT reset currentField:
+    // the field's copy region spans it, so a destructive Regenerate's single
+    // [insertIndex, deleteEnd] range still covers the whole stack, headers
+    // included. Record the batch number so a re-riff computes max+1 — gap-safe
+    // (if a middle batch was deleted, max+1 still can't collide with a survivor,
+    // where counting headers would).
+    if (named === 'HEADING_6') {
+      const rm = text.match(/^Riff\s+(\d+)/i);
+      if (currentField && rm) {
+        currentField.maxRiffN = Math.max(currentField.maxRiffN || 0, Number(rm[1]));
+      }
+      continue;
+    }
+
     if (current && !current.gotMeta && current.fields.length === 0 && italic && text) {
       const parts = text.split('·').map((s) => s.trim());
       current.channel = parts[0] || '';
@@ -484,6 +507,9 @@ function parseDoc(doc) {
         // regeneration; stays null for a first draft so that path is untouched.
         deleteEnd: null,
         notes: '',
+        // Highest "Riff N" batch number seen under this field (0 = none). Drives
+        // the next append batch's number (max+1). Set by the HEADING_6 branch.
+        maxRiffN: 0,
       };
       current.fields.push(currentField);
       notesSeen = false;
@@ -518,6 +544,32 @@ function ctxKey(assetType, fieldName) {
   return `${String(assetType).trim().toLowerCase()}|${String(fieldName).trim().toLowerCase()}`;
 }
 
+// Normalize a scoped field's variation controls into one of two shapes:
+//   { matrix: [{ doorway, intensity, count }] }  — Variations Matrix (Step 3):
+//       explicit per-angle rows. Angle must be a known doorway; count capped 1–5;
+//       intensity a known Safe/Bold/Wild (default Safe). Invalid rows are dropped.
+//   { count, distance }                          — legacy Phase 2/3 controls.
+// A valid matrix WINS (assignDoorways is bypassed downstream). This is the single
+// place matrix input is validated, so the route can pass rows through loosely.
+function normalizeVarControls(t) {
+  const rows = Array.isArray(t.variations) ? t.variations : null;
+  if (rows && rows.length) {
+    const matrix = [];
+    for (const r of rows) {
+      const angle = r && ANGLE_NAMES.has(String(r.angle)) ? String(r.angle) : null;
+      if (!angle) continue;
+      const count = Math.max(1, Math.min(5, Number(r.count) || 1));
+      const intensity = r && INTENSITY_NAMES.has(String(r.intensity)) ? String(r.intensity) : 'Safe';
+      matrix.push({ doorway: angle, intensity, count });
+    }
+    if (matrix.length) return { matrix };
+  }
+  return {
+    count: Math.max(1, Math.min(4, Number(t.count) || 1)),
+    distance: t.distance === 'explore' || t.distance === 'wide' ? t.distance : 'close',
+  };
+}
+
 // Assemble N variations into the single copy block inserted under a field label.
 // Two independent markers: a NUMBER appears iff there's more than one option (a
 // stack to resolve between); a (Doorway) LABEL appears iff a non-'close' distance
@@ -533,17 +585,20 @@ function ctxKey(assetType, fieldName) {
 // that base — even a single option gets its number, so an appended batch always
 // reads as a numbered group. Omitted → today's behavior exactly (numbered iff the
 // batch has >1 option, base 1).
-function buildVariantBlock(variations, { distance, charMax, startIndex } = {}) {
+function buildVariantBlock(variations, { distance, charMax, startIndex, labeled } = {}) {
   const list = (variations || []).filter((v) => v && String(v.copy || '').trim());
   if (list.length === 0) return '';
   const numbered = startIndex != null ? true : list.length > 1;
   const base = startIndex != null ? startIndex : 1;
-  const labeled = distance && distance !== 'close';
+  // `labeled` (Step 3) forces the (Doorway) tag on regardless of distance — the
+  // append/matrix path always labels so every riffed option carries its angle.
+  // When omitted, fall back to the legacy rule (label iff a non-'close' distance).
+  const labelOn = labeled != null ? labeled : Boolean(distance && distance !== 'close');
   const longField = !(Number(charMax) > 0 && Number(charMax) <= 120);
   const lines = list.map((v, i) => {
     let prefix = '';
     if (numbered) prefix += `${base + i}. `;
-    if (labeled) prefix += `(${v.doorway}) `;
+    if (labelOn && v.doorway) prefix += `(${v.doorway}) `;
     return prefix + String(v.copy).trim();
   });
   return lines.join(numbered && longField ? '\n\n' : '\n');
@@ -586,10 +641,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   const scopeMeta = new Map();
   if (scopeKeys) {
     for (const t of scopedFields) {
-      scopeMeta.set(ctxKey(t.assetType, t.fieldName), {
-        count: Math.max(1, Math.min(4, Number(t.count) || 1)),
-        distance: t.distance === 'explore' || t.distance === 'wide' ? t.distance : 'close',
-      });
+      scopeMeta.set(ctxKey(t.assetType, t.fieldName), normalizeVarControls(t));
     }
   }
 
@@ -607,6 +659,8 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
         charMax: field.charMax || 0,
         insertIndex: field.insertIndex,
         deleteEnd: field.deleteEnd,
+        // Highest existing "Riff N" batch number under this field (append uses +1).
+        maxRiffN: field.maxRiffN || 0,
       })),
     }))
     // Scoped: drop assets with no selected field so we don't even iterate them.
@@ -653,12 +707,25 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
             .map((s) => ({ fieldName: s.fieldName, copy: (copyByKey.get(ctxKey(a.assetType, s.fieldName)) || '').trim() }))
             .filter((s) => s.copy);
           const meta = scopeMeta.get(ctxKey(a.assetType, f.fieldName)) || { count: 1, distance: 'close' };
-          const wantsVariations = meta.count > 1 || meta.distance !== 'close';
+          const hasMatrix = Array.isArray(meta.matrix) && meta.matrix.length > 0;
+          const wantsVariations = hasMatrix || meta.count > 1 || meta.distance !== 'close';
           try {
             // Produce the option list (reuse existing generators — no new prompt work).
             let variations;
             if (wantsVariations) {
-              // Phase 2/3: N conceptually-distinct options via assigned doorways.
+              // Matrix path (Step 3): expand each row into `count` explicit
+              // {doorway, intensity} entries and generate against them directly
+              // (assignDoorways bypassed). Legacy path: distance + count.
+              let genArgs;
+              if (hasMatrix) {
+                const rows = [];
+                for (const m of meta.matrix) {
+                  for (let k = 0; k < m.count; k++) rows.push({ doorway: m.doorway, intensity: m.intensity });
+                }
+                genArgs = { rows };
+              } else {
+                genArgs = { distance: meta.distance, count: meta.count };
+              }
               variations = await generateFieldVariations({
                 assetType: a.assetType,
                 fieldName: f.fieldName,
@@ -668,8 +735,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
                 writerPrompt,
                 direction,
                 voiceGuide,
-                distance: meta.distance,
-                count: meta.count,
+                ...genArgs,
                 currentCopy: copyByKey.get(ctxKey(a.assetType, f.fieldName)) || '',
                 siblings,
               });
@@ -690,15 +756,18 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
             }
 
             if (appendMode) {
-              // ADDITIVE write: number the batch from 1 and insert it BELOW the
-              // field's current copy (at deleteEnd — the end of the last existing
-              // copy paragraph, or insertIndex when the field is empty). deleteEnd
-              // is set to null so this field cannot enter the deletions list — the
-              // existing copy is never touched.
-              const block = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax, startIndex: 1 });
+              // ADDITIVE write: number the batch from 1, ALWAYS label each option
+              // with its (Doorway), and insert it BELOW the field's current copy
+              // (at deleteEnd — the end of the last existing copy paragraph, or
+              // insertIndex when the field is empty). deleteEnd is set to null so
+              // this field cannot enter the deletions list — existing copy is
+              // never touched. The batch is prefaced by a faint "Riff N" header in
+              // Phase 2; N = the field's highest existing Riff batch + 1 (max+1).
+              const block = buildVariantBlock(variations, { charMax: f.charMax, startIndex: 1, labeled: true });
               const insertAt = f.deleteEnd != null ? f.deleteEnd : f.insertIndex;
               if (block && insertAt != null) {
-                drafts.push({ fieldName: f.fieldName, copy: block, insertIndex: insertAt, deleteEnd: null });
+                const riffN = (f.maxRiffN || 0) + 1;
+                drafts.push({ fieldName: f.fieldName, copy: block, insertIndex: insertAt, deleteEnd: null, riffN });
               }
             } else {
               // Destructive-replace path (unchanged): buildVariantBlock with no
@@ -735,6 +804,8 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
             insertIndex: d.insertIndex != null ? d.insertIndex : meta.insertIndex,
             deleteEnd: Object.prototype.hasOwnProperty.call(d, 'deleteEnd') ? d.deleteEnd : meta.deleteEnd,
             copy: d.copy,
+            // Append batches carry their Riff header number (undefined otherwise).
+            riffN: d.riffN,
           };
         })
         .filter((r) => r.insertIndex != null && r.copy);
@@ -802,16 +873,64 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
       const idx = insertIndexByField
         ? insertIndexByField.get(ctxKey(d.assetType, d.fieldName))
         : d.insertIndex;
-      return idx != null ? { insertIndex: idx, copy: d.copy } : null;
+      return idx != null ? { insertIndex: idx, copy: d.copy, riffN: d.riffN } : null;
     })
     .filter(Boolean)
     // Bottom-to-top so each insert doesn't shift the indices of the ones above.
     .sort((a, b) => b.insertIndex - a.insertIndex);
 
   // Phase 2 — insert the new copy under each label (regular weight, not the
-  // bold label style).
+  // bold label style). Inserts run bottom-to-top (highest index first), so each
+  // insert's absolute index stays valid until it's applied.
+  //
+  // Append batches (riffN set) are prefaced by a faint "Riff N" HEADING_6 header.
+  // HEADING_6 is the structural marker parseDoc/getDocContent key off to exclude
+  // the divider from copy — cosmetic faint styling is layered on top and does not
+  // affect parsing. The header range stops BEFORE its newline so the paragraph
+  // style lands only on the header; the block range is forced to NORMAL_TEXT so
+  // it can't inherit the heading style.
   const requests = [];
-  for (const { insertIndex, copy } of inserts) {
+  for (const { insertIndex, copy, riffN } of inserts) {
+    if (riffN != null) {
+      const header = `Riff ${riffN}`;
+      requests.push({ insertText: { location: { index: insertIndex }, text: `${header}\n${copy}\n` } });
+      const headerEnd = insertIndex + header.length;
+      const blockStart = headerEnd + 1; // past the header's newline
+      requests.push({
+        updateParagraphStyle: {
+          range: { startIndex: insertIndex, endIndex: headerEnd },
+          paragraphStyle: { namedStyleType: 'HEADING_6' },
+          fields: 'namedStyleType',
+        },
+      });
+      requests.push({
+        updateTextStyle: {
+          range: { startIndex: insertIndex, endIndex: headerEnd },
+          textStyle: {
+            bold: false,
+            italic: true,
+            fontSize: { magnitude: 8, unit: 'PT' },
+            foregroundColor: { color: { rgbColor: { red: 0.6, green: 0.63, blue: 0.65 } } },
+          },
+          fields: 'bold,italic,fontSize,foregroundColor',
+        },
+      });
+      requests.push({
+        updateParagraphStyle: {
+          range: { startIndex: blockStart, endIndex: blockStart + copy.length },
+          paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+          fields: 'namedStyleType',
+        },
+      });
+      requests.push({
+        updateTextStyle: {
+          range: { startIndex: blockStart, endIndex: blockStart + copy.length },
+          textStyle: { bold: false, italic: false },
+          fields: 'bold,italic',
+        },
+      });
+      continue;
+    }
     requests.push({ insertText: { location: { index: insertIndex }, text: copy + '\n' } });
     requests.push({
       updateTextStyle: {
@@ -898,6 +1017,14 @@ async function getDocContent(id, clients) {
       field = null;
       continue;
     }
+
+    // Riff batch header (Step 3) — structural divider, never copy. Skip it WITHOUT
+    // ending the field, so the batch options below it still accumulate into this
+    // field's copy. The faint "Riff N" divider itself is rendered in the app from
+    // 3b; here it's simply excluded from copy (the named-style check fires before
+    // the bold-label and copy branches, so it can never be read as an option).
+    if (named === 'HEADING_6') continue;
+
     if (!current) continue;
 
     // The italic line between the asset heading and its first field is the

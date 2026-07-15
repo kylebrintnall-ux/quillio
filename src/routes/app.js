@@ -244,11 +244,14 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
         .slice(0, 200)
     : null;
   const scoped = scopedFields && scopedFields.length > 0;
+  // ADDITIVE write (Variations Matrix Step 1): append the batch below existing
+  // copy instead of replacing. Scoped-only; ignored on a whole-doc call.
+  const append = body.append === true && scoped;
 
-  const mode = `${direction ? `regenerate (${direction.length} chars)` : 'first draft'}${scoped ? ` scoped ${scopedFields.length}` : ''}`;
+  const mode = `${direction ? `regenerate (${direction.length} chars)` : 'first draft'}${scoped ? ` scoped ${scopedFields.length}` : ''}${append ? ' append' : ''}`;
   const jobId = startJob(`draft doc=${docId} ${mode}`, async () => {
     const tenantContext = await resolveTenant(sessionTenant);
-    const out = await runWebDraft(docId, tenantContext, direction, scoped ? scopedFields : undefined);
+    const out = await runWebDraft(docId, tenantContext, direction, scoped ? scopedFields : undefined, append);
     return { docId: out.docId, fieldCount: out.fieldCount };
   });
   console.log(`[web] /api/draft start → job=${jobId} doc=${docId} tenant=${sessionTenant} mode=${mode}`);

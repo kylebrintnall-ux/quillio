@@ -1748,10 +1748,10 @@ test('selective regen (Phase 1): scopedFields threaded route -> adapter -> pipel
   const route = rd('src/routes/app.js');
   assert.ok(/body\.scopedFields/.test(route), 'route reads body.scopedFields');
   assert.ok(/runWebDraft\(docId, tenantContext, direction/.test(route), 'route passes scopedFields to runWebDraft');
-  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields\)/.test(rd('src/adapters/web.js')), 'adapter accepts scopedFields');
-  assert.ok(/generateDraft\(docId, direction, clients, tenantId, scopedFields\)/.test(rd('src/core/pipeline.js')), 'pipeline accepts scopedFields');
+  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields(, append)?\)/.test(rd('src/adapters/web.js')), 'adapter accepts scopedFields');
+  assert.ok(/generateDraft\(docId, direction, clients, tenantId, scopedFields(, append)?\)/.test(rd('src/core/pipeline.js')), 'pipeline accepts scopedFields');
   const gd = rd('src/destinations/googleDocs.js');
-  assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields\)/.test(gd), 'destination accepts scopedFields');
+  assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields(, append)?\)/.test(gd), 'destination accepts scopedFields');
   assert.ok(!/lookupDirection, targets\)/.test(gd), 'no bare `targets` param (avoids assetTargets collision)');
   assert.ok(/scopeKeys/.test(gd) && /generateFieldDraft\(/.test(gd), 'destination scoped branch uses per-field generator');
   // Sibling copy is read BEFORE the delete phase (the getDocContent sibling read
@@ -2082,6 +2082,52 @@ test('variations (P1 regression): count=1 + close routes to the unchanged per-fi
   assert.ok(/meta\.count > 1 \|\| meta\.distance !== 'close'/.test(gd), 'routes to variations only above defaults');
   assert.ok(/generateFieldVariations\(/.test(gd) && /generateFieldDraft\(/.test(gd), 'both generators wired in scoped branch');
   assert.ok(/buildVariantBlock\(/.test(gd), 'variations are stacked via buildVariantBlock');
+});
+
+// --- Variations Matrix Step 1: append write path ----------------------------
+
+test('append: buildVariantBlock startIndex force-numbers a batch from 1; omitted = today', () => {
+  const { buildVariantBlock } = require('../src/destinations/googleDocs');
+  // Omitted → unchanged: bare for a lone close option, numbered for a stack.
+  assert.strictEqual(buildVariantBlock([{ doorway: null, copy: 'Ship faster.' }], { distance: 'close', charMax: 60 }), 'Ship faster.');
+  assert.strictEqual(buildVariantBlock([{ doorway: null, copy: 'A' }, { doorway: null, copy: 'B' }], { distance: 'close', charMax: 60 }), '1. A\n2. B');
+  // Append (startIndex:1) → every batch restarts at 1 and is force-numbered,
+  // even a single option, so it reads as a numbered group below existing copy.
+  assert.strictEqual(buildVariantBlock([{ doorway: 'Reframe', copy: 'X' }], { distance: 'wide', charMax: 60, startIndex: 1 }), '1. (Reframe) X');
+  assert.strictEqual(buildVariantBlock([{ doorway: null, copy: 'Y' }], { distance: 'close', charMax: 60, startIndex: 1 }), '1. Y');
+  assert.strictEqual(
+    buildVariantBlock([{ doorway: 'Pain', copy: 'A' }, { doorway: 'Proof', copy: 'B' }, { doorway: 'Reframe', copy: 'C' }], { distance: 'wide', charMax: 60, startIndex: 1 }),
+    '1. (Pain) A\n2. (Proof) B\n3. (Reframe) C'
+  );
+});
+
+test('append: additive write inserts below, never deletes (deleteEnd:null guarantee)', () => {
+  const gd = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  // append is a run-level, scoped-only mode.
+  assert.ok(/async function generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append\)/.test(gd), 'generateDraft takes append');
+  assert.ok(/const appendMode = !!\(append && scopeKeys\)/.test(gd), 'append is scoped-only (appendMode guard)');
+  // The no-delete guarantee is in the DATA: append fields carry deleteEnd:null and
+  // insert at the field's current copy end (deleteEnd, or insertIndex when empty).
+  assert.ok(/const insertAt = f\.deleteEnd != null \? f\.deleteEnd : f\.insertIndex;/.test(gd), 'insert index = end of current copy block');
+  assert.ok(/drafts\.push\(\{ fieldName: f\.fieldName, copy: block, insertIndex: insertAt, deleteEnd: null \}\)/.test(gd), 'append pushes deleteEnd:null');
+  assert.ok(/startIndex: 1/.test(gd), 'append batch numbered from 1');
+  // …and the deletions filter keys on deleteEnd != null, so a deleteEnd:null field
+  // can NEVER produce a deleteContentRange.
+  assert.ok(/\.filter\(\(d\) => d\.deleteEnd != null && d\.deleteEnd > d\.insertIndex\)/.test(gd), 'deletions require deleteEnd != null');
+  // The mapping honors an append item's own insertIndex/deleteEnd.
+  assert.ok(/hasOwnProperty\.call\(d, 'deleteEnd'\)/.test(gd), 'mapping honors explicit deleteEnd:null');
+});
+
+test('append: threaded route -> adapter -> pipeline -> destination; scoped-only; default off', () => {
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  assert.ok(/const append = body\.append === true && scoped;/.test(route), 'route reads body.append, scoped-only');
+  assert.ok(/runWebDraft\(docId, tenantContext, direction, scoped \? scopedFields : undefined, append\)/.test(route), 'route threads append');
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields, append\)/.test(web), 'adapter takes append');
+  assert.ok(/pipeline\.generateDraft\(docId, direction, clients, tenantId, scopedFields, append\)/.test(web), 'adapter threads append');
+  const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.ok(/async function generateDraft\(docId, direction, clients, tenantId, scopedFields, append\)/.test(pipe), 'pipeline takes append');
+  assert.ok(/generateDraft\(docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append\)/.test(pipe), 'pipeline threads append to destination');
 });
 
 test('variations (P2/P3): route sanitizes count (1-4) and distance whitelist; payload threads through', () => {

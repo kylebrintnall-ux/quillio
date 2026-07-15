@@ -528,15 +528,21 @@ function ctxKey(assetType, fieldName) {
 //   wide   ×N  → `1. (Pain) copy` / `2. …`  (numbered + labeled stack)
 // Inserted bold:false/italic:false by the caller, so markers parse as copy — not
 // labels or notes. Long fields separate stacked options with a blank line.
-function buildVariantBlock(variations, { distance, charMax } = {}) {
+//
+// `startIndex` (append writes only): when given, the block is FORCE-numbered from
+// that base — even a single option gets its number, so an appended batch always
+// reads as a numbered group. Omitted → today's behavior exactly (numbered iff the
+// batch has >1 option, base 1).
+function buildVariantBlock(variations, { distance, charMax, startIndex } = {}) {
   const list = (variations || []).filter((v) => v && String(v.copy || '').trim());
   if (list.length === 0) return '';
-  const numbered = list.length > 1;
+  const numbered = startIndex != null ? true : list.length > 1;
+  const base = startIndex != null ? startIndex : 1;
   const labeled = distance && distance !== 'close';
   const longField = !(Number(charMax) > 0 && Number(charMax) <= 120);
   const lines = list.map((v, i) => {
     let prefix = '';
-    if (numbered) prefix += `${i + 1}. `;
+    if (numbered) prefix += `${base + i}. `;
     if (labeled) prefix += `(${v.doorway}) `;
     return prefix + String(v.copy).trim();
   });
@@ -545,7 +551,7 @@ function buildVariantBlock(variations, { distance, charMax } = {}) {
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields) {
+async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append) {
   const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
@@ -562,6 +568,17 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
     Array.isArray(scopedFields) && scopedFields.length > 0
       ? new Set(scopedFields.map((t) => ctxKey(t.assetType, t.fieldName)))
       : null;
+
+  // ADDITIVE (append) write — Variations Matrix Step 1. When `append` is set on a
+  // SCOPED call, each selected field's new batch is inserted BELOW its current
+  // copy (numbered from 1) and NOTHING is deleted. The no-delete guarantee is in
+  // the data: append fields are pushed with deleteEnd:null, so they can't enter
+  // the deletions filter below. Append is scoped-only (whole-doc append is not a
+  // Step-1 concern); a stray append without scope degrades to normal behavior.
+  const appendMode = !!(append && scopeKeys);
+  if (append && !scopeKeys) {
+    console.warn('[googleDocs] append requested without scopedFields — ignoring (whole-doc runs normally)');
+  }
 
   // Per-field variation controls (Phase 2/3): count (how many options) and
   // distance (which doorways are eligible). Absent → count 1 / 'close', which
@@ -638,11 +655,11 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
           const meta = scopeMeta.get(ctxKey(a.assetType, f.fieldName)) || { count: 1, distance: 'close' };
           const wantsVariations = meta.count > 1 || meta.distance !== 'close';
           try {
+            // Produce the option list (reuse existing generators — no new prompt work).
+            let variations;
             if (wantsVariations) {
               // Phase 2/3: N conceptually-distinct options via assigned doorways.
-              // Stacked into one copy block (buildVariantBlock), so it rides the
-              // existing two-phase write as a single {fieldName, copy}.
-              const variations = await generateFieldVariations({
+              variations = await generateFieldVariations({
                 assetType: a.assetType,
                 fieldName: f.fieldName,
                 charMax: f.charMax,
@@ -656,11 +673,9 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
                 currentCopy: copyByKey.get(ctxKey(a.assetType, f.fieldName)) || '',
                 siblings,
               });
-              const copy = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax });
-              if (copy) drafts.push({ fieldName: f.fieldName, copy });
             } else {
-              // Phase-1 path, unchanged: one bare draft, count 1 / Stay close.
-              const copy = await generateFieldDraft({
+              // Phase-1 path: one bare draft, count 1 / Stay close.
+              const c = await generateFieldDraft({
                 assetType: a.assetType,
                 fieldName: f.fieldName,
                 charMax: f.charMax,
@@ -671,6 +686,24 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
                 voiceGuide,
                 siblings,
               });
+              variations = c ? [{ doorway: null, copy: c }] : [];
+            }
+
+            if (appendMode) {
+              // ADDITIVE write: number the batch from 1 and insert it BELOW the
+              // field's current copy (at deleteEnd — the end of the last existing
+              // copy paragraph, or insertIndex when the field is empty). deleteEnd
+              // is set to null so this field cannot enter the deletions list — the
+              // existing copy is never touched.
+              const block = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax, startIndex: 1 });
+              const insertAt = f.deleteEnd != null ? f.deleteEnd : f.insertIndex;
+              if (block && insertAt != null) {
+                drafts.push({ fieldName: f.fieldName, copy: block, insertIndex: insertAt, deleteEnd: null });
+              }
+            } else {
+              // Destructive-replace path (unchanged): buildVariantBlock with no
+              // startIndex is byte-identical to before (bare for count-1/close).
+              const copy = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax });
               if (copy) drafts.push({ fieldName: f.fieldName, copy });
             }
           } catch (err) {
@@ -694,11 +727,13 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
       const mapped = drafts
         .map((d) => {
           const meta = metaByName.get(d.fieldName) || {};
+          // Append items carry their own insertIndex (= deleteEnd position) and an
+          // explicit deleteEnd:null; everything else uses the parsed field meta.
           return {
             assetType: a.assetType,
             fieldName: d.fieldName,
-            insertIndex: meta.insertIndex,
-            deleteEnd: meta.deleteEnd,
+            insertIndex: d.insertIndex != null ? d.insertIndex : meta.insertIndex,
+            deleteEnd: Object.prototype.hasOwnProperty.call(d, 'deleteEnd') ? d.deleteEnd : meta.deleteEnd,
             copy: d.copy,
           };
         })

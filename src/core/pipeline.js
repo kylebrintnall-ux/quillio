@@ -836,7 +836,7 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) 
 // falling back to the repo voice.md when there's no DB / no saved guide, and
 // supplies the asset-level creative direction lookup for the drafter.
 // Returns { title, fieldCount, url }.
-async function generateDraft(docId, direction, clients, tenantId, scopedFields) {
+async function generateDraft(docId, direction, clients, tenantId, scopedFields, append) {
   // Best-effort: a DB miss/error just falls back to the repo voice.md. Never
   // log the guide content — only whether one was found.
   let voiceGuide = null;
@@ -850,8 +850,9 @@ async function generateDraft(docId, direction, clients, tenantId, scopedFields) 
   console.log(`[workflow] draft voice guide: ${voiceGuide ? 'tenant (Postgres)' : 'repo voice.md'}`);
   const lookupDirection = await getAssetDirections(tenantId);
   // `scopedFields` (optional [{assetType, fieldName}]) scopes the draft to those
-  // fields; undefined → whole-doc, exactly as before.
-  return getDestination().generateDraft(docId, direction, clients, voiceGuide, lookupDirection, scopedFields);
+  // fields; undefined → whole-doc, exactly as before. `append` (Variations Matrix
+  // Step 1) makes a scoped call ADDITIVE — insert below existing copy, no delete.
+  return getDestination().generateDraft(docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append);
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web

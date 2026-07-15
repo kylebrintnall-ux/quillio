@@ -143,10 +143,10 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
 // `direction` is optional user revision feedback threaded into the prompt.
 // `scopedFields` (optional [{assetType, fieldName}]) scopes the draft to only
 // those fields (selective generate/regenerate); undefined → whole doc, as before.
-async function runWebDraft(docId, tenantContext = {}, direction, scopedFields) {
+async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, append) {
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
   const clients = await getClientsForTenant(tenantId);
-  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, scopedFields);
+  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, scopedFields, append);
   return { docId, title, fieldCount, url };
 }
 

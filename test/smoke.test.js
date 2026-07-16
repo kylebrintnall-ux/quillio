@@ -499,7 +499,7 @@ test('public/onboarding.html has all six steps and talks to the onboarding API',
   // v8 design system: StarCrush via @font-face + IBM Plex from Google Fonts
   // (matches app.html / settings.html). Scripts must still all be inline.
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
-  assert.ok(/Saira\+Semi\+Condensed/.test(html), 'loads Saira Semi Condensed (font experiment)');
+  assert.ok(/Encode\+Sans\+Semi\+Condensed/.test(html), 'loads Encode Sans Semi Condensed (font experiment)');
   assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
 });
 
@@ -848,7 +848,7 @@ test('public/app.html has the core screens, API wiring, and the v8 design system
   // and the pixel-art assets are referenced from the scoped /assets + /fonts
   // static routes.
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
-  assert.ok(/Saira\+Semi\+Condensed/.test(html), 'loads Saira Semi Condensed (font experiment)');
+  assert.ok(/Encode\+Sans\+Semi\+Condensed/.test(html), 'loads Encode Sans Semi Condensed (font experiment)');
   assert.ok(/\/assets\/images\/quillio-quill\.png/.test(html), 'uses the pixel-quill logo');
   assert.ok(/\/assets\/gifs\//.test(html), 'uses the progress/header GIFs');
 });

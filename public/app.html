@@ -1390,13 +1390,14 @@
       }
 
       // The rows already show exactly what will be generated, so there's no
-      // separate summary line — the total rides on the button as "Riff (N)"
-      // (just "Riff" when empty), and the button disables with zero rows.
+      // separate summary line — the total rides on the button as
+      // "Generate options (N)" ("Generate options" when empty), and the button
+      // disables with zero rows.
       function syncRiffBtn() {
         if (!riffBtn) return;
         var rows = fieldRows(aName, fName);
         var total = rows.reduce(function (n, r) { return n + (r.count || 1); }, 0);
-        riffBtn.textContent = total ? 'Riff (' + total + ')' : 'Riff';
+        riffBtn.textContent = total ? 'Generate options (' + total + ')' : 'Generate options';
         riffBtn.disabled = rows.length === 0;
       }
 
@@ -1495,7 +1496,7 @@
       // assembled matrix rows as variations:[{angle,count,intensity}].
       if (typeof onRiff === 'function') {
         var riffRow = el('div', 'riff-row');
-        riffBtn = el('button', 'riff-btn', 'Riff');
+        riffBtn = el('button', 'riff-btn', 'Generate options');
         riffBtn.type = 'button';
         riffBtn.addEventListener('click', function (e) {
           e.stopPropagation();
@@ -1630,7 +1631,7 @@
           var expandBtn = el('button', 'field-expand');
           expandBtn.type = 'button';
           expandBtn.appendChild(el('span', 'chev', '▸'));
-          expandBtn.appendChild(el('span', null, 'Variations'));
+          expandBtn.appendChild(el('span', null, 'Riff on this'));
           expandBtn.addEventListener('click', function (e) {
             e.stopPropagation();
             fieldEl.classList.toggle('expanded');

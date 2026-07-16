@@ -2405,10 +2405,10 @@ test('matrix 3b: Riff sends the matrix; Regenerate stays name-only; dividers ren
 
   // Riff sends variations:[{angle,count,intensity}] — 3a's contract.
   assert.ok(/variations: rows\.map\(function \(r\) \{ return \{ angle: r\.angle, count: r\.count, intensity: r\.intensity \}; \}\)/.test(html), 'Riff payload is the matrix');
-  // No separate summary line — the total rides on the button as "Riff (N)", and
-  // the button disables with zero rows.
+  // No separate summary line — the total rides on the generate button as
+  // "Generate options (N)", and the button disables with zero rows.
   assert.ok(!/matrix-summary/.test(html) && !/'Generate ' \+ total/.test(html), 'redundant summary line removed');
-  assert.ok(/riffBtn\.textContent = total \? 'Riff \(' \+ total \+ '\)' : 'Riff'/.test(html), 'total shown on the Riff button');
+  assert.ok(/riffBtn\.textContent = total \? 'Generate options \(' \+ total \+ '\)' : 'Generate options'/.test(html), 'total shown on the generate button');
   assert.ok(/riffBtn\.disabled = rows\.length === 0/.test(html), 'Riff disabled with 0 rows');
 
   // Regenerate path strips to {assetType, fieldName} — never the matrix rows.

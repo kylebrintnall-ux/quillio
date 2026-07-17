@@ -153,6 +153,14 @@
     .regen { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.4); padding-top: 16px; }
     .regen textarea { min-height: 60px; }
     .regen button { margin-top: 10px; }
+
+    /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
+       screens use the horizontal space instead of a phone-width strip. Purely
+       ADDITIVE — below 768px this block does nothing, so the phone layout is
+       byte-identical. Capped at a comfortable reading width, not edge-to-edge. */
+    @media (min-width: 768px) {
+      main { max-width: 900px; }
+    }
   </style>
 </head>
 <body>

@@ -745,6 +745,17 @@
       opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
+       screens use the horizontal space instead of a phone-width strip. Purely
+       ADDITIVE — below 768px this block does nothing, so the phone layout is
+       byte-identical. Capped at a comfortable reading width, not edge-to-edge.
+       The fixed CTA bar widens to match so its buttons stay aligned with the
+       cards above them. */
+    @media (min-width: 768px) {
+      main { max-width: 900px; }
+      .output-ctas { max-width: 900px; }
+    }
   </style>
 </head>
 <body>

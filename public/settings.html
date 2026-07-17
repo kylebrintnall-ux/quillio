@@ -319,6 +319,14 @@
     .error { border-radius: 12px; }
     .empty { background: rgba(255,255,255,0.3); border: 1.5px dashed rgba(255,255,255,0.6); color: rgba(26,26,46,0.65); border-radius: 14px; }
     .progress { color: rgba(26,26,46,0.6); }
+
+    /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
+       screens use the horizontal space instead of a phone-width strip. Purely
+       ADDITIVE — below 768px this block does nothing, so the phone layout is
+       byte-identical. Capped at a comfortable reading width, not edge-to-edge. */
+    @media (min-width: 768px) {
+      main { max-width: 900px; }
+    }
   </style>
 </head>
 <body>

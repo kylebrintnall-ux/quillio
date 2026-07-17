@@ -732,13 +732,19 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) 
   let projectFolderUrl = null;
   let assetsSubfolderPromise = Promise.resolve();
   try {
-    const { drive } = clients || (await getClients());
-    const parent = folderId || config.DRIVE_FOLDER_ID;
+    const activeClients = clients || (await getClients());
+    const { drive } = activeClients;
+    // Folder placement: an explicit folderId (brief URL or tenant default) always
+    // wins. With none, a real OAuth user gets the folder in THEIR My Drive root
+    // (parents omitted) — never the global default. The service account has ~no
+    // personal Drive quota, so it still falls back to config.DRIVE_FOLDER_ID
+    // (a Shared Drive).
+    const parent = folderId || (activeClients.usingOAuth ? null : config.DRIVE_FOLDER_ID);
     const folder = await drive.files.create({
       requestBody: {
         name: spec.campaignTitle || 'Untitled Campaign',
         mimeType: 'application/vnd.google-apps.folder',
-        parents: [parent],
+        ...(parent ? { parents: [parent] } : {}),
       },
       fields: 'id, webViewLink',
       supportsAllDrives: true,

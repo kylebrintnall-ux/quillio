@@ -97,15 +97,24 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
     // rather than a generic failure. effectiveFolderId is null when no folder
     // was specified, so isFolderAccessError returns false and we rethrow.
     if (pipeline.isFolderAccessError(err, effectiveFolderId)) {
-      let email = null;
-      try {
-        email = await pipeline.getServiceAccountEmail();
-      } catch (_) {
-        /* best-effort — fall back to a generic share hint below */
+      // Name the identity that actually writes: the signed-in Google user when
+      // this tenant connected OAuth, otherwise the shared service account.
+      let share;
+      if (clients && clients.usingOAuth) {
+        share =
+          'Make sure that folder is in the Google account you signed in with (or shared with it as Editor), then run the brief again. ' +
+          'Or clear the default folder in Settings to let Quillio create the doc in your own Drive.';
+      } else {
+        let email = null;
+        try {
+          email = await pipeline.getServiceAccountEmail();
+        } catch (_) {
+          /* best-effort — fall back to a generic share hint below */
+        }
+        share = email
+          ? `Share it with the Quillio service account (${email}) and give it Editor access, then run the brief again.`
+          : `Make sure it's shared (Editor access) with the Google account Quillio writes as, then run the brief again.`;
       }
-      const share = email
-        ? `Share it with the Quillio service account (${email}) and give it Editor access, then run the brief again.`
-        : `Make sure it's shared (Editor access) with the Google account Quillio writes as, then run the brief again.`;
       throw new Error(`Couldn't write to your Drive folder (${effectiveFolderId}). ${share}`);
     }
     throw err;

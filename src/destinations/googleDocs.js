@@ -307,15 +307,20 @@ async function createDocument({
   console.log(
     `[googleDocs] createDocument references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
   );
-  const { drive, docs } = clients || (await getClients());
+  const activeClients = clients || (await getClients());
+  const { drive, docs } = activeClients;
   const title = makeTitle(brief, campaignTitle, namingPattern, namingContext);
   console.log(`[googleDocs] doc name: ${isValidNamingPattern(namingPattern) ? 'tenant pattern' : 'default'}`);
 
+  // Same placement rule as the project folder: explicit folder wins; otherwise an
+  // OAuth user's doc lands in their My Drive root (parents omitted), and only the
+  // quota-less service account falls back to config.DRIVE_FOLDER_ID.
+  const parentFolder = folderId || (activeClients.usingOAuth ? null : config.DRIVE_FOLDER_ID);
   const created = await drive.files.create({
     requestBody: {
       name: title,
       mimeType: 'application/vnd.google-apps.document',
-      parents: [folderId || config.DRIVE_FOLDER_ID],
+      ...(parentFolder ? { parents: [parentFolder] } : {}),
     },
     fields: 'id, webViewLink',
     supportsAllDrives: true,

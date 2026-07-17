@@ -55,10 +55,17 @@ async function getVoiceGuide(tenantId) {
 // consume a tenant the same way regardless of which path ran, so the pipeline
 // can be migrated to per-tenant config without ever breaking the env-var demo.
 
-// Look up a tenant by Slack workspace id. Returns the row, or null if there's
-// no DB or no match.
+// Look up a tenant by its id OR its Slack workspace id. Callers pass
+// req.user.tenant_id (the tenant's id). For Slack tenants id == workspace_id ==
+// team id, so either match works; for per-user Google tenants the id is a UUID
+// and workspace_id is NULL, so we MUST match on id or the tenant is never found
+// (which silently falls back to the env/demo tenant). Returns the row, or null
+// if there's no DB or no match.
 async function getTenantByWorkspace(workspaceId) {
-  const res = await query('SELECT * FROM tenants WHERE workspace_id = $1 LIMIT 1', [workspaceId]);
+  const res = await query(
+    'SELECT * FROM tenants WHERE id = $1 OR workspace_id = $1 LIMIT 1',
+    [workspaceId]
+  );
   return res && res.rows && res.rows[0] ? res.rows[0] : null;
 }
 

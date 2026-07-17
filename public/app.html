@@ -1631,25 +1631,26 @@
           fieldEl.classList.add('selectable');
           fieldEl.appendChild(el('span', 'field-check', '✓'));
 
-          // Progressive disclosure (Step 2): a selected field shows a chevron; the
-          // count/distance controls + Riff button live behind it, revealed only on
-          // expand. Riff (opts.riff present on drafted screens) fires the append
-          // path for THIS field and reloads the screen in place.
-          var onRiff = opts.riff
-            ? function (sf) { runRiff(opts.riff.docId, sf, opts.riff.reload); }
-            : null;
-          var controls = buildVarControls(aName, fName, onRiff);
+          // "Riff on this" riffs off a field's EXISTING copy, so only offer it on
+          // drafted fields. Blank fields stay selectable (to generate them) but
+          // show no riff affordance. Progressive disclosure: a chevron reveals the
+          // count/distance controls + Riff button, which fires the append path for
+          // THIS field and reloads the screen in place.
+          if (hasCopy && opts.riff) {
+            var onRiff = function (sf) { runRiff(opts.riff.docId, sf, opts.riff.reload); };
+            var controls = buildVarControls(aName, fName, onRiff);
 
-          var expandBtn = el('button', 'field-expand');
-          expandBtn.type = 'button';
-          expandBtn.appendChild(el('span', 'chev', '▸'));
-          expandBtn.appendChild(el('span', null, 'Riff on this'));
-          expandBtn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            fieldEl.classList.toggle('expanded');
-          });
-          fieldEl.appendChild(expandBtn);
-          fieldEl.appendChild(controls);
+            var expandBtn = el('button', 'field-expand');
+            expandBtn.type = 'button';
+            expandBtn.appendChild(el('span', 'chev', '▸'));
+            expandBtn.appendChild(el('span', null, 'Riff on this'));
+            expandBtn.addEventListener('click', function (e) {
+              e.stopPropagation();
+              fieldEl.classList.toggle('expanded');
+            });
+            fieldEl.appendChild(expandBtn);
+            fieldEl.appendChild(controls);
+          }
 
           if (isFieldSelected(aName, fName)) fieldEl.classList.add('selected');
           fieldEl.addEventListener('click', function () {
@@ -1992,7 +1993,7 @@
     function renderCopyDoneAssets(assets) {
       var wrap = document.getElementById('copydone-assets');
       wrap.textContent = '';
-      wrap.appendChild(fieldSelectHint());
+      wrap.appendChild(fieldSelectHint({ hasCopy: assetsHaveCopy(assets), hasBlank: assetsHaveBlank(assets) }));
       (assets || []).forEach(function (a) {
         appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true, selectable: true, onSelectionChange: refreshCopyDonePrimary,
           riff: { docId: state.docId, reload: async function () { await loadCopyDone(); showScreen('copydone'); } } });
@@ -2535,8 +2536,9 @@
       projectContentEl.appendChild(el('div', 'section-body', content.writerDirection || '—'));
 
       projectContentEl.appendChild(el('div', 'assets-label', 'Assets'));
-      projectContentEl.appendChild(fieldSelectHint());
-      var assets = content.assets || [];
+      var passets = content.assets || [];
+      projectContentEl.appendChild(fieldSelectHint({ hasCopy: assetsHaveCopy(passets), hasBlank: assetsHaveBlank(passets) }));
+      var assets = passets;
       assets.forEach(function (a) {
         appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary,
           riff: { docId: (projectState.project && projectState.project.copy_doc_id) || null, reload: function () { return openProject(projectState.project); } } });
@@ -2544,13 +2546,30 @@
     }
 
     // The affordance line: fields aren't obviously tappable, so say so. Muted,
-    // shared by the project view and Copy Done. Returns a fresh node per call.
-    function fieldSelectHint() {
-      return el(
-        'p',
-        'field-select-hint',
-        'Tap any field to select it. Selected fields generate on their own — with their own variation count and conceptual distance.'
-      );
+    // shared by the project view and Copy Done. Wording adapts to draft state so
+    // it nudges the right action — generate blanks vs riff on existing copy.
+    // Returns a fresh node per call.
+    function fieldSelectHint(opts) {
+      opts = opts || {};
+      var text;
+      if (opts.hasCopy && opts.hasBlank) {
+        text = 'Tap a blank field to generate it, or a field with copy to riff on new variations.';
+      } else if (opts.hasCopy) {
+        text = 'Tap a field to riff on new variations — or select fields to regenerate.';
+      } else {
+        text = 'Generate a whole first draft — or tap specific fields to generate just those.';
+      }
+      return el('p', 'field-select-hint', text);
+    }
+    function assetsHaveCopy(assets) {
+      return (assets || []).some(function (a) {
+        return (a.fields || []).some(function (f) { return f.copy != null && String(f.copy).trim().length > 0; });
+      });
+    }
+    function assetsHaveBlank(assets) {
+      return (assets || []).some(function (a) {
+        return (a.fields || []).some(function (f) { return !(f.copy != null && String(f.copy).trim().length > 0); });
+      });
     }
 
     function openProjectInDrive() {

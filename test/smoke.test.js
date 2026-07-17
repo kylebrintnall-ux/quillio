@@ -2302,7 +2302,7 @@ test('matrix 3b: the add-a-row variations matrix (angles, count 1–10, intensit
   assert.ok(/matrix-x/.test(html) && /removeRow\(aName, fName, i\)/.test(html), 'remove control');
   // iOS: inner controls stop propagation so a tap/drag never toggles the field.
   assert.ok(/function shield\(node\)/.test(html) && /e\.stopPropagation\(\)/.test(html), 'inner controls shielded');
-  assert.ok(/Tap any field to select it\./.test(html), 'affordance line present');
+  assert.ok(/riff on new variations/.test(html) && /generate just those/.test(html), 'affordance line present (context-aware: generate vs riff)');
   assert.ok(/isNumberedStack/.test(html) && /field-options/.test(html), 'stacked fields show "N options"');
 });
 

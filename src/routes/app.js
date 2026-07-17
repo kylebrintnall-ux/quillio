@@ -378,7 +378,11 @@ router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
     if (!project.copy_doc_id) {
       return res.status(200).json({ success: false, error: 'No document for this project' });
     }
-    const content = await runWebProjectContent(project.copy_doc_id);
+    // Read the doc as this tenant's Google user — the doc lives in their own
+    // Drive (created via their OAuth), so the service-account fallback can't see
+    // it. Without passing { tenant }, the read fails and the UI drops to the
+    // "Open in Drive" fallback instead of rendering the copy inline.
+    const content = await runWebProjectContent(project.copy_doc_id, { tenant });
     return res.status(200).json({ success: true, content });
   } catch (err) {
     console.error('[web] /api/projects/:id/content failed:', err && err.stack ? err.stack : err);

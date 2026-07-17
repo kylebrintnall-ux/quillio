@@ -2011,6 +2011,7 @@
       var fallback = document.getElementById('copydone-fallback');
       clearError(document.getElementById('copydone-error'));
       clearFieldSelection(); // fresh screen → no stale selection
+      copydoneBlankFields = []; // recomputed once content loads
       refreshCopyDonePrimary();
       var content = await fetchDocContent();
       if (!content) {
@@ -2019,7 +2020,9 @@
         return false;
       }
       hide(fallback);
+      copydoneBlankFields = computeBlankFields(content);
       renderCopyDoneAssets(content.assets || []);
+      refreshCopyDonePrimary(); // blanks now known → correct primary label
       return true;
     }
 
@@ -2392,7 +2395,20 @@
     function refreshCopyDonePrimary() {
       var n = selectedCount();
       var b = document.getElementById('copydone-regen-btn');
-      if (b) b.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
+      if (b) {
+        if (n > 0) {
+          // An all-blank selection reads as "Generate"; any drafted field in the
+          // selection makes it a regenerate (opens the direction modal).
+          var allBlank = selectedScopedFields().every(function (f) {
+            return isBlankCopyDoneField(f.assetType, f.fieldName);
+          });
+          b.textContent = allBlank ? ('Generate Selected (' + n + ')') : ('Regenerate Selected (' + n + ')');
+        } else if (copydoneBlankFields.length > 0) {
+          b.textContent = 'Generate the Rest'; // fill the remaining blank fields
+        } else {
+          b.textContent = 'Regenerate';
+        }
+      }
       var rb = document.getElementById('copydone-review-btn');
       if (rb) rb.textContent = n > 0 ? ('Review Selected (' + n + ')') : 'Review Copy';
     }
@@ -2404,6 +2420,65 @@
       if (!b) return;
       var n = selectedCount();
       b.textContent = n > 0 ? ('Generate Selected (' + n + ')') : 'Generate First Draft';
+    }
+
+    // --- Copy Done: blank-field tracking so the primary can offer "Generate the
+    // Rest" (fill remaining blanks, no direction modal) vs "Regenerate" (rewrite
+    // existing copy with direction). ---
+    var copydoneBlankFields = []; // [{assetType, fieldName}] recomputed each load
+    function computeBlankFields(content) {
+      var out = [];
+      ((content && content.assets) || []).forEach(function (a) {
+        (a.fields || []).forEach(function (f) {
+          var copy = f.copy != null ? String(f.copy).trim() : '';
+          if (!copy) out.push({ assetType: a.name, fieldName: f.fieldName });
+        });
+      });
+      return out;
+    }
+    function isBlankCopyDoneField(a, f) {
+      return copydoneBlankFields.some(function (x) { return x.assetType === a && x.fieldName === f; });
+    }
+
+    // Direct scoped generation (no direction modal) — used for "Generate the Rest"
+    // and for an all-blank selection. Reloads Copy Done on success.
+    async function copyDoneGenerate(scopedFields) {
+      if (!state.docId) { showError(document.getElementById('copydone-error'), 'No document to draft.'); return; }
+      showScreen('generating');
+      startGenerating();
+      try {
+        await draftFetch(state.docId, '', scopedFields);
+        stopGenerating();
+        await loadCopyDone();
+        showScreen('copydone');
+        showToast('✓ Copy updated');
+      } catch (e) {
+        stopGenerating();
+        var content = await fetchDocContent();
+        if (content && contentHasAnyCopy(content)) {
+          await loadCopyDone();
+          showScreen('copydone');
+          showToast('✓ Copy updated');
+        } else {
+          showScreen('copydone');
+          showError(document.getElementById('copydone-error'), draftErrorMessage(e));
+        }
+      }
+    }
+
+    // Copy Done primary router: fill blanks directly, or open the direction modal
+    // to regenerate existing copy.
+    function onCopyDonePrimary() {
+      var selected = selectedScopedFields();
+      if (selected.length > 0) {
+        var allBlank = selected.every(function (f) { return isBlankCopyDoneField(f.assetType, f.fieldName); });
+        if (allBlank) copyDoneGenerate(selected);
+        else openRegenModal(); // drafted/mixed selection → regenerate with direction
+      } else if (copydoneBlankFields.length > 0) {
+        copyDoneGenerate(copydoneBlankFields.slice()); // "Generate the Rest"
+      } else {
+        openRegenModal(); // fully drafted → whole-doc regenerate with direction
+      }
     }
 
     async function openProject(p) {
@@ -2620,7 +2695,7 @@
     document.getElementById('draft-btn').addEventListener('click', generateDraft);
     document.getElementById('open-btn').addEventListener('click', openInDrive);
     document.getElementById('copydone-review-btn').addEventListener('click', reviewCopyDone);
-    document.getElementById('copydone-regen-btn').addEventListener('click', openRegenModal);
+    document.getElementById('copydone-regen-btn').addEventListener('click', onCopyDonePrimary);
     document.getElementById('copydone-open-btn').addEventListener('click', openInDrive);
     document.getElementById('regen-modal-submit').addEventListener('click', submitRegen);
     document.getElementById('regen-modal-cancel').addEventListener('click', closeRegenModal);

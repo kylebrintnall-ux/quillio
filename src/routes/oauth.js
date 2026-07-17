@@ -399,6 +399,16 @@ router.get('/oauth/google/callback', async (req, res) => {
         tenantId: userTenantId,
         role: 'owner',
       });
+
+      // Seed the new tenant's default asset library (best-effort, idempotent —
+      // mirrors the Slack install path). Without this a brand-new Google account
+      // has no asset_types/copy_fields and the first brief fails the Postgres
+      // asset-library check. Never block sign-in if seeding fails.
+      try {
+        await seedTenantAssets(userTenantId);
+      } catch (e) {
+        console.error('[oauth] seedTenantAssets failed (continuing):', e.message);
+      }
     }
 
     // Store the Google refresh token on the user's OWN tenant — new person → the

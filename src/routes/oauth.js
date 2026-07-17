@@ -8,7 +8,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
-const { createTenantIfMissing, saveTenantToken, saveFigmaTokens } = require('../db');
+const { createTenantIfMissing, saveTenantToken, saveFigmaTokens, getPool } = require('../db');
 const { seedTenantAssets } = require('../db/assets');
 const { findUserByGoogleId, createUser } = require('../db/users');
 
@@ -332,10 +332,6 @@ router.get('/oauth/google/callback', async (req, res) => {
       console.error('[oauth] google state missing/expired/mismatch — aborting');
       return res.redirect('/app?error=google_failed');
     }
-    // New users are assigned the default tenant — we do NOT trust a
-    // client-supplied workspaceId for tenant membership (audit HIGH 4).
-    const workspaceId = DEFAULT_WORKSPACE_ID;
-
     const code = req.query.code;
     if (!code) {
       console.error('[oauth] google callback missing code');
@@ -367,12 +363,6 @@ router.get('/oauth/google/callback', async (req, res) => {
       return res.redirect('/app?error=google_failed');
     }
 
-    // Ensure the tenant exists and store the refresh token (best-effort —
-    // no-ops without a DB). refresh_token only comes back on first consent, but
-    // prompt=consent forces it; missing is non-fatal for sign-in. Never logged.
-    await createTenantIfMissing(workspaceId, null);
-    if (refreshToken) await saveTenantToken(workspaceId, 'google', refreshToken);
-
     // Fetch the Google profile so we can identify / create the user.
     const profile = await fetchGoogleProfile(accessToken);
     if (!profile || !profile.email) {
@@ -380,23 +370,48 @@ router.get('/oauth/google/callback', async (req, res) => {
       return res.redirect('/app?error=google_failed');
     }
 
-    // Find or create the user, then log them in by storing their id in session.
+    // Find or create the user. A brand-new person gets their OWN tenant (a fresh
+    // UUID) instead of the shared demo workspace; a returning user keeps theirs.
     let user = await findUserByGoogleId(profile.id);
     let isNew = false;
+    let userTenantId = user && user.tenant_id;
     if (!user) {
       isNew = true;
+      // Create the new tenant FIRST, so the token save below attaches to a tenant
+      // that already exists (FK). workspace_id stays NULL (no Slack workspace
+      // linked yet), onboarding not complete. Inline equivalent of
+      // createTenantIfMissing, which forces workspace_id = id and so can't null it.
+      userTenantId = crypto.randomUUID();
+      const p = getPool();
+      if (p) {
+        await p.query(
+          `INSERT INTO tenants (id, workspace_id, workspace_name, plan, onboarding_complete)
+             VALUES ($1, NULL, NULL, 'free', false)
+           ON CONFLICT (id) DO NOTHING`,
+          [userTenantId]
+        );
+      }
       user = await createUser({
         email: profile.email,
         googleId: profile.id,
         displayName: profile.name,
         avatarUrl: profile.picture,
-        tenantId: workspaceId,
+        tenantId: userTenantId,
         role: 'owner',
       });
     }
+
+    // Store the Google refresh token on the user's OWN tenant — new person → the
+    // fresh tenant created just above; returning person → their existing tenant id
+    // (from their user record) — never the demo workspace. Best-effort, no-ops
+    // without a DB. Never logged.
+    if (refreshToken && userTenantId) {
+      await saveTenantToken(userTenantId, 'google', refreshToken);
+    }
+
     if (req.session && user && user.id) req.session.userId = user.id;
 
-    console.log(`[oauth] google sign-in OK — tenant ${workspaceId} new=${isNew}`);
+    console.log(`[oauth] google sign-in OK — tenant ${userTenantId} new=${isNew}`);
 
     // Settings returns to /settings; onboarding continues at step 2; otherwise
     // new → onboarding, returning → app.

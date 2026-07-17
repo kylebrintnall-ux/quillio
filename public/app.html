@@ -2319,6 +2319,7 @@
 
     // --- Screen 5: project view --------------------------------------------
     var projectState = { project: null };
+    var projectBlankFields = []; // [{assetType, fieldName}] recomputed each openProject
     var projectContentEl = document.getElementById('project-content');
     var projectLoading = document.getElementById('project-loading');
     var projectFallback = document.getElementById('project-fallback');
@@ -2336,6 +2337,9 @@
         }
       }
       return false;
+    }
+    function isBlankProjectField(a, f) {
+      return projectBlankFields.some(function (x) { return x.assetType === a && x.fieldName === f; });
     }
 
     // Decide the draft affordance from whether copy already exists. There's no
@@ -2374,10 +2378,19 @@
     function refreshProjectPrimary() {
       if (!projectPrimaryBtn) return;
       var n = selectedCount();
-      if (projectState.hasCopy) {
-        projectPrimaryBtn.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
+      if (n > 0) {
+        // An all-blank selection reads as "Generate"; any drafted field makes it
+        // a regenerate (direction modal).
+        var allBlank = selectedScopedFields().every(function (f) {
+          return isBlankProjectField(f.assetType, f.fieldName);
+        });
+        projectPrimaryBtn.textContent = allBlank ? ('Generate Selected (' + n + ')') : ('Regenerate Selected (' + n + ')');
+      } else if (!projectState.hasCopy) {
+        projectPrimaryBtn.textContent = 'Generate First Draft';
+      } else if (projectBlankFields.length > 0) {
+        projectPrimaryBtn.textContent = 'Generate Remaining'; // fill the remaining blanks
       } else {
-        projectPrimaryBtn.textContent = n > 0 ? ('Generate Selected (' + n + ')') : 'Generate First Draft';
+        projectPrimaryBtn.textContent = 'Regenerate';
       }
       // Review button mirrors the primary: scoped when fields are selected.
       if (projectReviewBtn) projectReviewBtn.textContent = n > 0 ? ('Review Selected (' + n + ')') : 'Review Copy';
@@ -2387,8 +2400,18 @@
     // modal (scoped when fields are selected); undrafted → generate (scoped when
     // fields are selected, whole-doc otherwise).
     function onProjectPrimary() {
-      if (projectState.hasCopy) openProjectRegenModal();
-      else generateProjectDraft();
+      var selected = selectedScopedFields();
+      if (selected.length > 0) {
+        var allBlank = selected.every(function (f) { return isBlankProjectField(f.assetType, f.fieldName); });
+        if (allBlank) generateProjectDraft(selected);
+        else openProjectRegenModal(); // drafted/mixed selection → regenerate with direction
+      } else if (projectState.hasCopy && projectBlankFields.length > 0) {
+        generateProjectDraft(projectBlankFields.slice()); // "Generate Remaining"
+      } else if (projectState.hasCopy) {
+        openProjectRegenModal(); // fully drafted → whole-doc regenerate
+      } else {
+        generateProjectDraft(); // fully blank → whole-doc first draft
+      }
     }
 
     // The Copy Done screen is always drafted → its primary is Regenerate /
@@ -2485,6 +2508,7 @@
     async function openProject(p) {
       projectState.project = p;
       clearFieldSelection(); // fresh view → no stale selection
+      projectBlankFields = []; // recomputed once content loads
       showScreen('project');
       document.getElementById('project-title').textContent = p.name || 'Campaign';
       var badge = document.getElementById('project-status');
@@ -2517,6 +2541,7 @@
           return;
         }
         var content = data.content || {};
+        projectBlankFields = computeBlankFields(content);
         renderProjectContent(content);
         setDraftAffordance(contentHasCopy(content));
       } catch (e) {
@@ -2642,10 +2667,12 @@
       runReviewIntoModal(state.docId, state.docUrl, document.getElementById('copydone-review-btn'), document.getElementById('copydone-error'));
     }
 
-    async function generateProjectDraft() {
+    async function generateProjectDraft(scopedFieldsArg) {
       var p = projectState.project;
       if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
-      var scopedFields = selectedScopedFields(); // scoped generate when fields are selected
+      // Explicit list (e.g. "Generate Remaining" → the blank fields) wins; else
+      // fall back to the current selection (empty = whole doc).
+      var scopedFields = scopedFieldsArg || selectedScopedFields();
       clearError(projectError);
       // Same GIF loading modal + progress bar as the whole-doc/brief-flow path —
       // no separate treatment for scoped ops.

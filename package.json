@@ -20,7 +20,8 @@
     "test-comment": "node scripts/testDocComment.js",
     "migrate-reviews": "node scripts/migrateAddDocReviews.js",
     "mig": "node scripts/migrateAddSlackUserId.js",
-    "acct": "node scripts/accountInfo.js"
+    "acct": "node scripts/accountInfo.js",
+    "acct:del": "node scripts/accountDelete.js"
   },
   "engines": {
     "node": ">=18"

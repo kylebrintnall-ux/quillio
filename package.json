@@ -19,7 +19,8 @@
     "preview-naming": "node scripts/previewNamingPattern.js",
     "test-comment": "node scripts/testDocComment.js",
     "migrate-reviews": "node scripts/migrateAddDocReviews.js",
-    "mig": "node scripts/migrateAddSlackUserId.js"
+    "mig": "node scripts/migrateAddSlackUserId.js",
+    "acct": "node scripts/accountInfo.js"
   },
   "engines": {
     "node": ">=18"

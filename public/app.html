@@ -819,6 +819,7 @@
       <p class="section-body" id="out-direction"></p>
 
       <div class="assets-label">Assets</div>
+      <p class="field-select-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
       <div id="out-assets"></div>
       <div id="output-error" class="error hidden"></div>
 
@@ -1691,13 +1692,20 @@
       }
       // Remember the asset names for the draft progress-bar estimate + labels.
       state.assets = blocks.map(function (b) { return b.name; });
-      // Pre-draft view: names + char limits, no copy yet.
-      renderOutputAssets(blocks, { badge: 'Not yet drafted', showPlaceholder: false });
+      clearFieldSelection(); // fresh screen → no stale selection
+      // Pre-draft view: fields are tappable so you can generate a specific few
+      // (scoped first draft) or the whole doc. Mirrors the project screen.
+      renderOutputAssets(blocks, {
+        showPlaceholder: true,
+        selectable: true,
+        onSelectionChange: refreshOutputPrimary,
+        riff: { docId: state.docId, reload: async function () { await loadCopyDone(); showScreen('copydone'); } },
+      });
 
       var draftBtn = document.getElementById('draft-btn');
       draftBtn.disabled = false;
-      draftBtn.textContent = 'Generate First Draft';
       show(draftBtn);
+      refreshOutputPrimary();
       clearError(document.getElementById('output-error'));
     }
 
@@ -2024,7 +2032,7 @@
       startGenerating();
       console.log('[app] first draft start — docId=' + state.docId + ' projectId=' + state.projectId);
       try {
-        var data = await draftFetch(state.docId);
+        var data = await draftFetch(state.docId, '', selectedScopedFields()); // scoped first draft when fields are selected
         console.log('[app] first draft /api/draft returned:', data);
         stopGenerating();
         await loadCopyDone();
@@ -2387,6 +2395,15 @@
       if (b) b.textContent = n > 0 ? ('Regenerate Selected (' + n + ')') : 'Regenerate';
       var rb = document.getElementById('copydone-review-btn');
       if (rb) rb.textContent = n > 0 ? ('Review Selected (' + n + ')') : 'Review Copy';
+    }
+
+    // Output (post-brief) screen is always pre-draft → its primary generates the
+    // whole doc, or just the selected fields when any are tapped.
+    function refreshOutputPrimary() {
+      var b = document.getElementById('draft-btn');
+      if (!b) return;
+      var n = selectedCount();
+      b.textContent = n > 0 ? ('Generate Selected (' + n + ')') : 'Generate First Draft';
     }
 
     async function openProject(p) {

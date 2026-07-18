@@ -75,6 +75,39 @@ function consumeState(state) {
   return entry;
 }
 
+// Non-destructive read of a pending state — same validity checks as consumeState
+// but WITHOUT the delete/one-time-use. Lets the declined/error path learn `mode`
+// without consuming a state the normal flow may still need. Returns the entry, or
+// null if unknown/expired.
+function peekState(state) {
+  if (!state) return null;
+  const entry = pendingStates.get(state);
+  if (entry === undefined) return null;
+  if (Date.now() - entry.ts > STATE_TTL_MS) return null;
+  return entry;
+}
+
+// Self-contained page returned to a POPUP-mode Slack callback: message the opener
+// with the result, then close. The <p> line is the fallback shown if the inline
+// script is blocked. `status` is 'connected' | 'failed'.
+function slackPopupResult(status) {
+  const safe = status === 'connected' ? 'connected' : 'failed';
+  const line =
+    safe === 'connected'
+      ? 'Slack connected — you can close this window.'
+      : 'Slack connection failed — you can close this window.';
+  return (
+    '<!doctype html><html><head><meta charset="utf-8"><title>Quillio</title></head>' +
+    '<body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem;">' +
+    '<p>' + line + '</p>' +
+    '<script>(function(){' +
+    'try{if(window.opener){window.opener.postMessage({type:"slack",status:"' + safe + '"},location.origin);}}catch(e){}' +
+    'try{window.close();}catch(e){}' +
+    '})();</script>' +
+    '</body></html>'
+  );
+}
+
 // Step 1 — start the install: issue a CSRF state, store it, redirect to Slack.
 router.get('/oauth/slack', (req, res) => {
   if (!config.SLACK_CLIENT_ID || !config.SLACK_REDIRECT_URI) {
@@ -83,9 +116,12 @@ router.get('/oauth/slack', (req, res) => {
   }
 
   // `redirect=onboarding|settings` returns the user there after install.
+  // `mode=popup` carries through that this install runs inside a popup window, so
+  // the callback replies with a self-closing page instead of redirecting.
   const redirectTo = pickRedirect(req.query.redirect);
+  const mode = req.query.mode === 'popup' ? 'popup' : null;
   const state = crypto.randomBytes(16).toString('hex');
-  rememberState(state, { redirectTo });
+  rememberState(state, { redirectTo, mode });
 
   const url = new URL('https://slack.com/oauth/v2/authorize');
   url.searchParams.set('client_id', config.SLACK_CLIENT_ID);
@@ -98,29 +134,43 @@ router.get('/oauth/slack', (req, res) => {
 
 // Step 2 — Slack redirects back with ?code & ?state. Verify, exchange, store.
 router.get('/oauth/slack/callback', async (req, res) => {
+  let popupMode = false; // set once state is read; lets the decline/catch reply in-popup too
   try {
-    // User declined, or Slack returned an error.
+    // User declined, or Slack returned an error. Slack still returns our `state`
+    // here, so peek (non-destructively) to see if this was a popup install and, if
+    // so, reply in-popup rather than redirect and strand an orphaned window.
     if (req.query.error) {
       console.warn('[oauth] authorize declined/error:', req.query.error);
+      const declined = peekState(req.query.state);
+      if (declined && declined.data && declined.data.mode === 'popup') {
+        consumeState(req.query.state); // done with it — clean up the popup path
+        return res.set('Content-Type', 'text/html; charset=utf-8').send(slackPopupResult('failed'));
+      }
       return res.redirect('/welcome?error=access_denied');
     }
 
     // CSRF: the state in the URL must be one we issued, unexpired, unused.
     const stateEntry = consumeState(req.query.state);
     if (!stateEntry) {
+      // No state → we can't know if this was a popup (mode lived in the state), so
+      // fall back to the classic redirect.
       console.error('[oauth] state missing/expired/mismatch — aborting install');
       return res.redirect('/welcome?error=install_failed');
     }
     const slackRedirectTo = stateEntry.data && stateEntry.data.redirectTo;
+    popupMode = !!(stateEntry.data && stateEntry.data.mode === 'popup');
+    // Popup-mode failures reply in the popup; non-popup keeps today's redirect.
+    const failInstall = () =>
+      popupMode ? res.set('Content-Type', 'text/html; charset=utf-8').send(slackPopupResult('failed')) : res.redirect('/welcome?error=install_failed');
 
     const code = req.query.code;
     if (!code) {
       console.error('[oauth] callback missing code');
-      return res.redirect('/welcome?error=install_failed');
+      return failInstall();
     }
     if (!config.SLACK_CLIENT_ID || !config.SLACK_CLIENT_SECRET || !config.SLACK_REDIRECT_URI) {
       console.error('[oauth] Slack OAuth env not configured');
-      return res.redirect('/welcome?error=install_failed');
+      return failInstall();
     }
 
     // Exchange the code for tokens.
@@ -137,7 +187,7 @@ router.get('/oauth/slack/callback', async (req, res) => {
     const data = await resp.json();
     if (!data.ok) {
       console.error('[oauth] oauth.v2.access failed:', data.error);
-      return res.redirect('/welcome?error=install_failed');
+      return failInstall();
     }
 
     const teamId = data.team && data.team.id;
@@ -147,7 +197,7 @@ router.get('/oauth/slack/callback', async (req, res) => {
 
     if (!teamId) {
       console.error('[oauth] no team id in oauth response');
-      return res.redirect('/welcome?error=install_failed');
+      return failInstall();
     }
 
     // Create the tenant and store the issued tokens (best-effort — these no-op
@@ -168,6 +218,9 @@ router.get('/oauth/slack/callback', async (req, res) => {
     console.log(
       `[oauth] install OK — team ${teamId} (${teamName || '?'}) bot=${!!botToken} user=${!!userToken}`
     );
+    // Popup mode: reply in the popup and let it signal the opener — checked BEFORE
+    // the redirect branches so a popup install never navigates the top window.
+    if (popupMode) return res.set('Content-Type', 'text/html; charset=utf-8').send(slackPopupResult('connected'));
     // Onboarding flow returns to Step 5 / Settings returns to /settings, each
     // with a connected flag; standalone installs land on the welcome page.
     if (slackRedirectTo === 'settings') return res.redirect('/settings?slack=connected');
@@ -176,6 +229,7 @@ router.get('/oauth/slack/callback', async (req, res) => {
   } catch (err) {
     // Never leak a stack trace to the browser — log it, show a generic page.
     console.error('[oauth] callback error:', err && err.stack ? err.stack : err);
+    if (popupMode) return res.set('Content-Type', 'text/html; charset=utf-8').send(slackPopupResult('failed'));
     return res.redirect('/welcome?error=install_failed');
   }
 });

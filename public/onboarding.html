@@ -93,14 +93,12 @@
     @media (min-width: 560px) { .row { flex-direction: row; } .row button { width: auto; } h1 { font-size: 34px; } }
 
     /* Step 5 — workspace-tools showcase (informational; connecting happens in Settings) */
-    .tools { display: flex; gap: 10px; margin: 20px 0 4px; }
-    .tool { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+    .tools { display: flex; justify-content: center; gap: 10px; margin: 20px 0 4px; }
+    .tool { flex: 0 1 160px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
       padding: 16px 8px; border-radius: 14px; background: rgba(255,255,255,0.35);
       border: 1.5px solid rgba(255,255,255,0.55); }
     .tool.soon { opacity: 0.55; }               /* honest: not available yet, visibly dimmed */
-    .tool-logo { width: 44px; height: 44px; border-radius: 12px; image-rendering: pixelated;
-      display: flex; align-items: center; justify-content: center;
-      font-family: 'StarCrush', serif; font-size: 20px; color: var(--white); }
+    .tool-logo { width: 44px; height: 44px; image-rendering: pixelated; object-fit: contain; }
     .tool-name { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 600; font-size: 14px; color: var(--ink); }
     .tool-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em;
       text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
@@ -287,24 +285,17 @@
       <h1>Bring Quillio into your flow of work</h1>
       <p class="muted">Go from brief to a structured, ready-to-write copy doc in a single command — right where your team already works. No tab-switching, no setup. Just <code>/quillio</code> and start writing.</p>
 
-      <!-- Workspace tools showcase. Logos are placeholder monograms. To use real assets,
-           drop them at /public/assets/logos/{slack,teams,discord}.svg and replace each
-           <div class="tool-logo">…</div> with e.g.
-           <img class="tool-logo" src="/assets/logos/slack.svg" alt="Slack">. -->
+      <!-- Workspace tools showcase (Slack + Teams). Logos are real pixel-art SVGs at
+           /assets/logos/{slack,teams}.svg. -->
       <div class="tools">
         <div class="tool">
-          <div class="tool-logo" style="background:#4A154B;">S</div>
+          <img class="tool-logo" src="/assets/logos/slack.svg" alt="Slack">
           <div class="tool-name">Slack</div>
           <span class="tool-badge now">Available now</span>
         </div>
         <div class="tool soon">
-          <div class="tool-logo" style="background:#5059C9;">T</div>
+          <img class="tool-logo" src="/assets/logos/teams.svg" alt="Microsoft Teams">
           <div class="tool-name">Microsoft Teams</div>
-          <span class="tool-badge soon">Coming soon</span>
-        </div>
-        <div class="tool soon">
-          <div class="tool-logo" style="background:#5865F2;">D</div>
-          <div class="tool-name">Discord</div>
           <span class="tool-badge soon">Coming soon</span>
         </div>
       </div>

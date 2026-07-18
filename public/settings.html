@@ -269,6 +269,12 @@
       align-self: flex-start; background: none; border: none; padding: 0 0 4px; margin-bottom: 12px;
       font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: var(--ink); }
     .settings-back:hover { color: var(--sky-btm); }
+
+    /* Workspace connection rows: logo + name/status, action (button or badge) on the right. */
+    .conn-row { display: flex; align-items: center; gap: 12px; }
+    .conn-logo { width: 30px; height: 30px; image-rendering: pixelated; object-fit: contain; flex: none; }
+    .conn-meta { flex: 1; min-width: 0; }
+    .conn-row .btn, .conn-row .badge-soon { flex: none; }
     .sidebar { flex-direction: row; width: auto; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
     .tab {
       font-family: 'StarCrush', serif; font-size: 11px; letter-spacing: 0.04em; padding: 9px 18px;
@@ -470,25 +476,50 @@
               </div>
             </div>
 
-            <h2>Connections</h2>
+            <h2>Connect your workspace</h2>
             <div class="card">
-              <div class="row">
-                <div><div class="k">Google account</div><div class="v" id="google-status">Not connected</div></div>
-                <button class="btn secondary" id="google-reconnect">Reconnect Google</button>
+              <div class="conn-row">
+                <img class="conn-logo" src="/assets/logos/slack.svg" alt="Slack">
+                <div class="conn-meta">
+                  <div class="k">Slack</div>
+                  <div class="v" id="slack-status">Not connected</div>
+                </div>
+                <button class="btn secondary" id="slack-reconnect">Connect Slack</button>
               </div>
             </div>
-            <div class="card">
-              <div class="row">
-                <div><div class="k">Slack workspace</div><div class="v" id="slack-status">Not connected</div></div>
-                <button class="btn secondary" id="slack-reconnect">Reconnect Slack</button>
+            <div class="card soon">
+              <div class="conn-row">
+                <img class="conn-logo" src="/assets/logos/teams.svg" alt="Microsoft Teams">
+                <div class="conn-meta"><div class="k">Microsoft Teams</div></div>
+                <span class="badge-soon">Coming soon</span>
               </div>
             </div>
 
-            <h2>Coming soon</h2>
-            <div class="card soon"><div class="row"><span class="k">Notion</span><span class="badge-soon">Coming soon</span></div></div>
-            <div class="card soon"><div class="row"><span class="k">OneDrive</span><span class="badge-soon">Coming soon</span></div></div>
-            <div class="card soon"><div class="row"><span class="k">Figma</span><span class="badge-soon">Coming soon</span></div></div>
-            <div class="card soon"><div class="row"><span class="k">Other design tools</span><span class="badge-soon">Coming soon</span></div></div>
+            <h2>Connect your writing tools</h2>
+            <div class="card">
+              <div class="conn-row">
+                <img class="conn-logo" src="/assets/logos/gdrive.svg" alt="Google Drive">
+                <div class="conn-meta">
+                  <div class="k">Google</div>
+                  <div class="v" id="google-status">Not connected</div>
+                </div>
+                <button class="btn secondary" id="google-reconnect">Connect Google</button>
+              </div>
+            </div>
+            <div class="card soon">
+              <div class="conn-row">
+                <img class="conn-logo" src="/assets/logos/notion.svg" alt="Notion">
+                <div class="conn-meta"><div class="k">Notion</div></div>
+                <span class="badge-soon">Coming soon</span>
+              </div>
+            </div>
+            <div class="card soon">
+              <div class="conn-row">
+                <img class="conn-logo" src="/assets/logos/onedrive.svg" alt="OneDrive">
+                <div class="conn-meta"><div class="k">OneDrive</div></div>
+                <span class="badge-soon">Coming soon</span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -851,7 +882,9 @@
         $('folder-current').textContent = data.defaultFolderUrl || 'Not set';
         $('folder-input').value = data.defaultFolderUrl || '';
         $('google-status').textContent = data.googleEmail || 'Not connected';
+        $('google-reconnect').textContent = data.googleEmail ? 'Reconnect Google' : 'Connect Google';
         $('slack-status').textContent = data.slackWorkspaceName || 'Not connected';
+        $('slack-reconnect').textContent = data.slackWorkspaceName ? 'Reconnect Slack' : 'Connect Slack';
         show($('ws-body'));
       } catch (e) {
         hide($('ws-loading'));

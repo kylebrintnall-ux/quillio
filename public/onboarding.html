@@ -93,18 +93,30 @@
     @media (min-width: 560px) { .row { flex-direction: row; } .row button { width: auto; } h1 { font-size: 34px; } }
 
     /* Step 5 — workspace-tools showcase (informational; connecting happens in Settings) */
-    .tools { display: flex; justify-content: center; gap: 10px; margin: 20px 0 4px; }
-    .tool { flex: 0 1 160px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
-      padding: 16px 8px; border-radius: 14px; background: rgba(255,255,255,0.35);
+    /* Step 5 — workspace-tools showcase: wide horizontal cards stacked vertically. */
+    .tools { display: flex; flex-direction: column; gap: 12px; margin: 20px 0 4px; }
+    .tool { display: flex; flex-direction: row; align-items: center; gap: 16px; text-align: left;
+      padding: 16px; border-radius: 14px; background: rgba(255,255,255,0.35);
       border: 1.5px solid rgba(255,255,255,0.55); }
     .tool.soon { opacity: 0.55; }               /* honest: not available yet, visibly dimmed */
+    .tool-left { flex: 0 0 104px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
     .tool-logo { width: 44px; height: 44px; image-rendering: pixelated; object-fit: contain; }
-    .tool-name { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 600; font-size: 14px; color: var(--ink); }
+    .tool-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
     .tool-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em;
       text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
     .tool-badge.now { background: var(--sky-btm); color: #06302f; }
     .tool-badge.soon { background: rgba(26,26,46,0.1); color: rgba(26,26,46,0.6); }
+    .tool-bullets { flex: 1; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .tool-bullets li { position: relative; padding-left: 16px;
+      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 13px; line-height: 1.45; color: rgba(26,26,46,0.8); }
+    .tool-bullets li::before { content: ''; position: absolute; left: 0; top: 7px;
+      width: 5px; height: 5px; border-radius: 1px; background: var(--sky-btm); }   /* subtle pixel marker */
     .fineprint { color: rgba(26,26,46,0.6); font-size: 13px; margin-top: 10px; }
+    /* Narrow phones: stack the logo/name/badge above the bullets so nothing squishes. */
+    @media (max-width: 460px) {
+      .tool { flex-direction: column; align-items: stretch; gap: 12px; }
+      .tool-left { flex: none; flex-direction: row; justify-content: flex-start; align-items: center; gap: 10px; text-align: left; }
+    }
 
     .gbtn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: var(--white); color: var(--ink); border: none; box-shadow: 0 4px 16px rgba(26,26,46,0.12); }
     .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--sky-btm); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; font-family: 'Encode Sans Semi Condensed', sans-serif; }
@@ -289,14 +301,28 @@
            /assets/logos/{slack,teams}.svg. -->
       <div class="tools">
         <div class="tool">
-          <img class="tool-logo" src="/assets/logos/slack.svg" alt="Slack">
-          <div class="tool-name">Slack</div>
-          <span class="tool-badge now">Available now</span>
+          <div class="tool-left">
+            <img class="tool-logo" src="/assets/logos/slack.svg" alt="Slack">
+            <div class="tool-name">Slack</div>
+            <span class="tool-badge now">Available now</span>
+          </div>
+          <ul class="tool-bullets">
+            <li>Run <code>/quillio</code> in any channel to kick off a brief without leaving Slack</li>
+            <li>Get a structured, ready-to-write copy doc back in seconds</li>
+            <li>Copy reviews land right in your threads — feedback where your team already talks</li>
+          </ul>
         </div>
         <div class="tool soon">
-          <img class="tool-logo" src="/assets/logos/teams.svg" alt="Microsoft Teams">
-          <div class="tool-name">Microsoft Teams</div>
-          <span class="tool-badge soon">Coming soon</span>
+          <div class="tool-left">
+            <img class="tool-logo" src="/assets/logos/teams.svg" alt="Microsoft Teams">
+            <div class="tool-name">Microsoft Teams</div>
+            <span class="tool-badge soon">Coming soon</span>
+          </div>
+          <ul class="tool-bullets">
+            <li>Launch briefs straight from a Teams channel or chat</li>
+            <li>Same brief-to-doc flow, inside your Microsoft stack</li>
+            <li>Review and hand off copy without switching tools</li>
+          </ul>
         </div>
       </div>
 
@@ -304,7 +330,7 @@
         <button class="full" id="slack-settings-btn">Go to Settings to connect</button>
         <button class="ghost" id="slack-skip">Just try the app →</button>
       </div>
-      <p class="fineprint">You may need your Slack admin to approve Quillio for your workspace — Settings will walk you through it.</p>
+      <p class="fineprint">Talk to your admin to approve Quillio for your workspace — Settings will walk you through it.</p>
     </section>
 
     <!-- STEP 6 — DONE -->

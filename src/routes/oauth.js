@@ -8,9 +8,9 @@
 const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
-const { createTenantIfMissing, saveTenantToken, saveFigmaTokens, getPool } = require('../db');
+const { createTenantIfMissing, saveTenantToken, saveFigmaTokens, getPool, linkSlackUserToTenant } = require('../db');
 const { seedTenantAssets } = require('../db/assets');
-const { findUserByGoogleId, createUser } = require('../db/users');
+const { findUserByGoogleId, findUserById, createUser } = require('../db/users');
 
 // Post-OAuth landing destinations we accept via ?redirect=… (whitelist).
 const ALLOWED_REDIRECTS = ['onboarding', 'settings'];
@@ -205,6 +205,34 @@ router.get('/oauth/slack/callback', async (req, res) => {
     await createTenantIfMissing(teamId, teamName);
     if (botToken) await saveTenantToken(teamId, 'slack_bot', botToken);
     if (userToken) await saveTenantToken(teamId, 'slack_user', userToken);
+
+    // Slack-user link (Stage 1): when a SIGNED-IN Quillio user connects Slack,
+    // record their Slack identity (team + user id) on THEIR tenant so /quillio
+    // can later resolve (team_id + user_id) → that tenant. Purely additive —
+    // the workspace-tenant + token writes above are untouched. Best-effort: a
+    // failed link never breaks the install or the redirect.
+    const slackUserId = data.authed_user && data.authed_user.id;
+    if (req.session && req.session.userId && slackUserId) {
+      try {
+        const linkUser = await findUserById(req.session.userId);
+        if (linkUser && linkUser.tenant_id) {
+          await linkSlackUserToTenant(linkUser.tenant_id, teamId, slackUserId);
+          console.log(
+            `[oauth] slack link OK — tenant ${linkUser.tenant_id} ← team ${teamId} user ${slackUserId}`
+          );
+        }
+      } catch (e) {
+        if (e && e.code === '23505') {
+          // uq_tenants_slack_link: this (team, user) already belongs to another
+          // tenant. Re-link policy TBD — for now log and continue.
+          console.warn(
+            `[oauth] slack link skipped — team ${teamId} user ${slackUserId} already linked to another tenant`
+          );
+        } else {
+          console.error('[oauth] slack link failed (continuing):', e.message);
+        }
+      }
+    }
 
     // Seed the default asset library for this tenant (best-effort, idempotent —
     // no-ops without a DB, skips if already seeded). Never block the install if

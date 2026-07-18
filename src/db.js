@@ -152,6 +152,27 @@ async function saveTenantToken(tenantId, service, accessToken) {
   return true;
 }
 
+// Record a tenant's linked Slack identity (Stage 1 of the Slack-user link):
+// which Slack (team, user) this tenant belongs to, so /quillio can resolve
+// (team_id + user_id) → tenant. Overwrites a previous link on the SAME tenant;
+// the partial unique index uq_tenants_slack_link rejects claiming a (team, user)
+// pair another tenant already holds — callers catch that (Postgres 23505).
+// Returns true if the write ran, false if there's no DB / no tenant id.
+async function linkSlackUserToTenant(tenantId, slackTeamId, slackUserId) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping linkSlackUserToTenant');
+    return false;
+  }
+  if (!tenantId) return false;
+  await p.query('UPDATE tenants SET slack_team_id = $2, slack_user_id = $3 WHERE id = $1', [
+    tenantId,
+    slackTeamId || null,
+    slackUserId || null,
+  ]);
+  return true;
+}
+
 // Store a tenant's Figma OAuth tokens (Phase 4). Uses the dedicated figma_*
 // columns added in Stage 1.1, on the tenant_tokens row keyed by service='figma'.
 // `expiresAt` is a JS Date (absolute expiry) — Figma returns expires_in in
@@ -347,6 +368,7 @@ module.exports = {
   resolveTenant,
   createTenantIfMissing,
   saveTenantToken,
+  linkSlackUserToTenant,
   saveFigmaTokens,
   getFigmaTokens,
   getHeaderSchema,

@@ -14,6 +14,7 @@ const TABLES = [
       id TEXT PRIMARY KEY,
       workspace_id TEXT,
       workspace_name TEXT,
+      slack_user_id TEXT,
       plan TEXT DEFAULT 'free',
       installed_at TIMESTAMPTZ DEFAULT now(),
       onboarding_complete BOOLEAN DEFAULT false,

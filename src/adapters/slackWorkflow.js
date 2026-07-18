@@ -16,6 +16,7 @@ const {
   copyCompleteBlocks,
   postLive,
   updateLive,
+  refuseUnlinkedSlack,
 } = require('../services/slack');
 const { emoji } = require('../emoji');
 
@@ -32,9 +33,21 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   // Confirms the pipeline is actually invoked after the ack (before any I/O).
   console.log('[workflow] runBriefWorkflow START — brief chars:', (brief || '').length);
 
-  // Resolve this workspace's tenant tokens (DB-backed; env fallback for the
-  // demo workspace). Token source changes; nothing else does.
-  const { tenant, tokens, source } = await resolveTenant(opts.workspaceId);
+  // Resolve the tenant for the *user who ran /quillio* (team + user), not the
+  // workspace's installing tenant. Token source changes; nothing else does.
+  const resolved = await resolveTenant(opts.workspaceId, opts.slackUserId);
+  // Unlinked user: refuse (ephemeral) rather than building against a stranger's
+  // tenant. Only reachable on the Slack path (opts.slackUserId set) with a DB.
+  if (resolved.unlinked) {
+    console.log('[workflow] runBriefWorkflow — unlinked Slack user, refusing');
+    await refuseUnlinkedSlack({
+      responseUrl,
+      channel: opts.channelId || (opts.live && opts.live.channel),
+      slackUserId: opts.slackUserId,
+    });
+    return;
+  }
+  const { tenant, tokens, source } = resolved;
   const tenantId = tenant && tenant.id;
   // Log the token SOURCE only (db = Postgres tenant_tokens, env = fallback) —
   // never the tokens themselves.
@@ -219,8 +232,18 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 // completion if the bot token / message ts isn't available. An optional
 // `direction` string (from the Regenerate modal) is threaded into the drafter
 // as user revision feedback; empty/undefined behaves exactly like a first draft.
-async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspaceId, direction) {
-  const { tenant, tokens } = await resolveTenant(workspaceId);
+async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspaceId, direction, slackUserId) {
+  const resolved = await resolveTenant(workspaceId, slackUserId);
+  // Unlinked user: refuse (ephemeral) rather than drafting against a stranger's
+  // tenant. response_url covers the block-action path; the Regenerate modal
+  // (view_submission) has no response_url, so refuseUnlinkedSlack falls back to
+  // chat.postEphemeral via channel + user.
+  if (resolved.unlinked) {
+    console.log('[workflow] runGenerateDraft — unlinked Slack user, refusing');
+    await refuseUnlinkedSlack({ responseUrl, channel, slackUserId });
+    return;
+  }
+  const { tenant, tokens } = resolved;
   const canLive = !!tokens.slack_bot && channel && messageTs;
   const isRegen = !!(direction && String(direction).trim());
   console.log(

@@ -10,7 +10,7 @@ const config = require('../config');
 const { resolveTenant } = require('../db');
 const { getProjectByChannel } = require('../db/projects');
 const { getClientsForTenant } = require('../google');
-const { postLive, updateLive } = require('../services/slack');
+const { postLive, updateLive, refuseUnlinkedSlack } = require('../services/slack');
 const { runCopyReview } = require('../services/copyReview');
 
 // Inline custom emoji (shown next to the text) instead of a large image block.
@@ -39,10 +39,19 @@ function emojiBlocks(lines) {
 
 // Run the review from a /quillio-review slash command. `text` is the command
 // text (may carry a Drive link), `channelId`/`workspaceId` from the payload.
-async function runSlackReview({ text, channelId, workspaceId }) {
+async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
   const token = config.SLACK_BOT_TOKEN;
   console.log(`[slack] /quillio-review received — channel=${channelId} text=${JSON.stringify(text || '')}`);
-  const { tenant } = await resolveTenant(workspaceId);
+  const resolved = await resolveTenant(workspaceId, slackUserId);
+  // Unlinked user: refuse (ephemeral) rather than reviewing against a stranger's
+  // tenant. /quillio-review carries no response_url here, so refuseUnlinkedSlack
+  // falls back to chat.postEphemeral via channel + user.
+  if (resolved.unlinked) {
+    console.log('[slack] /quillio-review — unlinked Slack user, refusing');
+    await refuseUnlinkedSlack({ channel: channelId, slackUserId });
+    return;
+  }
+  const { tenant } = resolved;
   const tenantId = tenant && tenant.id;
 
   // Resolve the doc: an explicit link wins; otherwise the channel's latest project.

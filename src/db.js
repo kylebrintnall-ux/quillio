@@ -69,6 +69,18 @@ async function getTenantByWorkspace(workspaceId) {
   return res && res.rows && res.rows[0] ? res.rows[0] : null;
 }
 
+// Look up a tenant by its linked Slack identity (Stage 2 of the Slack-user
+// link): the (team, user) pair a tenant claimed at OAuth time. This is how
+// /quillio resolves to the *user who ran it* rather than the workspace's
+// installing tenant. Returns the row, or null if there's no DB / no match.
+async function getTenantBySlackLink(teamId, slackUserId) {
+  const res = await query(
+    'SELECT * FROM tenants WHERE slack_team_id = $1 AND slack_user_id = $2 LIMIT 1',
+    [teamId, slackUserId]
+  );
+  return res && res.rows && res.rows[0] ? res.rows[0] : null;
+}
+
 // Look up one of a tenant's service tokens (slack_bot | slack_user | google | …).
 // Returns the access_token string, or null if there's no DB / no match.
 async function getTenantToken(tenantId, service) {
@@ -103,16 +115,42 @@ function envTenant(workspaceId) {
 // Resolve a tenant to { tenant, tokens, source }. Reads from Postgres when the
 // workspace exists there; otherwise falls back to a synthesized env-var tenant
 // with the identical shape.
-async function resolveTenant(workspaceId) {
-  const tenant = await getTenantByWorkspace(workspaceId);
-  if (!tenant) return envTenant(workspaceId);
+//
+// slackUserId is OPTIONAL and changes the resolution path:
+//   - Omitted (web callers: routes/app.js, routes/settings.js) → behaves
+//     EXACTLY as before: workspace lookup, env fallback if none. Unchanged.
+//   - Provided (Slack callers) → user-aware. With no DB we keep the env/demo
+//     fallback (don't refuse offline). With a DB we resolve the tenant LINKED
+//     to this (team, user); if none is linked we return an "unlinked" sentinel
+//     ({ tenant: null, tokens: null, source: 'db', unlinked: true }) rather than
+//     silently falling back to the workspace/demo tenant — so /quillio refuses
+//     users who haven't connected their own account.
+async function resolveTenant(workspaceId, slackUserId) {
+  // Web path (no Slack user): identical to the original behavior.
+  if (!slackUserId) {
+    const tenant = await getTenantByWorkspace(workspaceId);
+    if (!tenant) return envTenant(workspaceId);
+    return { tenant, tokens: await resolveTenantTokens(tenant.id), source: 'db' };
+  }
 
-  const tokens = {
-    slack_bot: await getTenantToken(tenant.id, 'slack_bot'),
-    slack_user: await getTenantToken(tenant.id, 'slack_user'),
-    google: await getTenantToken(tenant.id, 'google'),
+  // Slack path, no DB configured: keep the env/demo fallback (don't refuse).
+  if (!getPool()) return envTenant(workspaceId);
+
+  // Slack path with a DB: resolve the tenant linked to this (team, user).
+  const linked = await getTenantBySlackLink(workspaceId, slackUserId);
+  if (!linked) {
+    return { tenant: null, tokens: null, source: 'db', unlinked: true };
+  }
+  return { tenant: linked, tokens: await resolveTenantTokens(linked.id), source: 'db' };
+}
+
+// Load a tenant's service tokens in the shape resolveTenant returns.
+async function resolveTenantTokens(tenantId) {
+  return {
+    slack_bot: await getTenantToken(tenantId, 'slack_bot'),
+    slack_user: await getTenantToken(tenantId, 'slack_user'),
+    google: await getTenantToken(tenantId, 'google'),
   };
-  return { tenant, tokens, source: 'db' };
 }
 
 // --- Install-flow writes (Phase 3 Slack OAuth) ---
@@ -364,6 +402,7 @@ module.exports = {
   saveVoiceGuide,
   getVoiceGuide,
   getTenantByWorkspace,
+  getTenantBySlackLink,
   getTenantToken,
   resolveTenant,
   createTenantIfMissing,

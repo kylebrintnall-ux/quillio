@@ -398,6 +398,41 @@ async function updateLive(channel, ts, text, blocks, token) {
   return slackApi('chat.update', blocks ? { channel, ts, text, blocks } : { channel, ts, text }, token);
 }
 
+// The message shown when a Slack user runs Quillio without having linked their
+// own account (Stage 2 of the Slack-user link). Only the user sees it.
+const UNLINKED_REFUSAL_TEXT =
+  "You haven't connected Quillio to your account yet. Visit " +
+  'https://quillio.co/settings → Workspace → Connect Slack to link your ' +
+  'account, then try again.';
+
+// Post the "you're not linked" refusal to just the invoking user (ephemeral).
+// Prefers the response_url (slash commands / block-action interactions carry
+// one and it needs no token); falls back to chat.postEphemeral for the
+// view_submission (Regenerate modal) path, which has no response_url. All
+// failures are swallowed with a warning — refusing must never crash the request.
+async function refuseUnlinkedSlack({ responseUrl, channel, slackUserId } = {}) {
+  try {
+    if (responseUrl) {
+      await postToSlack(responseUrl, {
+        response_type: 'ephemeral',
+        text: UNLINKED_REFUSAL_TEXT,
+      });
+      return;
+    }
+    if (channel && slackUserId && config.SLACK_BOT_TOKEN) {
+      await slackApi('chat.postEphemeral', {
+        channel,
+        user: slackUserId,
+        text: UNLINKED_REFUSAL_TEXT,
+      });
+      return;
+    }
+    console.warn('[slack] refuseUnlinkedSlack: no response_url and no channel/user/token — cannot notify user');
+  } catch (e) {
+    console.error('[slack] refuseUnlinkedSlack failed:', e.message);
+  }
+}
+
 // Diagnostic: log the bot user the SLACK_BOT_TOKEN actually belongs to. The
 // name shown on chat.postMessage/chat.update messages is this bot user — the
 // code never sets a username. If this logs "launchpen", Railway's token is the
@@ -430,6 +465,7 @@ module.exports = {
   buildFolderAccessBlocks,
   postLive,
   updateLive,
+  refuseUnlinkedSlack,
   copyCompleteBlocks,
   buildRegenerateModalView,
   openModal,

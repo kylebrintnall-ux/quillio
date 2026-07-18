@@ -308,11 +308,12 @@ app.post('/slack/command', (req, res) => {
   const responseUrl = req.body.response_url;
   const channelId = req.body.channel_id;
   const workspaceId = req.body.team_id;
+  const slackUserId = req.body.user_id;
   // File-attachment plumbing: slash commands don't carry files, but if a future
   // Events API handler supplies a files array ([{ url, filename, mimetype }]),
   // it threads straight through to fetchAllReferences as upload references.
   const attachments = parseSlackFiles(req.body.files);
-  runBriefWorkflow(brief, responseUrl, { channelId, workspaceId, attachments }).catch(async (err) => {
+  runBriefWorkflow(brief, responseUrl, { channelId, workspaceId, slackUserId, attachments }).catch(async (err) => {
     console.error('runBriefWorkflow failed:', err);
     try {
       await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
@@ -335,6 +336,7 @@ app.post('/slack/review', (req, res) => {
     text: (req.body.text || '').trim(),
     channelId: req.body.channel_id,
     workspaceId: req.body.team_id,
+    slackUserId: req.body.user_id,
   }).catch((err) => console.error('[slack] /quillio-review failed:', err));
 });
 
@@ -389,8 +391,9 @@ app.post('/slack/interactions', (req, res) => {
         view.state.values.direction_block.direction_input.value) ||
       undefined;
     const workspaceId = payload.team && payload.team.id;
+    const slackUserId = payload.user && payload.user.id;
 
-    runGenerateDraft(docId, null, channel, messageTs, workspaceId, direction).catch(async (err) => {
+    runGenerateDraft(docId, null, channel, messageTs, workspaceId, direction, slackUserId).catch(async (err) => {
       console.error('runGenerateDraft (regenerate) failed:', err);
       try {
         if (channel && messageTs) {
@@ -414,11 +417,12 @@ app.post('/slack/interactions', (req, res) => {
   const channelId = payload.channel && payload.channel.id;
   const messageTs = payload.message && payload.message.ts;
   const workspaceId = payload.team && payload.team.id;
+  const slackUserId = payload.user && payload.user.id;
   const canLive = !!config.SLACK_BOT_TOKEN && channelId && messageTs;
 
   if (action.action_id === 'generate_first_draft') {
     const docId = action.value;
-    runGenerateDraft(docId, responseUrl, channelId, messageTs, workspaceId).catch(async (err) => {
+    runGenerateDraft(docId, responseUrl, channelId, messageTs, workspaceId, undefined, slackUserId).catch(async (err) => {
       console.error('runGenerateDraft failed:', err);
       try {
         await updateMessage(`⚠️ Draft generation failed: ${err.message}`, responseUrl);
@@ -459,6 +463,7 @@ app.post('/slack/interactions', (req, res) => {
         : { folderIdOverride: ctx.folderId };
     if (canLive) opts.live = { channel: channelId, ts: messageTs };
     opts.workspaceId = workspaceId;
+    opts.slackUserId = slackUserId;
 
     runBriefWorkflow(ctx.brief || '', responseUrl, opts).catch(async (err) => {
       console.error('folder-recovery rerun failed:', err);

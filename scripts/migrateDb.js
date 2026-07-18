@@ -15,6 +15,7 @@ const TABLES = [
       workspace_id TEXT,
       workspace_name TEXT,
       slack_user_id TEXT,
+      slack_team_id TEXT,
       plan TEXT DEFAULT 'free',
       installed_at TIMESTAMPTZ DEFAULT now(),
       onboarding_complete BOOLEAN DEFAULT false,
@@ -22,6 +23,14 @@ const TABLES = [
       default_doc_platform TEXT,
       default_design_platform TEXT
     )`,
+  ],
+  [
+    // Slack-user link guard: one tenant per (team, user). Partial — only rows
+    // with both link fields set are constrained, so unlinked tenants are free.
+    'index uq_tenants_slack_link',
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_tenants_slack_link
+       ON tenants (slack_team_id, slack_user_id)
+       WHERE slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL`,
   ],
   [
     'tenant_tokens',

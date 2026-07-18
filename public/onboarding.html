@@ -94,7 +94,7 @@
 
     /* Step 5 — workspace-tools showcase (informational; connecting happens in Settings) */
     /* Step 5 — workspace-tools showcase: wide horizontal cards stacked vertically. */
-    .tools { display: flex; flex-direction: column; gap: 12px; margin: 20px 0 4px; }
+    .tools { display: flex; flex-direction: column; gap: 12px; margin: 20px auto 4px; max-width: 460px; }
     .tool { display: flex; flex-direction: row; align-items: center; gap: 16px; text-align: left;
       padding: 16px; border-radius: 14px; background: rgba(255,255,255,0.35);
       border: 1.5px solid rgba(255,255,255,0.55); }
@@ -102,13 +102,13 @@
     .tool-left { flex: 0 0 104px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
     .tool-logo { width: 44px; height: 44px; image-rendering: pixelated; object-fit: contain; }
     .tool-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .tool-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em;
+    .tool-badge { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 10px; letter-spacing: 0.06em;
       text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
     .tool-badge.now { background: var(--sky-btm); color: #06302f; }
     .tool-badge.soon { background: rgba(26,26,46,0.1); color: rgba(26,26,46,0.6); }
     .tool-bullets { flex: 1; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
     .tool-bullets li { position: relative; padding-left: 16px;
-      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 13px; line-height: 1.45; color: rgba(26,26,46,0.8); }
+      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 13px; line-height: 1.45; color: var(--ink); }
     .tool-bullets li::before { content: ''; position: absolute; left: 0; top: 7px;
       width: 5px; height: 5px; border-radius: 1px; background: var(--sky-btm); }   /* subtle pixel marker */
     .fineprint { color: rgba(26,26,46,0.6); font-size: 13px; margin-top: 10px; }
@@ -294,7 +294,7 @@
 
     <!-- STEP 5 — WORKSPACE INVITATION (showcase only; connecting Slack lives in Settings) -->
     <section class="step" id="step-5">
-      <h1>Bring Quillio into your flow of work</h1>
+      <h1>Bring Quillio into your flow of work.</h1>
       <p class="muted">Go from brief to a structured, ready-to-write copy doc in a single command — right where your team already works. No tab-switching, no setup. Just <code>/quillio</code> and start writing.</p>
 
       <!-- Workspace tools showcase (Slack + Teams). Logos are real pixel-art SVGs at

@@ -275,6 +275,7 @@
         <button class="full" id="slack-btn">Add to Slack</button>
         <button class="full hidden" id="slack-next">Next →</button>
       </div>
+      <div id="slack-error" class="error hidden"></div>
       <button class="ghost" id="slack-skip">I'll do this later →</button>
     </section>
 
@@ -664,9 +665,47 @@
     });
 
     // --- Step 5: Slack ------------------------------------------------------
-    $('slack-btn').addEventListener('click', function () { window.location.href = '/oauth/slack?redirect=onboarding'; });
+    // iOS/Safari hijacks a full-page /oauth/slack navigation with the Slack app and
+    // strands the user, so run the install in a POPUP opened SYNCHRONOUSLY in the
+    // click (no awaiting first, or the popup gets blocked). The OAuth callback
+    // (mode=popup) postMessages the result back to the listener below, then closes.
+    var slackPollTimer = null;  // watches for the popup closing without completing
+    var slackConnected = false; // set true once 'connected' arrives, so we never re-enable
+    $('slack-btn').addEventListener('click', function () {
+      clearError($('slack-error'));
+      slackConnected = false;
+      var popup = window.open('/oauth/slack?redirect=onboarding&mode=popup', 'slack_oauth', 'width=600,height=700');
+      $('slack-btn').disabled = true;
+      // If the popup is closed (or was blocked) before a 'connected' message, re-enable
+      // the button so the user can retry. Cleared as soon as it fires or on connect.
+      if (slackPollTimer) clearInterval(slackPollTimer);
+      slackPollTimer = setInterval(function () {
+        if (!popup || popup.closed) {
+          clearInterval(slackPollTimer);
+          slackPollTimer = null;
+          if (!slackConnected) $('slack-btn').disabled = false;
+        }
+      }, 500);
+    });
     $('slack-skip').addEventListener('click', function () { showStep(6); });
     $('slack-next').addEventListener('click', function () { showStep(6); });
+
+    // Popup install result, via postMessage from the Slack callback. Registered once
+    // on load; same-origin + type guarded; ignores anything else. The init()
+    // ?slack=connected check remains as the non-popup fallback.
+    window.addEventListener('message', function (event) {
+      if (event.origin !== location.origin) return;
+      if (!event.data || event.data.type !== 'slack') return;
+      if (event.data.status === 'connected') {
+        slackConnected = true;
+        if (slackPollTimer) { clearInterval(slackPollTimer); slackPollTimer = null; }
+        markSlackConnected();
+      } else if (event.data.status === 'failed') {
+        if (slackPollTimer) { clearInterval(slackPollTimer); slackPollTimer = null; }
+        showError($('slack-error'), "Slack connection didn't complete — try again.");
+        $('slack-btn').disabled = false;
+      }
+    });
 
     // Reflect a completed Slack install: disable the button and reveal Next →.
     function markSlackConnected() {

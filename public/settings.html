@@ -257,8 +257,9 @@
       background: rgba(255,255,255,0.35); border: 1.5px solid rgba(255,255,255,0.55);
       box-shadow: 0 4px 16px rgba(26,26,46,0.06); transition: transform 0.12s, background 0.15s, box-shadow 0.15s; }
     .hub-card:hover { background: rgba(255,255,255,0.55); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(26,26,46,0.12); }
-    .hub-icon { width: 40px; height: 40px; }
-    .hub-icon svg { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+    .hub-icon { width: 56px; height: 56px; border-radius: 12px; background: var(--cream);
+      display: flex; align-items: center; justify-content: center; }
+    .hub-icon svg { width: 40px; height: 40px; image-rendering: pixelated; display: block; }
     .hub-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
     .hub-desc { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; line-height: 1.4; color: rgba(26,26,46,0.68); }
     @media (max-width: 420px) { .hub { grid-template-columns: 1fr; } }
@@ -372,22 +373,22 @@
       <button class="hub-card" data-tab="voice">
         <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="7" width="2" height="4" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="8" fill="#4DD9D9"/><rect x="8" y="3" width="2" height="12" fill="#C9A84C"/><rect x="11" y="5" width="2" height="8" fill="#4DD9D9"/><rect x="14" y="7" width="2" height="4" fill="#4DD9D9"/></svg></span>
         <span class="hub-name">Voice Guide</span>
-        <span class="hub-desc">Define how your brand sounds so every draft stays on-voice</span>
+        <span class="hub-desc">Define how your brand sounds so every draft stays on-voice.</span>
       </button>
       <button class="hub-card" data-tab="header">
         <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="3" y="2" width="12" height="14" fill="#1C1F3B"/><rect x="4" y="3" width="10" height="3" fill="#4DD9D9"/><rect x="5" y="8" width="8" height="1" fill="#FFFFFF"/><rect x="5" y="10" width="8" height="1" fill="#FFFFFF"/><rect x="5" y="12" width="6" height="1" fill="#FFFFFF"/></svg></span>
         <span class="hub-name">Doc Header</span>
-        <span class="hub-desc">Set what appears at the top of every copy doc</span>
+        <span class="hub-desc">Set what appears at the top of every copy doc.</span>
       </button>
       <button class="hub-card" data-tab="workspace">
         <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="7" width="4" height="4" fill="#C9A84C"/><rect x="2" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="2" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="5" y="11" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="11" width="2" height="2" fill="#1C1F3B"/></svg></span>
         <span class="hub-name">Workspace</span>
-        <span class="hub-desc">Connect Slack, Google, and your writing tools</span>
+        <span class="hub-desc">Connect Slack, Google, and your writing tools.</span>
       </button>
       <button class="hub-card" data-tab="account">
         <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="3" width="4" height="1" fill="#4DD9D9"/><rect x="6" y="4" width="6" height="4" fill="#4DD9D9"/><rect x="7" y="8" width="4" height="1" fill="#4DD9D9"/><rect x="4" y="11" width="10" height="4" fill="#1C1F3B"/><rect x="6" y="10" width="6" height="1" fill="#1C1F3B"/></svg></span>
         <span class="hub-name">Account</span>
-        <span class="hub-desc">Manage your login and account details</span>
+        <span class="hub-desc">Manage your login and account details.</span>
       </button>
     </section>
 

@@ -935,6 +935,7 @@
     });
 
     // --- Boot ---------------------------------------------------------------
+    var VALID_TABS = new Set(['voice', 'header', 'workspace', 'account']);
     (function init() {
       var params = new URLSearchParams(window.location.search);
       loadVoice();
@@ -946,6 +947,9 @@
         banner($('ws-banner'), params.get('slack') === 'connected'
           ? '✓ Slack reconnected.'
           : '✓ Google reconnected.');
+      } else if (VALID_TABS.has(params.get('tab'))) {
+        // ?tab=<section> deep-link: open that section directly (navigation, no banner).
+        enterSection(params.get('tab'));
       } else {
         // Bare /settings → the hub landing.
         showHub();

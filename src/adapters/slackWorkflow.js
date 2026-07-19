@@ -6,6 +6,7 @@
 
 const pipeline = require('../core/pipeline');
 const { resolveTenant } = require('../db');
+const { getClientsForTenant } = require('../google');
 const {
   postResult,
   updateMessage,
@@ -168,10 +169,14 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       console.log(
         `[workflow] pre-generateDoc references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
       );
+      // Drive/Docs writes run as the resolved tenant's Google identity (per-user
+      // OAuth); getClientsForTenant falls back to the shared env client when the
+      // tenant has no stored google token.
+      const clients = await getClientsForTenant(tenantId);
       docResult = await pipeline.generateDoc(
         { brief, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
         effectiveFolderId,
-        undefined, // Slack uses the shared env Google client
+        clients,
         tenantId,
         // The live card's channel + ts become the project's Slack linkage so a
         // future in-thread action (e.g. Hand Off to Design) can resolve the
@@ -271,10 +276,14 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   if (canLive) await updateLive(channel, messageTs, progressText, undefined, tokens.slack_bot);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 
+  // Docs read/write runs as the resolved tenant's Google identity (per-user
+  // OAuth); getClientsForTenant falls back to the shared env client when the
+  // tenant has no stored google token.
+  const clients = await getClientsForTenant(tenant && tenant.id);
   const { title, fieldCount, url } = await pipeline.generateDraft(
     docId,
     direction,
-    undefined,
+    clients,
     tenant && tenant.id
   );
   console.log('[workflow] generateDraft returned — posting completion');

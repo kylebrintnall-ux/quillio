@@ -104,6 +104,13 @@ router.get('/api/settings/workspace', requireAuth, async (req, res) => {
       defaultFolderUrl: folderUrlFromId(tenant && tenant.default_folder_id),
       // "Connected" is gated on a stored token; show the signed-in email when so.
       googleEmail: tokens && tokens.google ? (req.user && req.user.email) || null : null,
+      // Slack connection status for a per-user tenant is the LINK (slack_team_id
+      // on its own row), NOT a bot token — the bot token/workspace_name live on
+      // the workspace tenant, which a per-user tenant never resolves to. Gating
+      // on the link is what the resolver (getTenantBySlackLink) actually uses.
+      slackConnected: !!(tenant && tenant.slack_team_id),
+      // Kept for backward-compat (workspace-tenant installs still populate it);
+      // the frontend now reads slackConnected.
       slackWorkspaceName: tokens && tokens.slack_bot ? (tenant && tenant.workspace_name) || null : null,
     });
   } catch (err) {

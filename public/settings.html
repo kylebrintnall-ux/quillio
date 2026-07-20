@@ -884,8 +884,8 @@
         $('folder-input').value = data.defaultFolderUrl || '';
         $('google-status').textContent = data.googleEmail || 'Not connected';
         $('google-reconnect').textContent = data.googleEmail ? 'Reconnect Google' : 'Connect Google';
-        $('slack-status').textContent = data.slackWorkspaceName || 'Not connected';
-        $('slack-reconnect').textContent = data.slackWorkspaceName ? 'Reconnect Slack' : 'Connect Slack';
+        $('slack-status').textContent = data.slackConnected ? 'Connected' : 'Not connected';
+        $('slack-reconnect').textContent = data.slackConnected ? 'Reconnect Slack' : 'Connect Slack';
         show($('ws-body'));
       } catch (e) {
         hide($('ws-loading'));

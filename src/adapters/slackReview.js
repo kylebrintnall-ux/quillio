@@ -8,9 +8,8 @@
 
 const config = require('../config');
 const { resolveTenant } = require('../db');
-const { getProjectByChannel } = require('../db/projects');
 const { getClientsForTenant } = require('../google');
-const { postLive, updateLive, refuseUnlinkedSlack } = require('../services/slack');
+const { postLive, updateLive, refuseUnlinkedSlack, postEphemeral } = require('../services/slack');
 const { runCopyReview } = require('../services/copyReview');
 
 // Inline custom emoji (shown next to the text) instead of a large image block.
@@ -54,26 +53,18 @@ async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
   const { tenant } = resolved;
   const tenantId = tenant && tenant.id;
 
-  // Resolve the doc: an explicit link wins; otherwise the channel's latest project.
-  const linkId = docIdFromText(text);
-  let docId = linkId;
-  let docUrl = docId ? `https://docs.google.com/document/d/${docId}/edit` : null;
-  if (!docId) {
-    const project = await getProjectByChannel(tenantId, channelId).catch(() => null);
-    if (project && project.copy_doc_id) {
-      docId = project.copy_doc_id;
-      docUrl = project.copy_doc_url || `https://docs.google.com/document/d/${docId}/edit`;
-    }
-  }
-  console.log(`[slack] /quillio-review resolved docId=${docId || '(none)'} source=${linkId ? 'pasted-link' : docId ? 'channel-project' : 'none'}`);
+  // The doc to review comes ONLY from a Google Doc link in the command text —
+  // there is no channel/project fallback.
+  const docId = docIdFromText(text);
+  const docUrl = docId ? `https://docs.google.com/document/d/${docId}/edit` : null;
+  console.log(`[slack] /quillio-review resolved docId=${docId || '(none)'} source=${docId ? 'pasted-link' : 'none'}`);
 
   if (!docId) {
-    await postLive(
-      channelId,
-      'Nothing to review yet.',
-      emojiBlocks(["I couldn't find a copy doc here. Run this in a project's channel, or paste a Drive doc link: `/quillio-review <link>`."]),
-      token
-    ).catch((e) => console.error('[slack] review no-doc post failed:', e.message));
+    await postEphemeral({
+      channel: channelId,
+      user: slackUserId,
+      text: 'Paste a Google Doc link after the command, like: `/quillio-review https://docs.google.com/document/d/...`',
+    });
     return;
   }
 

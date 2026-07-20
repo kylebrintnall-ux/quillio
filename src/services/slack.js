@@ -433,6 +433,21 @@ async function refuseUnlinkedSlack({ responseUrl, channel, slackUserId } = {}) {
   }
 }
 
+// Post an ephemeral message visible only to `user` in `channel` (mrkdwn `text`).
+// Best-effort: needs a bot token + channel + user; failures are logged, never
+// thrown — an ephemeral notice must not crash the request.
+async function postEphemeral({ channel, user, text } = {}) {
+  try {
+    if (channel && user && config.SLACK_BOT_TOKEN) {
+      await slackApi('chat.postEphemeral', { channel, user, text });
+      return;
+    }
+    console.warn('[slack] postEphemeral: missing channel/user/token — cannot post');
+  } catch (e) {
+    console.error('[slack] postEphemeral failed:', e.message);
+  }
+}
+
 // Diagnostic: log the bot user the SLACK_BOT_TOKEN actually belongs to. The
 // name shown on chat.postMessage/chat.update messages is this bot user — the
 // code never sets a username. If this logs "launchpen", Railway's token is the
@@ -466,6 +481,7 @@ module.exports = {
   postLive,
   updateLive,
   refuseUnlinkedSlack,
+  postEphemeral,
   copyCompleteBlocks,
   buildRegenerateModalView,
   openModal,

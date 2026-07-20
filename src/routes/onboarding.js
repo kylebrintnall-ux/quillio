@@ -11,7 +11,7 @@ const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const { voiceLimiter } = require('../middleware/rateLimit');
 const { clientErrorMessage } = require('../utils/errors');
-const { setTenantDefaultFolder, saveVoiceGuide, getVoiceGuide } = require('../db');
+const { setTenantDefaultFolder, saveVoiceGuide, getVoiceGuide, setTenantOnboardingComplete } = require('../db');
 const { getTenantAssets, setActiveAssets } = require('../db/assets');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { generateVoiceGuide } = require('../services/gemini');
@@ -95,6 +95,19 @@ router.post('/api/onboarding/assets', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, deactivated });
   } catch (err) {
     console.error('[onboarding] /assets save failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/onboarding/complete — mark the signed-in user's onboarding done (the
+// step-6 finish action). Flips tenants.onboarding_complete = true so sign-in
+// routing sends this user to the app next time. Best-effort/no-DB safe.
+router.post('/api/onboarding/complete', requireAuth, async (req, res) => {
+  try {
+    await setTenantOnboardingComplete(req.user && req.user.tenant_id);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[onboarding] /complete failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });

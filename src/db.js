@@ -397,6 +397,21 @@ async function setTenantDefaultFolder(tenantId, folderId) {
   return true;
 }
 
+// Mark a tenant's onboarding as complete (the step-6 finish action). This is the
+// ONLY place onboarding_complete is set true for a real tenant — sign-in routing
+// reads it to send finished users to the app instead of back into onboarding.
+// Returns true if the write ran, false if there's no DB / no tenant id.
+async function setTenantOnboardingComplete(tenantId) {
+  const p = getPool();
+  if (!p) {
+    console.warn('[db] DATABASE_URL not set — skipping setTenantOnboardingComplete');
+    return false;
+  }
+  if (!tenantId) return false;
+  await p.query('UPDATE tenants SET onboarding_complete = true WHERE id = $1', [tenantId]);
+  return true;
+}
+
 module.exports = {
   getPool,
   saveVoiceGuide,
@@ -417,4 +432,5 @@ module.exports = {
   getReviewState,
   saveReviewState,
   setTenantDefaultFolder,
+  setTenantOnboardingComplete,
 };

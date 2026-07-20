@@ -748,7 +748,17 @@
       btn.textContent = '✓ Copied!';
       setTimeout(function () { btn.textContent = 'Copy brief'; }, 2000);
     });
-    $('go-app').addEventListener('click', function () { window.location.href = '/app'; });
+    $('go-app').addEventListener('click', async function () {
+      // Record completion so sign-in routing sends this user to the app next
+      // time. Never trap the user on onboarding if the write hiccups — log and
+      // navigate regardless.
+      try {
+        await fetch('/api/onboarding/complete', { method: 'POST' });
+      } catch (e) {
+        console.error('[onboarding] complete call failed (continuing to app):', e);
+      }
+      window.location.href = '/app';
+    });
 
     // --- Boot: pick the starting step from the URL --------------------------
     (function init() {

@@ -476,6 +476,7 @@ test('onboarding router mounts and exposes its routes', () => {
   assert.deepStrictEqual(paths, [
     '/api/onboarding/assets',
     '/api/onboarding/assets',
+    '/api/onboarding/complete',
     '/api/onboarding/folder',
     '/api/onboarding/me',
     '/api/onboarding/voice',

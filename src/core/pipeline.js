@@ -654,8 +654,10 @@ async function enrichWithReferences(parsed, refs) {
 // Convert a tenant's Postgres asset library (getTenantAssets output) into the
 // exact shape getAssetSpecs returns, so every downstream consumer (createDocument,
 // generateAssetDrafts) is identical regardless of source. Postgres has no
-// channel / toneNotes / per-field notes / funnelStage columns → those map to
-// empty strings (the same value the Sheet yields when those cells are blank).
+// channel / toneNotes / funnelStage columns → those map to empty strings (the
+// same value the Sheet yields when those cells are blank). Per-field guidance
+// IS stored (copy_fields.spec_note) and is carried through as `specNote` → the
+// italic note fieldHint() renders under the field label.
 // Applies the same filter semantics as getAssetSpecs: restrict to the requested
 // assets (normalized), but return all when the filter is empty or matches nothing.
 function tenantAssetsToSpecs(rows, assetFilter = []) {
@@ -670,6 +672,7 @@ function tenantAssetsToSpecs(rows, assetFilter = []) {
         charMin: parseInt(f.char_min, 10) || 0,
         charMax: parseInt(f.char_max, 10) || 0,
         groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
+        specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
         notes: '', // not stored in copy_fields (Sheet-only)
         funnelStage: '', // not stored in copy_fields (Sheet-only)
       })),

@@ -245,6 +245,12 @@ const LANDING_HTML = `<!doctype html>
     .btn:hover { opacity: 0.85; }
     .btn-primary { background: var(--sky); color: var(--navy); }
     .btn-secondary { background: transparent; color: var(--sky); }
+    .helper {
+      font-size: 13px;
+      color: var(--cream);
+      opacity: 0.7;
+      margin: 16px 0 0;
+    }
     @media (max-width: 380px) {
       .actions { flex-direction: column; }
       .btn { width: 100%; }
@@ -257,9 +263,10 @@ const LANDING_HTML = `<!doctype html>
     <h1 class="wordmark">Quillio</h1>
     <p class="tagline">Creative brief intelligence for copywriters.</p>
     <div class="actions">
-      <a class="btn btn-primary" href="/app">Go to app</a>
-      <a class="btn btn-secondary" href="/onboarding">Sign in</a>
+      <a class="btn btn-primary" href="/onboarding">Create account</a>
+      <a class="btn btn-secondary" href="/oauth/google">Sign in</a>
     </div>
+    <p class="helper">New to Quillio? Set up in about 2 minutes.</p>
   </main>
 </body>
 </html>`;

@@ -8,7 +8,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
-const { createTenantIfMissing, saveTenantToken, saveFigmaTokens, getPool, linkSlackUserToTenant } = require('../db');
+const { createTenantIfMissing, saveTenantToken, saveFigmaTokens, getPool, linkSlackUserToTenant, getTenantByWorkspace } = require('../db');
 const { seedTenantAssets } = require('../db/assets');
 const { findUserByGoogleId, findUserById, createUser } = require('../db/users');
 
@@ -506,11 +506,22 @@ router.get('/oauth/google/callback', async (req, res) => {
     console.log(`[oauth] google sign-in OK — tenant ${userTenantId} new=${isNew}`);
 
     // Settings returns to /settings; onboarding continues at step 2; otherwise
-    // new → onboarding, returning → app.
+    // route on SETUP STATE, not just record existence: a tenant with
+    // onboarding_complete=true → the app; anyone still incomplete (brand-new OR
+    // a returning user who abandoned setup) → /onboarding to finish. Best-effort:
+    // a lookup miss/error defaults to incomplete → onboarding (never strand a
+    // user in the app half-set-up). isNew stays for the log line only.
     const redirectTo = entry.data && entry.data.redirectTo;
     if (redirectTo === 'settings') return res.redirect('/settings?connected=google');
     if (redirectTo === 'onboarding') return res.redirect('/onboarding?step=2');
-    return res.redirect(isNew ? '/onboarding' : '/app?connected=google');
+    let onboardingComplete = false;
+    try {
+      const t = await getTenantByWorkspace(userTenantId);
+      onboardingComplete = !!(t && t.onboarding_complete);
+    } catch (e) {
+      console.warn('[oauth] onboarding_complete lookup failed — treating as incomplete:', e.message);
+    }
+    return res.redirect(onboardingComplete ? '/app?connected=google' : '/onboarding');
   } catch (err) {
     // Never leak a stack trace to the browser — log it, redirect generically.
     console.error('[oauth] google callback error:', err && err.stack ? err.stack : err);

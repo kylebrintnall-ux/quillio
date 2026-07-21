@@ -145,6 +145,26 @@ function specSourceName(specSource) {
   return null; // unrecognized → no source name (never print the raw value)
 }
 
+// Render-only citation links for hand-written spec_notes. Some notes end in a
+// plain-text source credit like "(Litmus)"; this maps a note to the specific
+// source page so fieldHint can hyperlink just the source WORD (same Phase-B
+// range-link machinery as the tier-line platform name). This lives in the
+// render layer only — it never touches spec_source, the seed, or the DB. Keyed
+// on a DISTINCTIVE substring of the note (`match`) so the two Litmus notes each
+// resolve to their own page; `name` is the exact word to hyperlink.
+const NOTE_SOURCE_LINKS = [
+  {
+    match: 'Mobile inboxes cut around 40',
+    name: 'Litmus',
+    url: 'https://www.litmus.com/blog/how-to-write-the-perfect-subject-line-infographic',
+  },
+  {
+    match: 'characters of preheader',
+    name: 'Litmus',
+    url: 'https://www.litmus.com/blog/the-ultimate-guide-to-preview-text-support',
+  },
+];
+
 // Compose the spec_type tier sentence as { text, nameStart, nameLen } — or null
 // for house_default / unset. nameStart/nameLen locate the platform-name sub-range
 // WITHIN text (so Phase B can hyperlink just the name); nameStart is -1 when there
@@ -203,6 +223,19 @@ function fieldHint(field) {
   if (!parts.length) return null;
   const text = parts.join(' ');
   const links = [];
+  // Note-embedded citation (e.g. "(Litmus)"): the note is parts[0], so its
+  // offsets map directly into `text` (base 0). Scan the NOTE ONLY, keyed on a
+  // known match list — never the composed text or body copy, and never any
+  // parenthesized word — then hyperlink just the source name. First match only.
+  if (note) {
+    for (const entry of NOTE_SOURCE_LINKS) {
+      if (!note.includes(entry.match)) continue;
+      const i = note.indexOf(entry.name);
+      if (i < 0) continue;
+      links.push({ start: i, end: i + entry.name.length, url: entry.url });
+      break;
+    }
+  }
   if (tier && tier.nameStart >= 0) {
     const base = note ? note.length + 1 : 0; // spec_note prefix + the joining space
     const start = base + tier.nameStart;

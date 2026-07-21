@@ -760,6 +760,54 @@ test('fieldHint returns a field-level note only when the field carries a specNot
   assert.strictEqual(fieldHint({ fieldName: 'Subhead' }), null);
 });
 
+test('fieldHint composes the spec_type tier line (Phase A: plain text, no bogus source)', () => {
+  const { fieldHint } = require('../src/destinations/googleDocs');
+
+  // 1. enforced + quillio_default → no-source form (real names arrive at re-anchoring).
+  assert.strictEqual(
+    fieldHint({ fieldName: 'Primary Text', specType: 'enforced', specSource: 'quillio_default' }),
+    'Platform limit. Stay within this count.'
+  );
+
+  // 2. recommended + quillio_default → no "by SOURCE" clause.
+  assert.strictEqual(
+    fieldHint({ fieldName: 'Body Copy', specType: 'recommended', specSource: 'quillio_default' }),
+    'Recommended. Not a hard limit — adjust for your brand and goal.'
+  );
+
+  // 3. house_default → no tier line: specNote alone if present, else null.
+  assert.strictEqual(
+    fieldHint({ fieldName: 'Caption', specType: 'house_default', specSource: 'quillio_default' }),
+    null
+  );
+  assert.strictEqual(
+    fieldHint({ fieldName: 'Caption', specType: 'house_default', specSource: 'quillio_default', specNote: 'Keep it short.' }),
+    'Keep it short.'
+  );
+
+  // 4. specNote + a non-house tier → both, specNote FIRST, SPACE-joined into ONE
+  //    paragraph (the parseDoc-safe form — a newline would be misread as copy).
+  const combined = fieldHint({
+    fieldName: 'Hook', specType: 'enforced', specSource: 'quillio_default', specNote: 'Keep it short.',
+  });
+  assert.strictEqual(combined, 'Keep it short. Platform limit. Stay within this count.');
+  assert.ok(combined && !combined.includes('\n'), 'combined guidance must be a single paragraph (no newline)');
+
+  // 5. GUARANTEE: no combination ever emits the literal "quillio_default".
+  for (const specType of ['enforced', 'recommended', 'house_default', null]) {
+    for (const specNote of [null, 'Some note.']) {
+      const out = fieldHint({ fieldName: 'F', specType, specSource: 'quillio_default', specNote });
+      if (out) assert.ok(!out.includes('quillio_default'), `spec_type=${specType} note=${!!specNote} leaked quillio_default`);
+    }
+  }
+
+  // 6. enforced + a REAL source → named form. Locks in post-re-anchoring behavior.
+  assert.strictEqual(
+    fieldHint({ fieldName: 'Intro Text', specType: 'enforced', specSource: 'business.linkedin.com' }),
+    'Platform limit (LinkedIn). Stay within this count.'
+  );
+});
+
 test('parseDoc treats a Hook field explainer as notes, not copy (insertion below it)', () => {
   const { parseDoc } = require('../src/destinations/googleDocs');
   function makeDoc(paras) {

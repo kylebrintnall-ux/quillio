@@ -141,8 +141,8 @@ class DocBuilder {
   // Italic + muted grey so it reads as guidance, distinct from drafted copy
   // (regular weight) and the asset meta line (plain italic). Parsers recognize
   // it by the italic style + its position right after the bold label.
-  fieldNote(text, { indent = 0 } = {}) {
-    this._push(text, {
+  fieldNote(text, { indent = 0, links = [] } = {}) {
+    const range = this._push(text, {
       paragraphStyle: indent ? indentStyle(indent) : undefined,
       paragraphFields: indent ? 'indentStart,indentFirstLine' : undefined,
       textStyle: {
@@ -151,6 +151,26 @@ class DocBuilder {
       },
       textFields: 'italic,foregroundColor',
     });
+    // Layer standard blue+underlined hyperlinks over sub-ranges (e.g. the platform
+    // name in the tier line). Pushed AFTER the base style so they win on their
+    // range: italic is inherited (not touched here), grey is overridden to the
+    // same link blue used by link(). Still ONE paragraph — parseDoc reads it as a
+    // single notes line. `start`/`end` are offsets within `text`.
+    for (const link of links || []) {
+      const { start, end, url } = link || {};
+      if (!url || !(end > start)) continue;
+      this.textRequests.push({
+        updateTextStyle: {
+          range: { startIndex: range.startIndex + start, endIndex: range.startIndex + end },
+          textStyle: {
+            link: { url },
+            underline: true,
+            foregroundColor: { color: { rgbColor: { red: 0.06, green: 0.45, blue: 0.86 } } },
+          },
+          fields: 'link,underline,foregroundColor',
+        },
+      });
+    }
   }
 
   // A bold field label, e.g. "Headline [30]". `indent` (PT) shifts the paragraph

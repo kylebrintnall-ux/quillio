@@ -652,6 +652,51 @@ test('defaultAssets spec_type tiers match the migrations enforced set byte-for-b
   assert.strictEqual(migEnforced.size, 25, 'expected 25 enforced pairs (23 initial + 2 corrective)');
 });
 
+test('enforced fields seed a real spec_source that resolves to the right platform; house_default stays quillio_default', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { fieldHint } = require('../src/destinations/googleDocs');
+  const { PLATFORM_URLS } = require('../scripts/migrateSetEnforcedSpecSource');
+
+  const platformForAsset = (a) => {
+    if (a.startsWith('Meta ')) return 'Meta';
+    if (a.startsWith('LinkedIn ')) return 'LinkedIn';
+    if (a === 'Twitter/X Ad') return 'X';
+    if (a.startsWith('Google DV360')) return 'Google';
+    return null;
+  };
+
+  let enforcedSeen = 0;
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      if (f.spec_type === 'enforced') {
+        enforcedSeen++;
+        const p = platformForAsset(a.name);
+        assert.ok(p, `enforced field ${a.name}/${f.field_name} maps to a platform`);
+        // Seed URL is byte-identical to the migration's URL for that platform.
+        assert.strictEqual(
+          f.spec_source,
+          PLATFORM_URLS[p],
+          `${a.name}/${f.field_name} seed spec_source must equal migration URL for ${p}`
+        );
+        // And it renders the NAMED tier line via the real specSourceName path.
+        assert.strictEqual(
+          fieldHint({ specType: 'enforced', specSource: f.spec_source }),
+          `Platform limit (${p}). Stay within this count.`,
+          `${a.name}/${f.field_name} renders "(${p})"`
+        );
+      } else {
+        // Non-enforced (house_default) fields keep the sentinel — not re-anchored.
+        assert.strictEqual(
+          f.spec_source,
+          'quillio_default',
+          `${a.name}/${f.field_name} must stay quillio_default`
+        );
+      }
+    }
+  }
+  assert.strictEqual(enforcedSeen, 25, 'exactly 25 enforced fields carry a real spec_source');
+});
+
 test('defaultAssets Graphic Copy group is contiguous and correctly placed', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const grouped = DEFAULT_ASSETS.filter((a) => a.fields.some((f) => f.group_label === 'Graphic Copy'));

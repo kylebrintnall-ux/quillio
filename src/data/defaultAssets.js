@@ -391,6 +391,35 @@ function fieldSpecType(assetName, fieldName) {
   return ENFORCED_SPEC_FIELDS.has(`${assetName}||${fieldName}`) ? 'enforced' : 'house_default';
 }
 
+// Per-field spec_source. Enforced fields carry the real platform spec-page URL
+// (so the doc tier line renders "Platform limit (LinkedIn)." etc. — the renderer
+// substring-matches the URL to a display name); everything else keeps the
+// 'quillio_default' sentinel. URLs are kept BYTE-IDENTICAL to
+// PLATFORM_URLS in scripts/migrateSetEnforcedSpecSource.js so newly-seeded
+// tenants match the backfill (the smoke test asserts this).
+const ENFORCED_SOURCE_URLS = {
+  Meta: 'https://www.facebook.com/business/ads-guide/update',
+  LinkedIn: 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
+  X: 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
+  Google: 'https://support.google.com/google-ads/answer/7684791',
+};
+
+function platformForAsset(assetName) {
+  if (assetName.startsWith('Meta ')) return 'Meta';
+  if (assetName.startsWith('LinkedIn ')) return 'LinkedIn';
+  if (assetName === 'Twitter/X Ad') return 'X';
+  if (assetName.startsWith('Google DV360')) return 'Google';
+  return null;
+}
+
+function fieldSpecSource(assetName, fieldName) {
+  if (ENFORCED_SPEC_FIELDS.has(`${assetName}||${fieldName}`)) {
+    const p = platformForAsset(assetName);
+    return (p && ENFORCED_SOURCE_URLS[p]) || SPEC_SOURCE;
+  }
+  return SPEC_SOURCE; // house_default → 'quillio_default'
+}
+
 const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   name,
   group,
@@ -409,6 +438,7 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
     group_label: group_label || null,
     spec_note: fieldSpecNote(field_name),
     spec_type: fieldSpecType(name, field_name),
+    spec_source: fieldSpecSource(name, field_name),
   })),
 }));
 

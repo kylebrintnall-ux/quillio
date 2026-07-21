@@ -678,12 +678,21 @@ test('enforced fields seed a real spec_source that resolves to the right platfor
           PLATFORM_URLS[p],
           `${a.name}/${f.field_name} seed spec_source must equal migration URL for ${p}`
         );
-        // And it renders the NAMED tier line via the real specSourceName path.
+        // And it renders the NAMED tier line, with the platform name hyperlinked
+        // to the spec_source URL (Phase B).
+        const hint = fieldHint({ specType: 'enforced', specSource: f.spec_source });
         assert.strictEqual(
-          fieldHint({ specType: 'enforced', specSource: f.spec_source }),
+          hint.text,
           `Platform limit (${p}). Stay within this count.`,
           `${a.name}/${f.field_name} renders "(${p})"`
         );
+        assert.strictEqual(hint.links.length, 1, `${a.name}/${f.field_name} has one link range`);
+        assert.strictEqual(
+          hint.text.substring(hint.links[0].start, hint.links[0].end),
+          p,
+          `${a.name}/${f.field_name} link covers only the platform name`
+        );
+        assert.strictEqual(hint.links[0].url, f.spec_source, `${a.name}/${f.field_name} link points at spec_source`);
       } else {
         // Non-enforced (house_default) fields keep the sentinel — not re-anchored.
         assert.strictEqual(
@@ -790,11 +799,9 @@ test('fieldHint returns a field-level note only when the field carries a specNot
     'Only this opening runs before the app collapses the rest behind “…more.” ' +
     'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.';
   // A field with a specNote renders it verbatim (DB-driven, no longer hardcoded).
-  assert.strictEqual(
-    fieldHint({ fieldName: 'Hook (first 125 chars, before More)', specNote: note }),
-    note,
-    'a field carrying specNote renders it as the note'
-  );
+  const only = fieldHint({ fieldName: 'Hook (first 125 chars, before More)', specNote: note });
+  assert.strictEqual(only.text, note, 'a field carrying specNote renders it as the note');
+  assert.strictEqual(only.links.length, 0, 'a plain specNote has no link');
   // The Hook name alone no longer produces a note — nothing is hardwired now.
   assert.strictEqual(
     fieldHint({ fieldName: 'Hook (first 125 chars, before More)' }),
@@ -805,52 +812,57 @@ test('fieldHint returns a field-level note only when the field carries a specNot
   assert.strictEqual(fieldHint({ fieldName: 'Subhead' }), null);
 });
 
-test('fieldHint composes the spec_type tier line (Phase A: plain text, no bogus source)', () => {
+test('fieldHint returns { text, links } and hyperlinks only the platform name (Phase B)', () => {
   const { fieldHint } = require('../src/destinations/googleDocs');
 
-  // 1. enforced + quillio_default → no-source form (real names arrive at re-anchoring).
-  assert.strictEqual(
-    fieldHint({ fieldName: 'Primary Text', specType: 'enforced', specSource: 'quillio_default' }),
-    'Platform limit. Stay within this count.'
-  );
+  // 1. enforced + quillio_default → no-source form, NO link range.
+  const a1 = fieldHint({ specType: 'enforced', specSource: 'quillio_default' });
+  assert.strictEqual(a1.text, 'Platform limit. Stay within this count.');
+  assert.strictEqual(a1.links.length, 0);
 
-  // 2. recommended + quillio_default → no "by SOURCE" clause.
-  assert.strictEqual(
-    fieldHint({ fieldName: 'Body Copy', specType: 'recommended', specSource: 'quillio_default' }),
-    'Recommended. Not a hard limit — adjust for your brand and goal.'
-  );
+  // 2. recommended + quillio_default → no "by SOURCE" clause, NO link.
+  const a2 = fieldHint({ specType: 'recommended', specSource: 'quillio_default' });
+  assert.strictEqual(a2.text, 'Recommended. Not a hard limit — adjust for your brand and goal.');
+  assert.strictEqual(a2.links.length, 0);
 
-  // 3. house_default → no tier line: specNote alone if present, else null.
-  assert.strictEqual(
-    fieldHint({ fieldName: 'Caption', specType: 'house_default', specSource: 'quillio_default' }),
-    null
-  );
-  assert.strictEqual(
-    fieldHint({ fieldName: 'Caption', specType: 'house_default', specSource: 'quillio_default', specNote: 'Keep it short.' }),
-    'Keep it short.'
-  );
+  // 3. house_default → no tier line (null), or specNote-only (no link) when present.
+  assert.strictEqual(fieldHint({ specType: 'house_default', specSource: 'quillio_default' }), null);
+  const a3 = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specNote: 'Keep it short.' });
+  assert.strictEqual(a3.text, 'Keep it short.');
+  assert.strictEqual(a3.links.length, 0);
 
-  // 4. specNote + a non-house tier → both, specNote FIRST, SPACE-joined into ONE
-  //    paragraph (the parseDoc-safe form — a newline would be misread as copy).
-  const combined = fieldHint({
-    fieldName: 'Hook', specType: 'enforced', specSource: 'quillio_default', specNote: 'Keep it short.',
-  });
-  assert.strictEqual(combined, 'Keep it short. Platform limit. Stay within this count.');
-  assert.ok(combined && !combined.includes('\n'), 'combined guidance must be a single paragraph (no newline)');
+  // 4. enforced + a REAL source → named form, with ONLY the name hyperlinked.
+  const url = 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs';
+  const a4 = fieldHint({ specType: 'enforced', specSource: url });
+  assert.strictEqual(a4.text, 'Platform limit (LinkedIn). Stay within this count.');
+  assert.strictEqual(a4.links.length, 1);
+  assert.strictEqual(
+    a4.text.substring(a4.links[0].start, a4.links[0].end),
+    'LinkedIn',
+    'link covers only "LinkedIn", not the surrounding parens'
+  );
+  assert.strictEqual(a4.links[0].url, url);
 
-  // 5. GUARANTEE: no combination ever emits the literal "quillio_default".
+  // 5. STACKING: specNote FIRST, then enforced-with-source. Space-joined ONE
+  //    paragraph; the link range accounts for the specNote prefix + joining space.
+  const a5 = fieldHint({ specType: 'enforced', specSource: url, specNote: 'Keep it short.' });
+  assert.strictEqual(a5.text, 'Keep it short. Platform limit (LinkedIn). Stay within this count.');
+  assert.ok(!a5.text.includes('\n'), 'stacked guidance stays one paragraph (no newline)');
+  assert.strictEqual(a5.links.length, 1);
+  assert.strictEqual(
+    a5.text.substring(a5.links[0].start, a5.links[0].end),
+    'LinkedIn',
+    'link lands on the name despite the specNote prefix'
+  );
+  assert.strictEqual(a5.links[0].url, url);
+
+  // 6. GUARANTEE: no combination ever emits the literal "quillio_default".
   for (const specType of ['enforced', 'recommended', 'house_default', null]) {
     for (const specNote of [null, 'Some note.']) {
-      const out = fieldHint({ fieldName: 'F', specType, specSource: 'quillio_default', specNote });
-      if (out) assert.ok(!out.includes('quillio_default'), `spec_type=${specType} note=${!!specNote} leaked quillio_default`);
+      const out = fieldHint({ specType, specSource: 'quillio_default', specNote });
+      if (out) assert.ok(!out.text.includes('quillio_default'), `spec_type=${specType} note=${!!specNote} leaked quillio_default`);
     }
   }
-
-  // 6. enforced + a REAL source → named form. Locks in post-re-anchoring behavior.
-  assert.strictEqual(
-    fieldHint({ fieldName: 'Intro Text', specType: 'enforced', specSource: 'business.linkedin.com' }),
-    'Platform limit (LinkedIn). Stay within this count.'
-  );
 });
 
 test('parseDoc treats a Hook field explainer as notes, not copy (insertion below it)', () => {

@@ -145,41 +145,70 @@ function specSourceName(specSource) {
   return null; // unrecognized → no source name (never print the raw value)
 }
 
-// Compose the spec_type tier sentence, or null for house_default / unset. The
-// "(name)" / "by name" clause only appears once a real spec_source resolves to a
-// platform name (see specSourceName); until then enforced/recommended render
-// without naming a source — so nothing bogus (e.g. 'quillio_default') is shown.
+// Compose the spec_type tier sentence as { text, nameStart, nameLen } — or null
+// for house_default / unset. nameStart/nameLen locate the platform-name sub-range
+// WITHIN text (so Phase B can hyperlink just the name); nameStart is -1 when there
+// is no recognized source (the no-source form names nothing). The "(name)" /
+// "by name" clause only appears once a real spec_source resolves to a platform
+// name (see specSourceName); until then enforced/recommended render without naming
+// a source — so nothing bogus (e.g. 'quillio_default') is shown.
 function specTypeLine(specType, sourceName) {
   if (specType === 'enforced') {
-    return sourceName
-      ? `Platform limit (${sourceName}). Stay within this count.`
-      : 'Platform limit. Stay within this count.';
+    if (sourceName) {
+      const prefix = 'Platform limit (';
+      return {
+        text: `${prefix}${sourceName}). Stay within this count.`,
+        nameStart: prefix.length,
+        nameLen: sourceName.length,
+      };
+    }
+    return { text: 'Platform limit. Stay within this count.', nameStart: -1, nameLen: 0 };
   }
   if (specType === 'recommended') {
-    return sourceName
-      ? `Recommended by ${sourceName}. Not a hard limit — adjust for your brand and goal.`
-      : 'Recommended. Not a hard limit — adjust for your brand and goal.';
+    if (sourceName) {
+      const prefix = 'Recommended by ';
+      return {
+        text: `${prefix}${sourceName}. Not a hard limit — adjust for your brand and goal.`,
+        nameStart: prefix.length,
+        nameLen: sourceName.length,
+      };
+    }
+    return {
+      text: 'Recommended. Not a hard limit — adjust for your brand and goal.',
+      nameStart: -1,
+      nameLen: 0,
+    };
   }
   return null; // house_default or null → no tier line
 }
 
-// The italic grey guidance line under a field label. Composes two optional parts,
-// in order: (1) the hand-written spec_note (verbatim), then (2) the spec_type
-// tier sentence. Both, one, or neither may be present — none → null (no line,
-// unchanged behavior). Rendered via the existing single-style b.fieldNote() path.
+// The italic grey guidance line under a field label, returned as { text, links }
+// (or null when there's no line). `text` is the composed line — the hand-written
+// spec_note (verbatim) then the spec_type tier sentence, space-joined. `links` is
+// a list of { start, end, url } sub-ranges to hyperlink within `text` — currently
+// just the platform name inside the tier line, pointing at the field's
+// spec_source URL. `links` is empty when there's no recognized source (no-source
+// form) or no tier line.
 //
-// Joined with a SPACE, not a newline, on purpose: b.fieldNote() emits ONE
-// paragraph, and parseDoc treats any SECOND paragraph after a label as drafted
-// copy (it would be deleted on the first "Generate Draft"). A space keeps the
-// stacked parts in a single wrapping paragraph, leaving the draft flow untouched.
-// (With today's data the stack never triggers — spec_note fields are all
-// house_default and enforced fields carry no spec_note — but the ordering holds
-// for when both coexist.)
+// The name offset is tracked structurally (specTypeLine reports nameStart, and we
+// add the spec_note prefix + joining-space here) — never re-searched from the
+// flat text. ONE paragraph, space-joined (not newline): b.fieldNote() emits a
+// single paragraph and parseDoc treats any SECOND paragraph after a label as
+// drafted copy (deleted on the first "Generate Draft"). The link is a sub-range
+// within that one paragraph, so the notes-branch still consumes it whole.
 function fieldHint(field) {
   const note = field && field.specNote != null ? String(field.specNote).trim() : '';
   const tier = field ? specTypeLine(field.specType, specSourceName(field.specSource)) : null;
-  const parts = [note, tier].filter(Boolean);
-  return parts.length ? parts.join(' ') : null;
+  const parts = [note, tier && tier.text].filter(Boolean);
+  if (!parts.length) return null;
+  const text = parts.join(' ');
+  const links = [];
+  if (tier && tier.nameStart >= 0) {
+    const base = note ? note.length + 1 : 0; // spec_note prefix + the joining space
+    const start = base + tier.nameStart;
+    links.push({ start, end: start + tier.nameLen, url: String(field.specSource) });
+  }
+  return { text, links };
 }
 
 function fieldLabel(field) {
@@ -313,7 +342,7 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
       const indent = group ? GROUP_INDENT_PT : 0;
       b.boldLabel(fieldLabel(field), { indent });
       const hint = fieldHint(field);
-      if (hint) b.fieldNote(hint, { indent });
+      if (hint) b.fieldNote(hint.text, { indent, links: hint.links });
       b.blankLine({ indent });
     }
   }

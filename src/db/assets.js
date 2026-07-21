@@ -74,7 +74,7 @@ async function seedTenantAssets(tenantId) {
             field.char_max,
             field.field_type,
             field.sort_order,
-            asset.spec_source,
+            field.spec_source || asset.spec_source,
             asset.spec_version,
             field.group_label || null,
             field.spec_note || null,

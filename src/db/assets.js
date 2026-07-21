@@ -65,8 +65,8 @@ async function seedTenantAssets(tenantId) {
       for (const field of asset.fields) {
         await client.query(
           `INSERT INTO copy_fields
-             (asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             (asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note, spec_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             assetTypeId,
             field.field_name,
@@ -78,6 +78,7 @@ async function seedTenantAssets(tenantId) {
             asset.spec_version,
             field.group_label || null,
             field.spec_note || null,
+            field.spec_type || null,
           ]
         );
       }
@@ -98,7 +99,8 @@ async function seedTenantAssets(tenantId) {
 // tenant has no active assets (the feature-flag "miss" that keeps the Sheet
 // fallback in play). Shape per type:
 //   { id, name, group, sort_order, fields: [{ field_name, char_min, char_max,
-//     field_type, sort_order, spec_source, spec_version }, …] }
+//     field_type, sort_order, spec_source, spec_version, group_label, spec_note,
+//     spec_type }, …] }
 async function getTenantAssets(tenantId) {
   const pool = getPool();
   if (!pool || !tenantId) return null;
@@ -114,7 +116,7 @@ async function getTenantAssets(tenantId) {
 
   const typeIds = typesRes.rows.map((t) => t.id);
   const fieldsRes = await pool.query(
-    `SELECT asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note
+    `SELECT asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note, spec_type
        FROM copy_fields
       WHERE asset_type_id = ANY($1::bigint[])
       ORDER BY sort_order, id`,
@@ -134,6 +136,7 @@ async function getTenantAssets(tenantId) {
       spec_version: row.spec_version,
       group_label: row.group_label || null,
       spec_note: row.spec_note || null,
+      spec_type: row.spec_type || null,
     });
   }
 

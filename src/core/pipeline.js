@@ -657,7 +657,9 @@ async function enrichWithReferences(parsed, refs) {
 // channel / toneNotes / funnelStage columns → those map to empty strings (the
 // same value the Sheet yields when those cells are blank). Per-field guidance
 // IS stored (copy_fields.spec_note) and is carried through as `specNote` → the
-// italic note fieldHint() renders under the field label.
+// italic note fieldHint() renders under the field label. Per-field spec metadata
+// (`spec_type`, `spec_source`) is also carried through as `specType`/`specSource`
+// — data only for now; nothing downstream renders or branches on them yet.
 // Applies the same filter semantics as getAssetSpecs: restrict to the requested
 // assets (normalized), but return all when the filter is empty or matches nothing.
 function tenantAssetsToSpecs(rows, assetFilter = []) {
@@ -673,6 +675,8 @@ function tenantAssetsToSpecs(rows, assetFilter = []) {
         charMax: parseInt(f.char_max, 10) || 0,
         groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
         specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
+        specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' (data only; nothing renders it yet)
+        specSource: f.spec_source || null, // provenance of the spec (data only; nothing renders it yet)
         notes: '', // not stored in copy_fields (Sheet-only)
         funnelStage: '', // not stored in copy_fields (Sheet-only)
       })),

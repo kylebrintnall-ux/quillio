@@ -348,12 +348,34 @@ const HOOK_SPEC_NOTE =
 // BYTE-IDENTICAL to NOTE in scripts/migrateFixLinkedInIntroText.js.
 const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150; 600 is the technical max.';
 
+// Email mobile-truncation notes. Subject Lines carry a 50–75 working range and
+// Preheaders 85–120, but mobile inboxes clip far earlier (Litmus) — these tell
+// the writer to front-load. Applied to Subject Line 1, Subject Line 2 and
+// Preheader on every email asset. BYTE-IDENTICAL to SUBJECT_NOTE / PREHEADER_NOTE
+// in scripts/migrateAddEmailSubjectPreheaderNotes.js.
+const EMAIL_SUBJECT_NOTE = 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)';
+const EMAIL_PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — keep the key part first. (Litmus)';
+
+// The 5 email assets that carry the subject/preheader notes above.
+const EMAIL_NOTE_ASSETS = new Set([
+  'Demand Gen Nurture Email',
+  'Event Invitation Email',
+  'Event Reminder Email',
+  'Event Follow-Up / Recap Email',
+  'Sales Basho Email',
+]);
+
 // Resolve a field's spec_note, keyed on (assetName, fieldName): the LinkedIn SIA
-// Intro Text explainer for that exact pair, else the visible-then-"…more" Hook
-// explainer for any Hook field (mirrors the migration's `field_name ~* '^Hook\y'`
-// match). Byte-identical to the corresponding migrations so seed and backfill agree.
+// Intro Text explainer for that exact pair; the mobile-truncation note for email
+// Subject Line 1/2 and Preheader; else the visible-then-"…more" Hook explainer
+// for any Hook field (mirrors the migration's `field_name ~* '^Hook\y'` match).
+// Byte-identical to the corresponding migrations so seed and backfill agree.
 function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'LinkedIn Single Image Ad' && fieldName === 'Intro Text') return LINKEDIN_SIA_INTRO_NOTE;
+  if (EMAIL_NOTE_ASSETS.has(assetName)) {
+    if (fieldName === 'Subject Line 1' || fieldName === 'Subject Line 2') return EMAIL_SUBJECT_NOTE;
+    if (fieldName === 'Preheader') return EMAIL_PREHEADER_NOTE;
+  }
   return /^Hook\b/i.test(String(fieldName || '')) ? HOOK_SPEC_NOTE : null;
 }
 

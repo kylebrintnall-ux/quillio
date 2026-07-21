@@ -27,7 +27,7 @@ const SPEC_VERSION = '1.0';
 
 const RAW = [
   ['LinkedIn Single Image Ad', 'Paid Social', [
-    ['Intro Text', 0, 600],
+    ['Intro Text', 0, 150],
     ['Headline', 0, 70],
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 40, 90, 'Graphic Copy'],
@@ -343,10 +343,17 @@ const HOOK_SPEC_NOTE =
   'Only this opening runs before the app collapses the rest behind “…more.” ' +
   'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.';
 
-// Resolve a field's spec_note from its name. Mirrors the migration's
-// `field_name ~* '^Hook\y'` match (case-insensitive, word boundary after "Hook")
-// so the seed and the backfill assign the note to exactly the same fields.
-function fieldSpecNote(fieldName) {
+// LinkedIn Single Image Ad → Intro Text note. char_max is the recommended 150
+// (in-feed truncation), not LinkedIn's technical 600; this note explains the gap.
+// BYTE-IDENTICAL to NOTE in scripts/migrateFixLinkedInIntroText.js.
+const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150; 600 is the technical max.';
+
+// Resolve a field's spec_note, keyed on (assetName, fieldName): the LinkedIn SIA
+// Intro Text explainer for that exact pair, else the visible-then-"…more" Hook
+// explainer for any Hook field (mirrors the migration's `field_name ~* '^Hook\y'`
+// match). Byte-identical to the corresponding migrations so seed and backfill agree.
+function fieldSpecNote(assetName, fieldName) {
+  if (assetName === 'LinkedIn Single Image Ad' && fieldName === 'Intro Text') return LINKEDIN_SIA_INTRO_NOTE;
   return /^Hook\b/i.test(String(fieldName || '')) ? HOOK_SPEC_NOTE : null;
 }
 
@@ -436,7 +443,7 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
     field_type: 'text',
     sort_order: j + 1,
     group_label: group_label || null,
-    spec_note: fieldSpecNote(field_name),
+    spec_note: fieldSpecNote(name, field_name),
     spec_type: fieldSpecType(name, field_name),
     spec_source: fieldSpecSource(name, field_name),
   })),

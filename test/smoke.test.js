@@ -706,6 +706,32 @@ test('enforced fields seed a real spec_source that resolves to the right platfor
   assert.strictEqual(enforcedSeen, 25, 'exactly 25 enforced fields carry a real spec_source');
 });
 
+test('LinkedIn Single Image Ad Intro Text seeds char_max 150 + note; Carousel Intro Text untouched', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { NOTE } = require('../scripts/migrateFixLinkedInIntroText');
+
+  const introOf = (assetName) =>
+    DEFAULT_ASSETS.find((a) => a.name === assetName).fields.find((f) => f.field_name === 'Intro Text');
+
+  // The targeted field: recommended 150 + the explainer note (byte-identical to migration).
+  const sia = introOf('LinkedIn Single Image Ad');
+  assert.strictEqual(sia.char_max, 150, 'LinkedIn SIA Intro Text char_max is 150');
+  assert.strictEqual(sia.spec_note, NOTE, 'LinkedIn SIA Intro Text spec_note equals the migration NOTE');
+  assert.strictEqual(
+    sia.spec_note,
+    'In-feed preview truncates near 150; 600 is the technical max.',
+    'spec_note is the exact expected text'
+  );
+  // spec_type / spec_source untouched by this change.
+  assert.strictEqual(sia.spec_type, 'enforced', 'spec_type unchanged (enforced)');
+  assert.ok(/linkedin/i.test(sia.spec_source), 'spec_source unchanged (LinkedIn URL)');
+
+  // The collision neighbour must NOT be touched: Carousel Intro Text stays 600 / null.
+  const carousel = introOf('LinkedIn Carousel Ad');
+  assert.strictEqual(carousel.char_max, 600, 'LinkedIn Carousel Intro Text char_max stays 600');
+  assert.strictEqual(carousel.spec_note, null, 'LinkedIn Carousel Intro Text has no note');
+});
+
 test('defaultAssets Graphic Copy group is contiguous and correctly placed', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const grouped = DEFAULT_ASSETS.filter((a) => a.fields.some((f) => f.group_label === 'Graphic Copy'));

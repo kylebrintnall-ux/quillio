@@ -334,6 +334,22 @@ const SPEC_NOTES = {
     'Responsive — the platform assembles combinations across sizes from one copy set. Every element must read on its own and in combination.',
 };
 
+// Field-level spec notes — per-field guidance rendered as an italic line under
+// the field label (see fieldHint in destinations/googleDocs.js). Only "Hook"
+// fields carry one today: the visible-then-"…more" explainer. The text is kept
+// BYTE-IDENTICAL to the backfill in scripts/migrateAddCopyFieldSpecNote.js, so
+// existing (migrated) and newly-seeded tenants render the exact same note.
+const HOOK_SPEC_NOTE =
+  'Only this opening runs before the app collapses the rest behind “…more.” ' +
+  'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.';
+
+// Resolve a field's spec_note from its name. Mirrors the migration's
+// `field_name ~* '^Hook\y'` match (case-insensitive, word boundary after "Hook")
+// so the seed and the backfill assign the note to exactly the same fields.
+function fieldSpecNote(fieldName) {
+  return /^Hook\b/i.test(String(fieldName || '')) ? HOOK_SPEC_NOTE : null;
+}
+
 const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   name,
   group,
@@ -350,6 +366,7 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
     field_type: 'text',
     sort_order: j + 1,
     group_label: group_label || null,
+    spec_note: fieldSpecNote(field_name),
   })),
 }));
 

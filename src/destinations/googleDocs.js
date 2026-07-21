@@ -129,18 +129,14 @@ function makeTitle(brief, campaignTitle, namingPattern, namingCtx) {
 const GROUP_INDENT_PT = 18;
 
 // Optional writer-facing explainer rendered as an italic line under a field
-// label. Pattern-based (not hardcoded per asset) so it applies wherever the
-// field appears. "Hook" fields carry the platform's visible-then-"…more"
-// mechanic — the char limit is the visible portion; the full post runs longer.
+// label. DB-driven: a field's `spec_note` (copy_fields.spec_note, carried
+// through pipeline.tenantAssetsToSpecs as `specNote`) is returned verbatim and
+// rendered via b.fieldNote(); a field without one gets no italic line. The
+// former hardcoded per-"Hook" explainer now lives in copy_fields.spec_note (see
+// scripts/migrateAddCopyFieldSpecNote.js) so nothing is hardwired here.
 function fieldHint(field) {
-  const name = String(field.fieldName || '');
-  if (/^Hook\b/i.test(name)) {
-    return (
-      'Only this opening runs before the app collapses the rest behind “…more.” ' +
-      'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.'
-    );
-  }
-  return null;
+  const note = field && field.specNote != null ? String(field.specNote).trim() : '';
+  return note || null;
 }
 
 function fieldLabel(field) {

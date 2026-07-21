@@ -707,12 +707,24 @@ test('parseDoc skips the Graphic Copy group heading and recovers grouped fields'
   assert.strictEqual(sub.charMax, 90);
 });
 
-test('fieldHint explains the visible-then-more mechanic for Hook fields only', () => {
+test('fieldHint returns a field-level note only when the field carries a specNote', () => {
   const { fieldHint } = require('../src/destinations/googleDocs');
-  assert.ok(fieldHint({ fieldName: 'Hook (first 125 chars, before More)' }), 'Instagram hook gets a hint');
-  assert.ok(fieldHint({ fieldName: 'Hook (first 150 chars, before See more)' }), 'LinkedIn hook gets a hint');
-  assert.match(fieldHint({ fieldName: 'Hook' }), /more/i);
-  assert.strictEqual(fieldHint({ fieldName: 'Headline' }), null);
+  const note =
+    'Only this opening runs before the app collapses the rest behind “…more.” ' +
+    'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.';
+  // A field with a specNote renders it verbatim (DB-driven, no longer hardcoded).
+  assert.strictEqual(
+    fieldHint({ fieldName: 'Hook (first 125 chars, before More)', specNote: note }),
+    note,
+    'a field carrying specNote renders it as the note'
+  );
+  // The Hook name alone no longer produces a note — nothing is hardwired now.
+  assert.strictEqual(
+    fieldHint({ fieldName: 'Hook (first 125 chars, before More)' }),
+    null,
+    'a Hook field with no specNote gets no note'
+  );
+  assert.strictEqual(fieldHint({ fieldName: 'Headline', specNote: null }), null);
   assert.strictEqual(fieldHint({ fieldName: 'Subhead' }), null);
 });
 

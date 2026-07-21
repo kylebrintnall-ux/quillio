@@ -128,15 +128,58 @@ function makeTitle(brief, campaignTitle, namingPattern, namingCtx) {
 // Left indent (points) applied to fields nested under a group sub-heading.
 const GROUP_INDENT_PT = 18;
 
-// Optional writer-facing explainer rendered as an italic line under a field
-// label. DB-driven: a field's `spec_note` (copy_fields.spec_note, carried
-// through pipeline.tenantAssetsToSpecs as `specNote`) is returned verbatim and
-// rendered via b.fieldNote(); a field without one gets no italic line. The
-// former hardcoded per-"Hook" explainer now lives in copy_fields.spec_note (see
-// scripts/migrateAddCopyFieldSpecNote.js) so nothing is hardwired here.
+// Map a field's spec_source to a human-readable platform name for the tier line,
+// or null when there's no real source yet. Phase A: production spec_source is
+// uniformly 'quillio_default' (real per-field values arrive in a later
+// re-anchoring pass), so that value — and anything unrecognized — returns null.
+// The raw spec_source string is NEVER surfaced (we must never print
+// 'quillio_default' or a bogus source name).
+function specSourceName(specSource) {
+  const s = String(specSource || '').toLowerCase();
+  if (!s || s === 'quillio_default') return null;
+  if (s.includes('linkedin')) return 'LinkedIn';
+  if (s.includes('meta') || s.includes('facebook') || s.includes('fb.com')) return 'Meta';
+  if (s.includes('twitter') || s.includes('x.com')) return 'X';
+  if (s.includes('google') || s.includes('dv360') || s.includes('doubleclick')) return 'Google';
+  if (s.includes('instagram')) return 'Instagram';
+  return null; // unrecognized → no source name (never print the raw value)
+}
+
+// Compose the spec_type tier sentence, or null for house_default / unset. The
+// "(name)" / "by name" clause only appears once a real spec_source resolves to a
+// platform name (see specSourceName); until then enforced/recommended render
+// without naming a source — so nothing bogus (e.g. 'quillio_default') is shown.
+function specTypeLine(specType, sourceName) {
+  if (specType === 'enforced') {
+    return sourceName
+      ? `Platform limit (${sourceName}). Stay within this count.`
+      : 'Platform limit. Stay within this count.';
+  }
+  if (specType === 'recommended') {
+    return sourceName
+      ? `Recommended by ${sourceName}. Not a hard limit — adjust for your brand and goal.`
+      : 'Recommended. Not a hard limit — adjust for your brand and goal.';
+  }
+  return null; // house_default or null → no tier line
+}
+
+// The italic grey guidance line under a field label. Composes two optional parts,
+// in order: (1) the hand-written spec_note (verbatim), then (2) the spec_type
+// tier sentence. Both, one, or neither may be present — none → null (no line,
+// unchanged behavior). Rendered via the existing single-style b.fieldNote() path.
+//
+// Joined with a SPACE, not a newline, on purpose: b.fieldNote() emits ONE
+// paragraph, and parseDoc treats any SECOND paragraph after a label as drafted
+// copy (it would be deleted on the first "Generate Draft"). A space keeps the
+// stacked parts in a single wrapping paragraph, leaving the draft flow untouched.
+// (With today's data the stack never triggers — spec_note fields are all
+// house_default and enforced fields carry no spec_note — but the ordering holds
+// for when both coexist.)
 function fieldHint(field) {
   const note = field && field.specNote != null ? String(field.specNote).trim() : '';
-  return note || null;
+  const tier = field ? specTypeLine(field.specType, specSourceName(field.specSource)) : null;
+  const parts = [note, tier].filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
 }
 
 function fieldLabel(field) {

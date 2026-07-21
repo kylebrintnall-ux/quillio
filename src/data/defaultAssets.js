@@ -354,9 +354,11 @@ function fieldSpecNote(fieldName) {
 // (advisory), or 'house_default' (Quillio convention). Enforcement is PER ASSET
 // — the same field name can be a hard cap in one asset and only a house default
 // in another — so this is keyed on (assetName, fieldName). This set is kept
-// BYTE-IDENTICAL to the ENFORCED pairs in scripts/migrateAddCopyFieldSpecType.js
-// so newly-seeded tenants get the exact same tiers as the backfill. Everything
-// not listed here is 'house_default'. (No 'recommended' rows in the seed today.)
+// BYTE-IDENTICAL to the union of the enforced pairs in the migrations
+// (scripts/migrateAddCopyFieldSpecType.js ENFORCED, 23, plus
+// scripts/migrateAddCopyFieldSpecTypeFixes.js PROMOTE, 2 → 25 total) so
+// newly-seeded tenants get the exact same tiers as the backfilled ones.
+// Everything not listed here is 'house_default'. (No 'recommended' rows today.)
 const ENFORCED_SPEC_FIELDS = new Set([
   'Meta Single Image Ad||Primary Text',
   'Meta Single Image Ad||Headline',
@@ -370,6 +372,7 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'Meta Carousel Ad||Card Description',
   'LinkedIn Single Image Ad||Intro Text',
   'LinkedIn Single Image Ad||Headline',
+  'LinkedIn Single Image Ad||LAN Description',
   'LinkedIn Carousel Ad||Intro Text',
   'LinkedIn Carousel Ad||Card 1 Headline',
   'LinkedIn Carousel Ad||Card 2 Headline',
@@ -377,6 +380,7 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'LinkedIn Carousel Ad||Card 4 Headline',
   'LinkedIn Carousel Ad||Card 5 Headline',
   'Twitter/X Ad||Ad Copy',
+  'Twitter/X Ad||Headline',
   'Google DV360 / Responsive Display||Short Headline',
   'Google DV360 / Responsive Display||Long Headline',
   'Google DV360 / Responsive Display||Description',

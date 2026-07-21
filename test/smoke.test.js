@@ -620,9 +620,10 @@ test('defaultAssets is the 30-type v3 library with valid shape', () => {
   );
 });
 
-test('defaultAssets spec_type tiers match the migration ENFORCED set byte-for-byte', () => {
+test('defaultAssets spec_type tiers match the migrations enforced set byte-for-byte', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { ENFORCED } = require('../scripts/migrateAddCopyFieldSpecType');
+  const { PROMOTE } = require('../scripts/migrateAddCopyFieldSpecTypeFixes');
   const VALID = new Set(['enforced', 'recommended', 'house_default']);
 
   // Every field carries a valid tier.
@@ -632,22 +633,23 @@ test('defaultAssets spec_type tiers match the migration ENFORCED set byte-for-by
     }
   }
 
-  // The seed's 'enforced' set === the migration's ENFORCED pairs, exactly — so
-  // existing (backfilled) and new (seeded) tenants get identical tiers.
+  // The seed's 'enforced' set === the UNION of every migration's enforced pairs
+  // (initial ENFORCED + the corrective PROMOTE), exactly — so existing
+  // (backfilled) and new (seeded) tenants get identical tiers.
   const seedEnforced = new Set();
   for (const a of DEFAULT_ASSETS) {
     for (const f of a.fields) {
       if (f.spec_type === 'enforced') seedEnforced.add(`${a.name}||${f.field_name}`);
     }
   }
-  const migEnforced = new Set(ENFORCED.map(([asset, field]) => `${asset}||${field}`));
+  const migEnforced = new Set([...ENFORCED, ...PROMOTE].map(([asset, field]) => `${asset}||${field}`));
   assert.deepStrictEqual(
     [...seedEnforced].sort(),
     [...migEnforced].sort(),
-    'seed enforced pairs must equal migration ENFORCED pairs'
+    'seed enforced pairs must equal the union of migration enforced pairs'
   );
   // Guard the pair count so an accidental add/drop on either side is caught.
-  assert.strictEqual(migEnforced.size, 23, 'expected 23 enforced pairs');
+  assert.strictEqual(migEnforced.size, 25, 'expected 25 enforced pairs (23 initial + 2 corrective)');
 });
 
 test('defaultAssets Graphic Copy group is contiguous and correctly placed', () => {

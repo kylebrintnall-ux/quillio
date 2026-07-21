@@ -350,6 +350,43 @@ function fieldSpecNote(fieldName) {
   return /^Hook\b/i.test(String(fieldName || '')) ? HOOK_SPEC_NOTE : null;
 }
 
+// Per-field spec_type tier: 'enforced' (platform hard cap), 'recommended'
+// (advisory), or 'house_default' (Quillio convention). Enforcement is PER ASSET
+// — the same field name can be a hard cap in one asset and only a house default
+// in another — so this is keyed on (assetName, fieldName). This set is kept
+// BYTE-IDENTICAL to the ENFORCED pairs in scripts/migrateAddCopyFieldSpecType.js
+// so newly-seeded tenants get the exact same tiers as the backfill. Everything
+// not listed here is 'house_default'. (No 'recommended' rows in the seed today.)
+const ENFORCED_SPEC_FIELDS = new Set([
+  'Meta Single Image Ad||Primary Text',
+  'Meta Single Image Ad||Headline',
+  'Meta Single Image Ad||Description',
+  'Meta Carousel Ad||Primary Text',
+  'Meta Carousel Ad||Card 1 Headline',
+  'Meta Carousel Ad||Card 2 Headline',
+  'Meta Carousel Ad||Card 3 Headline',
+  'Meta Carousel Ad||Card 4 Headline',
+  'Meta Carousel Ad||Card 5 Headline',
+  'Meta Carousel Ad||Card Description',
+  'LinkedIn Single Image Ad||Intro Text',
+  'LinkedIn Single Image Ad||Headline',
+  'LinkedIn Carousel Ad||Intro Text',
+  'LinkedIn Carousel Ad||Card 1 Headline',
+  'LinkedIn Carousel Ad||Card 2 Headline',
+  'LinkedIn Carousel Ad||Card 3 Headline',
+  'LinkedIn Carousel Ad||Card 4 Headline',
+  'LinkedIn Carousel Ad||Card 5 Headline',
+  'Twitter/X Ad||Ad Copy',
+  'Google DV360 / Responsive Display||Short Headline',
+  'Google DV360 / Responsive Display||Long Headline',
+  'Google DV360 / Responsive Display||Description',
+  'Google DV360 / Responsive Display||Business Name',
+]);
+
+function fieldSpecType(assetName, fieldName) {
+  return ENFORCED_SPEC_FIELDS.has(`${assetName}||${fieldName}`) ? 'enforced' : 'house_default';
+}
+
 const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   name,
   group,
@@ -367,6 +404,7 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
     sort_order: j + 1,
     group_label: group_label || null,
     spec_note: fieldSpecNote(field_name),
+    spec_type: fieldSpecType(name, field_name),
   })),
 }));
 

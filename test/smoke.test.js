@@ -732,6 +732,82 @@ test('LinkedIn Single Image Ad Intro Text seeds char_max 150 + note; Carousel In
   assert.strictEqual(carousel.spec_note, null, 'LinkedIn Carousel Intro Text has no note');
 });
 
+test('email Subject Line + Preheader seed mobile-truncation notes; reused names on non-email assets untouched', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { SUBJECT_NOTE, PREHEADER_NOTE, EMAIL_ASSETS, FIELD_NOTES } = require('../scripts/migrateAddEmailSubjectPreheaderNotes');
+
+  const fieldOf = (assetName, fieldName) => {
+    const a = DEFAULT_ASSETS.find((x) => x.name === assetName);
+    assert.ok(a, `asset "${assetName}" exists`);
+    const f = a.fields.find((x) => x.field_name === fieldName);
+    assert.ok(f, `field "${assetName}/${fieldName}" exists`);
+    return f;
+  };
+
+  // Note text is byte-identical to the exact strings the user specified.
+  assert.strictEqual(SUBJECT_NOTE, 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)');
+  assert.strictEqual(PREHEADER_NOTE, 'Mobile shows ~35–40 characters of preheader — keep the key part first. (Litmus)');
+
+  // All 15 (asset, field) pairs the migration targets seed the matching note —
+  // and nothing numeric moved (Subject 50–75, Preheader 85–120), tier untouched.
+  let count = 0;
+  for (const assetName of EMAIL_ASSETS) {
+    for (const [fieldName, note] of FIELD_NOTES) {
+      const f = fieldOf(assetName, fieldName);
+      assert.strictEqual(f.spec_note, note, `${assetName}/${fieldName} seeds the migration note byte-for-byte`);
+      if (fieldName === 'Preheader') {
+        assert.strictEqual(f.char_min, 85, `${assetName}/Preheader char_min stays 85`);
+        assert.strictEqual(f.char_max, 120, `${assetName}/Preheader char_max stays 120`);
+      } else {
+        assert.strictEqual(f.char_min, 50, `${assetName}/${fieldName} char_min stays 50`);
+        assert.strictEqual(f.char_max, 75, `${assetName}/${fieldName} char_max stays 75`);
+      }
+      assert.strictEqual(f.spec_type, 'house_default', `${assetName}/${fieldName} spec_type stays house_default`);
+      assert.strictEqual(f.spec_source, 'quillio_default', `${assetName}/${fieldName} spec_source stays quillio_default`);
+      count++;
+    }
+  }
+  assert.strictEqual(count, 15, 'exactly 15 email field defs (3 × 5) carry the notes');
+
+  // Reused field names on NON-email assets must stay noteless — per-pair match,
+  // never a global field_name sweep. "Body Copy" lives on Event Reminder (email)
+  // but ALSO on Display Banner / Direct Mail Insert (non-email); "Headline" is
+  // everywhere. None of these should have picked up an email note.
+  assert.strictEqual(
+    fieldOf('Display Banner — Standard', 'Body Copy').spec_note, null,
+    'non-email "Body Copy" (Display Banner) is untouched'
+  );
+  assert.strictEqual(
+    fieldOf('Direct Mail — Insert', 'Body Copy').spec_note, null,
+    'non-email "Body Copy" (Direct Mail Insert) is untouched'
+  );
+  assert.strictEqual(
+    fieldOf('Direct Mail — Insert', 'Headline').spec_note, null,
+    'non-email "Headline" (Direct Mail Insert) is untouched'
+  );
+
+  // Existing notes are undisturbed: Hook fields keep the "…more" explainer and
+  // LinkedIn SIA Intro Text keeps its own note (neither is an email field).
+  assert.ok(
+    /collapses the rest behind/.test(
+      fieldOf('Organic Social — Instagram', 'Hook (first 125 chars, before More)').spec_note || ''
+    ),
+    'Instagram Hook note is preserved'
+  );
+  assert.strictEqual(
+    fieldOf('LinkedIn Single Image Ad', 'Intro Text').spec_note,
+    'In-feed preview truncates near 150; 600 is the technical max.',
+    'LinkedIn SIA Intro Text note is preserved'
+  );
+
+  // And a non-Subject/Preheader email field (e.g. a CTA) did NOT get a note —
+  // this pass is Subject Lines + Preheader ONLY.
+  assert.strictEqual(
+    fieldOf('Demand Gen Nurture Email', 'CTA Text (Offer 1)').spec_note, null,
+    'other email fields (CTA) are not touched this pass'
+  );
+});
+
 test('defaultAssets Graphic Copy group is contiguous and correctly placed', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const grouped = DEFAULT_ASSETS.filter((a) => a.fields.some((f) => f.group_label === 'Graphic Copy'));
@@ -889,6 +965,50 @@ test('fieldHint returns { text, links } and hyperlinks only the platform name (P
       if (out) assert.ok(!out.text.includes('quillio_default'), `spec_type=${specType} note=${!!specNote} leaked quillio_default`);
     }
   }
+});
+
+test('fieldHint hyperlinks a note-embedded "(Litmus)" citation to the right page (render-only)', () => {
+  const { fieldHint } = require('../src/destinations/googleDocs');
+
+  const SUBJECT_NOTE = 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)';
+  const PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — keep the key part first. (Litmus)';
+  const SUBJECT_URL = 'https://www.litmus.com/blog/how-to-write-the-perfect-subject-line-infographic';
+  const PREHEADER_URL = 'https://www.litmus.com/blog/the-ultimate-guide-to-preview-text-support';
+
+  // These are house_default fields (no tier line) → the ONLY link is the Litmus
+  // citation, and it lands on exactly the word "Litmus" (not the parens).
+  const subj = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specNote: SUBJECT_NOTE });
+  assert.strictEqual(subj.text, SUBJECT_NOTE, 'subject note text is verbatim');
+  assert.strictEqual(subj.links.length, 1, 'exactly one link (the citation)');
+  assert.strictEqual(subj.text.substring(subj.links[0].start, subj.links[0].end), 'Litmus', 'links only "Litmus"');
+  assert.strictEqual(subj.links[0].url, SUBJECT_URL, 'subject note → subject-line Litmus page');
+
+  const pre = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specNote: PREHEADER_NOTE });
+  assert.strictEqual(pre.links.length, 1, 'exactly one link');
+  assert.strictEqual(pre.text.substring(pre.links[0].start, pre.links[0].end), 'Litmus', 'links only "Litmus"');
+  assert.strictEqual(pre.links[0].url, PREHEADER_URL, 'preheader note → preheader Litmus page');
+  // Disambiguation: the two notes resolve to DIFFERENT pages.
+  assert.notStrictEqual(subj.links[0].url, pre.links[0].url, 'subject vs preheader link to different pages');
+
+  // A house_default note WITHOUT a known citation (e.g. the Hook explainer) gets
+  // NO link — keyed on the match list, not any parenthesized word.
+  const hookNote =
+    'Only this opening runs before the app collapses the rest behind “…more.” ' +
+    'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.';
+  const hook = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specNote: hookNote });
+  assert.strictEqual(hook.links.length, 0, 'a note with no known citation produces no link');
+
+  // A stray parenthesized word that is NOT in the match list is never linked.
+  const stray = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specNote: 'Keep it tight. (TBD)' });
+  assert.strictEqual(stray.links.length, 0, 'unknown "(TBD)" is not linked');
+
+  // The enforced tier-link path is UNCHANGED: platform name still links to spec_source.
+  const url = 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs';
+  const enf = fieldHint({ specType: 'enforced', specSource: url });
+  assert.strictEqual(enf.text, 'Platform limit (LinkedIn). Stay within this count.');
+  assert.strictEqual(enf.links.length, 1, 'enforced field still has its one tier link');
+  assert.strictEqual(enf.text.substring(enf.links[0].start, enf.links[0].end), 'LinkedIn', 'tier link covers the platform name');
+  assert.strictEqual(enf.links[0].url, url, 'tier link still points at spec_source');
 });
 
 test('parseDoc treats a Hook field explainer as notes, not copy (insertion below it)', () => {

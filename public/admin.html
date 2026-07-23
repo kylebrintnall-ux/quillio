@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quillio — LiveSpecs Admin</title>
+  <style>
+    :root { --navy:#1C1F3B; --sky:#4DD9D9; --cream:#F5F0E8; --warn:#E8A33D; --danger:#E86A6A; --ok:#5FB98E; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--navy); color:var(--cream);
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+      padding:24px; line-height:1.45; }
+    h1 { font-size:22px; margin:0 0 4px; }
+    h2 { font-size:15px; text-transform:uppercase; letter-spacing:.08em; opacity:.7; margin:28px 0 10px; }
+    .sub { opacity:.65; font-size:13px; margin:0 0 20px; }
+    .bar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+    button { font:inherit; font-weight:600; border-radius:8px; border:2px solid var(--sky);
+      padding:8px 14px; cursor:pointer; background:transparent; color:var(--sky); }
+    button.primary { background:var(--sky); color:var(--navy); }
+    button.danger { border-color:var(--danger); color:var(--danger); }
+    button.warn { border-color:var(--warn); color:var(--warn); }
+    button:disabled { opacity:.4; cursor:not-allowed; }
+    .card { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12);
+      border-radius:12px; padding:16px; margin-bottom:12px; }
+    .card.test { border-style:dashed; opacity:.9; }
+    .row { display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap; }
+    .title { font-weight:700; font-size:16px; }
+    .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; letter-spacing:.05em; }
+    .badge.test { background:var(--warn); color:var(--navy); }
+    .badge.real { background:var(--sky); color:var(--navy); }
+    .meta { font-size:12.5px; opacity:.7; word-break:break-all; margin:6px 0; }
+    .hash { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+    .actions { display:flex; gap:8px; margin-top:10px; }
+    .empty { opacity:.55; font-style:italic; }
+    table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+    th,td { text-align:left; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.1); vertical-align:top; }
+    th { opacity:.6; font-weight:600; }
+    input[type=text],input[type=number] { font:inherit; background:rgba(0,0,0,.25); color:var(--cream);
+      border:1px solid rgba(255,255,255,.2); border-radius:6px; padding:5px 8px; width:100%; }
+    input:disabled { opacity:.35; }
+    .diff-old { color:var(--danger); }
+    .diff-new { color:var(--ok); font-weight:700; }
+    #overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; padding:24px; overflow:auto; }
+    #panel { max-width:760px; margin:0 auto; background:var(--navy); border:1px solid rgba(255,255,255,.2);
+      border-radius:14px; padding:22px; }
+    .note { font-size:12.5px; opacity:.7; }
+    .msg { padding:10px 12px; border-radius:8px; margin:10px 0; font-size:13.5px; }
+    .msg.err { background:rgba(232,106,106,.15); border:1px solid var(--danger); }
+    .msg.ok { background:rgba(95,185,142,.15); border:1px solid var(--ok); }
+  </style>
+</head>
+<body>
+  <h1>LiveSpecs — Review Queue</h1>
+  <p class="sub">Pending spec-change flags. Approve writes production spec values (with a diff you confirm first); dismiss clears a false positive. Test flags can only be dismissed.</p>
+  <div class="bar">
+    <button id="runBtn" class="primary">Run detection</button>
+    <button id="refreshBtn">Refresh</button>
+    <span id="runMsg" class="note"></span>
+  </div>
+
+  <h2>Flags</h2>
+  <div id="realList"></div>
+  <h2>Test flags</h2>
+  <div id="testList"></div>
+
+  <div id="overlay"><div id="panel"></div></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const overlay = $('overlay'), panel = $('panel');
+
+// Always render dynamic values as text (never innerHTML) to avoid injection.
+function el(tag, props={}, kids=[]) {
+  const n = document.createElement(tag);
+  for (const k in props) {
+    if (k === 'class') n.className = props[k];
+    else if (k === 'text') n.textContent = props[k];
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), props[k]);
+    else n.setAttribute(k, props[k]);
+  }
+  for (const c of [].concat(kids)) if (c) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  return n;
+}
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const data = await res.json().catch(() => ({ success:false, error:'bad response' }));
+  if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+function short(h){ return h ? String(h).slice(0,10) : '—'; }
+function closeOverlay(){ overlay.style.display='none'; panel.innerHTML=''; }
+
+async function loadQueue() {
+  $('realList').innerHTML = ''; $('testList').innerHTML = '';
+  let rows;
+  try { rows = (await api('/admin/api/review-queue')).reviewQueue; }
+  catch (e) { $('realList').appendChild(el('p',{class:'msg err',text:'Failed to load: '+e.message})); return; }
+  const pending = rows.filter(r => r.status === 'pending');
+  const real = pending.filter(r => !r.is_test);
+  const test = pending.filter(r => r.is_test);
+  renderList($('realList'), real, false);
+  renderList($('testList'), test, true);
+}
+function renderList(container, list, isTest) {
+  if (!list.length) { container.appendChild(el('p',{class:'empty',text:'None pending.'})); return; }
+  for (const f of list) container.appendChild(flagCard(f, isTest));
+}
+function flagCard(f, isTest) {
+  const card = el('div',{class:'card'+(isTest?' test':'')});
+  card.appendChild(el('div',{class:'row'},[
+    el('span',{class:'title',text:f.source_url}),
+    el('span',{class:'badge '+(isTest?'test':'real'),text:isTest?'TEST':'REAL'}),
+  ]));
+  card.appendChild(el('div',{class:'meta'},['flag #'+f.id+' · detected '+new Date(f.detected_at).toLocaleString()]));
+  card.appendChild(el('div',{class:'meta hash'},['old '+short(f.old_hash)+'  →  new '+short(f.new_hash)]));
+  const actions = el('div',{class:'actions'});
+  if (!isTest) actions.appendChild(el('button',{class:'primary',onclick:()=>openApprove(f.id)},['Approve…']));
+  actions.appendChild(el('button',{class:'warn',onclick:()=>doDismiss(f.id)},['Dismiss']));
+  card.appendChild(actions);
+  return card;
+}
+async function doDismiss(flagId) {
+  if (!confirm('Dismiss flag #'+flagId+'? (marks it dismissed; no spec change)')) return;
+  try { await api('/admin/api/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId})}); loadQueue(); }
+  catch (e) { alert('Dismiss failed: '+e.message); }
+}
+
+// --- Approve flow: form → preview → confirm ---
+async function openApprove(flagId) {
+  let flag;
+  try { flag = (await api('/admin/api/flag/'+flagId)).flag; }
+  catch (e) { alert('Load failed: '+e.message); return; }
+  panel.innerHTML='';
+  panel.appendChild(el('h1',{text:'Approve flag #'+flag.id}));
+  panel.appendChild(el('p',{class:'note',text:flag.source_url}));
+  panel.appendChild(el('p',{class:'note',text:'Check only the field(s) this change actually applies to, and type the new value. Unchecked fields are never touched.'}));
+
+  const table = el('table');
+  table.appendChild(el('tr',{},[
+    el('th',{text:'✓'}), el('th',{text:'Asset / Field'}), el('th',{text:'Current char_max'}),
+    el('th',{text:'New char_max'}), el('th',{text:'New spec_note (optional)'}),
+  ]));
+  const inputs = [];
+  for (const fld of flag.fields) {
+    const cb = el('input',{type:'checkbox'});
+    const cmax = el('input',{type:'number',min:'1',placeholder:fld.current_char_max||''});
+    const note = el('input',{type:'text',placeholder:'leave blank to keep'});
+    cmax.disabled = true; note.disabled = true;
+    cb.addEventListener('change',()=>{ cmax.disabled=!cb.checked; note.disabled=!cb.checked; });
+    inputs.push({fld, cb, cmax, note});
+    table.appendChild(el('tr',{},[
+      el('td',{},[cb]),
+      el('td',{},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'})]),
+      el('td',{text:String(fld.current_char_max||'—')}),
+      el('td',{},[cmax]), el('td',{},[note]),
+    ]));
+  }
+  panel.appendChild(table);
+  const msg = el('div',{});
+  panel.appendChild(msg);
+  const bar = el('div',{class:'actions'},[
+    el('button',{class:'primary',onclick:()=>preview(flag, inputs, msg)},['Preview changes']),
+    el('button',{onclick:closeOverlay},['Cancel']),
+  ]);
+  panel.appendChild(bar);
+  overlay.style.display='block';
+}
+function collectEdits(inputs, msg) {
+  const edits = [];
+  for (const r of inputs) {
+    if (!r.cb.checked) continue;
+    const e = { asset:r.fld.asset, field:r.fld.field };
+    if (r.cmax.value !== '') e.char_max = r.cmax.value;
+    if (r.note.value.trim() !== '') e.spec_note = r.note.value;
+    edits.push(e);
+  }
+  return edits;
+}
+async function preview(flag, inputs, msg) {
+  msg.innerHTML='';
+  const edits = collectEdits(inputs, msg);
+  if (!edits.length) { msg.appendChild(el('div',{class:'msg err',text:'Check at least one field and enter a new value.'})); return; }
+  let pv;
+  try { pv = await api('/admin/api/approve-preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId:flag.id,edits})}); }
+  catch (e) { msg.appendChild(el('div',{class:'msg err',text:e.message})); return; }
+  renderPreview(flag, edits, pv, msg);
+}
+function renderPreview(flag, edits, pv, msg) {
+  panel.innerHTML='';
+  panel.appendChild(el('h1',{text:'Confirm write — flag #'+flag.id}));
+  panel.appendChild(el('p',{class:'note',text:'Nothing has been written yet. Review the diff, then confirm.'}));
+  const table = el('table');
+  table.appendChild(el('tr',{},[el('th',{text:'Asset / Field'}),el('th',{text:'Attr'}),el('th',{text:'Change'}),el('th',{text:'Tenant rows'})]));
+  for (const c of pv.changes) {
+    table.appendChild(el('tr',{},[
+      el('td',{},[el('div',{class:'title',text:c.asset}),el('div',{class:'note',text:c.field})]),
+      el('td',{text:c.attr}),
+      el('td',{},[el('span',{class:'diff-old',text:String(c.old||'∅')}),document.createTextNode('  →  '),el('span',{class:'diff-new',text:String(c.new)})]),
+      el('td',{text:String(c.tenant_count)}),
+    ]));
+  }
+  panel.appendChild(table);
+  panel.appendChild(el('p',{class:'note',text:'Source: '+pv.source_url}));
+  const out = el('div',{});
+  panel.appendChild(out);
+  panel.appendChild(el('div',{class:'actions'},[
+    el('button',{class:'primary',onclick:async()=>{
+      try {
+        const r = await api('/admin/api/approve-commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId:flag.id,edits})});
+        out.appendChild(el('div',{class:'msg ok',text:'Written. '+r.written.reduce((a,w)=>a+w.tenant_count,0)+' tenant row(s) updated across '+r.written.length+' field(s); flag marked reviewed; logged.'}));
+        setTimeout(()=>{ closeOverlay(); loadQueue(); }, 1400);
+      } catch (e) { out.appendChild(el('div',{class:'msg err',text:'Write failed: '+e.message})); }
+    }},['Confirm write']),
+    el('button',{onclick:closeOverlay},['Cancel — write nothing']),
+  ]));
+}
+
+$('refreshBtn').addEventListener('click', loadQueue);
+$('runBtn').addEventListener('click', async () => {
+  $('runMsg').textContent = 'Running…';
+  try { const r = await api('/admin/api/run-detection',{method:'POST'}); $('runMsg').textContent = 'Done: '+JSON.stringify(r.summary); loadQueue(); }
+  catch (e) { $('runMsg').textContent = 'Failed: '+e.message; }
+});
+loadQueue();
+</script>
+</body>
+</html>

@@ -146,12 +146,13 @@ async function openApprove(flagId) {
     const cb = el('input',{type:'checkbox'});
     const cmax = el('input',{type:'number',min:'1',placeholder:fld.current_char_max||''});
     const note = el('input',{type:'text',placeholder:'leave blank to keep'});
+    const hint = el('div',{class:'note'});
     cmax.disabled = true; note.disabled = true;
     cb.addEventListener('change',()=>{ cmax.disabled=!cb.checked; note.disabled=!cb.checked; });
-    inputs.push({fld, cb, cmax, note});
+    inputs.push({fld, cb, cmax, note, hint});
     table.appendChild(el('tr',{},[
       el('td',{},[cb]),
-      el('td',{},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'})]),
+      el('td',{},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'}), hint]),
       el('td',{text:String(fld.current_char_max||'—')}),
       el('td',{},[cmax]), el('td',{},[note]),
     ]));
@@ -160,11 +161,41 @@ async function openApprove(flagId) {
   const msg = el('div',{});
   panel.appendChild(msg);
   const bar = el('div',{class:'actions'},[
+    el('button',{onclick:()=>suggest(flag, inputs, msg)},['Suggest values']),
     el('button',{class:'primary',onclick:()=>preview(flag, inputs, msg)},['Preview changes']),
     el('button',{onclick:closeOverlay},['Cancel']),
   ]);
   panel.appendChild(bar);
   overlay.style.display='block';
+}
+// Chunk 3b: read the source page and pre-fill suggested char_max per field.
+// Suggestion only — pre-fills the (disabled) input + shows the snippet; the admin
+// still ticks the field and confirms the diff. Nothing is written here.
+async function suggest(flag, inputs, msg) {
+  msg.innerHTML='';
+  const info = el('div',{class:'msg',text:'Reading the source page… (a few seconds)'});
+  msg.appendChild(info);
+  let data;
+  try { data = await api('/admin/api/flag/'+flag.id+'/suggestions'); }
+  catch (e) { info.className='msg err'; info.textContent='Suggest failed: '+e.message; return; }
+  const byKey = new Map();
+  for (const s of (data.suggestions||[])) byKey.set(s.asset+' '+s.field, s);
+  let filled = 0;
+  for (const r of inputs) {
+    const s = byKey.get(r.fld.asset+' '+r.fld.field);
+    r.hint.textContent = '';
+    if (s && s.suggested_char_max != null) {
+      r.cmax.value = String(s.suggested_char_max);
+      r.hint.textContent = 'suggested '+s.suggested_char_max+' ('+s.confidence+')' + (s.snippet ? ' — "'+s.snippet+'"' : '');
+      filled++;
+    } else if (s) {
+      r.hint.textContent = 'no confident value found on the page';
+    }
+  }
+  info.className = 'msg' + (filled ? ' ok' : '');
+  info.textContent = filled
+    ? 'Pre-filled '+filled+' suggestion(s). Tick the field(s) you want, review the diff, then confirm. Suggestions are not written until you confirm.'
+    : ('No confident suggestions' + (data.note ? ' — '+data.note : '') + '. Enter values manually.');
 }
 function collectEdits(inputs, msg) {
   const edits = [];

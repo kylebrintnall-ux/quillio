@@ -20,6 +20,7 @@ const {
 const { runDetection } = require('../services/specDetector');
 const {
   getFlagForReview,
+  getSuggestions,
   buildPreview,
   commitReview,
   dismiss,
@@ -131,6 +132,20 @@ router.get('/admin/api/flag/:id', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[admin] flag read failed:', err.message);
     res.status(500).json({ success: false, error: 'Failed to read flag' });
+  }
+});
+
+// GET /admin/api/flag/:id/suggestions — chunk 3b. Re-fetch the changed page and
+// suggest a char_max per affected field (Gemini) + a supporting snippet.
+// Suggestion only — writes nothing. Admin-gated.
+router.get('/admin/api/flag/:id/suggestions', requireAdmin, async (req, res) => {
+  try {
+    const result = await getSuggestions(req.params.id);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    console.error('[admin] suggestions failed:', err.message);
+    res.status(500).json({ success: false, error: 'Suggestions failed' });
   }
 });
 

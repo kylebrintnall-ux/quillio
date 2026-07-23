@@ -17,6 +17,8 @@
 // field -- all-or-nothing.
 
 const { getPool } = require('../db');
+const { fetchText, normalize } = require('./specDetector');
+const { extractSpecValues } = require('./gemini');
 
 // A field name repeats across assets, so always match the (asset, field) PAIR.
 function pairKey(asset, field) {
@@ -309,6 +311,54 @@ async function commitReview(flagId, edits, changedBy) {
   }
 }
 
+// Chunk 3b: suggest a new char_max per affected field by reading the changed
+// page. Re-fetches source_url, normalizes it, and asks Gemini for the limit each
+// field's page states -- returning a per-field suggestion + supporting snippet.
+// SUGGESTION ONLY: this never writes anything. A test flag returns no suggestions
+// (it can't be approved); a fetch/model failure degrades to empty (manual entry).
+// Suggestions map back to fields by `ref` (index), so repeated field names across
+// assets can't cross-wire.
+async function getSuggestions(flagId) {
+  const pool = getPool();
+  if (!pool) return { ok: false, error: 'no database' };
+  const flag = await loadFlag(pool, flagId);
+  if (!flag) return { ok: false, error: 'flag not found' };
+  if (flag.is_test) return { ok: false, error: 'test flags cannot be approved -- no suggestions' };
+
+  const pairs = Array.isArray(flag.affected_fields) ? flag.affected_fields : [];
+  const fields = [];
+  for (const p of pairs) {
+    if (!p || !p.asset || !p.field) continue;
+    const rows = await currentValues(pool, p.asset, p.field);
+    fields.push({ asset: p.asset, field: p.field, current_char_max: distinctValue(rows, 'char_max') });
+  }
+  if (fields.length === 0) return { ok: true, suggestions: [], note: 'no affected fields' };
+
+  let pageText = '';
+  try {
+    pageText = normalize(await fetchText(flag.source_url));
+  } catch (err) {
+    return { ok: true, suggestions: [], note: 'could not fetch page: ' + err.message };
+  }
+
+  const raw = await extractSpecValues({ pageText, fields });
+  const byRef = new Map();
+  for (const s of raw) byRef.set(s.ref, s);
+
+  const suggestions = fields.map((f, i) => {
+    const s = byRef.get(i) || {};
+    return {
+      asset: f.asset,
+      field: f.field,
+      current_char_max: f.current_char_max,
+      suggested_char_max: s.suggested_char_max != null ? s.suggested_char_max : null,
+      snippet: s.snippet || '',
+      confidence: s.confidence || 'low',
+    };
+  });
+  return { ok: true, suggestions };
+}
+
 // Dismiss a flag (false positive / nothing real changed). Touches ONLY the queue
 // status -- never copy_fields. Allowed for any flag, including test flags.
 async function dismiss(flagId) {
@@ -322,4 +372,4 @@ async function dismiss(flagId) {
   return { ok: true, flagId: flagId, status: 'dismissed' };
 }
 
-module.exports = { getFlagForReview, buildPreview, commitReview, dismiss };
+module.exports = { getFlagForReview, getSuggestions, buildPreview, commitReview, dismiss };

@@ -183,4 +183,4 @@ async function runDetection() {
   return { ran: true, summary, results };
 }
 
-module.exports = { runDetection, normalize, hashText };
+module.exports = { runDetection, normalize, hashText, fetchText };

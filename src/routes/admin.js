@@ -2,11 +2,13 @@
 
 // Admin area (LiveSpecs admin). Admin surfaces are gated by requireAdmin
 // (users.is_admin = true; 404 for everyone else). Chunk 2 adds the detector
-// trigger and the editable test page. NOTE: GET /admin/test-spec is deliberately
-// PUBLIC (see below) — the detector fetches it over HTTP with no session, so it
-// can't be admin-gated. It serves only fake seed data. Everything else here
-// stays admin-gated.
+// trigger and the editable test page; chunk 3a adds the review UI + the
+// approve→write path. NOTE: GET /admin/test-spec is deliberately PUBLIC (see
+// below) — the detector fetches it over HTTP with no session, so it can't be
+// admin-gated. It serves only fake seed data. Everything else here stays
+// admin-gated.
 
+const path = require('path');
 const express = require('express');
 const { requireAdmin } = require('../middleware/requireAdmin');
 const {
@@ -16,8 +18,16 @@ const {
   setTestPageContent,
 } = require('../db/specWatch');
 const { runDetection } = require('../services/specDetector');
+const {
+  getFlagForReview,
+  buildPreview,
+  commitReview,
+  dismiss,
+} = require('../services/specReview');
 
 const router = express.Router();
+
+const ADMIN_HTML = path.join(__dirname, '..', '..', 'public', 'admin.html');
 
 // Minimal HTML-escape for the test page (content is admin-controlled fake data,
 // but escape anyway so it can never inject markup into the served page).
@@ -28,10 +38,11 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;');
 }
 
-// GET /admin — minimal proof the gate works. Admins get "admin ok"; everyone
-// else is stopped by requireAdmin with a bare 404 before reaching this handler.
+// GET /admin — the review console (chunk 3a). Admin-gated static page that
+// renders the pending queue and drives dismiss/approve via the JSON endpoints
+// below. Non-admins are stopped by requireAdmin with a bare 404.
 router.get('/admin', requireAdmin, (req, res) => {
-  res.status(200).type('text').send('admin ok');
+  res.status(200).sendFile(ADMIN_HTML);
 });
 
 // GET /admin/api/watch-list — the URLs being monitored (JSON). Admin-gated.
@@ -105,6 +116,70 @@ router.post('/admin/api/run-detection', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[admin] run-detection failed:', err.message);
     res.status(500).json({ success: false, error: 'Detection run failed' });
+  }
+});
+
+// --- Chunk 3a: review a flag → dismiss, or approve → diff → confirm → write ---
+
+// GET /admin/api/flag/:id — a flag + every affected (asset,field) with its
+// current char_max/spec_note, to populate the approve form. Admin-gated.
+router.get('/admin/api/flag/:id', requireAdmin, async (req, res) => {
+  try {
+    const flag = await getFlagForReview(req.params.id);
+    if (!flag) return res.status(404).json({ success: false, error: 'flag not found' });
+    res.status(200).json({ success: true, flag });
+  } catch (err) {
+    console.error('[admin] flag read failed:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to read flag' });
+  }
+});
+
+// POST /admin/api/dismiss { flagId } — mark a flag dismissed. Touches ONLY the
+// queue status, never copy_fields. Allowed for any flag (incl. test). Admin-gated.
+router.post('/admin/api/dismiss', requireAdmin, async (req, res) => {
+  const flagId = req.body && req.body.flagId;
+  if (!flagId) return res.status(400).json({ success: false, error: 'flagId is required' });
+  try {
+    const result = await dismiss(flagId);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    console.error('[admin] dismiss failed:', err.message);
+    res.status(500).json({ success: false, error: 'Dismiss failed' });
+  }
+});
+
+// POST /admin/api/approve-preview { flagId, edits } — compute the diff for the
+// checked fields. Writes NOTHING. Admin-gated. is_test / validation / affected-
+// pair checks all run here (and again on commit).
+router.post('/admin/api/approve-preview', requireAdmin, async (req, res) => {
+  const { flagId, edits } = req.body || {};
+  if (!flagId) return res.status(400).json({ success: false, error: 'flagId is required' });
+  try {
+    const result = await buildPreview(flagId, edits);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    console.error('[admin] approve-preview failed:', err.message);
+    res.status(500).json({ success: false, error: 'Preview failed' });
+  }
+});
+
+// POST /admin/api/approve-commit { flagId, edits } — THE ONLY path that writes
+// copy_fields. Re-validates server-side, then value write + spec_verified_at
+// stamp + audit log + flag flip in one transaction. changed_by is the signed-in
+// admin (req.user.id). Admin-gated.
+router.post('/admin/api/approve-commit', requireAdmin, async (req, res) => {
+  const { flagId, edits } = req.body || {};
+  if (!flagId) return res.status(400).json({ success: false, error: 'flagId is required' });
+  try {
+    const changedBy = req.user && req.user.id;
+    const result = await commitReview(flagId, edits, changedBy);
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    console.error('[admin] approve-commit failed:', err.message);
+    res.status(500).json({ success: false, error: 'Write failed' });
   }
 });
 

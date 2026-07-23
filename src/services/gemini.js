@@ -1514,7 +1514,81 @@ async function reviewVariationStack({ assetType, fieldName, charMax, variations,
   });
 }
 
+// LiveSpecs (chunk 3b): read a platform spec page and suggest the character
+// limit for each requested field. Best-effort — returns [] on ANY failure so the
+// admin review falls back to manual entry; never throws fatally. Each requested
+// field carries a numeric `ref` (its index) that the model echoes back, so the
+// caller maps suggestions to the exact (asset,field) even when field names repeat.
+const SPEC_EXTRACT_MAX = 12000; // page-text cap protecting the context window
+
+async function extractSpecValues({ pageText, fields } = {}) {
+  const text = String(pageText || '').slice(0, SPEC_EXTRACT_MAX);
+  const list = Array.isArray(fields) ? fields : [];
+  if (!text || list.length === 0) return [];
+
+  const fieldLines = list
+    .map(
+      (f, i) =>
+        `ref ${i}: asset="${f.asset}" field="${f.field}" current_char_max=${f.current_char_max != null && f.current_char_max !== '' ? f.current_char_max : '(unknown)'}`
+    )
+    .join('\n');
+
+  const prompt = [
+    'You are auditing an advertising/email platform spec page for CHARACTER LIMITS.',
+    'Below is the visible text of the page, then a list of copy fields (each with a ref number).',
+    'For EACH listed field, find the character limit the page states for it, if any.',
+    'Return STRICT JSON — an array with one object per field:',
+    '  { "ref": <the field\'s ref number>,',
+    '    "suggested_char_max": <integer, or null if the page does not clearly state one>,',
+    '    "snippet": <a short verbatim quote (<=160 chars) from the page supporting the number, else "">,',
+    '    "confidence": "high" | "medium" | "low" }',
+    'Rules: use ONLY numbers actually present in the page text. If a field is not clearly',
+    'addressed, set suggested_char_max=null, snippet="", confidence="low". Do NOT guess or',
+    'invent numbers. Match platform wording to the field by meaning (e.g. page "Headline"',
+    'wording may map to field "Short Headline").',
+    '',
+    'FIELDS:',
+    fieldLines,
+    '',
+    'PAGE TEXT:',
+    text,
+  ].join('\n');
+
+  let parsed = null;
+  try {
+    const out = await callGemini({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+      },
+    });
+    parsed = extractJsonArray(out);
+  } catch (err) {
+    console.error('[gemini] extractSpecValues failed:', err.message);
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  // Sanitize each row to the expected shape; a positive integer within bounds or null.
+  return parsed
+    .map((r) => {
+      if (!r || typeof r !== 'object') return null;
+      const ref = Number(r.ref);
+      const n = Number(r.suggested_char_max);
+      return {
+        ref: Number.isInteger(ref) ? ref : null,
+        suggested_char_max: Number.isInteger(n) && n > 0 && n <= 100000 ? n : null,
+        snippet: r.snippet ? String(r.snippet).slice(0, 200) : '',
+        confidence: ['high', 'medium', 'low'].includes(r.confidence) ? r.confidence : 'low',
+      };
+    })
+    .filter((r) => r && r.ref !== null);
+}
+
 module.exports = {
+  extractSpecValues,
   parseBrief,
   enrichWithReferences,
   generateFieldDraft,

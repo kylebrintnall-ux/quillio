@@ -16,6 +16,7 @@ const {
   getReviewQueue,
   getTestPageContent,
   setTestPageContent,
+  getDetectionHealth,
 } = require('../db/specWatch');
 const { runDetection } = require('../services/specDetector');
 const {
@@ -54,6 +55,19 @@ router.get('/admin/api/watch-list', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[admin] watch-list read failed:', err.message);
     res.status(500).json({ success: false, error: 'Failed to read watch list' });
+  }
+});
+
+// GET /admin/api/health — detection health (chunk 4c): watch-list state
+// (last_checked_at / baselined / last_error) + pending-flag counts + overall
+// last-run timestamp. READ-ONLY. Admin-gated.
+router.get('/admin/api/health', requireAdmin, async (req, res) => {
+  try {
+    const health = await getDetectionHealth();
+    res.status(200).json({ success: true, ...health });
+  } catch (err) {
+    console.error('[admin] health read failed:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to read health' });
   }
 });
 

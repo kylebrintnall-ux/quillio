@@ -106,6 +106,10 @@ app.use(require('./routes/headerTemplate'));
 // slash-command/interactions handlers; touches none of them.
 app.use(appRoutes);
 
+// Admin area (/admin). Gated by requireAdmin (users.is_admin); non-admins get a
+// bare 404. Stub only for now — proves the gate before any dashboard is built.
+app.use(require('./routes/admin'));
+
 // Slack request signature verification (enforced). Fails CLOSED: if no signing
 // secret is configured we can't verify, so we reject rather than silently
 // letting requests through. Requires SLACK_SIGNING_SECRET to be set.

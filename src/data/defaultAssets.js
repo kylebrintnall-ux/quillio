@@ -430,7 +430,7 @@ const ENFORCED_SOURCE_URLS = {
   Meta: 'https://www.facebook.com/business/ads-guide/update',
   LinkedIn: 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
   X: 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
-  Google: 'https://support.google.com/google-ads/answer/7684791',
+  Google: 'https://support.google.com/google-ads/answer/17090561',
 };
 
 function platformForAsset(assetName) {

@@ -1135,6 +1135,10 @@
       '/assets/gifs/quillio-folder.gif'
     ];
     var BRIEF_STAGES = ['Parsing brief…', 'Fetching references…', 'Building your doc…', 'Creating project folder…'];
+    // The GIF list for the run in progress — the full STEP_GIFS, or (when the
+    // brief has no references) STEP_GIFS without the "fetching references" GIF.
+    // Set by startBriefBar; read by setBriefGif so the two stay in lockstep.
+    var activeStepGifs = STEP_GIFS;
     var progressError = document.getElementById('progress-error');
     var progressBack = document.getElementById('progress-back');
 
@@ -1163,7 +1167,7 @@
     function setBriefGif(stage) {
       var gif = document.getElementById('progress-gif');
       if (!gif) return;
-      var src = STEP_GIFS[Math.min(stage, STEP_GIFS.length - 1)];
+      var src = activeStepGifs[Math.min(stage, activeStepGifs.length - 1)];
       if (gif.getAttribute('src') === src) return;
       var n = document.createElement('img');
       n.id = 'progress-gif'; n.className = 'progress-gif'; n.alt = ''; n.src = src;
@@ -1174,7 +1178,7 @@
     // the bar is paced by elapsed/estimate (caps at ~96%), advancing the stage
     // label + GIF by fraction; finishBriefBar() snaps to 100% on the real result.
     var briefBarTimer = null;
-    function startBriefBar(estimateSec) {
+    function startBriefBar(estimateSec, hasRefs) {
       var track = document.getElementById('brief-progress-track');
       var estimateEl = document.getElementById('brief-progress-estimate');
       var labelEl = document.getElementById('brief-progress-label');
@@ -1182,11 +1186,15 @@
       clearError(progressError);
       progressBack.classList.add('hidden');
       document.getElementById('progress-check-projects').classList.add('hidden');
+      // Drop the "Fetching references…" stage (and its GIF, STEP_GIFS index 1)
+      // when the brief has no reference links or attachments — nothing is fetched.
+      var stages = hasRefs ? BRIEF_STAGES : BRIEF_STAGES.filter(function (_, i) { return i !== 1; });
+      activeStepGifs = hasRefs ? STEP_GIFS : STEP_GIFS.filter(function (_, i) { return i !== 1; });
       buildTrack(track);
       fillTrack(track, 0);
       track.classList.remove('pulsing');
       estimateEl.textContent = 'Estimated: ~' + Math.round(estimateSec) + 's';
-      labelEl.textContent = BRIEF_STAGES[0];
+      labelEl.textContent = stages[0];
       subEl.textContent = '';
       setBriefGif(0);
       var startTs = Date.now();
@@ -1196,14 +1204,16 @@
         var elapsed = (Date.now() - startTs) / 1000;
         var frac = Math.min(elapsed / estimateSec, 0.96);
         fillTrack(track, frac);
-        var stage = Math.min(BRIEF_STAGES.length - 1, Math.floor((frac / 0.96) * BRIEF_STAGES.length));
+        // Index off the ACTUAL list being shown, so dropping a stage still lands
+        // the last stage correctly.
+        var stage = Math.min(stages.length - 1, Math.floor((frac / 0.96) * stages.length));
         if (stage !== lastStage) {
           lastStage = stage;
-          labelEl.textContent = BRIEF_STAGES[stage];
+          labelEl.textContent = stages[stage];
           setBriefGif(stage);
         }
         // Sub-label on the final (folder) stage — communicates the Drive wait.
-        subEl.textContent = stage >= BRIEF_STAGES.length - 1 ? 'Setting up your Drive workspace…' : '';
+        subEl.textContent = stage >= stages.length - 1 ? 'Setting up your Drive workspace…' : '';
         if (elapsed >= estimateSec) {
           track.classList.add('pulsing');
           labelEl.textContent = 'Almost there…';
@@ -1721,9 +1731,10 @@
       var refCount = countReferenceLinks(briefText);
       var fileCount = attachedFiles.length;
       var estimateSec = 8 + refCount * 5 + fileCount * 8 + 3 * 4;
+      var hasRefs = refCount > 0 || fileCount > 0;
 
       showScreen('progress');
-      startBriefBar(estimateSec);
+      startBriefBar(estimateSec, hasRefs);
 
       // Start a brief job and poll until it completes — no long-held request for
       // Railway's proxy to cut. Any attached files are uploaded first, then their
@@ -2128,8 +2139,25 @@
       }
     }
 
+    // Open a doc URL as a real anchor tap, NOT window.open(url,'_blank','noopener').
+    // On iOS, passing 'noopener' in the features slot makes window.open a popup
+    // open, which leaves an orphaned blank tab behind when the Google Docs app
+    // takes over. A transient <a target=_blank rel=noopener> click opens cleanly
+    // with the same isolation and no dead tab. Shared by all three Open-in-Drive
+    // call sites.
+    function openDocUrl(url) {
+      if (!url) return;
+      var a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
     function openInDrive() {
-      if (state.docUrl) window.open(state.docUrl, '_blank', 'noopener');
+      if (state.docUrl) openDocUrl(state.docUrl);
     }
 
     // --- Screen 4: projects ------------------------------------------------
@@ -2599,7 +2627,7 @@
 
     function openProjectInDrive() {
       var p = projectState.project;
-      if (p && p.copy_doc_url) window.open(p.copy_doc_url, '_blank', 'noopener');
+      if (p && p.copy_doc_url) openDocUrl(p.copy_doc_url);
     }
 
     // Review Copy: run the review with the magnifying-glass GIF in-progress, then
@@ -2615,7 +2643,7 @@
     // The modal's Open in Drive opens whichever doc triggered the review (project
     // view or brief-flow Copy Done), not just the project view's doc.
     function openReviewModalDoc() {
-      if (reviewModalDocUrl) window.open(reviewModalDocUrl, '_blank', 'noopener');
+      if (reviewModalDocUrl) openDocUrl(reviewModalDocUrl);
     }
     // Shared review runner used by BOTH the project view AND the brief-flow Copy
     // Done screen. Reviews `docId`, surfacing progress + result in the overlay. It

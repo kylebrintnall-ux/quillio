@@ -59,4 +59,43 @@ async function getReviewQueue() {
   return (res && res.rows) || [];
 }
 
-module.exports = { getWatchList, getReviewQueue, getTestPageContent, setTestPageContent };
+// Detection health (read-only, chunk 4c). The watch-list state the admin page's
+// health module renders: each entry's last_checked_at / baselined / last_error,
+// its pending-flag count, plus the overall last-run timestamp (newest
+// last_checked_at across the watch list). No writes. Returns { lastRun: null,
+// watch: [] } with no DB.
+async function getDetectionHealth() {
+  const p = getPool();
+  if (!p) return { lastRun: null, watch: [] };
+
+  const rows = await getWatchList(); // real-first, test-last; carries the fields we need
+  const counts = await p.query(
+    "SELECT watch_id, COUNT(*)::int AS n FROM spec_review_queue WHERE status = 'pending' GROUP BY watch_id"
+  );
+  const byWatch = new Map();
+  for (const c of counts.rows) byWatch.set(String(c.watch_id), c.n);
+
+  const lr = await p.query('SELECT MAX(last_checked_at) AS last_run FROM spec_watch_list');
+  const lastRun = (lr.rows && lr.rows[0] && lr.rows[0].last_run) || null;
+
+  const watch = rows.map((r) => ({
+    id: r.id,
+    display_name: r.display_name,
+    source_url: r.source_url,
+    is_test: r.is_test,
+    last_checked_at: r.last_checked_at || null,
+    baselined: !!r.current_hash,
+    last_error: r.last_error || null,
+    pending_count: byWatch.get(String(r.id)) || 0,
+  }));
+
+  return { lastRun, watch };
+}
+
+module.exports = {
+  getWatchList,
+  getReviewQueue,
+  getTestPageContent,
+  setTestPageContent,
+  getDetectionHealth,
+};

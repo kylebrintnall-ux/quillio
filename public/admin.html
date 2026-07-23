@@ -47,13 +47,21 @@
     .msg { padding:10px 12px; border-radius:8px; margin:10px 0; font-size:13.5px; }
     .msg.err { background:rgba(232,106,106,.15); border:1px solid var(--danger); }
     .msg.ok { background:rgba(95,185,142,.15); border:1px solid var(--ok); }
+    .summary { font-size:13.5px; margin:0 0 12px; }
+    .summary > div { margin:3px 0; }
+    tr.err-row td { background:rgba(232,106,106,.12); }
+    tr.err-row td:first-child { border-left:3px solid var(--danger); }
   </style>
 </head>
 <body>
-  <h1>LiveSpecs — Review Queue</h1>
-  <p class="sub">Pending spec-change flags. Approve writes production spec values (with a diff you confirm first); dismiss clears a false positive. Test flags can only be dismissed.</p>
+  <h1>LiveSpecs — Admin</h1>
+  <p class="sub">Detection health + the pending review queue. Approve writes production spec values (with a diff you confirm first); dismiss clears a false positive. Test flags can only be dismissed.</p>
+
+  <h2>Detection Health</h2>
+  <div id="healthSummary" class="summary"></div>
+  <div id="healthTableWrap"></div>
   <div class="bar">
-    <button id="runBtn" class="primary">Run detection</button>
+    <button id="runBtn" class="primary">Run detection now</button>
     <button id="refreshBtn">Refresh</button>
     <span id="runMsg" class="note"></span>
   </div>
@@ -91,6 +99,54 @@ async function api(url, opts) {
 function short(h){ return h ? String(h).slice(0,10) : '—'; }
 function closeOverlay(){ overlay.style.display='none'; panel.innerHTML=''; }
 
+// --- Detection health (read-only) ---
+function relTime(iso){
+  if(!iso) return 'never';
+  const s = Math.floor((Date.now()-new Date(iso).getTime())/1000);
+  if(s<0) return 'just now';
+  if(s<60) return s+'s ago';
+  const m=Math.floor(s/60); if(m<60) return m+'m ago';
+  const h=Math.floor(m/60); if(h<24) return h+'h ago';
+  return Math.floor(h/24)+'d ago';
+}
+// Next Monday 15:00 UTC (the cron: 0 15 * * 1), as a readable UTC string.
+function nextMondayCron(){
+  const now=new Date();
+  const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate(),15,0,0,0));
+  while(d.getUTCDay()!==1 || d.getTime()<=now.getTime()) d.setUTCDate(d.getUTCDate()+1);
+  return d.toISOString().slice(0,16).replace('T',' ')+' UTC';
+}
+async function loadHealth(){
+  const sum=$('healthSummary'), wrap=$('healthTableWrap');
+  sum.textContent=''; wrap.innerHTML='';
+  let h;
+  try { h = await api('/admin/api/health'); }
+  catch(e){ sum.appendChild(el('div',{class:'msg err',text:'Health load failed: '+e.message})); return; }
+  const watch = h.watch || [];
+  const withErrors = watch.filter(w=>w.last_error).length;
+  const pending = watch.reduce((a,w)=>a+(w.pending_count||0),0);
+  sum.appendChild(el('div',{},['Last detection run: '+(h.lastRun ? relTime(h.lastRun)+' ('+new Date(h.lastRun).toLocaleString()+')' : 'never')]));
+  sum.appendChild(el('div',{},['Last run result: '+watch.length+' watched · '+withErrors+' with error(s) · '+pending+' pending flag(s)']));
+  sum.appendChild(el('div',{class:'note'},['Next scheduled run: '+nextMondayCron()+' — Mondays 15:00 UTC (0 15 * * 1)']));
+  const table=el('table');
+  table.appendChild(el('tr',{},[
+    el('th',{text:'Watch'}), el('th',{text:'Type'}), el('th',{text:'Last checked'}),
+    el('th',{text:'Baselined'}), el('th',{text:'Last error'}), el('th',{text:'Pending'}),
+  ]));
+  for(const w of watch){
+    const tr = el('tr', w.last_error ? {class:'err-row'} : {});
+    tr.appendChild(el('td',{},[el('div',{class:'title',text:w.display_name||'(no name)'}), el('div',{class:'note',text:w.source_url})]));
+    tr.appendChild(el('td',{},[el('span',{class:'badge '+(w.is_test?'test':'real'),text:w.is_test?'TEST':'REAL'})]));
+    tr.appendChild(el('td',{text:relTime(w.last_checked_at)}));
+    tr.appendChild(el('td',{text:w.baselined?'yes':'no'}));
+    tr.appendChild(el('td',{text:w.last_error?w.last_error:'—'}));
+    tr.appendChild(el('td',{text:String(w.pending_count||0)}));
+    table.appendChild(tr);
+  }
+  wrap.appendChild(table);
+}
+function loadAll(){ loadHealth(); loadQueue(); }
+
 async function loadQueue() {
   $('realList').innerHTML = ''; $('testList').innerHTML = '';
   let rows;
@@ -122,7 +178,7 @@ function flagCard(f, isTest) {
 }
 async function doDismiss(flagId) {
   if (!confirm('Dismiss flag #'+flagId+'? (marks it dismissed; no spec change)')) return;
-  try { await api('/admin/api/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId})}); loadQueue(); }
+  try { await api('/admin/api/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId})}); loadAll(); }
   catch (e) { alert('Dismiss failed: '+e.message); }
 }
 
@@ -240,20 +296,21 @@ function renderPreview(flag, edits, pv, msg) {
       try {
         const r = await api('/admin/api/approve-commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId:flag.id,edits})});
         out.appendChild(el('div',{class:'msg ok',text:'Written. '+r.written.reduce((a,w)=>a+w.tenant_count,0)+' tenant row(s) updated across '+r.written.length+' field(s); flag marked reviewed; logged.'}));
-        setTimeout(()=>{ closeOverlay(); loadQueue(); }, 1400);
+        setTimeout(()=>{ closeOverlay(); loadAll(); }, 1400);
       } catch (e) { out.appendChild(el('div',{class:'msg err',text:'Write failed: '+e.message})); }
     }},['Confirm write']),
     el('button',{onclick:closeOverlay},['Cancel — write nothing']),
   ]));
 }
 
-$('refreshBtn').addEventListener('click', loadQueue);
+$('refreshBtn').addEventListener('click', loadAll);
 $('runBtn').addEventListener('click', async () => {
-  $('runMsg').textContent = 'Running…';
-  try { const r = await api('/admin/api/run-detection',{method:'POST'}); $('runMsg').textContent = 'Done: '+JSON.stringify(r.summary); loadQueue(); }
+  $('runBtn').disabled = true; $('runMsg').textContent = 'Running detection…';
+  try { const r = await api('/admin/api/run-detection',{method:'POST'}); $('runMsg').textContent = 'Done: '+JSON.stringify(r.summary); loadAll(); }
   catch (e) { $('runMsg').textContent = 'Failed: '+e.message; }
+  finally { $('runBtn').disabled = false; }
 });
-loadQueue();
+loadAll();
 </script>
 </body>
 </html>

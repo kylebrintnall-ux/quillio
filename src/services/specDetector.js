@@ -1,12 +1,21 @@
 'use strict';
 
-// LiveSpecs detector (chunk 2). For each spec_watch_list row: fetch the URL,
-// normalize the HTML to visible text, hash it, and compare to the stored hash.
-// Manual trigger only (POST /admin/api/run-detection) — NO cron in this chunk.
+// LiveSpecs detector (chunk 2 + 2.5). For each spec_watch_list row: fetch the
+// URL, normalize the HTML to visible text, hash it, and compare to the stored
+// hash. Manual trigger only (POST /admin/api/run-detection) — NO cron.
+//
+// CONFIRM-ON-REFETCH (chunk 2.5): a changed hash is NOT flagged on the first
+// observation. We refetch once after a short delay and only flag if the new
+// hash reproduces. This filters transient per-request noise — dynamic widgets,
+// counters, nonces that survive the tag strip and change on every fetch (e.g.
+// Google's help pages) — while a genuine spec edit, which is stable, reproduces
+// and flags. A change that doesn't reproduce is reported as 'unconfirmed': no
+// flag, and the baseline hash is left untouched so it never advances to a noisy
+// value.
 //
 // SAFETY: this NEVER writes to copy_fields or any spec/field data. It only
 //   - updates spec_watch_list (current_hash, last_checked_at, last_error), and
-//   - inserts spec_review_queue rows (flags) on a detected change.
+//   - inserts spec_review_queue rows (flags) on a CONFIRMED change.
 // A fetch failure updates last_checked_at + last_error only — it never flags and
 // never overwrites a good current_hash, so a failed fetch can't look like a
 // change. is_test is inherited onto the flag row so test-page changes stay
@@ -17,6 +26,11 @@ const { getPool } = require('../db');
 const { getWatchList } = require('../db/specWatch');
 
 const FETCH_TIMEOUT_MS = 10000;
+// Delay before the confirmation refetch. Long enough that a per-request-varying
+// page returns a different value; short enough to keep a run snappy. Overridable.
+const REFETCH_DELAY_MS = Number(process.env.SPEC_REFETCH_DELAY_MS) || 1500;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Normalize HTML to the visible text we hash. Middle-ground strip: drop
 // <script>/<style> blocks AND their contents (noise that changes constantly),
@@ -88,7 +102,7 @@ async function runDetection() {
 
   const rows = await getWatchList();
   const results = [];
-  const summary = { total: rows.length, baseline: 0, unchanged: 0, changed: 0, error: 0 };
+  const summary = { total: rows.length, baseline: 0, unchanged: 0, changed: 0, unconfirmed: 0, error: 0 };
 
   for (const row of rows) {
     const checkedAt = new Date().toISOString();
@@ -113,9 +127,31 @@ async function runDetection() {
         );
         status = 'unchanged';
       } else {
-        // Changed → flag it (transaction), then advance the hash.
-        await recordChange(pool, row, newHash);
-        status = 'changed';
+        // Hash moved — but confirm it reproduces before flagging (chunk 2.5).
+        // Refetch after a short delay; a genuine change gives the SAME newHash
+        // again, transient noise gives a different one.
+        let confirmHash = null;
+        try {
+          await sleep(REFETCH_DELAY_MS);
+          confirmHash = hashText(normalize(await fetchText(row.source_url)));
+        } catch (e) {
+          // Couldn't refetch → can't confirm → treat as unconfirmed (no flag).
+          confirmHash = null;
+        }
+
+        if (confirmHash && confirmHash === newHash) {
+          // Reproduced → real change. Flag it (transaction), then advance the hash.
+          await recordChange(pool, row, newHash);
+          status = 'changed';
+        } else {
+          // Did not reproduce → transient noise. DON'T flag, DON'T advance the
+          // baseline hash (leave current_hash where it was); just bump the check.
+          await pool.query(
+            'UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL WHERE id = $1',
+            [row.id]
+          );
+          status = 'unconfirmed';
+        }
       }
     } catch (err) {
       // Fetch/processing failure: record it, DON'T flag, DON'T touch current_hash.

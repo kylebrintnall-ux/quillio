@@ -17,6 +17,9 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'kyle.brintnall@gmail.com').trim
 
 const ADD_COLUMN_SQL =
   'ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false';
+// Verify the target row BEFORE writing: select it so we can print id + tenant_id
+// and abort unless exactly one row matches. Never guesses which row to grant.
+const FIND_SQL = 'SELECT id, tenant_id FROM users WHERE LOWER(email) = LOWER($1)';
 const GRANT_SQL =
   'UPDATE users SET is_admin = true WHERE LOWER(email) = LOWER($1)';
 
@@ -45,15 +48,32 @@ async function main() {
     await client.query(ADD_COLUMN_SQL);
     console.log('[migrate-admin] added column: users.is_admin (BOOLEAN DEFAULT false)');
 
+    // Verify the target row before granting. Abort (no write) unless exactly one
+    // row matches — never guess which user to make admin.
+    const found = await client.query(FIND_SQL, [ADMIN_EMAIL]);
+    if (found.rowCount === 0) {
+      console.error(
+        `[migrate-admin] ABORTED: no users row matches email '${ADMIN_EMAIL}'. ` +
+          'Nothing was granted. Check the email (or pass ADMIN_EMAIL=...) and re-run.'
+      );
+      process.exit(1);
+    }
+    if (found.rowCount > 1) {
+      console.error(
+        `[migrate-admin] ABORTED: ${found.rowCount} rows match email '${ADMIN_EMAIL}'. ` +
+          'Nothing was granted. Resolve the duplicate before re-running.'
+      );
+      process.exit(1);
+    }
+
+    const row = found.rows[0];
+    console.log(
+      `[migrate-admin] matched exactly 1 row → user id=${row.id}, tenant_id=${row.tenant_id}`
+    );
+
     const res = await client.query(GRANT_SQL, [ADMIN_EMAIL]);
     console.log(`[migrate-admin] granted is_admin=true where LOWER(email)=LOWER('${ADMIN_EMAIL}')`);
     console.log(`[migrate-admin] rows changed: ${res.rowCount} (expected 1)`);
-    if (res.rowCount !== 1) {
-      console.warn(
-        `[migrate-admin] WARNING: expected exactly 1 row, got ${res.rowCount}. ` +
-          'Check that the ADMIN_EMAIL matches your users.email row exactly.'
-      );
-    }
 
     console.log('[migrate-admin] done');
     process.exit(0);

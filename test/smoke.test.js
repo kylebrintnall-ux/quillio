@@ -1054,6 +1054,140 @@ test('routes/app does NOT import the Slack messaging layer', () => {
   assert.ok(!/services\/slack/.test(src), 'app.js must not import services/slack');
 });
 
+// --- Job-status auth + tenant scoping ---
+//
+// The three /status polls are gated by requireAuth and only resolve for the
+// tenant that STARTED the job. The rest of this suite runs in demo mode (no
+// DATABASE_URL), where requireAuth short-circuits to one fixed demo tenant — so
+// it can neither reach the 401 branch nor produce two distinct tenants, and the
+// check would sit untested. This block swaps the DB layer for stubs so
+// requireAuth takes its authenticated path, then drives the real router over a
+// real (ephemeral, loopback-only) HTTP listener.
+//
+// Everything it touches in require.cache is restored afterwards, so the modules
+// the other tests see are unchanged regardless of ordering.
+function withStubbedDb(fn) {
+  const saved = new Map();
+  const remember = (p) => {
+    if (!saved.has(p)) saved.set(p, require.cache[p]); // may be undefined = wasn't loaded
+  };
+  const resolve = (rel) => require.resolve(path.join(__dirname, '..', rel));
+  // Replace a module's exports wholesale.
+  const stub = (rel, exports) => {
+    const p = resolve(rel);
+    remember(p);
+    require.cache[p] = { id: p, filename: p, path: path.dirname(p), loaded: true, exports, children: [], paths: [] };
+  };
+  // Drop a cached module so it re-loads (and re-binds) against the stubs above.
+  // Needed because middleware/auth destructures getPool at require time.
+  const reload = (rel) => {
+    const p = resolve(rel);
+    remember(p);
+    delete require.cache[p];
+    return require(p);
+  };
+
+  // u1 → TENANT_A, anyone else → TENANT_B. A truthy getPool is what takes
+  // requireAuth off its demo-mode path.
+  stub('src/db', { getPool: () => ({}), resolveTenant: async (id) => ({ tenant: { id } }) });
+  stub('src/db/users', {
+    findUserById: async (id) => ({ id, email: `${id}@example.test`, tenant_id: id === 'u1' ? 'TENANT_A' : 'TENANT_B', role: 'owner' }),
+  });
+  stub('src/db/projects', { getProjects: async () => [], getProject: async () => null, setProjectStatus: async () => {} });
+  // No Gemini / Docs / Drive: the job body resolves instantly with a marker the
+  // owner's poll must see (and nobody else's).
+  stub('src/adapters/web', {
+    runWebBrief: async () => ({ docUrl: 'https://docs.google.com/document/d/TENANT_A_ONLY/edit' }),
+    runWebDraft: async () => ({}),
+    runWebReview: async () => ({}),
+    runWebProjectContent: async () => ({}),
+  });
+  reload('src/middleware/auth');
+  const router = reload('src/routes/app');
+
+  return Promise.resolve(fn(router)).finally(() => {
+    for (const [p, mod] of saved) {
+      if (mod === undefined) delete require.cache[p];
+      else require.cache[p] = mod;
+    }
+  });
+}
+
+test('job-status polls are gated by auth and scoped to the starting tenant', async () => {
+  await withStubbedDb(async (router) => {
+    const express = require('express');
+    const app = express();
+    app.use(express.json());
+    // Stand-in for express-session: the X-User header names the signed-in user;
+    // absent header = no session at all.
+    app.use((req, res, next) => {
+      const u = req.get('x-user');
+      req.session = u ? { userId: u } : {};
+      next();
+    });
+    app.use(router);
+
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    // Returns the RAW body text too — the cross-tenant / unknown-job responses
+    // have to be indistinguishable byte for byte, not merely both 404s.
+    const call = async (method, p, user, body) => {
+      const res = await fetch(base + p, {
+        method,
+        headers: { 'Content-Type': 'application/json', ...(user ? { 'X-User': user } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const text = await res.text();
+      return { code: res.status, text, json: JSON.parse(text) };
+    };
+
+    try {
+      const start = await call('POST', '/api/brief', 'u1', { briefText: 'launch the spring sale' });
+      assert.strictEqual(start.code, 202, 'u1 starts a brief job');
+      const jobId = start.json.jobId;
+      assert.ok(jobId, 'POST /api/brief returns a jobId');
+
+      // The job settles on its own microtask chain; poll (as its owner) rather
+      // than sleeping a fixed amount.
+      let owner;
+      for (let i = 0; i < 100; i++) {
+        owner = await call('GET', `/api/brief/${jobId}/status`, 'u1');
+        if (owner.code !== 200 || owner.json.status !== 'pending') break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+
+      // 1. The owning tenant sees its own job and its result.
+      assert.strictEqual(owner.code, 200, 'owner polls its own job → 200');
+      assert.strictEqual(owner.json.success, true);
+      assert.strictEqual(owner.json.status, 'complete');
+      assert.strictEqual(owner.json.result.docUrl, 'https://docs.google.com/document/d/TENANT_A_ONLY/edit');
+
+      // 2. Another tenant holding the same (valid) id gets nothing back.
+      const other = await call('GET', `/api/brief/${jobId}/status`, 'u2');
+      assert.strictEqual(other.code, 404, "another tenant's poll → 404, not 403");
+      assert.ok(!other.text.includes('TENANT_A_ONLY'), 'no result leaks across tenants');
+
+      // 3. No session at all → 401 on all three status routes, matching the
+      //    gate their POST counterparts already had.
+      for (const route of ['brief', 'draft', 'review']) {
+        const anon = await call('GET', `/api/${route}/${jobId}/status`);
+        assert.strictEqual(anon.code, 401, `/api/${route}/:jobId/status requires a session`);
+        assert.strictEqual(anon.json.success, false);
+      }
+
+      // 4. Cross-tenant is byte-identical to a job that never existed — a 403
+      //    (or any distinguishable body) would confirm the id and make the
+      //    endpoint an oracle for probing other tenants' job ids.
+      const unknown = await call('GET', '/api/brief/00000000-0000-4000-8000-000000000000/status', 'u1');
+      assert.strictEqual(unknown.code, other.code, 'same status code');
+      assert.strictEqual(unknown.text, other.text, 'same response body, byte for byte');
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+});
+
 // --- Week 9: web app frontend ---
 
 test('public/app.html has the core screens, API wiring, and the v8 design system', () => {

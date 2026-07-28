@@ -11,9 +11,13 @@ const { resolveTenant } = require('../db');
 const { getClientsForTenant } = require('../google');
 const { postLive, updateLive, refuseUnlinkedSlack, postEphemeral } = require('../services/slack');
 const { runCopyReview } = require('../services/copyReview');
+const { emoji } = require('../emoji');
 
-// Inline custom emoji (shown next to the text) instead of a large image block.
-const REVIEW_EMOJI = config.SLACK_REVIEW_EMOJI;
+// Inline emoji (shown next to the text) instead of a large image block. Routed
+// through emoji() so it respects SLACK_USE_CUSTOM_EMOJI: the :quillio-review:
+// shortcode only where the custom emoji is installed, the Unicode fallback
+// otherwise (never a literal ":quillio-review:" in a fresh workspace).
+const REVIEW_EMOJI = emoji(config.SLACK_REVIEW_EMOJI);
 
 // Pull a Google Docs id out of a pasted link (or a bare id), or null. Handles
 // Slack's URL wrapping — it sends a pasted URL as <url> or <url|label>, so the

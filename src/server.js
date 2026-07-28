@@ -20,7 +20,7 @@ const {
   buildRegenerateModalView,
   openModal,
 } = require('./services/slack');
-const { oauthLimiter } = require('./middleware/rateLimit');
+const { oauthLimiter, slackLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
@@ -288,7 +288,7 @@ app.get('/health', (req, res) => {
 // CRITICAL: Slack requires a response within 3 seconds, but the workflow takes
 // 7s+. We send the 200 acknowledgment FIRST, then run the workflow
 // asynchronously after the response has been flushed.
-app.post('/slack/command', (req, res) => {
+app.post('/slack/command', slackLimiter, (req, res) => {
   if (!verifySlack(req)) {
     return res.status(401).send('Invalid signature.');
   }
@@ -330,7 +330,7 @@ app.post('/slack/command', (req, res) => {
 // --- Slash command: /quillio-review [optional Drive link] ---
 // Ack-first (Slack's 3s window), then run the review fire-and-forget. The runner
 // posts a live "Reviewing…" message and updates it in place on completion.
-app.post('/slack/review', (req, res) => {
+app.post('/slack/review', slackLimiter, (req, res) => {
   if (!verifySlack(req)) {
     return res.status(401).send('Invalid signature.');
   }
@@ -345,18 +345,23 @@ app.post('/slack/review', (req, res) => {
 });
 
 // --- Interactive button clicks (Generate First Draft / Skip) ---
-app.post('/slack/interactions', (req, res) => {
+app.post('/slack/interactions', slackLimiter, (req, res) => {
+  // Signature check FIRST — nothing from the body is read, echoed, or acted on
+  // until the request is proven to come from Slack. (Slack signs the
+  // url_verification handshake too, so answering it after this check is still
+  // correct; echoing it before would reflect arbitrary attacker-supplied text
+  // to any unauthenticated caller.)
+  if (!verifySlack(req)) {
+    return res.status(401).send('Invalid signature.');
+  }
+
   // URL verification handshake. Slack sends this as a top-level JSON body
   // ({ type: 'url_verification', challenge }); some setups wrap it in `payload`.
-  // Answer it before signature checks / payload parsing so the Request URL can
-  // be saved. Echo the challenge straight back.
+  // Answer it before payload parsing so the Request URL can be saved. Echo the
+  // challenge straight back.
   const challenge = extractChallenge(req.body);
   if (challenge) {
     return res.status(200).json({ challenge });
-  }
-
-  if (!verifySlack(req)) {
-    return res.status(401).send('Invalid signature.');
   }
 
   let payload;

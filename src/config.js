@@ -94,12 +94,17 @@ module.exports = {
   // Public origin for absolute asset URLs (e.g. web app GIFs).
   PUBLIC_BASE_URL: (process.env.PUBLIC_BASE_URL && process.env.PUBLIC_BASE_URL.trim()) || 'https://quillio.co',
 
-  // Custom Slack emoji shortcode shown inline in the /quillio-review messages
-  // (both the in-progress and result states), instead of a large image block.
-  // Must match the emoji uploaded to the workspace. Include the surrounding
-  // colons; override with SLACK_REVIEW_EMOJI if the upload is named differently.
+  // NAME of the emoji shown inline in the /quillio-review messages (both the
+  // in-progress and result states), instead of a large image block. This is a
+  // bare name, not a shortcode: it is resolved through src/emoji.js `emoji()`,
+  // so it honours SLACK_USE_CUSTOM_EMOJI like every other emoji — the custom
+  // :name: form only when custom emoji are enabled, the Unicode fallback
+  // otherwise. Override with SLACK_REVIEW_EMOJI if the workspace upload is named
+  // differently; surrounding colons are stripped so a legacy ":name:" value
+  // keeps working.
   SLACK_REVIEW_EMOJI:
-    (process.env.SLACK_REVIEW_EMOJI && process.env.SLACK_REVIEW_EMOJI.trim()) || ':quillio-review:',
+    (process.env.SLACK_REVIEW_EMOJI && process.env.SLACK_REVIEW_EMOJI.trim().replace(/^:|:$/g, '')) ||
+    'quillio-review',
 
   // Whether Slack messages use the custom :quillio-*: emoji shortcodes. Defaults
   // to FALSE: a workspace that hasn't uploaded those emoji would otherwise render

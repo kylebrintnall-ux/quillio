@@ -101,6 +101,15 @@ module.exports = {
   SLACK_REVIEW_EMOJI:
     (process.env.SLACK_REVIEW_EMOJI && process.env.SLACK_REVIEW_EMOJI.trim()) || ':quillio-review:',
 
+  // Whether Slack messages use the custom :quillio-*: emoji shortcodes. Defaults
+  // to FALSE: a workspace that hasn't uploaded those emoji would otherwise render
+  // the literal ":quillio-scroll:" text, so the standard Unicode fallbacks in
+  // src/emoji.js are the safe default. Set SLACK_USE_CUSTOM_EMOJI=true (or 1) in
+  // a workspace where the custom emoji are installed.
+  SLACK_USE_CUSTOM_EMOJI: /^(true|1)$/i.test(
+    (process.env.SLACK_USE_CUSTOM_EMOJI || '').trim()
+  ),
+
   // Slack OAuth (Phase 3 install flow). Client id/secret identify the Quillio
   // app; redirect URI must match the one registered in the Slack app config.
   SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_ID.trim(),

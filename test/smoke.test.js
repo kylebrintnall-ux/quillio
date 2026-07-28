@@ -46,10 +46,13 @@ test('adapters/slackWorkflow exposes the two entry points', () => {
 
 test('emoji config maps custom emoji to standard fallbacks', () => {
   const { emoji, EMOJI, USE_CUSTOM_EMOJI } = require('../src/emoji');
-  // Existing behavior unchanged: custom emoji on, so emoji() yields :name:.
-  assert.strictEqual(USE_CUSTOM_EMOJI, true);
-  assert.strictEqual(emoji('quillio-scroll'), ':quillio-scroll:');
-  assert.strictEqual(emoji('quillio-folder'), ':quillio-folder:');
+  // Default (SLACK_USE_CUSTOM_EMOJI unset): custom emoji OFF, so a fresh
+  // workspace gets the standard Unicode fallback rather than a literal ":name:".
+  assert.strictEqual(USE_CUSTOM_EMOJI, false);
+  assert.strictEqual(emoji('quillio-scroll'), '📜');
+  assert.strictEqual(emoji('quillio-folder'), '📁');
+  // Unknown names never leak a shortcode.
+  assert.strictEqual(emoji('nope'), '');
   // Fallback map is complete and correct (used when USE_CUSTOM_EMOJI is false).
   assert.deepStrictEqual(EMOJI, {
     'quillio-scroll': '📜',

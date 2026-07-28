@@ -12,9 +12,16 @@
     "slash_commands": [
       {
         "command": "/quillio",
-        "url": "https://<your-railway-domain>/slack/command",
+        "url": "https://quillio.co/slack/command",
         "description": "Turn a campaign brief into a formatted Google Doc",
         "usage_hint": "[campaign brief]",
+        "should_escape": false
+      },
+      {
+        "command": "/quillio-review",
+        "url": "https://quillio.co/slack/review",
+        "description": "Review a Quillio doc against its copy specs",
+        "usage_hint": "[optional Google Drive link]",
         "should_escape": false
       }
     ]
@@ -24,8 +31,7 @@
       "bot": [
         "commands",
         "chat:write",
-        "chat:write.public",
-        "incoming-webhook"
+        "chat:write.public"
       ],
       "user": [
         "canvases:read",
@@ -36,7 +42,7 @@
   "settings": {
     "interactivity": {
       "is_enabled": true,
-      "request_url": "https://<your-railway-domain>/slack/interactions"
+      "request_url": "https://quillio.co/slack/interactions"
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false,

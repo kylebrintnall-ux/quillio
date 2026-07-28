@@ -31,10 +31,7 @@
       "bot": [
         "commands",
         "chat:write",
-        "chat:write.public",
-        "channels:history",
-        "users:read",
-        "im:write"
+        "chat:write.public"
       ],
       "user": [
         "canvases:read",

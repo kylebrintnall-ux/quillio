@@ -20,7 +20,19 @@ function pickRedirect(value) {
 
 const router = express.Router();
 
-const BOT_SCOPES = 'commands,chat:write,chat:write.public,channels:history,users:read,im:write';
+// Only the scopes the code actually uses, so the consent screen matches
+// reality and manifest.json can mirror it exactly:
+//   commands          — the /quillio + /quillio-review slash commands
+//   chat:write        — chat.postMessage (services/slack.js)
+//   chat:write.public — post to channels the bot hasn't been invited to
+// channels:history / users:read / im:write were requested here for a while
+// with no caller; nothing in src/ hits conversations.history, users.info or
+// conversations.open, so they're gone.
+const BOT_SCOPES = 'commands,chat:write,chat:write.public';
+// files:read + canvases:read back fetchSlackCanvasContent (core/pipeline.js),
+// which reads Slack Canvas links out of a brief via files.info. Kept — the
+// user token is preferred there because the bot identity gets `not_visible`
+// on user-owned canvases.
 const USER_SCOPES = 'canvases:read,files:read';
 
 // Google OAuth. drive.file = files this app creates; documents = read/write

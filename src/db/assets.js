@@ -6,10 +6,10 @@
 // seedTenantAssets returns false, getTenantAssets returns null — so the
 // single-tenant demo and tests run unchanged.
 //
-// IMPORTANT (Week 7 scope): nothing here is wired into the pipeline yet. Asset
-// matching still reads from the Sheet. getTenantAssets returning null on a miss
-// is the feature flag — the Sheet fallback stays in place until a later week
-// flips the preference.
+// IMPORTANT: this IS the pipeline's spec source. The Google Sheet was fully
+// retired (services/sheets.js no longer exists), so there is no fallback —
+// core/pipeline.js generateDoc() THROWS when getTenantAssets returns null or an
+// empty library. A null here means "no DB or unseeded tenant", not "fall back".
 
 const { getPool } = require('../db');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
@@ -96,8 +96,8 @@ async function seedTenantAssets(tenantId) {
 
 // Read a tenant's active asset library — active asset_types in sort_order, each
 // with its copy_fields in sort_order. Returns null if there's no DB or the
-// tenant has no active assets (the feature-flag "miss" that keeps the Sheet
-// fallback in play). Shape per type:
+// tenant has no active assets; there is no Sheet fallback, so generateDoc()
+// turns that null into a thrown error. Shape per type:
 //   { id, name, group, sort_order, fields: [{ field_name, char_min, char_max,
 //     field_type, sort_order, spec_source, spec_version, group_label, spec_note,
 //     spec_type }, …] }

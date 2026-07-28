@@ -659,7 +659,9 @@ async function enrichWithReferences(parsed, refs) {
 // IS stored (copy_fields.spec_note) and is carried through as `specNote` → the
 // italic note fieldHint() renders under the field label. Per-field spec metadata
 // (`spec_type`, `spec_source`) is also carried through as `specType`/`specSource`
-// — data only for now; nothing downstream renders or branches on them yet.
+// — both are RENDERED in the doc by googleDocs.js fieldHint(): spec_type becomes
+// the italic tier sentence under the field label (specTypeLine) and spec_source
+// supplies the platform name plus the clickable citation link (specSourceName).
 // Applies the same filter semantics as getAssetSpecs: restrict to the requested
 // assets (normalized), but return all when the filter is empty or matches nothing.
 function tenantAssetsToSpecs(rows, assetFilter = []) {
@@ -675,8 +677,8 @@ function tenantAssetsToSpecs(rows, assetFilter = []) {
         charMax: parseInt(f.char_max, 10) || 0,
         groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
         specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
-        specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' (data only; nothing renders it yet)
-        specSource: f.spec_source || null, // provenance of the spec (data only; nothing renders it yet)
+        specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' → tier line under the field label
+        specSource: f.spec_source || null, // provenance → platform name + citation link in the tier line
         notes: '', // not stored in copy_fields (Sheet-only)
         funnelStage: '', // not stored in copy_fields (Sheet-only)
       })),

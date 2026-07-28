@@ -72,7 +72,7 @@ function safeFileRefs(refs) {
 // job and let the client poll its status. Shared by /api/brief and /api/draft.
 // Single-instance only (fine here); a multi-instance deploy would need a shared
 // store. Jobs are swept after a TTL so the Map can't grow unbounded.
-const JOBS = new Map(); // jobId -> { status, result, error, ts }
+const JOBS = new Map(); // jobId -> { tenantId, status, result, error, ts }
 const JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 // Hard ceiling on a single job's runtime. Every Gemini call is already bounded
@@ -95,10 +95,14 @@ function sweepJobs() {
 
 // Start a job: register it as pending, run `work()` fire-and-forget, and record
 // its result/error on settle. Returns the new jobId. `label` is for logs only.
-function startJob(label, work, timeoutMs = JOB_TIMEOUT_MS) {
+// `tenantId` is the owning tenant (from the starter's session) — it's stamped on
+// the record and re-checked on every poll so one tenant can't read another's job
+// result by guessing/leaking a job id. Every settle below re-writes the record,
+// so each write must carry tenantId forward.
+function startJob(label, tenantId, work, timeoutMs = JOB_TIMEOUT_MS) {
   sweepJobs();
   const jobId = crypto.randomUUID();
-  JOBS.set(jobId, { status: 'pending', result: null, error: null, ts: Date.now() });
+  JOBS.set(jobId, { tenantId, status: 'pending', result: null, error: null, ts: Date.now() });
   const startedAt = Date.now();
   (async () => {
     let timer;
@@ -115,11 +119,11 @@ function startJob(label, work, timeoutMs = JOB_TIMEOUT_MS) {
       const result = await Promise.race([work(), deadline]);
       const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.log(`[web] job done → ${label} job=${jobId} in ${secs}s`);
-      JOBS.set(jobId, { status: 'complete', result, error: null, ts: Date.now() });
+      JOBS.set(jobId, { tenantId, status: 'complete', result, error: null, ts: Date.now() });
     } catch (err) {
       const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.error(`[web] job failed → ${label} job=${jobId} after ${secs}s:`, err && err.stack ? err.stack : err);
-      JOBS.set(jobId, { status: 'failed', result: null, error: err.message, ts: Date.now() });
+      JOBS.set(jobId, { tenantId, status: 'failed', result: null, error: err.message, ts: Date.now() });
     } finally {
       clearTimeout(timer);
     }
@@ -127,11 +131,21 @@ function startJob(label, work, timeoutMs = JOB_TIMEOUT_MS) {
   return jobId;
 }
 
-// Shared poll handler for a job's status route. Unknown id → 404 (job expired
-// or the server restarted; clients fall back as appropriate).
+// Shared poll handler for a job's status route. Mounted behind requireAuth, so
+// req.user is always populated (in demo mode with the demo tenant) — the tenant
+// is read exactly as the POST starters read it, so a job is only visible to the
+// tenant that started it.
+//
+// Unknown id → 404 (job expired or the server restarted; clients fall back as
+// appropriate). A job owned by ANOTHER tenant returns that same 404, not a 403:
+// a 403 would confirm the id exists, turning the endpoint into an oracle for
+// probing other tenants' job ids. Cross-tenant reads are indistinguishable from
+// "no such job". The response shape is byte-identical to the pre-auth one, so
+// the client's polling contract is unchanged.
 function sendJobStatus(req, res) {
+  const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
   const job = JOBS.get(req.params.jobId);
-  if (!job) {
+  if (!job || job.tenantId !== sessionTenant) {
     return res.status(404).json({ success: false, status: 'failed', error: 'Unknown or expired job' });
   }
   return res.status(200).json({ success: true, status: job.status, result: job.result, error: job.error });
@@ -197,7 +211,7 @@ router.post('/api/brief', briefLimiter, requireAuth, (req, res) => {
     return res.status(400).json({ success: false, error: 'briefText is required' });
   }
 
-  const jobId = startJob(`brief tenant=${sessionTenant}`, async () => {
+  const jobId = startJob(`brief tenant=${sessionTenant}`, sessionTenant, async () => {
     const tenantContext = await resolveTenant(sessionTenant);
     return runWebBrief(briefText, tenantContext, fileRefs); // the full { docUrl, assetBlocks, … }
   });
@@ -210,8 +224,10 @@ router.post('/api/brief', briefLimiter, requireAuth, (req, res) => {
 });
 
 // GET /api/brief/:jobId/status — poll a brief job. On complete, `result` is the
-// same structured payload the old synchronous endpoint returned.
-router.get('/api/brief/:jobId/status', sendJobStatus);
+// same structured payload the old synchronous endpoint returned. Requires a
+// session (same gate as the POST above) and only returns the session tenant's
+// own jobs.
+router.get('/api/brief/:jobId/status', requireAuth, sendJobStatus);
 
 // POST /api/draft — START draft generation and return a job id immediately.
 // The work (~1 min) runs fire-and-forget; the client polls the status endpoint
@@ -263,7 +279,7 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
   const append = body.append === true && scoped;
 
   const mode = `${direction ? `regenerate (${direction.length} chars)` : 'first draft'}${scoped ? ` scoped ${scopedFields.length}` : ''}${append ? ' append' : ''}`;
-  const jobId = startJob(`draft doc=${docId} ${mode}`, async () => {
+  const jobId = startJob(`draft doc=${docId} ${mode}`, sessionTenant, async () => {
     const tenantContext = await resolveTenant(sessionTenant);
     const out = await runWebDraft(docId, tenantContext, direction, scoped ? scopedFields : undefined, append);
     return { docId: out.docId, fieldCount: out.fieldCount };
@@ -274,7 +290,9 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
 
 // GET /api/draft/:jobId/status — poll a draft job. Unknown id → 404 (e.g. the
 // job expired or the server restarted; the client falls back to reading the doc).
-router.get('/api/draft/:jobId/status', sendJobStatus);
+// Requires a session (same gate as the POST above) and only returns the session
+// tenant's own jobs.
+router.get('/api/draft/:jobId/status', requireAuth, sendJobStatus);
 
 // POST /api/review — START a copy review and return a job id. The work (Gemini
 // per-field eval + Drive comment writes) runs fire-and-forget; the client polls
@@ -296,7 +314,7 @@ router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
     : null;
   const scoped = scopedFields && scopedFields.length > 0;
 
-  const jobId = startJob(`review doc=${docId}${scoped ? ` scoped ${scopedFields.length}` : ''}`, async () => {
+  const jobId = startJob(`review doc=${docId}${scoped ? ` scoped ${scopedFields.length}` : ''}`, sessionTenant, async () => {
     const tenantContext = await resolveTenant(sessionTenant);
     return runWebReview(docId, tenantContext, scoped ? scopedFields : undefined);
   });
@@ -304,8 +322,9 @@ router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
   return res.status(202).json({ success: true, jobId });
 });
 
-// GET /api/review/:jobId/status — poll a review job.
-router.get('/api/review/:jobId/status', sendJobStatus);
+// GET /api/review/:jobId/status — poll a review job. Requires a session (same
+// gate as the POST above) and only returns the session tenant's own jobs.
+router.get('/api/review/:jobId/status', requireAuth, sendJobStatus);
 
 // Project status lifecycle (Week 12). Closed projects are hidden by default but
 // never deleted.

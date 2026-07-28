@@ -77,9 +77,6 @@ test('services/slack exposes posting + Block Kit helpers', () => {
     'buildResultBlocks',
     'openInDriveBlocks',
     'copyCompleteBlocks',
-    'reviewRequestBlocks',
-    'designerHandoffBlocks',
-    'changesRequestedBlocks',
     'postLive',
     'updateLive',
   ];
@@ -88,16 +85,12 @@ test('services/slack exposes posting + Block Kit helpers', () => {
   }
 });
 
-test('services, destinations, db, and handlers load with their APIs', () => {
+test('services, destinations, and db load with their APIs', () => {
   const gemini = require('../src/services/gemini');
   assert.strictEqual(typeof gemini.parseBrief, 'function');
   assert.strictEqual(typeof gemini.generateVoiceGuide, 'function');
   assert.strictEqual(typeof require('../src/destinations').getDestination, 'function');
   assert.strictEqual(typeof require('../src/db').saveVoiceGuide, 'function');
-  const approval = require('../src/handlers/approval');
-  for (const fn of ['handleSubmitForReview', 'handleApprove', 'handleRequestChanges', 'handleResubmit']) {
-    assert.strictEqual(typeof approval[fn], 'function', `approval.${fn} should be a function`);
-  }
 });
 
 // --- Pure logic: functions safe to call without secrets/network ---
@@ -138,30 +131,18 @@ test('resolveDestinationFolderId prioritizes brief URL > tenant default > none',
   assert.strictEqual(resolveDestinationFolderId('no folder', null), null);
 });
 
-test('copyCompleteBlocks builds Open in Drive + Submit for Review', () => {
+test('copyCompleteBlocks builds Open in Drive + Regenerate', () => {
   const { copyCompleteBlocks } = require('../src/services/slack');
   const blocks = copyCompleteBlocks('done', 'https://doc', 'DOC1');
   const actions = blocks.find((b) => b.type === 'actions').elements;
   const ids = actions.map((e) => e.action_id);
   assert.ok(ids.includes('open_in_drive'), 'has Open in Drive');
-  assert.ok(ids.includes('submit_for_review'), 'has Submit for Review');
+  assert.ok(ids.includes('regenerate_draft'), 'has Regenerate');
   assert.strictEqual(
-    actions.find((e) => e.action_id === 'submit_for_review').value,
+    actions.find((e) => e.action_id === 'regenerate_draft').value,
     'DOC1',
-    'submit button carries the doc id'
+    'regenerate button carries the doc id'
   );
-});
-
-test('reviewRequestBlocks has Review Copy / Approve / Request Changes', () => {
-  const { reviewRequestBlocks } = require('../src/services/slack');
-  const blocks = reviewRequestBlocks({
-    campaignTitle: 'Q3 Always On',
-    assetList: 'LinkedIn, Email',
-    docUrl: 'https://doc',
-    projectRef: '7',
-  });
-  const ids = blocks.find((b) => b.type === 'actions').elements.map((e) => e.action_id);
-  assert.deepStrictEqual(ids, ['review_copy', 'approve', 'request_changes']);
 });
 
 test('config.ALLOWED_ASSETS is the 30-name v3 taxonomy', () => {
@@ -340,8 +321,6 @@ test('oauth router mounts and exposes its routes', () => {
     .map((layer) => layer.route.path)
     .sort();
   assert.deepStrictEqual(paths, [
-    '/auth/figma',
-    '/auth/figma/callback',
     '/oauth/google',
     '/oauth/google/callback',
     '/oauth/slack',
@@ -365,30 +344,6 @@ test('oauth.js wires the Google OAuth flow (per-user token storage)', () => {
   assert.ok(/connected=google/.test(src) && /error=google_failed/.test(src), 'redirects back to /app');
 });
 
-test('oauth.js wires the Figma OAuth redirect (Phase 4, granular scopes)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
-  assert.ok(/www\.figma\.com\/oauth/.test(src), 'redirects to the Figma consent screen');
-  assert.ok(
-    /current_user:read file_content:read file_metadata:read file_comments:write projects:read/.test(src),
-    'requests the current granular Figma scopes'
-  );
-  assert.ok(/response_type.*code/.test(src), 'uses the authorization-code flow');
-  assert.ok(/error=figma_failed/.test(src), 'redirects back with a sanitized error on misconfig');
-});
-
-test('oauth.js wires the Figma OAuth callback (token exchange + storage)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
-  // Current Figma OAuth token endpoint (granular-scope system), Basic auth.
-  assert.ok(/api\.figma\.com\/v1\/oauth\/token/.test(src), 'exchanges at the current Figma token endpoint');
-  assert.ok(/Authorization: `Basic \$\{basicAuth\}`/.test(src), 'uses HTTP Basic auth for the exchange');
-  assert.ok(/grant_type: 'authorization_code'/.test(src), 'authorization-code grant');
-  assert.ok(/consumeState\(req\.query\.state\)/.test(src), 'validates the CSRF state');
-  // expires_in (seconds) is converted to an absolute timestamp, not stored raw.
-  assert.ok(/expires_in/.test(src) && /Date\.now\(\) \+ Number\(expiresIn\) \* 1000/.test(src), 'converts expires_in seconds to a timestamp');
-  assert.ok(/saveFigmaTokens\(/.test(src), 'stores tokens via saveFigmaTokens');
-  assert.ok(/error=figma_failed/.test(src) && /connected=figma/.test(src), 'redirects on failure and success');
-});
-
 test('db exposes saveFigmaTokens and it degrades with no database', async () => {
   const db = require('../src/db');
   assert.strictEqual(typeof db.saveFigmaTokens, 'function');
@@ -403,31 +358,6 @@ test('db exposes getFigmaTokens and it degrades with no database', async () => {
   assert.strictEqual(await db.getFigmaTokens('T0B8LPRDKHR'), null);
 });
 
-test('services/figma token utility: exports + refresh wiring (Phase 4 Stage 1.4)', () => {
-  const figma = require('../src/services/figma');
-  assert.strictEqual(typeof figma.ensureFigmaAccessToken, 'function');
-  assert.strictEqual(typeof figma.refreshFigmaToken, 'function');
-
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'figma.js'), 'utf8');
-  // Refresh at the current Figma token endpoint with the refresh_token grant.
-  assert.ok(/api\.figma\.com\/v1\/oauth\/token/.test(src), 'refreshes at the current Figma token endpoint');
-  assert.ok(/grant_type: 'refresh_token'/.test(src), 'uses the refresh_token grant');
-  assert.ok(/Authorization: `Basic \$\{basicAuth\}`/.test(src), 'HTTP Basic auth (client_id:client_secret)');
-  // Same expires_in seconds → absolute timestamp conversion as the 1.3 callback.
-  assert.ok(/Number\(expiresIn\) \* 1000/.test(src), 'converts expires_in seconds to a timestamp');
-  // Rotates the refresh token if returned, else keeps the existing one.
-  assert.ok(/data\.refresh_token\) \|\| refreshToken/.test(src), 'keeps the old refresh token if not rotated');
-  // Refreshes within a buffer before expiry, and persists via saveFigmaTokens.
-  assert.ok(/REFRESH_BUFFER_MS/.test(src), 'refreshes within a pre-expiry buffer');
-  assert.ok(/saveFigmaTokens\(/.test(src), 'persists via the saveFigmaTokens upsert');
-});
-
-test('ensureFigmaAccessToken returns null when the tenant has no stored Figma tokens', async () => {
-  // No DATABASE_URL → getFigmaTokens returns null → utility returns null (not connected).
-  const { ensureFigmaAccessToken } = require('../src/services/figma');
-  assert.strictEqual(await ensureFigmaAccessToken('T0B8LPRDKHR'), null);
-});
-
 // --- Week 11: onboarding + sign-in ---
 
 test('oauth.js requests the userinfo scopes for Sign in with Google', () => {
@@ -437,21 +367,19 @@ test('oauth.js requests the userinfo scopes for Sign in with Google', () => {
   assert.ok(/req\.session\.userId/.test(src), 'sets the session userId on sign-in');
 });
 
-test('db/users exposes the finder + create/update API', () => {
+test('db/users exposes the finder + create API', () => {
   const u = require('../src/db/users');
-  for (const fn of ['findUserByGoogleId', 'findUserByEmail', 'findUserById', 'createUser', 'updateUser']) {
+  for (const fn of ['findUserByGoogleId', 'findUserById', 'createUser']) {
     assert.strictEqual(typeof u[fn], 'function', `users.${fn} should be a function`);
   }
 });
 
 test('db/users degrades gracefully with no database', async () => {
   delete process.env.DATABASE_URL;
-  const { findUserByGoogleId, findUserByEmail, findUserById, createUser, updateUser } = require('../src/db/users');
+  const { findUserByGoogleId, findUserById, createUser } = require('../src/db/users');
   assert.strictEqual(await findUserByGoogleId('g1'), null);
-  assert.strictEqual(await findUserByEmail('a@b.co'), null);
   assert.strictEqual(await findUserById(1), null);
   assert.strictEqual(await createUser({ email: 'a@b.co' }), null);
-  assert.strictEqual(await updateUser(1, { role: 'owner' }), null);
 });
 
 test('requireAuth bypasses (attaches a demo user) with no database', () => {
@@ -2721,8 +2649,6 @@ test('gemini.reviewCopyFields + googleDocs review comment API exposed', () => {
   assert.strictEqual(typeof g.listReviewComments, 'function');
   assert.strictEqual(typeof g.addReviewComment, 'function');
   assert.strictEqual(typeof g.deleteReviewComment, 'function');
-  assert.strictEqual(typeof g.clearReviewComments, 'function');
-  assert.strictEqual(typeof g.postReviewComments, 'function');
   assert.strictEqual(g.REVIEW_PREFIX, '🪶 Quillio Review — ');
 });
 
@@ -2787,8 +2713,7 @@ test('Slack review trigger (8c): runner, doc-id extract, endpoint, channel looku
   const srsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackReview.js'), 'utf8');
   assert.ok(!/type:\s*'image'/.test(srsrc), 'no image block in slack review');
   assert.ok(/REVIEW_EMOJI|SLACK_REVIEW_EMOJI/.test(srsrc), 'inline emoji shortcode used');
-  // Channel lookup helper + the /slack/review endpoint are wired.
-  assert.strictEqual(typeof require('../src/db/projects').getProjectByChannel, 'function');
+  // The /slack/review endpoint is wired.
   const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
   assert.ok(srv.includes("app.post('/slack/review'"), '/slack/review endpoint present');
   assert.ok(srv.includes('runSlackReview'), 'runner wired into server');

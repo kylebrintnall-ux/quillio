@@ -8,12 +8,6 @@ const session = require('express-session');
 const config = require('./config');
 const { getPool } = require('./db');
 const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
-const {
-  handleSubmitForReview,
-  handleApprove,
-  handleRequestChanges,
-  handleResubmit,
-} = require('./handlers/approval');
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
 const onboardingRoutes = require('./routes/onboarding');
@@ -73,10 +67,9 @@ app.use(
 );
 
 // Slack OAuth install flow (/oauth/slack, /oauth/slack/callback, /welcome) +
-// Google OAuth / sign-in (/oauth/google[, /callback]) + Figma OAuth
-// (/auth/figma[, /callback], Phase 4). Separate from the slash-command/
-// interactions handlers below. Rate-limit the OAuth surfaces (20/hr/IP) —
-// /welcome is not under these prefixes so it stays unlimited.
+// Google OAuth / sign-in (/oauth/google[, /callback]). Separate from the
+// slash-command/interactions handlers below. Rate-limit the OAuth surfaces
+// (20/hr/IP) — /welcome is not under these prefixes so it stays unlimited.
 app.use('/oauth', oauthLimiter);
 app.use('/auth', oauthLimiter);
 app.use(oauthRoutes);
@@ -484,24 +477,11 @@ app.post('/slack/interactions', (req, res) => {
         console.error('Failed to report error to Slack:', e);
       }
     });
-  } else if (action.action_id === 'submit_for_review') {
-    // Approval workflow (handlers/approval.js). Each handler reads the full
-    // payload (channel/message/user/value) itself, so pass payload, not value.
-    // Fire-and-forget — the 200 ack above already closed the 3s window.
-    handleSubmitForReview(payload).catch((err) =>
-      console.error('submit_for_review failed:', err)
-    );
-  } else if (action.action_id === 'approve') {
-    handleApprove(payload).catch((err) => console.error('approve failed:', err));
-  } else if (action.action_id === 'request_changes') {
-    handleRequestChanges(payload).catch((err) =>
-      console.error('request_changes failed:', err)
-    );
-  } else if (action.action_id === 'resubmit') {
-    handleResubmit(payload).catch((err) => console.error('resubmit failed:', err));
   }
-  // 'open_in_drive' / 'review_copy' are link buttons — no server-side work.
-  // 'populate_figma' is Phase 4 — intentionally unwired.
+  // 'open_in_drive' is a link button — no server-side work. Any other
+  // action_id (including buttons on old messages whose handlers have since been
+  // removed) falls through here: the 200 ack above already went out, so a stale
+  // click is a no-op rather than an error.
 });
 
 // Global error handler (must be LAST, with 4 args). Catches anything thrown in a

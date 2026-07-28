@@ -8,7 +8,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
-const { createTenantIfMissing, saveTenantToken, saveFigmaTokens, getPool, linkSlackUserToTenant, getTenantByWorkspace } = require('../db');
+const { createTenantIfMissing, saveTenantToken, getPool, linkSlackUserToTenant, getTenantByWorkspace } = require('../db');
 const { seedTenantAssets } = require('../db/assets');
 const { findUserByGoogleId, findUserById, createUser } = require('../db/users');
 
@@ -32,17 +32,6 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
 ].join(' ');
-
-// Figma OAuth (Phase 4). Figma deprecated the old files:read / files:write
-// scopes; these are the current granular scopes, matching the Quillio Figma app
-// config: read the connected user, read file content + metadata (duplicate and
-// read the master/project files), write file comments, and read projects.
-// Space-separated per the OAuth2 scope convention (same as GOOGLE_SCOPES above).
-const FIGMA_SCOPES =
-  'current_user:read file_content:read file_metadata:read file_comments:write projects:read';
-
-// The web app's demo tenant — used when /oauth/google isn't given a workspaceId.
-const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
 
 // CSRF state store. Cookies don't survive the cross-site OAuth redirect in
 // Safari/iPad (ITP), so we keep issued state values in-process with a short TTL
@@ -288,116 +277,6 @@ router.get('/oauth/google', (req, res) => {
   url.searchParams.set('prompt', 'consent'); // force a refresh token every time
   url.searchParams.set('state', state);
   return res.redirect(url.toString());
-});
-
-// Step 1 (Figma, Phase 4) — start connecting a Figma account: issue a CSRF state
-// and redirect to Figma's OAuth consent screen. Mirrors the Google flow above;
-// the callback (code exchange + token storage in tenant_tokens) is Stage 1.3.
-router.get('/auth/figma', (req, res) => {
-  if (!config.FIGMA_CLIENT_ID || !config.FIGMA_REDIRECT_URI) {
-    console.error('[oauth] FIGMA_CLIENT_ID / FIGMA_REDIRECT_URI not configured');
-    return res.redirect('/app?error=figma_failed');
-  }
-
-  // `redirect=onboarding|settings` returns the user there after connecting.
-  const redirectTo = pickRedirect(req.query.redirect);
-  const state = crypto.randomBytes(16).toString('hex');
-  rememberState(state, { redirectTo });
-
-  const url = new URL('https://www.figma.com/oauth');
-  url.searchParams.set('client_id', config.FIGMA_CLIENT_ID);
-  url.searchParams.set('redirect_uri', config.FIGMA_REDIRECT_URI);
-  url.searchParams.set('scope', FIGMA_SCOPES);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('state', state);
-  return res.redirect(url.toString());
-});
-
-// Step 2 (Figma, Phase 4) — Figma redirects back with ?code & ?state. Verify the
-// state, exchange the code for access + refresh tokens, and store them (with an
-// absolute expiry) in tenant_tokens' figma_* columns. Template duplication is a
-// later stage — this ends once tokens are stored.
-router.get('/auth/figma/callback', async (req, res) => {
-  try {
-    if (req.query.error) {
-      console.warn('[oauth] figma authorize declined/error:', req.query.error);
-      return res.redirect('/app?error=figma_failed');
-    }
-
-    // CSRF: the state must be one we issued, unexpired, unused (same store/check
-    // as the Google/Slack callbacks).
-    const entry = consumeState(req.query.state);
-    if (!entry) {
-      console.error('[oauth] figma state missing/expired/mismatch — aborting');
-      return res.redirect('/app?error=figma_failed');
-    }
-    // Attribute the connection to the default tenant — we do NOT trust a
-    // client-supplied workspaceId (audit HIGH 4), same as the Google flow.
-    const workspaceId = DEFAULT_WORKSPACE_ID;
-
-    const code = req.query.code;
-    if (!code) {
-      console.error('[oauth] figma callback missing code');
-      return res.redirect('/app?error=figma_failed');
-    }
-    if (!config.FIGMA_CLIENT_ID || !config.FIGMA_CLIENT_SECRET || !config.FIGMA_REDIRECT_URI) {
-      console.error('[oauth] Figma OAuth env not configured');
-      return res.redirect('/app?error=figma_failed');
-    }
-
-    // Exchange the authorization code for tokens. Figma's current OAuth (the
-    // granular-scope system) uses api.figma.com/v1/oauth/token with HTTP Basic
-    // auth — base64(client_id:client_secret) — and grant_type/code/redirect_uri
-    // in the x-www-form-urlencoded body.
-    const basicAuth = Buffer.from(
-      `${config.FIGMA_CLIENT_ID}:${config.FIGMA_CLIENT_SECRET}`
-    ).toString('base64');
-    const resp = await fetch('https://api.figma.com/v1/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${basicAuth}`,
-      },
-      body: new URLSearchParams({
-        redirect_uri: config.FIGMA_REDIRECT_URI,
-        code: String(code),
-        grant_type: 'authorization_code',
-      }),
-    });
-    const data = await resp.json().catch(() => null);
-    const accessToken = data && data.access_token;
-    const refreshToken = data && data.refresh_token;
-    const expiresIn = data && data.expires_in; // SECONDS
-    if (!resp.ok || !accessToken) {
-      // Log the error code/status only — never the token payload.
-      console.error(
-        '[oauth] figma token exchange failed:',
-        (data && (data.error || data.message)) || resp.status
-      );
-      return res.redirect('/app?error=figma_failed');
-    }
-
-    // Figma returns expires_in in SECONDS — convert to an absolute timestamp so
-    // the refresh utility (Stage 1.4) can compare it directly. Store null if the
-    // field is missing/invalid rather than a bogus epoch.
-    const expiresAt =
-      Number(expiresIn) > 0 ? new Date(Date.now() + Number(expiresIn) * 1000) : null;
-
-    // Ensure the tenant exists, then store the Figma tokens (best-effort — no-ops
-    // without a DB). Never log the tokens.
-    await createTenantIfMissing(workspaceId, null);
-    await saveFigmaTokens(workspaceId, { accessToken, refreshToken, expiresAt });
-    console.log('[oauth] figma connected — tokens stored for tenant', workspaceId);
-
-    // Return the user where they started the connect flow.
-    const redirectTo = entry.data && entry.data.redirectTo;
-    if (redirectTo === 'onboarding') return res.redirect('/onboarding?connected=figma');
-    return res.redirect('/settings?connected=figma');
-  } catch (err) {
-    // Never leak a stack trace to the browser — log it, redirect generically.
-    console.error('[oauth] figma callback error:', err && err.stack ? err.stack : err);
-    return res.redirect('/app?error=figma_failed');
-  }
 });
 
 // Step 2 (Google) — Google redirects back with ?code & ?state. Verify the

@@ -59,6 +59,7 @@ test('emoji config maps custom emoji to standard fallbacks', () => {
     'quillio-doc-done': '📄',
     'quillio-folder': '📁',
     'quillio-copy-done': '🪶',
+    'quillio-review': '🔍',
     quillio: '🪶',
   });
 });
@@ -2854,4 +2855,64 @@ test('Slack review trigger (8c): runner, doc-id extract, endpoint, channel looku
   const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
   assert.ok(srv.includes("app.post('/slack/review'"), '/slack/review endpoint present');
   assert.ok(srv.includes('runSlackReview'), 'runner wired into server');
+});
+
+test('Slack HTTP surface: signature check runs before the challenge echo', () => {
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  const handler = srv.slice(srv.indexOf("app.post('/slack/interactions'"));
+  const verifyAt = handler.indexOf('verifySlack(req)');
+  const challengeAt = handler.indexOf('extractChallenge(req.body)');
+  assert.ok(verifyAt > -1 && challengeAt > -1, 'both the verify and challenge steps are present');
+  assert.ok(
+    verifyAt < challengeAt,
+    'verifySlack must run BEFORE extractChallenge — echoing the challenge first reflects ' +
+      'attacker-supplied text to any unauthenticated POST'
+  );
+  // extractChallenge still unwraps a challenge out of the form-encoded `payload`.
+  const ec = srv.slice(srv.indexOf('function extractChallenge'), srv.indexOf('// GET / —'));
+  assert.ok(/JSON\.parse\(body\.payload\)/.test(ec), 'form-encoded payload unwrapping kept');
+});
+
+test('verifySlack fails closed when SLACK_SIGNING_SECRET is unset', () => {
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  const fn = srv.slice(srv.indexOf('function verifySlack'), srv.indexOf('function parseSlackFiles'));
+  assert.ok(
+    /if\s*\(!config\.SLACK_SIGNING_SECRET\)[\s\S]{0,200}?return false;/.test(fn),
+    'no signing secret => reject, never allow'
+  );
+});
+
+test('all three Slack routes are rate limited', () => {
+  const { slackLimiter } = require('../src/middleware/rateLimit');
+  assert.strictEqual(typeof slackLimiter, 'function', 'slackLimiter middleware exists');
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  for (const route of ['/slack/command', '/slack/review', '/slack/interactions']) {
+    assert.ok(
+      srv.includes(`app.post('${route}', slackLimiter,`),
+      `${route} is mounted behind slackLimiter`
+    );
+  }
+  // Generous on purpose: Slack retries failed deliveries and all workspaces
+  // share Slack's egress IPs, so the cap must not throttle legitimate bursts.
+  const rl = fs.readFileSync(path.join(__dirname, '..', 'src', 'middleware', 'rateLimit.js'), 'utf8');
+  const m = rl.match(/slackLimiter:\s*perHour\((\d+)\)/);
+  assert.ok(m, 'slackLimiter is a perHour limiter');
+  assert.ok(Number(m[1]) >= 300, `slack limit should be generous, got ${m[1]}`);
+});
+
+test('review emoji goes through emoji() and has a Unicode fallback', () => {
+  const config = require('../src/config');
+  const { emoji, EMOJI } = require('../src/emoji');
+  // Config carries a bare NAME (no colons), so emoji() can resolve it.
+  assert.strictEqual(config.SLACK_REVIEW_EMOJI, 'quillio-review');
+  assert.ok(!config.SLACK_REVIEW_EMOJI.includes(':'), 'no literal shortcode in config');
+  // Default (custom emoji off) renders the Unicode fallback, not ":quillio-review:".
+  assert.strictEqual(EMOJI['quillio-review'], '🔍');
+  assert.strictEqual(emoji(config.SLACK_REVIEW_EMOJI), '🔍');
+  // The adapter resolves it through emoji() rather than injecting config directly.
+  const srsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackReview.js'), 'utf8');
+  assert.ok(
+    /const REVIEW_EMOJI = emoji\(config\.SLACK_REVIEW_EMOJI\);/.test(srsrc),
+    'slackReview routes the review emoji through emoji()'
+  );
 });

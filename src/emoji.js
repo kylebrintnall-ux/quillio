@@ -20,6 +20,7 @@ const EMOJI = {
   'quillio-doc-done': '📄',
   'quillio-folder': '📁',
   'quillio-copy-done': '🪶',
+  'quillio-review': '🔍',
   quillio: '🪶',
 };
 

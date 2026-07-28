@@ -27,4 +27,14 @@ module.exports = {
   uploadLimiter: perHour(20),
   voiceLimiter: perHour(10),
   oauthLimiter: perHour(20),
+  // Slack surfaces (/slack/command, /slack/review, /slack/interactions).
+  // Deliberately far more generous than the user-facing limiters above: real
+  // Slack traffic arrives from a shared pool of Slack egress IPs, so a single
+  // req.ip fronts every workspace's slash commands AND every button click, and
+  // Slack re-delivers a request it considers failed (up to 3 retries) — a tight
+  // limit would turn one slow response into a self-inflicted outage. 600/hr/IP
+  // is ~10 requests/minute sustained, orders of magnitude above realistic
+  // command + interaction volume, while still capping an unauthenticated flood
+  // before it reaches HMAC verification.
+  slackLimiter: perHour(600),
 };

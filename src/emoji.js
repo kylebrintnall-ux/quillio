@@ -1,8 +1,8 @@
 'use strict';
 
 // Centralized emoji: custom Quillio emoji with standard fallbacks. Shared by
-// every Slack-facing module (slackWorkflow, services/slack, handlers/approval)
-// so the custom-vs-fallback choice lives in exactly one place.
+// every Slack-facing module (slackWorkflow, services/slack) so the
+// custom-vs-fallback choice lives in exactly one place.
 //
 // USE_CUSTOM_EMOJI is hardcoded true for now (existing behavior — emoji()
 // returns the :name: shortcode). When false, emoji() returns the standard

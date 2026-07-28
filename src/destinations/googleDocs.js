@@ -1262,53 +1262,6 @@ async function deleteReviewComment(docId, commentId, clients) {
   }
 }
 
-// Delete all prior Quillio review comments on the doc (identified by the prefix).
-// Best-effort; returns the count removed. NOTE: no longer used by the review flow
-// (reconcile preserves unresolved comments); kept for completeness / other uses.
-async function clearReviewComments(docId, clients) {
-  const comments = await listReviewComments(docId, clients);
-  let removed = 0;
-  for (const c of comments) {
-    if (await deleteReviewComment(docId, c.id, clients)) removed++;
-  }
-  return removed;
-}
-
-// Post branded review comments, each anchored to its field's copy via
-// quotedFileContent. `items`: [{ quote, content }]. Uniqueness guard: if the same
-// copy text appears in more than one field, only the first is anchored (Drive
-// would otherwise anchor every duplicate to the same first occurrence) — the
-// collision is logged and skipped rather than mis-anchored. Returns the count posted.
-async function postReviewComments(docId, items, clients) {
-  const { drive } = clients || (await getClients());
-  const seen = new Set();
-  let posted = 0;
-  for (const it of items || []) {
-    const quote = String(it.quote || '');
-    if (!quote.trim() || !it.content) continue;
-    if (seen.has(quote)) {
-      console.warn('[review] duplicate copy text — skipping a comment to avoid mis-anchoring');
-      continue;
-    }
-    seen.add(quote);
-    try {
-      await drive.comments.create({
-        fileId: docId,
-        fields: 'id',
-        supportsAllDrives: true,
-        requestBody: {
-          content: REVIEW_PREFIX + it.content,
-          quotedFileContent: { mimeType: 'text/plain', value: quote },
-        },
-      });
-      posted++;
-    } catch (err) {
-      console.error(`[review] failed to post comment: ${err.message}`);
-    }
-  }
-  return posted;
-}
-
 // The destination adapter contract.
 module.exports = {
   name: 'google-docs',
@@ -1318,8 +1271,6 @@ module.exports = {
   listReviewComments,
   addReviewComment,
   deleteReviewComment,
-  clearReviewComments,
-  postReviewComments,
   REVIEW_PREFIX,
   // Exposed for unit tests only (not part of the destination interface used by
   // the registry): char-limit bracket rendering, the field explainer, doc

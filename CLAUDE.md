@@ -265,7 +265,7 @@ npm test                          # node --test → test/smoke.test.js
 ```
 
 **There is a test suite.** `test/smoke.test.js` is ~2,900 lines and currently
-runs **152 tests** in about a second, with no credentials or network — it
+runs **156 tests** in about a second, with no credentials or network — it
 exercises wiring, parsing, rendering, and regression guards. `.github/workflows/ci.yml`
 runs `npm ci && npm test` on every push and pull request. Run it before you
 commit, and add cases there when you change behavior.
@@ -356,27 +356,45 @@ The Dynamic Email block is ordered: Subject Line 1, Subject Line 2,
 Pre-header, Headline (Offer 1) [50], Offer Body 1, CTA Text (Offer 1),
 Headline (Offer 2) [50], Offer Body 2, CTA Text (Offer 2).
 
-## Brand voice (`voice.md`)
+## Craft and brand voice (`craft.md` + `voice.md`)
 
-**Brand voice** lives in `voice.md` at the repo root, loaded once at startup by
-`gemini.js` and injected into every draft prompt as the overall brand identity
-(per-asset creative direction comes from Postgres `asset_direction`; a tenant's
-saved guide in Postgres takes precedence over the repo file when present). HTML
-comments are stripped; an unfilled placeholder (headings/comments only) injects
-nothing. Edits to the repo file take effect on restart/deploy.
+Two repo-root markdown files, both loaded once at startup by `gemini.js` and
+injected into every draft and review prompt as two clearly labeled blocks:
 
-**Editing `voice.md` — mind the structural coupling.** To save tokens,
-`gemini.js` slices the file per asset: everything *except* the
+| File | Answers | Replaceable by a tenant? |
+| --- | --- | --- |
+| `craft.md` | **How good copy works** — universal craft: headline/body/CTA principles, the approved CTA library, character discipline, and the per-medium sections | **Never.** It always loads, for every tenant. |
+| `voice.md` | **How this company sounds** — brand voice attributes, words & phrases, mechanics | Yes. A tenant's saved guide in Postgres replaces it entirely. |
+
+The split exists because a tenant's onboarding-generated guide is brand-only: if
+it replaced one combined file (as it used to), completing onboarding silently
+dropped the CTA library, character discipline, and all per-medium guidance from
+every prompt. `buildCraftContext()` always reads `craft.md`;
+`buildBrandContext()` reads the tenant guide, else `voice.md`; `brandVoiceLines()`
+emits both. In the prompt hierarchy, craft governs **structure**, brand wins on
+**voice** conflicts, field Tone Notes win for their field, and character limits
+always win.
+
+Per-asset creative direction still comes from Postgres `asset_direction`. HTML
+comments are stripped; a file with only headings/comments (an unfilled
+placeholder) injects nothing. Edits to either repo file take effect on
+restart/deploy.
+
+**Editing `craft.md` — mind the structural coupling.** To save tokens,
+`gemini.js` slices it per asset: everything *except* the
 `## … Writing Across Mediums` section is treated as universal craft and always
 injected; that section's `### ` subsections are the per-medium parts, and only
-the one matching the asset is injected. Two things the parser keys off: (1) a
+the one matching the asset is injected. (Copy review spans several assets, so it
+gets the *union* of their mediums.) Two things the parser keys off: (1) a
 level-2 heading whose text contains **"Writing Across Mediums"**, and (2) its
 `### ` subsection titles, matched by keyword in `mediumKeywordsForAsset`
 (`paid social`, `organic social`, `google display`, `email`, `sales`,
 `confirmation`). If you rename that heading or those subsections, update
 `mediumKeywordsForAsset` too — otherwise it safely falls back to injecting the
-whole file (more tokens, no lost guidance). Keep the CTA library and banned-words
-list *outside* the mediums section so they stay universal.
+whole file (more tokens, no lost guidance). Keep the CTA library *outside* the
+mediums section so it stays universal. The same slicing is applied to a tenant
+guide that happens to carry its own mediums section; a typical one has none and
+passes through whole.
 
 ## Vision & roadmap
 

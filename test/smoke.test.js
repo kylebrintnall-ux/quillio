@@ -2916,3 +2916,110 @@ test('review emoji goes through emoji() and has a Unicode fallback', () => {
     'slackReview routes the review emoji through emoji()'
   );
 });
+
+// --- craft.md / voice.md split: craft always loads, brand is replaceable ---
+
+test('craft/brand split: craft.md holds the mediums, voice.md holds brand only', () => {
+  const root = path.join(__dirname, '..');
+  // Read what actually reaches a prompt: loadGuide() strips HTML comments, so
+  // the maintainer notes at the top of each file are not part of the content.
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const craft = read('craft.md');
+  const voice = read('voice.md');
+  // The medium-slicing parser keys off this exact level-2 heading text.
+  assert.ok(/^##\s.*Writing Across Mediums/mi.test(craft), 'craft.md carries the mediums section');
+  assert.ok(!/Writing Across Mediums/i.test(voice), 'voice.md no longer carries the mediums');
+  // Craft content that a tenant guide must never be able to displace.
+  assert.ok(/Approved CTA Library/i.test(craft), 'CTA library lives in craft.md');
+  assert.ok(/Character Count Discipline/i.test(craft), 'character discipline lives in craft.md');
+  assert.ok(/##\s.*Headlines/i.test(craft) && /##\s.*Body Copy/i.test(craft), 'headline/body craft in craft.md');
+  assert.ok(!/Approved CTA Library/i.test(voice), 'CTA library is not duplicated in voice.md');
+  // Brand placeholder sections stay put as the no-tenant-guide fallback.
+  assert.ok(/Brand Voice \(CUSTOMIZE THIS SECTION\)/.test(voice), 'brand placeholder stays in voice.md');
+  assert.ok(/Mechanics & Formatting/.test(voice), 'mechanics stay in voice.md');
+});
+
+test('craft.md is injected for BOTH a tenant with a saved guide and one without', () => {
+  const { brandVoiceLines } = require('../src/services/gemini');
+  const tenantGuide = [
+    '# Acme Voice Guide',
+    '## Brand Personality',
+    'Bold, irreverent, allergic to corporate speak.',
+    '## Do Not Use',
+    'synergy, best-in-class',
+  ].join('\n');
+
+  const withGuide = brandVoiceLines('LinkedIn Paid Social', tenantGuide).join('\n');
+  const noGuide = brandVoiceLines('LinkedIn Paid Social', '').join('\n');
+
+  for (const [label, block] of [['tenant guide', withGuide], ['no guide', noGuide]]) {
+    // This is the regression the split exists to prevent: a tenant who
+    // completes onboarding must NOT lose the craft playbook.
+    assert.ok(/COPY CRAFT PLAYBOOK/.test(block), `${label}: craft block is labeled`);
+    assert.ok(/BRAND VOICE —/.test(block), `${label}: brand block is labeled`);
+    assert.ok(/Approved CTA Library/.test(block), `${label}: CTA library present`);
+    assert.ok(/Character Count Discipline/.test(block), `${label}: character discipline present`);
+    assert.ok(/Lead with the benefit/.test(block), `${label}: universal craft principles present`);
+    assert.ok(/LinkedIn \(paid\)/.test(block), `${label}: the asset's medium section present`);
+    assert.ok(/PROMPT HIERARCHY/.test(block), `${label}: hierarchy stated`);
+    assert.ok(/BRAND VOICE wins/.test(block), `${label}: brand wins voice conflicts`);
+    assert.ok(/Character limits = HARD constraints that ALWAYS win/.test(block), `${label}: limits win`);
+  }
+  // The tenant's guide is the brand half; the repo placeholder is not used.
+  assert.ok(/allergic to corporate speak/.test(withGuide), 'tenant brand content injected');
+  assert.ok(!/CUSTOMIZE THIS SECTION/.test(withGuide), 'tenant guide replaces the brand placeholder');
+  assert.ok(/CUSTOMIZE THIS SECTION/.test(noGuide), 'no tenant guide → repo voice.md is the brand half');
+});
+
+test('medium slicing still picks the right craft section per asset type', () => {
+  const { buildCraftContext, mediumKeywordsForAsset } = require('../src/services/gemini');
+  const cases = [
+    ['LinkedIn Paid Social', 'Paid Social', ['Organic Social', 'Email', 'Google Display']],
+    ['Organic Social Post', 'Organic Social', ['Google Display', 'Email']],
+    ['Display Banner', 'Google Display', ['Organic Social', 'Email']],
+    ['Dynamic Email', 'Email', ['Organic Social', 'Google Display']],
+    ['Basho Email Outbound', 'Sales / 1:1 Outreach', ['Organic Social', 'Google Display']],
+    ['Form Confirmation', 'Confirmation / Post-Conversion', ['Organic Social', 'Google Display']],
+  ];
+  for (const [assetType, want, absent] of cases) {
+    const ctx = buildCraftContext(assetType);
+    assert.ok(ctx.includes(`### ${want}`), `${assetType} → keeps "${want}"`);
+    for (const other of absent) {
+      assert.ok(!ctx.includes(`### ${other}`), `${assetType} → drops "${other}"`);
+    }
+    // Universal craft rides along with every slice.
+    assert.ok(/Approved CTA Library/.test(ctx), `${assetType} → keeps the CTA library`);
+  }
+  // Unknown medium → keep every section rather than drop guidance.
+  assert.strictEqual(mediumKeywordsForAsset('Billboard'), null);
+  const all = buildCraftContext('Billboard');
+  for (const s of ['Paid Social', 'Organic Social', 'Google Display', 'Email']) {
+    assert.ok(all.includes(`### ${s}`), `unknown medium keeps "${s}"`);
+  }
+  // An array of asset types (copy review) → the UNION of their mediums.
+  const union = buildCraftContext(['LinkedIn Paid Social', 'Dynamic Email']);
+  assert.ok(union.includes('### Paid Social') && union.includes('### Email'), 'union keeps both');
+  assert.ok(!union.includes('### Google Display'), 'union drops unrelated mediums');
+});
+
+test('copy review judges against BOTH craft and brand', () => {
+  const gsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  // Both review prompts (single fields + variation stacks) build a craft block.
+  assert.strictEqual((gsrc.match(/COPY CRAFT PLAYBOOK — AUTHORITATIVE/g) || []).length, 2,
+    'field review and variant review each label a craft block');
+  assert.ok(/buildCraftContext\(list\.map\(\(f\) => f\.assetType\)\)/.test(gsrc),
+    'field review scopes craft to the assets under review');
+  assert.ok(/It SUPPLEMENTS the craft playbook above — it never replaces it/.test(gsrc),
+    'review states craft is not replaced by the brand guide');
+  // The variant prompt carries both blocks.
+  const { buildVariantReviewPrompt } = require('../src/services/gemini');
+  const prompt = buildVariantReviewPrompt({
+    assetType: 'LinkedIn Paid Social', fieldName: 'Headline', charMax: 70,
+    variations: [{ index: 1, doorway: 'Pain', copy: 'Ticket queues never end.' }],
+    voiceGuide: '# Acme\nBold and irreverent.', briefContext: {}, siblings: [],
+  });
+  assert.ok(/COPY CRAFT PLAYBOOK/.test(prompt), 'variant review gets craft');
+  assert.ok(/Approved CTA Library/.test(prompt), 'variant review gets the CTA library');
+  assert.ok(/LinkedIn \(paid\)/.test(prompt), 'variant review gets the asset medium');
+  assert.ok(/Bold and irreverent/.test(prompt), 'variant review gets the tenant brand guide');
+});

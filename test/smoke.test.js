@@ -3032,3 +3032,93 @@ test('copy review judges against BOTH craft and brand', () => {
   assert.ok(/LinkedIn \(paid\)/.test(prompt), 'variant review gets the asset medium');
   assert.ok(/Bold and irreverent/.test(prompt), 'variant review gets the tenant brand guide');
 });
+
+// --- cleanDraft: balanced wrappers only ------------------------------------
+//
+// Regression guard. The original implementation was a blanket
+// /^[*_"'“”‘’\s]+|[*_"'“”‘’\s]+$/ strip, which ate the opening quote of any
+// copy that legitimately BEGAN with a quoted phrase. A wrapper now comes off
+// only when it is balanced and encloses the entire string.
+
+test('cleanDraft leaves a legitimate opening quote alone', () => {
+  const { cleanDraft } = require('../src/services/gemini');
+  // The reported bug: opens with a quoted phrase, ends with a period. Not a
+  // wrapper, so nothing should be stripped.
+  assert.strictEqual(
+    cleanDraft(`"Make it pop" isn't a brief. Stop endless review rounds.`),
+    `"Make it pop" isn't a brief. Stop endless review rounds.`
+  );
+});
+
+test('cleanDraft strips a balanced wrapper that encloses the whole string', () => {
+  const { cleanDraft } = require('../src/services/gemini');
+  assert.strictEqual(cleanDraft('"Just do it."'), 'Just do it.');
+  assert.strictEqual(cleanDraft('**Bold headline**'), 'Bold headline');
+  assert.strictEqual(cleanDraft('“Curly wrapped”'), 'Curly wrapped');
+  // Single quotes, single asterisk, underscores and curly singles too.
+  assert.strictEqual(cleanDraft("'Single wrapped'"), 'Single wrapped');
+  assert.strictEqual(cleanDraft('*Italic headline*'), 'Italic headline');
+  assert.strictEqual(cleanDraft('_Underscored_'), 'Underscored');
+  assert.strictEqual(cleanDraft('‘Curly single’'), 'Curly single');
+});
+
+test('cleanDraft leaves mixed, unbalanced, and mid-string quotes alone', () => {
+  const { cleanDraft } = require('../src/services/gemini');
+  // Opening double, no matching close -> not a wrapper.
+  assert.strictEqual(cleanDraft(`"Mixed' wrapper`), `"Mixed' wrapper`);
+  // Quotes entirely mid-string.
+  assert.strictEqual(cleanDraft('She said "hello" to him'), 'She said "hello" to him');
+  // First/last chars match but the inner text holds an ODD count -> peeling
+  // would leave a dangling quote, so it stays put.
+  assert.strictEqual(cleanDraft('"He said "hi"'), '"He said "hi"');
+  // Curly open with a straight close is not a matching pair.
+  assert.strictEqual(cleanDraft('“Mismatched"'), '“Mismatched"');
+});
+
+test('cleanDraft leaves two quoted phrases that merely bookend the string', () => {
+  const { cleanDraft } = require('../src/services/gemini');
+  // First/last chars match and the inner count is even, but the opening quote
+  // CLOSES at "pop" — it never enclosed the whole string, so it is not a wrapper.
+  assert.strictEqual(
+    cleanDraft(`"Make it pop" isn't a brief. "Stop endless review rounds."`),
+    `"Make it pop" isn't a brief. "Stop endless review rounds."`
+  );
+  assert.strictEqual(
+    cleanDraft('"Hello," she said, "goodbye."'),
+    '"Hello," she said, "goodbye."'
+  );
+  // Same shape with markdown emphasis: two italic runs, not one wrapper.
+  assert.strictEqual(cleanDraft('*Hello* and *world*'), '*Hello* and *world*');
+});
+
+test('cleanDraft strips only the OUTER wrapper when quotes nest', () => {
+  const { cleanDraft } = require('../src/services/gemini');
+  assert.strictEqual(cleanDraft('"He said "hi" loudly"'), 'He said "hi" loudly');
+  assert.strictEqual(cleanDraft('“He said “hi” loudly”'), 'He said “hi” loudly');
+});
+
+test('cleanDraft still trims whitespace and handles empty input', () => {
+  const { cleanDraft } = require('../src/services/gemini');
+  assert.strictEqual(cleanDraft('   padded copy   '), 'padded copy');
+  assert.strictEqual(cleanDraft('"  padded inside  "'), 'padded inside');
+  assert.strictEqual(cleanDraft(''), '');
+  assert.strictEqual(cleanDraft('"'), '"'); // lone quote is not a pair
+});
+
+test('cleanCampaignTitle shares cleanDraft, so the two cannot drift', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8'
+  );
+  assert.ok(/cleanDraft/.test(src), 'googleDocs imports cleanDraft');
+  assert.ok(
+    !/\^\[\*_"'“”‘’\\s\]\+/.test(src),
+    'the old blanket quote-strip regex is gone from googleDocs.js'
+  );
+  const gsrc = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8'
+  );
+  assert.ok(
+    !/\^\[\*_"'“”‘’\\s\]\+/.test(gsrc),
+    'the old blanket quote-strip regex is gone from gemini.js'
+  );
+});

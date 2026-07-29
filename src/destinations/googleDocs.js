@@ -16,7 +16,7 @@ const { DocBuilder } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
-const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, DOORWAYS, INTENSITIES } = require('../services/gemini');
+const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, cleanDraft, DOORWAYS, INTENSITIES } = require('../services/gemini');
 
 // Allowed matrix names (Variations Matrix, Step 3), sourced from gemini so there's
 // one taxonomy. Used to validate a scoped field's `variations` rows.
@@ -85,7 +85,10 @@ function cleanCampaignTitle(raw) {
   if (!t) return '';
   t = t.replace(/^(?:campaign\s*title|title|campaign|name)\s*[:\-–—]\s*/i, ''); // leading label
   t = t.replace(/^\d{4}-\d{2}-\d{2}\s*[-–—:]*\s*/, ''); // accidental leading date
-  t = t.replace(/^[*_"'“”‘’\s]+|[*_"'“”‘’\s]+$/g, ''); // surrounding quotes/markdown
+  // Shares cleanDraft with the field-copy path so the two can't drift: peels a
+  // wrapper only when it's balanced and encloses the whole title, leaving a
+  // title that merely OPENS with a quoted phrase intact.
+  t = cleanDraft(t); // surrounding quotes/markdown
   t = t.replace(/[.,;:!]+$/, '').trim(); // trailing punctuation
   const words = t.split(/\s+/).filter(Boolean);
   if (words.length > 8) t = words.slice(0, 8).join(' '); // keep it concise

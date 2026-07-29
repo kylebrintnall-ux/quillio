@@ -512,9 +512,80 @@ ${referenceContext}`;
   }
 }
 
-// Strip wrapping quotes / stray markdown from a single line of model output.
+// Wrapper delimiters we'll peel off model output: a straight quote pair, a
+// markdown emphasis pair, or a matching curly pair. Opening char → closing char.
+const WRAPPER_PAIRS = [
+  ['"', '"'],
+  ["'", "'"],
+  ['*', '*'],
+  ['_', '_'],
+  ['“', '”'], // “ ”
+  ['‘', '’'], // ‘ ’
+];
+
+// Peel ONE balanced wrapper enclosing the whole string; null if it isn't wrapped.
+//
+// Two conditions, and both matter:
+//   1. the first and last characters are a matching pair, AND
+//   2. the opening delimiter's match is the FINAL character — i.e. scanning the
+//      text between them never closes the wrapper early.
+//
+// Condition 2 is the difference between a wrapper and two quoted phrases that
+// merely happen to sit at each end:
+//
+//   "He said "hi" loudly"                  -> wrapped   (inner quotes nest)
+//   "Make it pop" isn't a brief. "Stop."   -> NOT wrapped (closes at "pop")
+//
+// Curly pairs have distinct open/close characters, so depth counting is exact.
+// Straight quotes and markdown emphasis reuse one character for both roles, so
+// we infer the role from the preceding character: a delimiter that follows a
+// non-space is closing something ("pop" ), one that follows a space or starts
+// the text is opening ( "hi). Meeting a closer at depth 0 means the wrapper
+// already ended, so the outer characters are not a wrapper at all.
+function stripOneWrapper(s) {
+  if (s.length < 2) return null;
+  const pair = WRAPPER_PAIRS.find((p) => p[0] === s[0] && p[1] === s[s.length - 1]);
+  if (!pair) return null;
+
+  const [open, close] = pair;
+  const symmetric = open === close;
+  const inner = s.slice(1, -1);
+
+  let depth = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch !== open && ch !== close) continue;
+
+    const closing = symmetric ? i > 0 && !/\s/.test(inner[i - 1]) : ch === close;
+    if (closing) {
+      if (depth === 0) return null; // wrapper already closed — not a wrapper
+      depth--;
+    } else {
+      depth++;
+    }
+  }
+  if (depth !== 0) return null; // something opened and never closed
+
+  return inner;
+}
+
+// Strip wrapping quotes / stray markdown from a single line of model output —
+// but ONLY when the wrapper is balanced and encloses the ENTIRE string.
+//
+// Models sometimes hand back a whole answer wrapped ("Just do it." or
+// **Bold headline**), and that junk has to come off. What must NOT come off is
+// a quote that belongs to the copy: `"Make it pop" isn't a brief.` opens with a
+// quoted phrase but is not wrapped, and the old blanket anchored-character-class
+// strip ate its opening quote.
+//
+// Loops so `**bold**` peels both layers; each pass drops 2 chars, so it ends.
 function cleanDraft(text) {
-  return String(text).trim().replace(/^[*_"'“”‘’\s]+|[*_"'“”‘’\s]+$/g, '').trim();
+  let s = String(text).trim();
+  for (;;) {
+    const inner = stripOneWrapper(s);
+    if (inner === null) return s;
+    s = inner.trim();
+  }
 }
 
 // The hard character ceiling implied by a charLimit cell. Handles "50",
@@ -1682,6 +1753,9 @@ module.exports = {
   extractHeaderSchema,
   reviewCopyFields,
   reviewVariationStack,
+  // Shared with destinations/googleDocs.js (cleanCampaignTitle) so the two
+  // wrapper-stripping paths can't drift apart.
+  cleanDraft,
   // Exposed for unit tests only.
   brandVoiceLines,
   buildCraftContext,

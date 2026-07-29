@@ -69,10 +69,12 @@ async function getTenantByWorkspace(workspaceId) {
   return res && res.rows && res.rows[0] ? res.rows[0] : null;
 }
 
-// Look up a tenant by its linked Slack identity (Stage 2 of the Slack-user
-// link): the (team, user) pair a tenant claimed at OAuth time. This is how
-// /quillio resolves to the *user who ran it* rather than the workspace's
-// installing tenant. Returns the row, or null if there's no DB / no match.
+// DEPRECATED — superseded by db/users.js getUserBySlackIdentity (user_slack_links).
+// Look up a tenant by the single (team, user) pair stored on its own row. Only
+// ONE Slack identity fits per tenant, so a second person connecting Slack
+// overwrote the first. Still read by resolveTenant as a fallback for links that
+// scripts/migrateBackfillUserCredentials.js hasn't moved yet; the columns are
+// intentionally not dropped. Returns the row, or null if there's no DB / no match.
 async function getTenantBySlackLink(teamId, slackUserId) {
   const res = await query(
     'SELECT * FROM tenants WHERE slack_team_id = $1 AND slack_user_id = $2 LIMIT 1',
@@ -95,6 +97,7 @@ async function getTenantToken(tenantId, service) {
 // database, or no row for this workspace yet.
 function envTenant(workspaceId) {
   return {
+    user: null,
     tenant: {
       id: workspaceId || null,
       workspace_id: workspaceId || null,
@@ -112,44 +115,109 @@ function envTenant(workspaceId) {
   };
 }
 
-// Resolve a tenant to { tenant, tokens, source }. Reads from Postgres when the
-// workspace exists there; otherwise falls back to a synthesized env-var tenant
-// with the identical shape.
+// Resolve a tenant to { tenant, tokens, source, user }. Reads from Postgres when
+// the workspace exists there; otherwise falls back to a synthesized env-var
+// tenant with the identical shape.
+//
+// `user` is the ACTING user (a users row) when one is known, else null. It is
+// what makes per-user credentials work: tokens are resolved for that user first
+// and callers thread their id into Drive/Docs writes and project authorship.
 //
 // slackUserId is OPTIONAL and changes the resolution path:
-//   - Omitted (web callers: routes/app.js, routes/settings.js) → behaves
-//     EXACTLY as before: workspace lookup, env fallback if none. Unchanged.
-//   - Provided (Slack callers) → user-aware. With no DB we keep the env/demo
-//     fallback (don't refuse offline). With a DB we resolve the tenant LINKED
-//     to this (team, user); if none is linked we return an "unlinked" sentinel
+//   - Omitted (web callers: routes/app.js, routes/settings.js) → workspace
+//     lookup, env fallback if none. The acting user is whoever holds the
+//     session, so web callers pass it explicitly as `actingUserId`.
+//   - Provided (Slack callers) → the acting user is derived from the Slack
+//     identity. With no DB we keep the env/demo fallback (don't refuse
+//     offline). With a DB we go Slack identity → user → that user's tenant; if
+//     the identity is unknown we return an "unlinked" sentinel
 //     ({ tenant: null, tokens: null, source: 'db', unlinked: true }) rather than
 //     silently falling back to the workspace/demo tenant — so /quillio refuses
 //     users who haven't connected their own account.
-async function resolveTenant(workspaceId, slackUserId) {
-  // Web path (no Slack user): identical to the original behavior.
+async function resolveTenant(workspaceId, slackUserId, actingUserId) {
+  // Web path (no Slack user). The acting user is supplied by the caller.
   if (!slackUserId) {
     const tenant = await getTenantByWorkspace(workspaceId);
     if (!tenant) return envTenant(workspaceId);
-    return { tenant, tokens: await resolveTenantTokens(tenant.id), source: 'db' };
+    let user = null;
+    if (actingUserId) {
+      try {
+        const { findUserById } = require('./db/users'); // lazy — avoids a require cycle
+        user = await findUserById(actingUserId);
+      } catch (err) {
+        console.warn('[db] acting user lookup failed — falling back to tenant tokens:', err.message);
+      }
+    }
+    return {
+      tenant,
+      tokens: await resolveTenantTokens(tenant.id, user && user.id),
+      source: 'db',
+      user,
+    };
   }
 
   // Slack path, no DB configured: keep the env/demo fallback (don't refuse).
   if (!getPool()) return envTenant(workspaceId);
 
-  // Slack path with a DB: resolve the tenant linked to this (team, user).
-  const linked = await getTenantBySlackLink(workspaceId, slackUserId);
-  if (!linked) {
-    return { tenant: null, tokens: null, source: 'db', unlinked: true };
+  // Slack path with a DB. Preferred: the per-user link — Slack identity → user →
+  // that user's tenant. Many people on one tenant can each hold their own link.
+  const { getUserBySlackIdentity } = require('./db/users'); // lazy — avoids a require cycle
+  const user = await getUserBySlackIdentity(workspaceId, slackUserId);
+  if (user) {
+    const tenant = await getTenantByWorkspace(user.tenant_id);
+    if (tenant) {
+      return { tenant, tokens: await resolveTenantTokens(tenant.id, user.id), source: 'db', user };
+    }
+    // A linked user whose tenant row is gone: refuse rather than fall through to
+    // the env/demo tenant, which would build against a stranger's library.
+    console.warn(
+      `[db] slack link → user ${user.id}, whose tenant_id has no tenants row — treating as unlinked`
+    );
+    return { tenant: null, tokens: null, source: 'db', unlinked: true, user: null };
   }
-  return { tenant: linked, tokens: await resolveTenantTokens(linked.id), source: 'db' };
+
+  // DEPRECATED fallback: the legacy one-link-per-tenant columns
+  // (tenants.slack_team_id / slack_user_id). Kept so a deploy that lands before
+  // scripts/migrateBackfillUserCredentials.js has run doesn't refuse every
+  // existing Slack user. The columns are not dropped; this path just goes quiet
+  // once the backfill has moved the links onto user_slack_links.
+  const linked = await getTenantBySlackLink(workspaceId, slackUserId);
+  if (linked) {
+    console.warn(
+      '[db] resolved via the DEPRECATED tenants.slack_* link — ' +
+        'run scripts/migrateBackfillUserCredentials.js to move it onto the user'
+    );
+    return { tenant: linked, tokens: await resolveTenantTokens(linked.id), source: 'db', user: null };
+  }
+
+  return { tenant: null, tokens: null, source: 'db', unlinked: true, user: null };
 }
 
-// Load a tenant's service tokens in the shape resolveTenant returns.
-async function resolveTenantTokens(tenantId) {
+// Load the service tokens in the shape resolveTenant returns.
+//
+// Per-user credentials win over the tenant-level ones. `google` and `slack_user`
+// belong to a person, so the acting user's own token is used when they have one
+// and the tenant_tokens row is only a fallback for data that predates the
+// per-user split. `slack_bot` is genuinely workspace-level (one bot install per
+// Slack workspace) and stays tenant-scoped.
+async function resolveTenantTokens(tenantId, userId) {
+  let userGoogle = null;
+  let userSlack = null;
+  if (userId) {
+    try {
+      const { getUserToken } = require('./db/users'); // lazy — avoids a require cycle
+      [userGoogle, userSlack] = await Promise.all([
+        getUserToken(userId, 'google'),
+        getUserToken(userId, 'slack_user'),
+      ]);
+    } catch (err) {
+      console.warn('[db] user token lookup failed — falling back to tenant tokens:', err.message);
+    }
+  }
   return {
     slack_bot: await getTenantToken(tenantId, 'slack_bot'),
-    slack_user: await getTenantToken(tenantId, 'slack_user'),
-    google: await getTenantToken(tenantId, 'google'),
+    slack_user: userSlack || (await getTenantToken(tenantId, 'slack_user')),
+    google: userGoogle || (await getTenantToken(tenantId, 'google')),
   };
 }
 
@@ -190,11 +258,11 @@ async function saveTenantToken(tenantId, service, accessToken) {
   return true;
 }
 
-// Record a tenant's linked Slack identity (Stage 1 of the Slack-user link):
-// which Slack (team, user) this tenant belongs to, so /quillio can resolve
-// (team_id + user_id) → tenant. Overwrites a previous link on the SAME tenant;
-// the partial unique index uq_tenants_slack_link rejects claiming a (team, user)
-// pair another tenant already holds — callers catch that (Postgres 23505).
+// DEPRECATED — superseded by db/users.js linkSlackIdentityToUser
+// (user_slack_links). Records ONE Slack (team, user) pair on the tenant row, so
+// two people on a tenant could never both be linked. No longer called from the
+// install flow; kept (with its columns) only so existing rows keep resolving via
+// the fallback in resolveTenant until the backfill migration runs.
 // Returns true if the write ran, false if there's no DB / no tenant id.
 async function linkSlackUserToTenant(tenantId, slackTeamId, slackUserId) {
   const p = getPool();

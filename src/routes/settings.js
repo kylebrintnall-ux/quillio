@@ -18,6 +18,7 @@ const {
   saveVoiceGuide,
   setTenantDefaultFolder,
 } = require('../db');
+const { getSlackLinksForUser } = require('../db/users');
 const { generateVoiceGuide } = require('../services/gemini');
 
 const router = express.Router();
@@ -98,17 +99,25 @@ router.post('/api/settings/voice/generate', voiceLimiter, requireAuth, async (re
 // GET /api/settings/workspace — current connections for the Workspace tab.
 router.get('/api/settings/workspace', requireAuth, async (req, res) => {
   try {
-    const { tenant, tokens } = await resolveTenant(req.user && req.user.tenant_id);
+    const userId = (req.user && req.user.id) || null;
+    // Pass the acting user so `tokens` reflects THEIR credentials, not whatever
+    // the tenant happens to hold — otherwise a second person on a tenant would
+    // see their colleague's Google connection reported as their own.
+    const { tenant, tokens } = await resolveTenant(req.user && req.user.tenant_id, null, userId);
+    // Slack connection status is the LINK, not a bot token — the bot
+    // token/workspace_name live on the workspace tenant, which a per-user tenant
+    // never resolves to. Gating on the link is what the resolver actually uses.
+    // Prefer this user's own link (user_slack_links); fall back to the
+    // deprecated tenant-row link for accounts the backfill hasn't moved yet.
+    let slackConnected = false;
+    if (userId) slackConnected = (await getSlackLinksForUser(userId)).length > 0;
+    if (!slackConnected) slackConnected = !!(tenant && tenant.slack_team_id);
     return res.status(200).json({
       success: true,
       defaultFolderUrl: folderUrlFromId(tenant && tenant.default_folder_id),
       // "Connected" is gated on a stored token; show the signed-in email when so.
       googleEmail: tokens && tokens.google ? (req.user && req.user.email) || null : null,
-      // Slack connection status for a per-user tenant is the LINK (slack_team_id
-      // on its own row), NOT a bot token — the bot token/workspace_name live on
-      // the workspace tenant, which a per-user tenant never resolves to. Gating
-      // on the link is what the resolver (getTenantBySlackLink) actually uses.
-      slackConnected: !!(tenant && tenant.slack_team_id),
+      slackConnected,
       // Kept for backward-compat (workspace-tenant installs still populate it);
       // the frontend now reads slackConnected.
       slackWorkspaceName: tokens && tokens.slack_bot ? (tenant && tenant.workspace_name) || null : null,

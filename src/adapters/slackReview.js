@@ -54,8 +54,11 @@ async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
     await refuseUnlinkedSlack({ channel: channelId, slackUserId });
     return;
   }
-  const { tenant } = resolved;
+  const { tenant, user } = resolved;
   const tenantId = tenant && tenant.id;
+  // The reviewer: the person whose Slack identity ran the command. The Docs
+  // read/comment writes run as their own Google identity.
+  const actingUserId = (user && user.id) || null;
 
   // The doc to review comes ONLY from a Google Doc link in the command text —
   // there is no channel/project fallback.
@@ -84,7 +87,7 @@ async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
   }
 
   try {
-    const clients = await getClientsForTenant(tenantId);
+    const clients = await getClientsForTenant({ tenantId, userId: actingUserId });
     const result = await runCopyReview(docId, tenantId, clients);
 
     if (!result.hadCopy) {

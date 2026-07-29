@@ -941,7 +941,14 @@
       loadVoice();
       loadWorkspace();
       loadAccount();
-      if (params.get('connected') === 'google' || params.get('slack') === 'connected') {
+      if (params.get('slack') === 'error') {
+        // The bot installed but this user's Slack identity was NOT linked, so
+        // /quillio won't run as them. Never show a success banner for this.
+        enterSection('workspace');
+        showError($('ws-error'), params.get('reason') === 'already_linked'
+          ? 'That Slack account is already connected to a different Quillio user, so it was not linked to yours. /quillio will not run as you. Sign in as that user, or connect a different Slack account.'
+          : 'Slack was installed but your account could not be linked, so /quillio will not run as you. Please try connecting again.');
+      } else if (params.get('connected') === 'google' || params.get('slack') === 'connected') {
         // Deep-link from an OAuth return: skip the hub, open Workspace + banner.
         enterSection('workspace');
         banner($('ws-banner'), params.get('slack') === 'connected'

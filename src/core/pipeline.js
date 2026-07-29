@@ -699,7 +699,8 @@ function tenantAssetsToSpecs(rows, assetFilter = []) {
 // it. Returns { doc, assetSpecs, projectFolderUrl }. Throws createDocument
 // errors so the caller can classify them (e.g. folder-access recovery).
 // Optional `clients` (from getClientsForTenant) runs the Drive folder + Doc
-// creation as a specific tenant's OAuth user; omitted → shared env getClients().
+// creation as the acting user's OAuth identity; omitted → shared env getClients().
+// `projectMeta.createdBy` (users.id) is recorded as the project's author.
 // `tenantId` selects the per-tenant Postgres asset library — the sole spec
 // source (the Google Sheet was fully retired) — and supplies asset_direction.
 // Throws if the tenant has no Postgres asset library (no DB / unseeded tenant):
@@ -835,6 +836,10 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) 
       status: 'not_started',
       slack_channel_id: projectMeta.slackChannelId || null,
       slack_thread_ts: projectMeta.slackThreadTs || null,
+      // Authorship: the acting user (users.id). On Slack that's whoever ran the
+      // command (resolved from their Slack identity); on the web it's the
+      // session user. Null when no user is identified (demo/env path).
+      created_by: projectMeta.createdBy || null,
     });
     if (saved) projectId = saved.id;
   } catch (err) {

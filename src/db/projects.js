@@ -32,9 +32,15 @@ async function saveProject(tenantId, projectData = {}) {
     status = 'draft',
     slack_channel_id = null,
     slack_thread_ts = null,
+    // The acting user (users.id) — who ran the brief. Nullable: the demo/env
+    // path and any flow with no identified user record NULL, exactly as every
+    // row created before this column existed does.
+    created_by = null,
   } = projectData;
 
-  console.log(`[db/projects] saveProject → tenant=${tenantId} name=${JSON.stringify(name)} doc=${copy_doc_id || 'none'}`);
+  console.log(
+    `[db/projects] saveProject → tenant=${tenantId} user=${created_by || 'none'} name=${JSON.stringify(name)} doc=${copy_doc_id || 'none'}`
+  );
   try {
     // Idempotent: a project is uniquely identified by its copy doc. If the
     // pipeline runs twice for the same doc (a retry, or being invoked from more
@@ -54,10 +60,10 @@ async function saveProject(tenantId, projectData = {}) {
 
     const res = await pool.query(
       `INSERT INTO projects
-         (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts]
+      [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts, created_by]
     );
     const saved = res.rows[0] || null;
     console.log(`[db/projects] saveProject OK → project id=${saved ? saved.id : 'null'} for tenant=${tenantId}`);

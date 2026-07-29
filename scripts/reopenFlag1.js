@@ -13,7 +13,7 @@
 // After eyeballing the suggestion, dismiss flag #1 again (the Dismiss button in
 // /admin, or set status='dismissed') so it doesn't linger as a fake pending flag.
 //
-// Run on Railway with: railway run node scripts/reopenFlag1.js
+// Run in the Railway console: node scripts/reopenFlag1.js
 
 const TARGET_ID = 1;
 

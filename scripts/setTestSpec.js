@@ -5,8 +5,8 @@
 // POST /admin/api/test-spec. Requires DATABASE_URL.
 //
 // Pass the new content as ONE quoted argument. A literal "\n" in the argument
-// becomes a real newline (handy on one line):
-//   railway run node scripts/setTestSpec.js "Headline: 80 characters\nBody: 200 characters\nCTA: 25 characters"
+// becomes a real newline. Run in the Railway console:
+//   node scripts/setTestSpec.js "Headline: 80 characters\nBody: 200 characters\nCTA: 25 characters"
 //
 // (Whitespace is collapsed before hashing, so newlines vs spaces don't change
 // the detection result — they only affect how the stored page reads.)

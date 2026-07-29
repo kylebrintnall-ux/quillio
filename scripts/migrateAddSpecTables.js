@@ -4,7 +4,7 @@
 // tables that back spec-change detection, then seeds the watch list from the
 // spec data already in Postgres. Standalone and idempotent (CREATE TABLE IF NOT
 // EXISTS; seed guards on the UNIQUE source_url), so it's safe to re-run.
-// Run on Railway with: railway run node scripts/migrateAddSpecTables.js
+// Run in the Railway console: node scripts/migrateAddSpecTables.js
 //
 // SCOPE (chunk 1): tables + watch-list seed ONLY. No detector, no hashing, no
 // queue rows, no writes to copy_fields. current_hash / last_checked_at stay NULL

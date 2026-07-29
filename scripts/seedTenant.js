@@ -1,8 +1,9 @@
 'use strict';
 
 // Seeds the default (single-tenant demo) row into the Phase 3 Postgres schema
-// from the current env vars. Idempotent — safe to re-run. Run on Railway:
-//   railway run node scripts/seedTenant.js
+// from the current env vars. Idempotent — safe to re-run. Run in the
+// Railway console:
+//   node scripts/seedTenant.js
 //
 // NOTE on the schema: the migrated `tenants` table uses `id` (TEXT) as the
 // primary key and has no unique constraint on `workspace_id`. So we set

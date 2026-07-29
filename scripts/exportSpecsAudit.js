@@ -9,7 +9,7 @@
 // The full array is written to /tmp/current-specs-export.json AND printed to
 // stdout so it can be copied straight from the terminal.
 //
-// Usage:  railway run node scripts/exportSpecsAudit.js [tenantId]
+// Usage (in the Railway console):  node scripts/exportSpecsAudit.js [tenantId]
 //   tenantId defaults to the demo tenant T0B8LPRDKHR.
 // Requires DATABASE_URL. READ-ONLY — never writes to the database.
 
@@ -27,7 +27,7 @@ async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) {
     console.error('[export] DATABASE_URL is not set in this environment.');
-    console.error('[export] Run via Railway, e.g.:  railway run node scripts/exportSpecsAudit.js');
+    console.error('[export] Run in the Railway console:  node scripts/exportSpecsAudit.js');
     process.exit(1);
   }
 

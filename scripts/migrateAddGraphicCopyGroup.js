@@ -19,7 +19,7 @@
 // Matching is by asset_types.name → every tenant carrying that asset is updated.
 // Re-running is a no-op. Wrapped in a transaction.
 //
-// Run on Railway with:  railway run node scripts/migrateAddGraphicCopyGroup.js
+// Run in the Railway console:  node scripts/migrateAddGraphicCopyGroup.js
 // (or any env with DATABASE_URL set — e.g. a local Postgres for validation).
 
 // Each entry: { name, deletes?, inserts?, group, order }

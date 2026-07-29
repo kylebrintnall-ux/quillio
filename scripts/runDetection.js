@@ -4,7 +4,8 @@
 // print the result. Runs the detector IN-PROCESS (no HTTP, no admin session),
 // the same way the migrations run — so it's the console-friendly equivalent of
 // POST /admin/api/run-detection. Manual trigger only; no cron.
-// Requires DATABASE_URL. Run: railway run node scripts/runDetection.js
+// Requires DATABASE_URL. Run in the Railway console:
+//   node scripts/runDetection.js
 //
 // Never writes copy_fields — the detector only touches spec_watch_list and
 // spec_review_queue.

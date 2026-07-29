@@ -9,9 +9,9 @@
 // vision (extractHeaderSchema), normalizes the result, prints the schema, and
 // renders an editable sample doc from it (Step 3) so you can eyeball the loop.
 //
-// Usage:
-//   railway run node scripts/extractHeaderFromImage.js            (latest image in folder)
-//   railway run node scripts/extractHeaderFromImage.js <fileId>   (a specific Drive image)
+// Usage (in the Railway console):
+//   node scripts/extractHeaderFromImage.js            (latest image in folder)
+//   node scripts/extractHeaderFromImage.js <fileId>   (a specific Drive image)
 //
 // No UI, no storage wiring yet — this is the extraction step only.
 

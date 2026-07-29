@@ -2,8 +2,8 @@
 
 // Migration — LiveSpecs chunk 3a. The audit trail for spec writes, plus a
 // verified-at stamp on copy_fields. Standalone and idempotent (IF NOT EXISTS),
-// safe to re-run. Run on Railway with:
-//   railway run node scripts/migrateAddSpecChangeLog.js
+// safe to re-run. Run in the Railway console:
+//   node scripts/migrateAddSpecChangeLog.js
 //
 // SCOPE: schema only. No data writes here — copy_fields is only ever written by
 // the confirmed approve path in src/services/specReview.js.

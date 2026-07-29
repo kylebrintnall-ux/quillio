@@ -4,10 +4,10 @@
 // grants it to the single admin user, matched by email. Standalone and
 // idempotent (ADD COLUMN IF NOT EXISTS; the UPDATE is a no-op the second time);
 // safe to run alongside migrateDb.js.
-// Run on Railway with: railway run node scripts/migrateAddAdminFlag.js
+// Run in the Railway console: node scripts/migrateAddAdminFlag.js
 //
 // The admin email can be overridden at run time:
-//   railway run ADMIN_EMAIL=you@example.com node scripts/migrateAddAdminFlag.js
+//   ADMIN_EMAIL=you@example.com node scripts/migrateAddAdminFlag.js
 // Matching is case-insensitive (LOWER(email)). Prints the rows changed by the
 // grant (expected 1).
 

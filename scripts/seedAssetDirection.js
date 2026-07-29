@@ -2,8 +2,9 @@
 
 // One-off backfill: set asset_types.asset_direction for existing rows from the
 // default library, matched by name (across all tenants). Idempotent — re-running
-// just re-applies the same values. Run AFTER scripts/migrateAddAssetDirection.js:
-//   railway run node scripts/seedAssetDirection.js
+// just re-applies the same values. Run in the Railway console, AFTER
+// scripts/migrateAddAssetDirection.js:
+//   node scripts/seedAssetDirection.js
 
 const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
 

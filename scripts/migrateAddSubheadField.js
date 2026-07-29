@@ -16,7 +16,7 @@
 // re-applied (sort_order). Matching is by asset_types.name, so EVERY tenant
 // carrying that asset is updated. Re-running is a no-op. Wrapped in a transaction.
 //
-// Run on Railway with:  railway run node scripts/migrateAddSubheadField.js
+// Run in the Railway console:  node scripts/migrateAddSubheadField.js
 // (or any env with DATABASE_URL set — e.g. a local Postgres for validation).
 
 // Each entry: { name, min, max, order }

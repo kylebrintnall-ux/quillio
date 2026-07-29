@@ -14,8 +14,8 @@
 // a Docs text-anchor format, so this test tells us empirically whether the comment
 // attaches to the field line or falls back to a general (unanchored) comment.
 //
-// Usage:
-//   railway run node scripts/testDocComment.js [docId-or-URL]
+// Usage (in the Railway console):
+//   node scripts/testDocComment.js [docId-or-URL]
 //     (no id → most recent Google Doc in DRIVE_FOLDER_ID that isn't a header test)
 
 const config = require('../src/config');

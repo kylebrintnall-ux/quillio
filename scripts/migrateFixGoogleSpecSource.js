@@ -22,7 +22,7 @@
 // migrateSetEnforcedSpecSource.js PLATFORM_URLS.Google) are updated to the new
 // URL in the same change, kept byte-identical (a smoke test asserts it).
 //
-// Run on Railway with: railway run node scripts/migrateFixGoogleSpecSource.js
+// Run in the Railway console: node scripts/migrateFixGoogleSpecSource.js
 
 const OLD_URL = 'https://support.google.com/google-ads/answer/7684791';
 const NEW_URL = 'https://support.google.com/google-ads/answer/17090561';

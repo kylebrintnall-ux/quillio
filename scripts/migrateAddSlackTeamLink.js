@@ -5,7 +5,7 @@
 // workspace. Together with the existing tenants.slack_user_id column this lets
 // /quillio resolve (team_id + user_id) → the user's own tenant.
 // Standalone and idempotent (IF NOT EXISTS); safe to run alongside migrateDb.js.
-// Run on Railway with: railway run node scripts/migrateAddSlackTeamLink.js
+// Run in the Railway console: node scripts/migrateAddSlackTeamLink.js
 
 const STATEMENTS = [
   'ALTER TABLE tenants ADD COLUMN IF NOT EXISTS slack_team_id TEXT',

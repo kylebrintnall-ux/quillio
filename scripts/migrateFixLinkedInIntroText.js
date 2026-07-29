@@ -13,7 +13,7 @@
 // Idempotent + non-clobbering: guarded by char_max = 600 AND spec_note IS NULL, so
 // a re-run (already 150 / noted) changes nothing.
 //
-// Run on Railway with: railway run node scripts/migrateFixLinkedInIntroText.js
+// Run in the Railway console: node scripts/migrateFixLinkedInIntroText.js
 //
 // SEQUENCING: run this BEFORE deploying the seed change (defaultAssets.js now
 // seeds the same 150 / note) — same ordering as the prior data migrations.

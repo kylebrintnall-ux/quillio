@@ -4,9 +4,9 @@
 // Stores the §3 worked-example pattern (SVC: {campaign}_ Promo Copy) so a real
 // brief's generated doc uses it, or clears it back to the default naming.
 //
-// Usage:
-//   railway run node scripts/seedNamingPattern.js         [tenantId]
-//   railway run node scripts/seedNamingPattern.js clear   [tenantId]
+// Usage (in the Railway console):
+//   node scripts/seedNamingPattern.js         [tenantId]
+//   node scripts/seedNamingPattern.js clear   [tenantId]
 //
 // tenantId defaults to the demo workspace (T0B8LPRDKHR). Requires DATABASE_URL
 // (+ the templates.naming_pattern column — run npm run migrate-naming first).

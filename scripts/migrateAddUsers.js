@@ -2,7 +2,7 @@
 
 // Phase 3 / Week 11 migration — adds the `users` table for web sign-in (Sign in
 // with Google). Standalone and idempotent (IF NOT EXISTS); safe to run alongside
-// migrateDb.js. Run on Railway with: railway run node scripts/migrateAddUsers.js
+// migrateDb.js. Run in the Railway console: node scripts/migrateAddUsers.js
 //
 // The connect-pg-simple session table is created automatically at boot, so it
 // is intentionally NOT defined here.

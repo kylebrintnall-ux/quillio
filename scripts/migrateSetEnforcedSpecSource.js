@@ -15,7 +15,7 @@
 // spec_source='quillio_default', so a re-run (sources now set) changes nothing
 // and it never overwrites a source set elsewhere.
 //
-// Run on Railway with: railway run node scripts/migrateSetEnforcedSpecSource.js
+// Run in the Railway console: node scripts/migrateSetEnforcedSpecSource.js
 //
 // SEQUENCING: run BEFORE deploying the seed change (defaultAssets.js now seeds
 // these same URLs) — same ordering as the prior spec_type work.

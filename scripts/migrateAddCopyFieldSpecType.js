@@ -16,7 +16,7 @@
 //   • Both backfill UPDATEs are guarded by `spec_type IS NULL`, so a re-run
 //     no-ops and never clobbers a value edited later.
 //
-// Run on Railway with: railway run node scripts/migrateAddCopyFieldSpecType.js
+// Run in the Railway console: node scripts/migrateAddCopyFieldSpecType.js
 //
 // SEQUENCING (important): run this BEFORE the code that references
 // copy_fields.spec_type goes live — seedTenantAssets() inserts the column, so
@@ -110,7 +110,7 @@ async function main() {
   }
 }
 
-// Run only when invoked directly (railway run node …). Requiring this module
+// Run only when invoked directly (node scripts/…). Requiring this module
 // (e.g. from the smoke test to verify byte-identical tiering) must NOT connect
 // to a database, so main() is gated on require.main.
 if (require.main === module) {

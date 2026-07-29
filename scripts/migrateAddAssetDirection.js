@@ -2,8 +2,9 @@
 
 // Phase 3 / Week 12 migration — adds the `asset_direction` column to asset_types
 // for asset-level creative direction (one italic line under the asset heading).
-// Standalone + idempotent (ADD COLUMN IF NOT EXISTS). Run on Railway with:
-//   railway run node scripts/migrateAddAssetDirection.js
+// Standalone + idempotent (ADD COLUMN IF NOT EXISTS). Run in the Railway
+// console:
+//   node scripts/migrateAddAssetDirection.js
 // Run this BEFORE deploying the code that reads/writes the column, and before
 // scripts/seedAssetDirection.js.
 

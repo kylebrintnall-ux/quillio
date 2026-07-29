@@ -9,7 +9,7 @@
 // transaction. Matches the scripts/migrate*.js pattern (sslFor, DATABASE_URL
 // required). The templates table is created by migrateAddFigmaSchema.js.
 //
-// Run on Railway with:  railway run node scripts/migrateAddNamingPattern.js
+// Run in the Railway console:  node scripts/migrateAddNamingPattern.js
 // (or:  npm run migrate-naming)
 
 function sslFor(url) {

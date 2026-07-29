@@ -18,7 +18,7 @@
 // exact pairs are touched, so a re-run (they're now 'enforced') changes nothing
 // and it never overwrites a value set elsewhere.
 //
-// Run on Railway with: railway run node scripts/migrateAddCopyFieldSpecTypeFixes.js
+// Run in the Railway console: node scripts/migrateAddCopyFieldSpecTypeFixes.js
 //
 // SEQUENCING: run this BEFORE the code that seeds these tiers goes live
 // (src/data/defaultAssets.js now seeds both pairs 'enforced') — same ordering
@@ -79,7 +79,7 @@ async function main() {
   }
 }
 
-// Run only when invoked directly (railway run node …). Requiring this module
+// Run only when invoked directly (node scripts/…). Requiring this module
 // (e.g. from the smoke test to verify byte-identical tiering) must NOT connect
 // to a database, so main() is gated on require.main.
 if (require.main === module) {

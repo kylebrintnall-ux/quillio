@@ -2,7 +2,7 @@
 
 // Phase 3 schema migration. Creates every table from the roadmap schema against
 // DATABASE_URL. All statements use IF NOT EXISTS, so it's safe to run repeatedly.
-// Run on Railway with: railway run node scripts/migrateDb.js
+// Run in the Railway console: node scripts/migrateDb.js
 //
 // Tables are ordered so foreign-key references resolve (tenants first, then the
 // tables that reference them; asset_types before copy_fields/project_assets/etc).

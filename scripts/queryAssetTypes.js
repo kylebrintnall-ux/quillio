@@ -5,7 +5,7 @@
 //   SELECT name, "group", sort_order FROM asset_types
 //    WHERE tenant_id = $1 ORDER BY sort_order;
 //
-// Usage:  railway run node scripts/queryAssetTypes.js [tenantId]
+// Usage (in the Railway console):  node scripts/queryAssetTypes.js [tenantId]
 //   tenantId defaults to the demo tenant T0B8LPRDKHR.
 // Requires DATABASE_URL. Reads only — never writes.
 

@@ -4,9 +4,9 @@
 // (no UI/extraction yet). Stores one of the bundled seed schemas onto the
 // tenant's default template row via db.saveHeaderSchema.
 //
-// Usage:
-//   railway run node scripts/seedHeaderSchema.js <table|text> [tenantId]
-//   railway run node scripts/seedHeaderSchema.js clear       [tenantId]
+// Usage (in the Railway console):
+//   node scripts/seedHeaderSchema.js <table|text> [tenantId]
+//   node scripts/seedHeaderSchema.js clear       [tenantId]
 //
 // `table` → the bordered two-column metadata table header.
 // `text`  → the heading-plus-text header (heading, label lines, field row, rule).

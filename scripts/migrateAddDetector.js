@@ -4,7 +4,7 @@
 // test-page store and the watch-row error column the detector needs, and points
 // the is_test watch entry at the real test-page URL. Standalone and idempotent
 // (IF NOT EXISTS / ON CONFLICT / guarded UPDATE), safe to re-run.
-// Run on Railway with: railway run node scripts/migrateAddDetector.js
+// Run in the Railway console: node scripts/migrateAddDetector.js
 //
 // SCOPE (chunk 2): schema + seed only. No cron, no writes to copy_fields. The
 // detector itself is app code (src/services/specDetector.js), triggered manually

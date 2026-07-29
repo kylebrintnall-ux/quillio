@@ -1,8 +1,8 @@
 'use strict';
 
 // Quick Postgres connectivity test. Connects using DATABASE_URL, runs a trivial
-// query, logs success or the error, and exits. Run with: node scripts/testDb.js
-// (on Railway: `railway run node scripts/testDb.js`).
+// query, logs success or the error, and exits. Run in the Railway console:
+//   node scripts/testDb.js
 
 async function main() {
   if (!process.env.DATABASE_URL) {

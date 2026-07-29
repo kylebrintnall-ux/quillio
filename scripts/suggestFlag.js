@@ -5,7 +5,8 @@
 // READ-ONLY: calls getSuggestions, which never writes copy_fields or anything
 // else. Requires DATABASE_URL (and GEMINI_API_KEY for the extraction pass).
 //
-// Run: railway run node scripts/suggestFlag.js [flagId]   (flagId defaults to 1)
+// Run in the Railway console:
+//   node scripts/suggestFlag.js [flagId]   (flagId defaults to 1)
 
 const { getSuggestions } = require('../src/services/specReview');
 

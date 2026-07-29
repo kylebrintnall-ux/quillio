@@ -13,10 +13,10 @@
 // The seed schemas are passed in-memory (no DB writes), so running this never
 // mutates any tenant's stored schema.
 //
-// Usage:
-//   railway run node scripts/genHeaderSchemaTestDoc.js            (all three)
-//   railway run node scripts/genHeaderSchemaTestDoc.js table      (one variant)
-//   railway run node scripts/genHeaderSchemaTestDoc.js stored <tenantId>
+// Usage (in the Railway console):
+//   node scripts/genHeaderSchemaTestDoc.js            (all three)
+//   node scripts/genHeaderSchemaTestDoc.js table      (one variant)
+//   node scripts/genHeaderSchemaTestDoc.js stored <tenantId>
 //       → render from the tenant's STORED schema (verifies the DB read path)
 //
 // Docs land in the configured DRIVE_FOLDER_ID.

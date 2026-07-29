@@ -6,7 +6,7 @@
 // in full), and the figma_token_expires_at timestamp (with whether it's still
 // in the future). Saves pasting SQL into a console.
 //
-// Usage:  railway run node scripts/queryFigmaTokens.js [tenantId]
+// Usage (in the Railway console):  node scripts/queryFigmaTokens.js [tenantId]
 //   tenantId defaults to the demo tenant T0B8LPRDKHR.
 // Requires DATABASE_URL. Reads only — never writes, never prints a full token.
 

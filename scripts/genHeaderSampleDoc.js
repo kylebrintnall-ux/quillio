@@ -7,9 +7,9 @@
 // Uses a seeded draft schema (Gemini will produce this later, Step 5). This does
 // NOT touch the normal createDocument pipeline or any tenant's stored schema.
 //
-// Usage:
-//   railway run node scripts/genHeaderSampleDoc.js            (table draft header)
-//   railway run node scripts/genHeaderSampleDoc.js text       (heading+text header)
+// Usage (in the Railway console):
+//   node scripts/genHeaderSampleDoc.js            (table draft header)
+//   node scripts/genHeaderSampleDoc.js text       (heading+text header)
 //
 // The doc lands in the configured DRIVE_FOLDER_ID.
 

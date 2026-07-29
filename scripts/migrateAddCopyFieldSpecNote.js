@@ -10,7 +10,7 @@
 //   • The backfill only sets rows whose spec_note IS NULL, so a re-run never
 //     clobbers a value edited later.
 //
-// Run on Railway with: railway run node scripts/migrateAddCopyFieldSpecNote.js
+// Run in the Railway console: node scripts/migrateAddCopyFieldSpecNote.js
 //
 // SEQUENCING (important): run this BEFORE the code that reads
 // copy_fields.spec_note goes live. The code change removes the hardcoded Hook

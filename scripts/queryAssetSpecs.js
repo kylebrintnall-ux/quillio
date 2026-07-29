@@ -4,7 +4,7 @@
 // with its copy_fields (field name, char min–max, and Graphic Copy grouping) in
 // order. Saves pasting SQL into a console.
 //
-// Usage:  railway run node scripts/queryAssetSpecs.js [tenantId]
+// Usage (in the Railway console):  node scripts/queryAssetSpecs.js [tenantId]
 //   tenantId defaults to the demo tenant T0B8LPRDKHR.
 // Requires DATABASE_URL. Reads only — never writes.
 

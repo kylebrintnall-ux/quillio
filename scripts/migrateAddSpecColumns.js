@@ -4,7 +4,7 @@
 // copy_fields so each seeded field can record where its spec came from
 // (`spec_source`, e.g. 'quillio_default') and its version (`spec_version`).
 // Both use ADD COLUMN IF NOT EXISTS, so it's safe to run repeatedly.
-// Run on Railway with: railway run node scripts/migrateAddSpecColumns.js
+// Run in the Railway console: node scripts/migrateAddSpecColumns.js
 //
 // Scope note: spec columns live on copy_fields ONLY (per the Week 7 plan) —
 // not asset_types — because provenance is tracked at the field-spec level.

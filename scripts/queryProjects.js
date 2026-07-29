@@ -4,7 +4,8 @@
 // briefs (web AND Slack) persist — and, via slack_channel_id, tell which
 // entry point created each. Saves pasting SQL into a console.
 //
-// Usage:  railway run node scripts/queryProjects.js [tenantId] [limit]
+// Usage (in the Railway console):
+//   node scripts/queryProjects.js [tenantId] [limit]
 //   tenantId  optional — filter to one tenant (default: all tenants).
 //   limit     optional — how many rows, newest first (default: 10).
 // Requires DATABASE_URL. Reads only — never writes.

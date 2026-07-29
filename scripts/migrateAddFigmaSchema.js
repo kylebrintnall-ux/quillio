@@ -16,7 +16,7 @@
 // safe to run repeatedly. Wrapped in a transaction. Matches the
 // scripts/migrate*.js pattern (sslFor, DATABASE_URL required).
 //
-// Run on Railway with:  railway run node scripts/migrateAddFigmaSchema.js
+// Run in the Railway console:  node scripts/migrateAddFigmaSchema.js
 // (or any env with DATABASE_URL set — e.g. a local Postgres for validation).
 
 function sslFor(url) {

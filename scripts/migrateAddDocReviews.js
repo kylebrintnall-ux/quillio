@@ -7,7 +7,7 @@
 // Idempotent: CREATE TABLE IF NOT EXISTS, safe to run repeatedly. Wrapped in a
 // transaction. Matches scripts/migrate*.js (sslFor, DATABASE_URL required).
 //
-// Run on Railway:  railway run node scripts/migrateAddDocReviews.js
+// Run in the Railway console:  node scripts/migrateAddDocReviews.js
 //   (or:  npm run migrate-reviews)
 
 function sslFor(url) {

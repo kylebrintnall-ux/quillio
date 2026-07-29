@@ -9,7 +9,7 @@
 // work, step 1). It does NOT touch the production pipeline — no schema extraction,
 // storage, or UI, and createDocument is unchanged.
 //
-// Usage:  railway run node scripts/genHeaderTableTestDoc.js
+// Usage (in the Railway console):  node scripts/genHeaderTableTestDoc.js
 //   (needs the same Google client credentials the app already uses; writes into
 //    the configured DRIVE_FOLDER_ID. Locally you can run with the app's env.)
 //

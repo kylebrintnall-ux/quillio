@@ -9,8 +9,8 @@
 //      can open the original and the round-trip side by side and confirm they
 //      match.
 //
-// Usage:
-//   railway run node scripts/readHeaderDoc.js <docId-or-URL>
+// Usage (in the Railway console):
+//   node scripts/readHeaderDoc.js <docId-or-URL>
 //
 // Test with BOTH a table-style and a text/heading-style header: generate a sample
 // (npm run gd3 / gd3 text), edit its header in Google Docs, then run this on that

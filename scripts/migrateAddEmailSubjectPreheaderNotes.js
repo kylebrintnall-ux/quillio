@@ -18,8 +18,8 @@
 // Idempotent + non-clobbering: guarded by spec_note IS NULL, so a re-run — or a
 // field that already carries a note — changes nothing.
 //
-// Run on Railway with:
-//   railway run node scripts/migrateAddEmailSubjectPreheaderNotes.js
+// Run in the Railway console:
+//   node scripts/migrateAddEmailSubjectPreheaderNotes.js
 //
 // SEQUENCING: run this BEFORE deploying the seed change (defaultAssets.js now
 // seeds the same notes) — same ordering as the prior data migrations.

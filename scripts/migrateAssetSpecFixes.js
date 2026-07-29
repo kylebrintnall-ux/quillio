@@ -19,7 +19,7 @@
 // is a no-op (renames hit 0 rows once applied, inserts are existence-guarded,
 // updates are idempotent). Wrapped in a transaction.
 //
-// Run on Railway with:  railway run node scripts/migrateAssetSpecFixes.js
+// Run in the Railway console:  node scripts/migrateAssetSpecFixes.js
 // (or any env with DATABASE_URL set — e.g. a local Postgres for validation).
 
 // Each entry: { name, direction?, spec_note?, renames?, inserts?, specs?, order? }

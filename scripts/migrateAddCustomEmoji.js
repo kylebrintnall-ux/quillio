@@ -3,7 +3,7 @@
 // Migration: add tenants.custom_emoji (BOOLEAN). Tracks whether a tenant's
 // workspace has the custom Quillio emoji available, so the adapter can choose
 // custom vs. fallback emoji per tenant. Idempotent (ADD COLUMN IF NOT EXISTS).
-// Run on Railway: railway run node scripts/migrateAddCustomEmoji.js
+// Run in the Railway console: node scripts/migrateAddCustomEmoji.js
 
 async function main() {
   if (!process.env.DATABASE_URL) {

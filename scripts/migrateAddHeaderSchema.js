@@ -11,7 +11,7 @@
 // required). The templates table itself is created by migrateAddFigmaSchema.js
 // (Phase 4 / Stage 1.1) — run that first on a DB that doesn't have it yet.
 //
-// Run on Railway with:  railway run node scripts/migrateAddHeaderSchema.js
+// Run in the Railway console:  node scripts/migrateAddHeaderSchema.js
 // (or any env with DATABASE_URL set — e.g. a local Postgres for validation).
 
 function sslFor(url) {

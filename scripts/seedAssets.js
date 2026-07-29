@@ -2,7 +2,7 @@
 
 // Seeds the default asset library into the demo tenant (T0B8LPRDKHR) in the
 // Phase 3 Postgres schema. Idempotent — skips if the tenant already has asset
-// types. Run on Railway with: railway run node scripts/seedAssets.js
+// types. Run in the Railway console: node scripts/seedAssets.js
 //
 // Prereqs: scripts/migrateDb.js (asset_types + copy_fields) and
 // scripts/migrateAddSpecColumns.js (copy_fields.spec_source/spec_version) must

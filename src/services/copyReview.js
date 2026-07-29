@@ -8,8 +8,9 @@
 //   1. getDocContent parses the doc; we evaluate ONLY fields with non-empty copy
 //      (labels, notes, asset/group headings, direction, summary, references, and
 //      the header table are already separated out by getDocContent).
-//   2. Load the tenant's voice.md (getVoiceGuide, repo voice.md fallback) — the
-//      single comprehensive brand reference.
+//   2. Load the tenant's brand guide (getVoiceGuide, repo voice.md fallback).
+//      gemini.js pairs it with the repo craft.md, which always applies — the
+//      review judges against both craft and brand.
 //   3. Load prior review state (per-field prior copy + prior comment) so Gemini
 //      can recognize the writer's improvements and not re-nag.
 //   4. Gemini returns a per-field comment or null (materiality/silence bar).
@@ -22,7 +23,9 @@ const { reviewCopyFields, reviewVariationStack } = require('./gemini');
 const { getVoiceGuide, getReviewState, saveReviewState } = require('../db');
 const { isNumberedStack, stripSoloLabel, parseNumberedStack } = require('../utils/variants');
 
-// Repo voice.md fallback, loaded once (same source gemini.js uses for drafting).
+// Repo voice.md fallback — the BRAND half only, loaded once (same source
+// gemini.js uses for drafting). The craft half (craft.md) is added by gemini.js
+// and is never replaced by tenant content.
 let repoVoice = null;
 function repoVoiceGuide() {
   if (repoVoice != null) return repoVoice;
@@ -339,8 +342,9 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   const priorFor = (assetType, fieldName) => priorFields[fieldKey(assetType, fieldName)] || {};
 
   // Brief context: the campaign's summary + writer direction carry the brief's
-  // stated audience/goal. The BRIEF's audience is authoritative (voice.md's is a
-  // default it overrides); voice.md still governs voice/tone/craft. It also lets
+  // stated audience/goal. The BRIEF's audience is authoritative (the brand
+  // guide's is a default it overrides); craft.md + the brand guide still govern
+  // craft and voice. It also lets
   // the variant review infer funnel stage. No new persisted state.
   const briefContext = {
     summary: (content && content.summary) || '',

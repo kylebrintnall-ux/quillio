@@ -4,13 +4,18 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 
-// Brand voice guide (voice.md at the repo root), loaded once at startup and
-// injected into every draft prompt as the overall brand identity. HTML comments
-// are stripped; if only headings/comments remain (the unfilled placeholder),
-// it's treated as empty and nothing is injected.
-function loadVoiceGuide() {
+// The two repo-root markdown guides, loaded once at startup:
+//   craft.md — HOW GOOD COPY WORKS. Universal craft (headline/body/CTA
+//     principles, the approved CTA library, character discipline, and the
+//     per-medium sections). ALWAYS injected, for every tenant. Never replaced
+//     by tenant content — a tenant's brand guide supplements it.
+//   voice.md — HOW THIS COMPANY SOUNDS. Brand identity only. This is the
+//     FALLBACK: a tenant's saved guide replaces it when one exists.
+// HTML comments are stripped; if only headings/comments remain (the unfilled
+// placeholder), the file is treated as empty and nothing is injected.
+function loadGuide(fileName) {
   try {
-    const raw = fs.readFileSync(path.join(__dirname, '..', '..', 'voice.md'), 'utf8');
+    const raw = fs.readFileSync(path.join(__dirname, '..', '..', fileName), 'utf8');
     const withoutComments = raw.replace(/<!--[\s\S]*?-->/g, '');
     const meaningful = withoutComments.replace(/^#.*$/gm, '').trim();
     return meaningful ? withoutComments.trim() : '';
@@ -18,13 +23,16 @@ function loadVoiceGuide() {
     return '';
   }
 }
-const VOICE_GUIDE = loadVoiceGuide();
+const CRAFT_GUIDE = loadGuide('craft.md');
+const VOICE_GUIDE = loadGuide('voice.md');
 
-// Split the guide once into the universal parts (always injected) and the
+// Split a guide once into the universal parts (always injected) and the
 // per-medium subsections of "## … Writing Across Mediums" (injected only for
-// the relevant medium — see buildVoiceContext). This is the token optimization:
+// the relevant medium — see buildCraftContext). This is the token optimization:
 // instead of shipping the whole file on every asset call, we ship the universal
-// craft + CTA library + banned words + just the one relevant medium section.
+// craft + CTA library + just the one relevant medium section. The mediums live
+// in craft.md now, so that's the file this normally slices — but it is also
+// applied to a tenant guide that happens to carry its own mediums section.
 function parseVoice(guide) {
   if (!guide) return null;
   const lines = guide.split('\n');
@@ -76,6 +84,7 @@ function parseVoice(guide) {
     postMedium: lines.slice(mediumsEnd).join('\n').trim(),
   };
 }
+const CRAFT_PARSED = parseVoice(CRAFT_GUIDE);
 const VOICE_PARSED = parseVoice(VOICE_GUIDE);
 
 // Which "Writing Across Mediums" subsection(s) apply to an asset type. Matched
@@ -94,27 +103,23 @@ function mediumKeywordsForAsset(assetType) {
   return null;
 }
 
-// The voice context to inject for a given asset: universal craft (incl. CTA
-// library + banned words) plus only the relevant medium subsection. When a
-// per-tenant `voiceGuide` (raw markdown) is supplied and non-empty, it is the
-// source; otherwise we fall back to the repo voice.md loaded at startup.
-function buildVoiceContext(assetType, voiceGuide) {
-  // Pick the source + its parsed form. A non-empty tenant guide wins; otherwise
-  // the module-level repo voice.md (parsed once at startup).
-  let rawFull;
-  let parsed;
-  if (voiceGuide && String(voiceGuide).trim()) {
-    rawFull = String(voiceGuide).trim();
-    parsed = parseVoice(rawFull);
-  } else {
-    rawFull = VOICE_GUIDE;
-    parsed = VOICE_PARSED;
-  }
-
+// Slice a parsed guide down to the universal part + only the medium subsections
+// relevant to `assetType`. `assetType` may be a single type or an array of them
+// (copy review spans several assets in one prompt) — the union of their mediums
+// is kept, and an unrecognized type anywhere means "keep every medium".
+function sliceGuide(parsed, rawFull, assetType) {
   if (!parsed) return '';
   if (!parsed.sliceable) return rawFull;
 
-  const keywords = mediumKeywordsForAsset(assetType);
+  const types = Array.isArray(assetType) ? assetType : [assetType];
+  let keywords = [];
+  for (const t of types) {
+    const k = mediumKeywordsForAsset(t);
+    if (!k) { keywords = null; break; } // unknown medium → include them all
+    keywords.push(...k);
+  }
+  if (keywords && keywords.length === 0) keywords = null;
+
   let chosen = keywords
     ? parsed.subs.filter((s) => keywords.some((k) => s.title.toLowerCase().includes(k)))
     : parsed.subs;
@@ -130,31 +135,75 @@ function buildVoiceContext(assetType, voiceGuide) {
     .join('\n\n');
 }
 
-// Prompt lines for the brand-voice section, scoped to the asset's medium.
-// Empty when no voice guide is set. Frames the layering: voice.md = how to
-// write; Sheet Tone Notes = field-specific direction; character limits = hard
-// constraints that always win.
+// The CRAFT context for a given asset: universal craft (incl. the CTA library
+// and character discipline) plus only the relevant medium subsection. Always
+// sourced from the repo craft.md — a tenant NEVER replaces it.
+function buildCraftContext(assetType) {
+  return sliceGuide(CRAFT_PARSED, CRAFT_GUIDE, assetType);
+}
+
+// The BRAND context for a given asset: the tenant's saved guide when they have
+// one, otherwise the repo voice.md placeholder. A tenant guide is normally a
+// short brand document with no mediums section, so it passes through whole; if
+// one does carry "Writing Across Mediums", it gets sliced like craft.md.
+function buildBrandContext(assetType, voiceGuide) {
+  if (voiceGuide && String(voiceGuide).trim()) {
+    const raw = String(voiceGuide).trim();
+    return sliceGuide(parseVoice(raw), raw, assetType);
+  }
+  return sliceGuide(VOICE_PARSED, VOICE_GUIDE, assetType);
+}
+
+// Prompt lines for the craft + brand sections, scoped to the asset's medium.
+// Two clearly labeled blocks: craft.md = how good copy works (always present);
+// brand = how this company sounds (tenant guide, else the repo voice.md).
+// Frames the layering: craft + brand = how to write; field Tone Notes =
+// field-specific direction; character limits = hard constraints that always win.
 function brandVoiceLines(assetType, voiceGuide) {
-  const voice = buildVoiceContext(assetType, voiceGuide);
-  if (!voice) return [];
+  const craft = buildCraftContext(assetType);
+  const brand = buildBrandContext(assetType, voiceGuide);
+  if (!craft && !brand) return [];
+
+  const craftBlock = craft
+    ? [
+        'COPY CRAFT PLAYBOOK — this is HOW GOOD COPY WORKS: universal copywriting craft',
+        '(headline/body/CTA principles, the approved CTA library, character discipline,',
+        'and guidance for THIS asset\'s medium). It applies to ALL copy, always.',
+        '"""',
+        craft,
+        '"""',
+        '',
+      ]
+    : [];
+  const brandBlock = brand
+    ? [
+        'BRAND VOICE — this is HOW THIS COMPANY SOUNDS: voice attributes, tone, word',
+        'choices, banned words, and mechanics. It does not replace the craft playbook —',
+        'it tells you what the craft above should sound like in this brand\'s hands.',
+        '"""',
+        brand,
+        '"""',
+        '',
+      ]
+    : [];
+
   return [
-    'BRAND VOICE & COPY PLAYBOOK — this is HOW to write: the overall brand voice',
-    'and copywriting craft (tone, banned words, headline/body/CTA principles, the',
-    'approved CTA library, and guidance for THIS asset\'s medium). Apply it to ALL copy.',
-    '"""',
-    voice,
-    '"""',
-    '',
+    ...craftBlock,
+    ...brandBlock,
     'PROMPT HIERARCHY — what governs what:',
-    '1. The Brand Voice & Copy Playbook above = HOW to write (voice + craft).',
-    "2. Each field's Tone Notes / guidance = field-specific tactical direction.",
-    '3. Character limits = HARD constraints that ALWAYS win.',
+    '1. The Copy Craft Playbook = HOW to write well (structure, format, craft).',
+    '2. The Brand Voice = HOW this company sounds (voice, tone, word choice).',
+    "3. Each field's Tone Notes / guidance = field-specific tactical direction.",
+    '4. Character limits = HARD constraints that ALWAYS win.',
+    'Craft governs STRUCTURE — length discipline, front-loading, one idea per line,',
+    'CTA/destination match. Brand governs VOICE, and where the two conflict on how',
+    'something SOUNDS (tone, word choice, phrasing), the BRAND VOICE wins.',
     "When the playbook and a field's Tone Note conflict, the field's Tone Note",
     'wins for that field — but the overall voice (tone, banned words, CTA style)',
     'always applies, and a field\'s character limit is never exceeded.',
-    'For CTA fields: prefer an option from the playbook\'s approved CTA library',
+    'For CTA fields: prefer an option from the craft playbook\'s approved CTA library',
     "that matches the asset's destination / funnel stage, rather than inventing a",
-    'new CTA phrasing.',
+    'new CTA phrasing — then adjust its wording to the brand voice if needed.',
     '',
   ];
 }
@@ -746,8 +795,8 @@ async function generateAssetDrafts({
 // version. Diversity is guaranteed structurally: assignDoorways() picks the N
 // distinct doorways in JS, and buildVariationsPrompt() names the exact doorway
 // for each numbered row, so the model is never asked to "be different" (which
-// makes LLMs cluster). The doorway changes the angle only; the brand voice
-// (voice.md) still governs tone + craft for every variation.
+// makes LLMs cluster). The doorway changes the angle only; the craft playbook
+// (craft.md) and the brand voice still govern craft + tone for every variation.
 const DOORWAYS = {
   Pain: 'lead with the ache / cost of the status quo the product removes.',
   Outcome: 'the after-state — who they become or what improves once they have it.',
@@ -1018,7 +1067,9 @@ async function generateFieldVariations({
 
 // Generate a brand voice guide (markdown) from the onboarding questionnaire
 // answers. Optional `direction` (a revision instruction) and `previousGuide`
-// (the current voice.md) drive regeneration. Returns the raw markdown string.
+// (the current guide) drive regeneration. Returns the raw markdown string. This
+// is a BRAND guide only — universal copy craft comes from craft.md, which always
+// loads alongside it, so the guide never needs to restate craft principles.
 async function generateVoiceGuide(answers = {}) {
   const list = (v) => (Array.isArray(v) ? v.filter(Boolean).join(', ') : String(v || ''));
   const revisionLines = [];
@@ -1034,6 +1085,7 @@ async function generateVoiceGuide(answers = {}) {
   }
   const prompt = [
     'You are a brand strategist. Generate a voice guide markdown file from these answers. Structure it with sections: Brand Personality, Tone, Words That Work, Do Not Use, Audience Language, Tone Reference. Be specific and actionable.',
+    'Scope: BRAND VOICE ONLY — how this company sounds. Universal copywriting craft (headline/body/CTA principles, a CTA library, character limits, per-medium guidance) is supplied separately and always applies, so do NOT restate it here.',
     '',
     `Brand Personality: ${String(answers.brandPersonality || '')}`,
     `Tone Guidance: ${list(answers.toneGuidance)}`,
@@ -1147,9 +1199,11 @@ async function extractHeaderSchema(base64Data, mimetype) {
 }
 
 // Review drafted copy field-by-field like a thoughtful editor (copy-review
-// feature). Judges each field's copy against (a) the brand reference (voice.md —
-// voice, tone, rules, banned words, CTA conventions) and (b) universal writing
-// craft, and returns a per-field comment ONLY where a material issue genuinely
+// feature). Judges each field's copy against (a) the craft playbook (craft.md —
+// headline/body/CTA craft, the CTA library, character discipline, the relevant
+// mediums) and (b) the brand reference (the tenant's guide, else voice.md —
+// voice, tone, banned words), and returns a per-field comment ONLY where a
+// material issue genuinely
 // warrants it (silence is the good outcome). On re-review, prior copy/comment
 // per field let it recognize the writer's improvements and not re-nag.
 //   fields: [{ assetType, fieldName, charMax, copy, priorCopy, priorComment }]
@@ -1178,10 +1232,14 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = fal
   const list = Array.isArray(fields) ? fields : [];
   if (list.length === 0) return [];
 
-  const brand = String(voiceGuide || '').trim() || '(no brand guide provided — judge on universal writing craft only)';
-  // The brief governs WHO the copy targets (audience) for THIS campaign; voice.md
-  // governs HOW it should sound. A brand runs campaigns for varied audiences, so
-  // the brief's audience overrides voice.md's default audience.
+  // Craft is scoped to the union of the mediums under review; brand is the
+  // tenant guide (else the repo voice.md placeholder), never craft's substitute.
+  const craft = buildCraftContext(list.map((f) => f.assetType));
+  const brand = buildBrandContext(list.map((f) => f.assetType), voiceGuide)
+    || '(no brand guide provided — judge on the craft playbook only)';
+  // The brief governs WHO the copy targets (audience) for THIS campaign; the
+  // brand guide governs HOW it should sound. A brand runs campaigns for varied
+  // audiences, so the brief's audience overrides the brand guide's default.
   const bc = briefContext || {};
   const briefSummary = String(bc.summary || '').trim();
   const briefDirection = String(bc.writerDirection || '').trim();
@@ -1199,24 +1257,35 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = fal
     'You are a seasoned copy editor giving a thoughtful second pass on marketing copy — NOT a linter.',
     '',
     ...briefBlock,
-    'BRAND REFERENCE (voice.md) — AUTHORITATIVE for HOW the copy should sound: voice, tone, rules, banned words,',
-    'CTA conventions, the "Words That Work" list, sounding human. Its audience description is the brand DEFAULT:',
+    ...(craft
+      ? [
+          'COPY CRAFT PLAYBOOK — AUTHORITATIVE for HOW GOOD COPY WORKS: headline/body/CTA craft, the approved CTA',
+          'library, character discipline, and how each medium under review behaves. It ALWAYS applies:',
+          craft,
+          '',
+        ]
+      : []),
+    'BRAND REFERENCE — AUTHORITATIVE for HOW THIS COMPANY SOUNDS: voice, tone, rules, banned words,',
+    'CTA conventions, the "Words That Work" list, sounding human. Its audience description is the brand DEFAULT.',
+    'It SUPPLEMENTS the craft playbook above — it never replaces it:',
     brand,
     '',
     'AUDIENCE PRECEDENCE — read carefully:',
     '• The CAMPAIGN BRIEF decides the target audience. If the brief states an audience, treat it as CORRECT.',
-    "• Do NOT flag copy for addressing the brief's audience, even when it differs from voice.md's default audience.",
-    "  Divergence from voice.md's default audience is NOT a defect — a brand runs campaigns for varied audiences.",
-    '  (e.g. if the brief targets marketing operations leaders, do not tell the writer to re-aim it at voice.md\'s',
-    '  default IT/service audience.)',
+    "• Do NOT flag copy for addressing the brief's audience, even when it differs from the brand reference's",
+    "  default audience. Divergence from that default is NOT a defect — a brand runs campaigns for varied audiences.",
+    '  (e.g. if the brief targets marketing operations leaders, do not tell the writer to re-aim it at the brand',
+    '  reference\'s default IT/service audience.)',
     '• Only raise an audience note if the copy misaddresses the BRIEF\'s OWN audience (e.g. speaks to consumers when',
-    '  the brief says enterprise) — never merely because it diverges from voice.md\'s default.',
-    '• If the brief states no audience, voice.md\'s default audience applies.',
-    "• Regardless of audience, ALWAYS apply voice.md's brand-universal guidance (voice, tone, avoid buzzwords,",
-    '  Words That Work, sound human, craft).',
+    '  the brief says enterprise) — never merely because it diverges from the brand default.',
+    '• If the brief states no audience, the brand reference\'s default audience applies.',
+    "• Regardless of audience, ALWAYS apply the brand reference's brand-universal guidance (voice, tone, avoid",
+    '  buzzwords, Words That Work, sound human) AND the full craft playbook.',
     '',
-    'For EACH field, judge its copy against (a) voice.md\'s voice/tone/craft rules, (b) fit to the BRIEF\'s audience &',
-    'goal, and (c) universal writing craft: clarity, tightness, natural phrasing, grammar.',
+    'For EACH field, judge its copy against (a) the craft playbook — structure, length discipline, front-loading,',
+    'CTA/destination match, medium fit, (b) the brand reference\'s voice/tone rules, (c) fit to the BRIEF\'s audience &',
+    'goal, and (d) universal writing craft: clarity, tightness, natural phrasing, grammar.',
+    'Where craft and brand conflict on how something SOUNDS, the brand reference wins; craft still governs structure.',
     '',
     'MATERIALITY BAR: only flag an issue a skilled editor would genuinely raise because fixing it MATERIALLY improves',
     'the copy. Ignore minor preferences and marginal nitpicks. At most the 1–2 most important notes per field.',
@@ -1359,7 +1428,9 @@ const DOORWAY_FIT_GUIDE = [
 function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, voiceGuide, briefContext, siblings } = {}) {
   const opts = Array.isArray(variations) ? variations : [];
   const sibs = Array.isArray(siblings) ? siblings.filter((s) => s && s.fieldName && String(s.copy || '').trim()) : [];
-  const brand = String(voiceGuide || '').trim() || '(no brand guide provided — judge on universal writing craft only)';
+  const craft = buildCraftContext(assetType);
+  const brand = buildBrandContext(assetType, voiceGuide)
+    || '(no brand guide provided — judge on the craft playbook only)';
   const bc = briefContext || {};
   const briefSummary = String(bc.summary || '').trim();
   const briefDirection = String(bc.writerDirection || '').trim();
@@ -1383,8 +1454,18 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, v
     'the writer owns that decision.',
     '',
     ...briefBlock,
-    'BRAND REFERENCE (voice.md) — AUTHORITATIVE for HOW it should sound (voice, tone, banned',
-    'words, "Words That Work", sounding human). Governs CRAFT:',
+    ...(craft
+      ? [
+          'COPY CRAFT PLAYBOOK — AUTHORITATIVE for HOW GOOD COPY WORKS (headline/body/CTA craft,',
+          'the approved CTA library, character discipline, this medium\'s behavior). ALWAYS applies:',
+          '"""',
+          craft,
+          '"""',
+          '',
+        ]
+      : []),
+    'BRAND REFERENCE — AUTHORITATIVE for HOW THIS COMPANY SOUNDS (voice, tone, banned',
+    'words, "Words That Work", sounding human). Supplements the craft playbook, never replaces it:',
     '"""',
     brand,
     '"""',
@@ -1401,8 +1482,9 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, v
     '1. STRATEGY — is this DOORWAY the right ANGLE for this asset type, audience, and funnel',
     '   stage? Use the doorway-fit guidance below. If the angle is a genuine mismatch, say why',
     '   in one sentence. If the angle fits, strategy = null.',
-    '2. CRAFT — is the execution strong under voice.md (tone, banned words, tightness, sounds',
-    '   human, within the limit)? Same bar as any review. If clean, craft = null.',
+    '2. CRAFT — is the execution strong under the craft playbook AND the brand reference',
+    '   (tightness, front-loading, CTA/destination match, tone, banned words, sounds human,',
+    '   within the limit)? Same bar as any review. If clean, craft = null.',
     '',
     'DOORWAY-FIT GUIDANCE (angle ↔ context):',
     ...DOORWAY_FIT_GUIDE,
@@ -1455,7 +1537,8 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, v
 }
 
 // Review ONE unresolved numbered stack: assess each option on STRATEGY (is the
-// doorway the right angle for this asset/audience/funnel?) then CRAFT (voice.md),
+// doorway the right angle for this asset/audience/funnel?) then CRAFT (craft.md
+// + the brand guide),
 // per-variation, at the materiality bar. `siblings` (scoped review) adds asset
 // context + enables a tight cross-field `flag`. Returns [{ index, doorway,
 // strategy, craft, flag }], each axis null when clean. It does NOT pick a winner.
@@ -1600,6 +1683,10 @@ module.exports = {
   reviewCopyFields,
   reviewVariationStack,
   // Exposed for unit tests only.
+  brandVoiceLines,
+  buildCraftContext,
+  buildBrandContext,
+  mediumKeywordsForAsset,
   builtInFieldGuidance,
   siblingContextBlock,
   assignDoorways,

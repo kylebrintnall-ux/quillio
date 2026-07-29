@@ -363,8 +363,8 @@ injected into every draft and review prompt as two clearly labeled blocks:
 
 | File | Answers | Replaceable by a tenant? |
 | --- | --- | --- |
-| `craft.md` | **How good copy works** — universal craft: headline/body/CTA principles, the approved CTA library, character discipline, and the per-medium sections | **Never.** It always loads, for every tenant. |
-| `voice.md` | **How this company sounds** — brand voice attributes, words & phrases, mechanics | Yes. A tenant's saved guide in Postgres replaces it entirely. |
+| `craft.md` | **How good copy works** — universal craft: headline/body/CTA principles, the approved CTA library, character discipline, the universally weak phrasing to cut (filler, throat-clears, hedges), and the per-medium sections | **Never.** It always loads, for every tenant. |
+| `voice.md` | **How this company sounds** — brand voice attributes, this brand's own vocabulary (the questionnaire's "Words That Work" / "Do Not Use" shape), mechanics | Yes. A tenant's saved guide in Postgres replaces it entirely. |
 
 The split exists because a tenant's onboarding-generated guide is brand-only: if
 it replaced one combined file (as it used to), completing onboarding silently
@@ -391,8 +391,8 @@ level-2 heading whose text contains **"Writing Across Mediums"**, and (2) its
 (`paid social`, `organic social`, `google display`, `email`, `sales`,
 `confirmation`). If you rename that heading or those subsections, update
 `mediumKeywordsForAsset` too — otherwise it safely falls back to injecting the
-whole file (more tokens, no lost guidance). Keep the CTA library *outside* the
-mediums section so it stays universal. The same slicing is applied to a tenant
+whole file (more tokens, no lost guidance). Keep the CTA library and the
+words-to-cut list *outside* the mediums section so they stay universal. The same slicing is applied to a tenant
 guide that happens to carry its own mediums section; a typical one has none and
 passes through whole.
 

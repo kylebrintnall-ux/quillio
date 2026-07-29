@@ -2934,9 +2934,17 @@ test('craft/brand split: craft.md holds the mediums, voice.md holds brand only',
   assert.ok(/Character Count Discipline/i.test(craft), 'character discipline lives in craft.md');
   assert.ok(/##\s.*Headlines/i.test(craft) && /##\s.*Body Copy/i.test(craft), 'headline/body craft in craft.md');
   assert.ok(!/Approved CTA Library/i.test(voice), 'CTA library is not duplicated in voice.md');
+  // Universally weak phrasing is craft — a tenant guide must not be able to drop it.
+  assert.ok(/Generic filler — delete or replace/.test(craft), 'the filler list lives in craft.md');
+  assert.ok(/synergy/.test(craft) && /Throat-clears/.test(craft), 'filler + throat-clears in craft.md');
+  assert.ok(!/synergy/i.test(voice), 'generic filler is not left in voice.md');
+  assert.ok(!/Generic filler/i.test(voice), 'no filler list left in voice.md (a cross-reference is fine)');
   // Brand placeholder sections stay put as the no-tenant-guide fallback.
   assert.ok(/Brand Voice \(CUSTOMIZE THIS SECTION\)/.test(voice), 'brand placeholder stays in voice.md');
   assert.ok(/Mechanics & Formatting/.test(voice), 'mechanics stay in voice.md');
+  // voice.md's words list keeps the questionnaire's BRAND-specific shape.
+  assert.ok(/Brand Vocabulary/.test(voice), 'brand vocabulary section stays in voice.md');
+  assert.ok(/Words That Work/.test(voice) && /Do Not Use/.test(voice), 'questionnaire word shape kept');
 });
 
 test('craft.md is injected for BOTH a tenant with a saved guide and one without', () => {
@@ -2959,6 +2967,7 @@ test('craft.md is injected for BOTH a tenant with a saved guide and one without'
     assert.ok(/BRAND VOICE —/.test(block), `${label}: brand block is labeled`);
     assert.ok(/Approved CTA Library/.test(block), `${label}: CTA library present`);
     assert.ok(/Character Count Discipline/.test(block), `${label}: character discipline present`);
+    assert.ok(/Generic filler — delete or replace/.test(block), `${label}: universal filler list present`);
     assert.ok(/Lead with the benefit/.test(block), `${label}: universal craft principles present`);
     assert.ok(/LinkedIn \(paid\)/.test(block), `${label}: the asset's medium section present`);
     assert.ok(/PROMPT HIERARCHY/.test(block), `${label}: hierarchy stated`);

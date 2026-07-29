@@ -9,16 +9,17 @@
   half and IS replaced by a tenant's saved guide. See "Craft and brand voice" in
   CLAUDE.md.
 
-  Structural coupling: the "## 6. Writing Across Mediums" heading text and its
+  Structural coupling: the "## 7. Writing Across Mediums" heading text and its
   "### " subsection titles are parsed by parseVoice / mediumKeywordsForAsset in
   src/services/gemini.js so only the relevant medium is injected per asset.
   Rename either and you must update mediumKeywordsForAsset too. Keep the CTA
-  library outside the mediums section so it stays universal.
+  library and the universal words-to-cut list outside the mediums section so
+  they stay universal.
 -->
 
 > **How good copy works** — universal craft, independent of any one brand:
 > headline, body and CTA principles, the approved CTA library, character
-> discipline, and how each medium behaves.
+> discipline, the phrasing that weakens any copy, and how each medium behaves.
 >
 > This playbook always applies. Brand voice — how a given company *sounds* —
 > is supplied separately and wins on tone and word choice; craft governs
@@ -75,7 +76,7 @@
 - End by pointing toward the action
 - In truncated formats (Meta primary text, LinkedIn intro), put everything that matters before the "see more" cutoff
 
-**By medium:** see Section 6.
+**By medium:** see Section 7.
 
 -----
 
@@ -142,7 +143,33 @@ When a field has both a recommended and a max, write to the recommended. Platfor
 
 -----
 
-## 6. Writing Across Mediums
+## 6. Words & Phrases to Cut (universal)
+
+These weaken copy in any voice. Cutting them is craft, not brand preference — a brand's own vocabulary rules sit on top of this list, never instead of it.
+
+**Generic filler — delete or replace with something concrete:**
+
+- "Leverage," "synergy," "best-in-class," "world-class," "cutting-edge," "revolutionary," "game-changing," "seamless," "robust," "innovative" (when unearned)
+- "Solutions," "empower," "unlock," "elevate," "supercharge," "next-level," "state-of-the-art," "industry-leading," "turnkey," "holistic"
+- Unearned superlatives: "the best," "the only," "#1" without a citable basis
+
+**Throat-clears — delete the opener, start at the news:**
+
+- "In today's fast-paced world…" and every variant of it
+- "We're excited to announce…" / "We're thrilled to share…" (lead with the news, not your excitement)
+- "As you know…" / "It goes without saying…" (then don't say it)
+
+**Hedges that drain a claim:** "may help," "can potentially," "one of the leading," "arguably," "we believe" — either make the claim or cut the sentence.
+
+**Prefer:**
+
+- Plain verbs over nominalizations ("decide" not "make a decision")
+- Concrete nouns over abstractions
+- The reader's words over internal jargon
+
+-----
+
+## 7. Writing Across Mediums
 
 Different placements demand different copy behavior, even for the same campaign.
 

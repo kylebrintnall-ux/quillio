@@ -297,10 +297,6 @@ node scripts/migrateAddSpecTables.js
 `DATABASE_URL` preloaded in its environment; `railway run` re-resolves the
 environment and is not the path these scripts expect. Use plain `node`.
 
-Caveat: 46 of the scripts carry a stale `Run on Railway with: railway run node …`
-line in their own header comments. Those comments are wrong — ignore them and
-use plain `node`.
-
 Most migrations are written to be idempotent (`CREATE TABLE IF NOT EXISTS`,
 guarded seeds), but read the script's header before re-running one.
 

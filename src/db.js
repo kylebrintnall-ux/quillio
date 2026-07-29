@@ -23,6 +23,39 @@ async function query(text, params) {
   return p.query(text, params);
 }
 
+// --- Schema-not-yet-migrated tolerance ---
+//
+// Railway auto-deploys on merge, so CODE CAN SHIP BEFORE A MIGRATION RUNS. Any
+// read or write against a table/column added in the same change must therefore
+// degrade instead of throwing, or the deploy takes the product down until
+// someone opens the Railway console.
+//
+// These identify the two Postgres errors that mean "that schema isn't there
+// yet" — 42P01 undefined_table, 42703 undefined_column. Callers use them to fall
+// back to the pre-migration behavior. They deliberately match ONLY those codes:
+// a genuine failure (permissions, connectivity, a constraint) still throws.
+const UNDEFINED_TABLE = '42P01';
+const UNDEFINED_COLUMN = '42703';
+
+function isUndefinedTable(err) {
+  return !!(err && err.code === UNDEFINED_TABLE);
+}
+function isUndefinedColumn(err) {
+  return !!(err && err.code === UNDEFINED_COLUMN);
+}
+
+// Warn once per missing relation. A pre-migration deploy should be obvious in
+// the logs without emitting a line on every single request.
+const warnedMissingSchema = new Set();
+function warnMissingSchema(what, migration) {
+  if (warnedMissingSchema.has(what)) return;
+  warnedMissingSchema.add(what);
+  console.warn(
+    `[db] ${what} does not exist yet — using the pre-migration fallback. ` +
+      `Run: node ${migration || 'scripts/migrateAddUserCredentials.js'}`
+  );
+}
+
 // Upsert a tenant's voice guide. Requires a voice_guide table with a unique
 // tenant_id and a raw_markdown column. Returns true if persisted.
 async function saveVoiceGuide(tenantId, rawMarkdown) {
@@ -482,6 +515,9 @@ async function setTenantOnboardingComplete(tenantId) {
 
 module.exports = {
   getPool,
+  isUndefinedTable,
+  isUndefinedColumn,
+  warnMissingSchema,
   saveVoiceGuide,
   getVoiceGuide,
   getTenantByWorkspace,

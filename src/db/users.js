@@ -6,7 +6,7 @@
 // unset (no pg): finders return null, createUser returns null — so the keyless
 // demo and the test suite run unchanged (auth then runs in demo mode).
 
-const { getPool } = require('../db');
+const { getPool, isUndefinedTable, warnMissingSchema } = require('../db');
 
 async function findUserByGoogleId(googleId) {
   const pool = getPool();
@@ -57,18 +57,34 @@ async function createUser({ email, googleId, displayName, avatarUrl, tenantId, r
 // `access_token`. That misnomer is inherited deliberately so the forward
 // migration is a straight column copy and both accessors read the same shape.
 
+// Returns the token, or null — including when user_tokens doesn't exist yet
+// (code shipped ahead of the migration), in which case the caller falls back to
+// the tenant-level token exactly as it did before the per-user split.
 async function getUserToken(userId, service) {
   const pool = getPool();
   if (!pool || !userId || !service) return null;
-  const res = await pool.query(
-    'SELECT access_token FROM user_tokens WHERE user_id = $1 AND service = $2 LIMIT 1',
-    [userId, service]
-  );
-  return (res.rows && res.rows[0] && res.rows[0].access_token) || null;
+  try {
+    const res = await pool.query(
+      'SELECT access_token FROM user_tokens WHERE user_id = $1 AND service = $2 LIMIT 1',
+      [userId, service]
+    );
+    return (res.rows && res.rows[0] && res.rows[0].access_token) || null;
+  } catch (err) {
+    if (isUndefinedTable(err)) {
+      warnMissingSchema('user_tokens');
+      return null;
+    }
+    throw err;
+  }
 }
 
 // Upsert one of a user's service tokens. Returns true if the write ran, false if
-// there's no DB / no user. Tokens are never logged.
+// there's no DB / no user / the table doesn't exist yet. Tokens are never logged.
+//
+// Returning false rather than throwing on a missing table matters: this is
+// called from the Google sign-in callback, and a throw there aborts the whole
+// callback and sends the user to /app?error=google_failed — i.e. a
+// deploy-before-migration would break sign-in entirely.
 async function saveUserToken(userId, service, accessToken) {
   const pool = getPool();
   if (!pool) {
@@ -76,14 +92,22 @@ async function saveUserToken(userId, service, accessToken) {
     return false;
   }
   if (!userId || !service) return false;
-  await pool.query(
-    `INSERT INTO user_tokens (user_id, service, access_token, updated_at)
-       VALUES ($1, $2, $3, now())
-     ON CONFLICT (user_id, service) DO UPDATE
-       SET access_token = EXCLUDED.access_token, updated_at = now()`,
-    [userId, service, accessToken]
-  );
-  return true;
+  try {
+    await pool.query(
+      `INSERT INTO user_tokens (user_id, service, access_token, updated_at)
+         VALUES ($1, $2, $3, now())
+       ON CONFLICT (user_id, service) DO UPDATE
+         SET access_token = EXCLUDED.access_token, updated_at = now()`,
+      [userId, service, accessToken]
+    );
+    return true;
+  } catch (err) {
+    if (isUndefinedTable(err)) {
+      warnMissingSchema('user_tokens');
+      return false;
+    }
+    throw err;
+  }
 }
 
 // --- Slack identity → user (user_slack_links) ---
@@ -96,29 +120,50 @@ async function saveUserToken(userId, service, accessToken) {
 
 // The user behind a Slack (team, user) pair, or null. Returns the full users row
 // so callers get tenant_id in the same round trip.
+// Returns the user, or null — including when user_slack_links doesn't exist yet
+// (code shipped ahead of the migration). Returning null is what lets
+// resolveTenant fall through to the DEPRECATED tenants.slack_* read, so every
+// existing Slack user keeps working during a deploy-before-migration window.
 async function getUserBySlackIdentity(slackTeamId, slackUserId) {
   const pool = getPool();
   if (!pool || !slackTeamId || !slackUserId) return null;
-  const res = await pool.query(
-    `SELECT u.* FROM user_slack_links l
-       JOIN users u ON u.id = l.user_id
-      WHERE l.slack_team_id = $1 AND l.slack_user_id = $2
-      LIMIT 1`,
-    [slackTeamId, slackUserId]
-  );
-  return (res.rows && res.rows[0]) || null;
+  try {
+    const res = await pool.query(
+      `SELECT u.* FROM user_slack_links l
+         JOIN users u ON u.id = l.user_id
+        WHERE l.slack_team_id = $1 AND l.slack_user_id = $2
+        LIMIT 1`,
+      [slackTeamId, slackUserId]
+    );
+    return (res.rows && res.rows[0]) || null;
+  } catch (err) {
+    if (isUndefinedTable(err)) {
+      warnMissingSchema('user_slack_links');
+      return null;
+    }
+    throw err;
+  }
 }
 
 // A user's Slack links (they may belong to more than one workspace). Used by
-// Settings to report connection status.
+// Settings to report connection status. Degrades to [] when the table doesn't
+// exist yet, so Settings falls back to the tenant-row link instead of 500ing.
 async function getSlackLinksForUser(userId) {
   const pool = getPool();
   if (!pool || !userId) return [];
-  const res = await pool.query(
-    'SELECT slack_team_id, slack_user_id FROM user_slack_links WHERE user_id = $1 ORDER BY id',
-    [userId]
-  );
-  return res.rows || [];
+  try {
+    const res = await pool.query(
+      'SELECT slack_team_id, slack_user_id FROM user_slack_links WHERE user_id = $1 ORDER BY id',
+      [userId]
+    );
+    return res.rows || [];
+  } catch (err) {
+    if (isUndefinedTable(err)) {
+      warnMissingSchema('user_slack_links');
+      return [];
+    }
+    throw err;
+  }
 }
 
 // Claim a Slack identity for a user. Returns one of:
@@ -139,17 +184,45 @@ async function linkSlackIdentityToUser(userId, slackTeamId, slackUserId) {
     return { ok: false, conflict: false };
   }
   if (!userId || !slackTeamId || !slackUserId) return { ok: false, conflict: false };
-  const res = await pool.query(
-    `INSERT INTO user_slack_links (user_id, slack_team_id, slack_user_id)
-          VALUES ($1, $2, $3)
-     ON CONFLICT (slack_team_id, slack_user_id) DO UPDATE
-            SET user_id = EXCLUDED.user_id, updated_at = now()
-          WHERE user_slack_links.user_id = EXCLUDED.user_id
-      RETURNING user_id`,
-    [userId, slackTeamId, slackUserId]
-  );
-  if (res.rowCount === 1) return { ok: true, conflict: false };
-  return { ok: false, conflict: true };
+  try {
+    const res = await pool.query(
+      `INSERT INTO user_slack_links (user_id, slack_team_id, slack_user_id)
+            VALUES ($1, $2, $3)
+       ON CONFLICT (slack_team_id, slack_user_id) DO UPDATE
+              SET user_id = EXCLUDED.user_id, updated_at = now()
+            WHERE user_slack_links.user_id = EXCLUDED.user_id
+        RETURNING user_id`,
+      [userId, slackTeamId, slackUserId]
+    );
+    if (res.rowCount === 1) return { ok: true, conflict: false };
+    return { ok: false, conflict: true };
+  } catch (err) {
+    if (!isUndefinedTable(err)) throw err;
+    warnMissingSchema('user_slack_links');
+    return legacyLinkSlackIdentity(userId, slackTeamId, slackUserId);
+  }
+}
+
+// Pre-migration fallback for linkSlackIdentityToUser: write the OLD one-link-
+// per-tenant pair on the user's tenant row, which resolveTenant still reads.
+// Slack connect therefore keeps working when the code ships before the
+// migration — with the old one-person-per-tenant limitation, but nothing breaks.
+//
+// The conflict is STILL surfaced here: the legacy write is guarded by the
+// partial unique index uq_tenants_slack_link, whose 23505 maps to the same
+// { conflict: true } the caller already handles. That's the whole point of the
+// fix — a taken Slack identity must never be reported as connected.
+async function legacyLinkSlackIdentity(userId, slackTeamId, slackUserId) {
+  const user = await findUserById(userId);
+  if (!user || !user.tenant_id) return { ok: false, conflict: false };
+  const { linkSlackUserToTenant } = require('../db'); // lazy — avoids a require cycle
+  try {
+    const ok = await linkSlackUserToTenant(user.tenant_id, slackTeamId, slackUserId);
+    return { ok: !!ok, conflict: false, legacy: true };
+  } catch (err) {
+    if (err && err.code === '23505') return { ok: false, conflict: true, legacy: true };
+    throw err;
+  }
 }
 
 module.exports = {

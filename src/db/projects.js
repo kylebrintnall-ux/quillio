@@ -6,7 +6,7 @@
 // saveProject returns null, getProjects returns [], getProject returns null — so
 // the single-tenant demo and tests run unchanged (history simply shows empty).
 
-const { getPool } = require('../db');
+const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
 
 // Insert a project after a successful brief run. `projectData` carries the
 // Drive/doc identifiers the pipeline produced; `status` defaults to 'draft' when
@@ -58,13 +58,31 @@ async function saveProject(tenantId, projectData = {}) {
       }
     }
 
-    const res = await pool.query(
-      `INSERT INTO projects
-         (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
-      [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts, created_by]
-    );
+    const cols = [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts];
+    let res;
+    try {
+      res = await pool.query(
+        `INSERT INTO projects
+           (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
+        [...cols, created_by]
+      );
+    } catch (err) {
+      // projects.created_by may not exist yet (code shipped ahead of the
+      // migration). Retry without it rather than losing the row: the authorship
+      // column is an addition, and dropping the whole project from history would
+      // be a far worse outcome than a NULL author for a few minutes.
+      if (!isUndefinedColumn(err)) throw err;
+      warnMissingSchema('projects.created_by');
+      res = await pool.query(
+        `INSERT INTO projects
+           (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        cols
+      );
+    }
     const saved = res.rows[0] || null;
     console.log(`[db/projects] saveProject OK → project id=${saved ? saved.id : 'null'} for tenant=${tenantId}`);
     return saved;

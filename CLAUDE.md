@@ -260,6 +260,20 @@ writes them for `google` any more, but a deploy that lands before
 `scripts/migrateBackfillUserCredentials.js` runs must not refuse every existing
 Slack user. Do not drop them until the backfill has run everywhere.
 
+**Either deploy order is safe, and must stay that way.** Railway auto-deploys
+`main` on merge, so this code runs against an unmigrated database first. Every
+read and write against `user_tokens` / `user_slack_links` / `projects.created_by`
+catches Postgres `42P01` (undefined_table) / `42703` (undefined_column) and
+degrades to the pre-migration behavior — `db.js` exports `isUndefinedTable`,
+`isUndefinedColumn` and `warnMissingSchema` for exactly this. Concretely:
+`getUserBySlackIdentity` → null (so `resolveTenant` uses the legacy tenant-row
+link), `saveUserToken` → false (so the OAuth callback writes the tenant token
+instead of failing sign-in), `linkSlackIdentityToUser` → the legacy tenant-row
+write *still surfacing 23505 as a conflict*, and `saveProject` retries its INSERT
+without `created_by`. The catches match only those two SQLSTATEs — a permissions
+or connectivity failure still throws. If you add a column or table here, add the
+same tolerance and a test in the "deploy-before-migration" block.
+
 Migrations: `scripts/migrateAddUserCredentials.js` (schema) then
 `scripts/migrateBackfillUserCredentials.js` (data; dry-run by default, `--commit`
 to write). The backfill only moves a tenant's credentials when that tenant has
@@ -311,7 +325,7 @@ npm test                          # node --test → test/smoke.test.js
 ```
 
 **There is a test suite.** `test/smoke.test.js` is ~3,300 lines and currently
-runs **169 tests** in about a second, with no credentials or network — it
+runs **173 tests** in about a second, with no credentials or network — it
 exercises wiring, parsing, rendering, and regression guards. `.github/workflows/ci.yml`
 runs `npm ci && npm test` on every push and pull request. Run it before you
 commit, and add cases there when you change behavior.

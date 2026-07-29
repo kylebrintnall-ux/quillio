@@ -443,7 +443,14 @@ router.get('/oauth/google/callback', async (req, res) => {
     // resolveGoogleRefreshToken) until scripts/migrateBackfillUserCredentials.js
     // moves them onto their owner.
     if (refreshToken && user && user.id) {
-      await saveUserToken(user.id, 'google', refreshToken);
+      const saved = await saveUserToken(user.id, 'google', refreshToken);
+      // PRE-MIGRATION FALLBACK ONLY: saveUserToken returns false when
+      // user_tokens doesn't exist yet (this code can deploy before the
+      // migration runs). Without this the token would be stored nowhere and the
+      // person's Drive writes would silently fall back to the env identity, so
+      // keep the old tenant-level write until the table is there. The read path
+      // already prefers the user's token, so nothing changes once it is.
+      if (!saved && userTenantId) await saveTenantToken(userTenantId, 'google', refreshToken);
     }
 
     if (req.session && user && user.id) req.session.userId = user.id;

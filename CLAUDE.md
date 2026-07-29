@@ -44,10 +44,13 @@ src/
                      the global error handler. Mounts every router below.
   config.js          Env vars + baked-in IDs/URLs (all env-overridable).
   google.js          Auth → memoized Drive/Docs clients. getClients() (shared env
-                     creds) and getClientsForTenant() (a tenant's OAuth user).
+                     creds) and getClientsForTenant({ tenantId, userId }) — writes
+                     run as the ACTING USER's OAuth identity, falling back to the
+                     tenant's (deprecated) token, then env.
   db.js              Postgres pool + tenant/token/voice/header/naming accessors.
-                     resolveTenant() returns { tenant, tokens, source } from
-                     either Postgres or synthesized env vars.
+                     resolveTenant() returns { tenant, tokens, source, user } from
+                     either Postgres or synthesized env vars. `user` is the ACTING
+                     user; per-user credentials win over the tenant's.
   emoji.js           Custom :quillio-*: emoji with Unicode fallbacks.
   workflow.js        Compatibility shim — re-exports adapters/slackWorkflow.js.
 
@@ -89,7 +92,9 @@ src/
     assets.js        Per-tenant asset library (asset_types + copy_fields).
                      getTenantAssets() is the sole spec source.
     projects.js      Project history rows.
-    users.js         Web sign-in users (Google identity).
+    users.js         Web sign-in users (Google identity) + per-user credentials:
+                     user_tokens (user_id, service) and user_slack_links
+                     (slack_team_id, slack_user_id) UNIQUE → user_id.
     specWatch.js     LiveSpecs watch list / review queue reads.
 
   utils/
@@ -219,6 +224,61 @@ generated doc**, not inert columns. In `destinations/googleDocs.js`:
 So changing `spec_type` or `spec_source` changes what writers see in the doc.
 Treat both as user-visible.
 
+## Accounts vs. tenants — what is per-user and what is shared
+
+A **tenant** is the shared workspace. A **user** is a person (`users`, keyed on
+`google_id`/`email`, pointing at one `tenant_id`). The dividing line:
+
+| Per **user** | Per **tenant** (shared, and meant to be) |
+| --- | --- |
+| Google refresh token — `user_tokens (user_id, service)` | Asset library (`asset_types` / `copy_fields`) |
+| Slack identity — `user_slack_links (slack_team_id, slack_user_id)` UNIQUE → `user_id` | Voice guide (`voice_guide`) |
+| Slack *user* token (`slack_user`) | Default Drive folder (`tenants.default_folder_id`) |
+| `projects.created_by` | Doc-header schema + naming pattern (`templates`) |
+| | Slack *bot* token (`slack_bot`) — one bot install per workspace |
+
+Credentials are per-user because they used to not be: the Google token lived on
+`tenant_tokens (tenant_id, 'google')` and the Slack link was a single
+`(slack_team_id, slack_user_id)` pair on the **tenants row**, so a second person
+on a tenant overwrote the first — every Drive write then ran as the newest
+signer, and the first person's `/quillio` started failing the unlinked check.
+
+Resolution order, both surfaces:
+
+- **Slack** — `resolveTenant(teamId, slackUserId)` → `user_slack_links` → user →
+  that user's tenant. An unknown identity still gets the unlinked refusal.
+- **Web** — `resolveTenant(tenantId, null, sessionUserId)`; the acting user is
+  the session user, passed explicitly by `routes/app.js` / `routes/settings.js`.
+
+Both return `user` on the context. Adapters read `user.id` and pass
+`{ tenantId, userId }` to `getClientsForTenant`, so a write always runs as the
+person who asked for it, and record it as `projects.created_by`.
+
+**The old columns still exist and are still read.** `tenant_tokens` rows and
+`tenants.slack_team_id/slack_user_id` are a deprecated *fallback* — nothing
+writes them for `google` any more, but a deploy that lands before
+`scripts/migrateBackfillUserCredentials.js` runs must not refuse every existing
+Slack user. Do not drop them until the backfill has run everywhere.
+
+**Either deploy order is safe, and must stay that way.** Railway auto-deploys
+`main` on merge, so this code runs against an unmigrated database first. Every
+read and write against `user_tokens` / `user_slack_links` / `projects.created_by`
+catches Postgres `42P01` (undefined_table) / `42703` (undefined_column) and
+degrades to the pre-migration behavior — `db.js` exports `isUndefinedTable`,
+`isUndefinedColumn` and `warnMissingSchema` for exactly this. Concretely:
+`getUserBySlackIdentity` → null (so `resolveTenant` uses the legacy tenant-row
+link), `saveUserToken` → false (so the OAuth callback writes the tenant token
+instead of failing sign-in), `linkSlackIdentityToUser` → the legacy tenant-row
+write *still surfacing 23505 as a conflict*, and `saveProject` retries its INSERT
+without `created_by`. The catches match only those two SQLSTATEs — a permissions
+or connectivity failure still throws. If you add a column or table here, add the
+same tolerance and a test in the "deploy-before-migration" block.
+
+Migrations: `scripts/migrateAddUserCredentials.js` (schema) then
+`scripts/migrateBackfillUserCredentials.js` (data; dry-run by default, `--commit`
+to write). The backfill only moves a tenant's credentials when that tenant has
+**exactly one** user — 0 or 2+ are reported and skipped, never guessed.
+
 ## Removed features — do not try to use them
 
 Commit `2ac1408` deleted the unshipped **approval workflow** and the **Figma
@@ -264,8 +324,8 @@ node --env-file=.env src/server.js
 npm test                          # node --test → test/smoke.test.js
 ```
 
-**There is a test suite.** `test/smoke.test.js` is ~2,900 lines and currently
-runs **156 tests** in about a second, with no credentials or network — it
+**There is a test suite.** `test/smoke.test.js` is ~3,300 lines and currently
+runs **173 tests** in about a second, with no credentials or network — it
 exercises wiring, parsing, rendering, and regression guards. `.github/workflows/ci.yml`
 runs `npm ci && npm test` on every push and pull request. Run it before you
 commit, and add cases there when you change behavior.

@@ -66,28 +66,76 @@ async function getClients() {
   return cached;
 }
 
-// Per-tenant clients (Phase 3 — per-user Google OAuth). When the tenant has a
-// stored Google refresh token (tenant_tokens service='google'), Drive/Docs run
-// as that user via OAuth2. Falls back to the shared env-based getClients() when
-// there's no tenant id, no DB, no stored token, or no OAuth client creds — so
-// the env GOOGLE_REFRESH_TOKEN demo path is untouched. Built fresh per call
-// (once per web request); never logs the token.
-async function getClientsForTenant(tenantId) {
-  if (!tenantId) return getClients();
+// Accept either a bare tenant id (the original signature) or
+// { tenantId, userId }. Keeping one polymorphic argument means every existing
+// call site stays valid while user-aware callers can name the acting person.
+function normalizeIdentity(arg) {
+  if (arg && typeof arg === 'object') {
+    return { tenantId: arg.tenantId || null, userId: arg.userId || null };
+  }
+  return { tenantId: arg || null, userId: null };
+}
+
+// Pick the Google refresh token a Drive/Docs write should run as, in priority
+// order:
+//   1. the ACTING USER's own token (user_tokens) — the person who ran the
+//      command or holds the session;
+//   2. the tenant-level token (tenant_tokens) — DEPRECATED, and only still read
+//      so credentials that predate the per-user split keep working until
+//      scripts/migrateBackfillUserCredentials.js has run;
+//   3. none → the caller falls back to the shared env clients.
+// Returns { token, source } where source is 'user' | 'tenant' | 'env'. Exported
+// for tests; never logs the token itself.
+async function resolveGoogleRefreshToken(identity) {
+  const { tenantId, userId } = normalizeIdentity(identity);
+
+  if (userId) {
+    try {
+      // Lazy-require to avoid a load-time dependency on the DB layer (and pg).
+      const { getUserToken } = require('./db/users');
+      const token = await getUserToken(userId, 'google');
+      if (token) return { token, source: 'user' };
+    } catch (err) {
+      console.warn('[google] user token lookup failed — trying the tenant token:', err.message);
+    }
+  }
+
+  if (tenantId) {
+    try {
+      const { getTenantToken } = require('./db');
+      const token = await getTenantToken(tenantId, 'google');
+      if (token) return { token, source: 'tenant' };
+    } catch (err) {
+      console.warn('[google] tenant token lookup failed — falling back to env auth:', err.message);
+    }
+  }
+
+  return { token: null, source: 'env' };
+}
+
+// Clients for a specific writer (Phase 3 per-user Google OAuth, now keyed on the
+// acting USER rather than the tenant). Pass { tenantId, userId } — or a bare
+// tenant id for the legacy behavior. When a refresh token is found, Drive/Docs
+// run as that Google user via OAuth2; otherwise this falls back to the shared
+// env-based getClients(), so the GOOGLE_REFRESH_TOKEN demo path is untouched.
+// Built fresh per call (once per request); never logs the token.
+async function getClientsForTenant(identity) {
+  const { tenantId, userId } = normalizeIdentity(identity);
+  if (!tenantId && !userId) return getClients();
   if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_CLIENT_SECRET) return getClients();
 
-  let refreshToken = null;
-  try {
-    // Lazy-require to avoid a load-time dependency on the DB layer (and pg).
-    const { getTenantToken } = require('./db');
-    refreshToken = await getTenantToken(tenantId, 'google');
-  } catch (err) {
-    console.warn('[google] tenant token lookup failed — falling back to env auth:', err.message);
-  }
+  const { token: refreshToken, source } = await resolveGoogleRefreshToken({ tenantId, userId });
   if (!refreshToken) return getClients();
 
+  // Log WHICH identity is writing (never the token) — with two people on a
+  // tenant, "whose Drive did this land in" is the first question asked.
+  console.log(
+    `[google] Drive/Docs writing as the ${source} Google identity` +
+      (source === 'user' ? ` (user ${userId})` : '')
+  );
+
   // Reuse the env path's SA email; only the Drive/Docs write client is swapped
-  // to the tenant's OAuth user.
+  // to the resolved OAuth user.
   const base = await getClients();
   const userAuth = new google.auth.OAuth2(config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET);
   userAuth.setCredentials({ refresh_token: refreshToken });
@@ -100,4 +148,4 @@ async function getClientsForTenant(tenantId) {
   };
 }
 
-module.exports = { getClients, getClientsForTenant };
+module.exports = { getClients, getClientsForTenant, resolveGoogleRefreshToken };

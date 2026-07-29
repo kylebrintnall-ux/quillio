@@ -344,7 +344,17 @@ test('oauth.js wires the Google OAuth flow (per-user token storage)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
   assert.ok(/accounts\.google\.com\/o\/oauth2/.test(src), 'redirects to Google consent');
   assert.ok(/oauth2\.googleapis\.com\/token/.test(src), 'exchanges code at the Google token endpoint');
-  assert.ok(/saveTenantToken\([^)]*'google'/.test(src), "stores the token under service='google'");
+  // The refresh token is the signing-in PERSON's Drive identity, so it is stored
+  // per user. It used to go to tenant_tokens, where the second person on a tenant
+  // overwrote the first's and every later Drive write ran as them.
+  assert.ok(/saveUserToken\([^)]*'google'/.test(src), "stores the token under service='google', per user");
+  // The tenant-level write survives ONLY as the pre-migration fallback, reached
+  // when saveUserToken reports that user_tokens doesn't exist yet. It must never
+  // be the unconditional path again — that was the overwrite bug.
+  assert.ok(
+    /if \(!saved && userTenantId\) await saveTenantToken\(userTenantId, 'google'/.test(src),
+    'the tenant-level Google write is guarded as a pre-migration fallback only'
+  );
   assert.ok(/connected=google/.test(src) && /error=google_failed/.test(src), 'redirects back to /app');
 });
 
@@ -3121,4 +3131,597 @@ test('cleanCampaignTitle shares cleanDraft, so the two cannot drift', () => {
     !/\^\[\*_"'“”‘’\\s\]\+/.test(gsrc),
     'the old blanket quote-strip regex is gone from gemini.js'
   );
+});
+
+// --- Per-user credentials: user_tokens + user_slack_links ------------------
+//
+// The regression these cover: Google tokens lived on tenant_tokens keyed
+// (tenant_id, service) and the Slack link was a single (slack_team_id,
+// slack_user_id) pair on the tenants ROW. Two people on one tenant therefore
+// overwrote each other — the second signer's Google token became the whole
+// team's writing identity, and the second person to connect Slack unlinked the
+// first, whose /quillio then hit the unlinked refusal.
+//
+// These drive the REAL src/db.js and src/db/users.js SQL against an in-memory
+// pool stubbed in for `pg`, so the accessors' actual queries are exercised. The
+// fake THROWS on any query it doesn't recognize, so it cannot silently drift
+// away from the SQL the modules really issue.
+
+function makeFakePool(seed) {
+  const db = {
+    tenants: JSON.parse(JSON.stringify(seed.tenants || [])),
+    users: JSON.parse(JSON.stringify(seed.users || [])),
+    tenant_tokens: JSON.parse(JSON.stringify(seed.tenant_tokens || [])),
+    user_tokens: JSON.parse(JSON.stringify(seed.user_tokens || [])),
+    user_slack_links: JSON.parse(JSON.stringify(seed.user_slack_links || [])),
+  };
+  const same = (a, b) => String(a) === String(b);
+  const rows = (r) => ({ rows: r, rowCount: r.length });
+  // Tables/columns that do not exist yet, to model a deploy that lands before
+  // the migration runs. Raises the same SQLSTATEs Postgres does.
+  const missingTables = new Set(seed.missingTables || []);
+  const missingColumns = new Set(seed.missingColumns || []);
+
+  async function query(text, params = []) {
+    const sql = String(text).replace(/\s+/g, ' ').trim();
+    const has = (...frags) => frags.every((f) => sql.includes(f));
+
+    for (const t of missingTables) {
+      if (new RegExp('\\b' + t + '\\b').test(sql)) {
+        const err = new Error(`relation "${t}" does not exist`);
+        err.code = '42P01'; // undefined_table
+        throw err;
+      }
+    }
+    for (const c of missingColumns) {
+      if (new RegExp('\\b' + c + '\\b').test(sql)) {
+        const err = new Error(`column "${c}" of relation "projects" does not exist`);
+        err.code = '42703'; // undefined_column
+        throw err;
+      }
+    }
+
+    if (has('FROM users', 'WHERE id = $1')) {
+      return rows(db.users.filter((u) => same(u.id, params[0])));
+    }
+    if (has('FROM users', 'WHERE google_id = $1')) {
+      return rows(db.users.filter((u) => u.google_id === params[0]));
+    }
+    if (has('SELECT access_token FROM user_tokens')) {
+      return rows(
+        db.user_tokens
+          .filter((t) => same(t.user_id, params[0]) && t.service === params[1])
+          .map((t) => ({ access_token: t.access_token }))
+      );
+    }
+    if (has('INSERT INTO user_tokens')) {
+      const [userId, service, token] = params;
+      const existing = db.user_tokens.find((t) => same(t.user_id, userId) && t.service === service);
+      if (existing) existing.access_token = token;
+      else db.user_tokens.push({ user_id: userId, service, access_token: token });
+      return rows([]);
+    }
+    if (has('FROM user_slack_links l', 'JOIN users u')) {
+      const link = db.user_slack_links.find(
+        (l) => l.slack_team_id === params[0] && l.slack_user_id === params[1]
+      );
+      const user = link ? db.users.find((u) => same(u.id, link.user_id)) : null;
+      return rows(user ? [user] : []);
+    }
+    if (has('SELECT slack_team_id, slack_user_id FROM user_slack_links')) {
+      return rows(db.user_slack_links.filter((l) => same(l.user_id, params[0])));
+    }
+    if (has('INSERT INTO user_slack_links')) {
+      const [userId, teamId, slackUserId] = params;
+      const existing = db.user_slack_links.find(
+        (l) => l.slack_team_id === teamId && l.slack_user_id === slackUserId
+      );
+      // Mirrors the conditional ON CONFLICT: a fresh identity inserts, the same
+      // user re-linking is an idempotent no-op success, and another user's claim
+      // matches the guarded WHERE zero times.
+      if (!existing) {
+        db.user_slack_links.push({ user_id: userId, slack_team_id: teamId, slack_user_id: slackUserId });
+        return rows([{ user_id: userId }]);
+      }
+      if (same(existing.user_id, userId)) return rows([{ user_id: userId }]);
+      return rows([]);
+    }
+    if (has('UPDATE tenants SET slack_team_id')) {
+      const [tenantId, teamId, slackUserId] = params;
+      // uq_tenants_slack_link: the pair may be held by exactly one tenant.
+      const holder = db.tenants.find(
+        (t) => t.slack_team_id === teamId && t.slack_user_id === slackUserId && !same(t.id, tenantId)
+      );
+      if (holder) {
+        const err = new Error('duplicate key value violates unique constraint "uq_tenants_slack_link"');
+        err.code = '23505';
+        throw err;
+      }
+      const target = db.tenants.find((t) => same(t.id, tenantId));
+      if (target) {
+        target.slack_team_id = teamId;
+        target.slack_user_id = slackUserId;
+      }
+      return rows([]);
+    }
+    if (has('FROM tenants', 'WHERE id = $1 OR workspace_id = $1')) {
+      return rows(db.tenants.filter((t) => same(t.id, params[0]) || same(t.workspace_id, params[0])));
+    }
+    if (has('FROM tenants', 'WHERE slack_team_id = $1 AND slack_user_id = $2')) {
+      return rows(
+        db.tenants.filter((t) => t.slack_team_id === params[0] && t.slack_user_id === params[1])
+      );
+    }
+    if (has('SELECT access_token FROM tenant_tokens')) {
+      return rows(
+        db.tenant_tokens
+          .filter((t) => same(t.tenant_id, params[0]) && t.service === params[1])
+          .map((t) => ({ access_token: t.access_token }))
+      );
+    }
+    throw new Error('fake pool: unhandled query → ' + sql);
+  }
+
+  return { pool: { query, connect: async () => ({ query, release() {} }) }, db };
+}
+
+// Install the fake pool as `pg`, reload the DB modules against it, run `fn`, and
+// restore require.cache + the environment exactly as they were.
+function withFakeDb(seed, fn) {
+  const saved = new Map();
+  const remember = (p) => {
+    if (!saved.has(p)) saved.set(p, require.cache[p]);
+  };
+  const rel = (r) => require.resolve(path.join(__dirname, '..', r));
+  const savedUrl = process.env.DATABASE_URL;
+  const fake = makeFakePool(seed);
+
+  // db.js lazy-requires 'pg' inside getPool(), so stubbing the module is enough.
+  const pgPath = require.resolve('pg');
+  remember(pgPath);
+  require.cache[pgPath] = {
+    id: pgPath,
+    filename: pgPath,
+    path: path.dirname(pgPath),
+    loaded: true,
+    exports: { Pool: function () { return fake.pool; } },
+    children: [],
+    paths: [],
+  };
+
+  process.env.DATABASE_URL = 'postgres://fake/quillio';
+  // Reload so db.js memoizes the stubbed pool and db/users re-binds getPool.
+  const reloaded = {};
+  for (const [key, r] of [['db', 'src/db'], ['users', 'src/db/users']]) {
+    const p = rel(r);
+    remember(p);
+    delete require.cache[p];
+    reloaded[key] = require(p);
+  }
+
+  return Promise.resolve(fn(reloaded, fake)).finally(() => {
+    for (const [p, mod] of saved) {
+      if (mod === undefined) delete require.cache[p];
+      else require.cache[p] = mod;
+    }
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  });
+}
+
+// Alice (#1) and Bob (#2) share tenant T_SHARED. The tenant also still carries a
+// legacy tenant_tokens google row — the pre-split credential — so the fallback
+// order is exercised alongside the per-user tokens.
+const TWO_USER_TENANT = {
+  tenants: [{ id: 'T_SHARED', workspace_id: 'T_SHARED', workspace_name: 'Shared Co.' }],
+  users: [
+    { id: 1, email: 'alice@example.test', tenant_id: 'T_SHARED', role: 'owner' },
+    { id: 2, email: 'bob@example.test', tenant_id: 'T_SHARED', role: 'owner' },
+  ],
+  tenant_tokens: [{ tenant_id: 'T_SHARED', service: 'google', access_token: 'goog-LEGACY-tenant' }],
+};
+
+test('two users on one tenant each hold their OWN Google token', async () => {
+  await withFakeDb(TWO_USER_TENANT, async ({ db, users }, fake) => {
+    // Both sign in with Google. Under the old scheme these were two upserts on
+    // the same (tenant_id, 'google') row and Bob's clobbered Alice's.
+    assert.strictEqual(await users.saveUserToken(1, 'google', 'goog-alice'), true);
+    assert.strictEqual(await users.saveUserToken(2, 'google', 'goog-bob'), true);
+
+    // Both survive, independently.
+    assert.strictEqual(await users.getUserToken(1, 'google'), 'goog-alice');
+    assert.strictEqual(await users.getUserToken(2, 'google'), 'goog-bob');
+
+    // Bob re-connecting (a token refresh) still does not touch Alice's.
+    await users.saveUserToken(2, 'google', 'goog-bob-v2');
+    assert.strictEqual(await users.getUserToken(2, 'google'), 'goog-bob-v2');
+    assert.strictEqual(await users.getUserToken(1, 'google'), 'goog-alice', "Alice's token survives Bob's write");
+
+    // …and resolveTenant hands each of them their own, on the SAME tenant.
+    const alice = await db.resolveTenant('T_SHARED', null, 1);
+    const bob = await db.resolveTenant('T_SHARED', null, 2);
+    assert.strictEqual(alice.tenant.id, 'T_SHARED');
+    assert.strictEqual(bob.tenant.id, 'T_SHARED', 'same tenant for both');
+    assert.strictEqual(alice.tokens.google, 'goog-alice');
+    assert.strictEqual(bob.tokens.google, 'goog-bob-v2');
+    assert.strictEqual(alice.user.id, 1, 'the acting user comes back on the context');
+    assert.strictEqual(bob.user.id, 2);
+
+    // With no acting user, the deprecated tenant-level token is still the
+    // fallback, so credentials that predate the split keep working.
+    const anonymous = await db.resolveTenant('T_SHARED');
+    assert.strictEqual(anonymous.tokens.google, 'goog-LEGACY-tenant');
+    assert.strictEqual(anonymous.user, null);
+
+    // Two distinct per-user rows exist; the tenant row was never rewritten.
+    assert.strictEqual(fake.db.user_tokens.filter((t) => t.service === 'google').length, 2);
+    assert.strictEqual(fake.db.tenant_tokens[0].access_token, 'goog-LEGACY-tenant');
+  });
+});
+
+test('two users on one tenant can EACH be Slack-linked', async () => {
+  await withFakeDb(TWO_USER_TENANT, async ({ db, users }, fake) => {
+    // The pair that was impossible before: one tenant row held one link, so the
+    // second of these overwrote the first.
+    assert.deepStrictEqual(await users.linkSlackIdentityToUser(1, 'T_TEAM', 'U_ALICE'), {
+      ok: true,
+      conflict: false,
+    });
+    assert.deepStrictEqual(await users.linkSlackIdentityToUser(2, 'T_TEAM', 'U_BOB'), {
+      ok: true,
+      conflict: false,
+    });
+    assert.strictEqual(fake.db.user_slack_links.length, 2, 'both links coexist');
+
+    // Each Slack identity resolves to its own user, and both land on the tenant.
+    const alice = await db.resolveTenant('T_TEAM', 'U_ALICE');
+    const bob = await db.resolveTenant('T_TEAM', 'U_BOB');
+    for (const [who, ctx, id] of [['alice', alice, 1], ['bob', bob, 2]]) {
+      assert.ok(!ctx.unlinked, `${who} is NOT refused as unlinked`);
+      assert.strictEqual(ctx.user.id, id, `${who} resolves to their own user`);
+      assert.strictEqual(ctx.tenant.id, 'T_SHARED', `${who} resolves to the shared tenant`);
+    }
+
+    // Re-connecting the same Slack account is an idempotent success, not a clash.
+    assert.deepStrictEqual(await users.linkSlackIdentityToUser(1, 'T_TEAM', 'U_ALICE'), {
+      ok: true,
+      conflict: false,
+    });
+
+    // Someone else claiming Alice's Slack identity is REFUSED and reported —
+    // this is the case that used to be swallowed as a logged 23505 while the
+    // install still told the person "Slack connected".
+    assert.deepStrictEqual(await users.linkSlackIdentityToUser(2, 'T_TEAM', 'U_ALICE'), {
+      ok: false,
+      conflict: true,
+    });
+    const stillAlice = await db.resolveTenant('T_TEAM', 'U_ALICE');
+    assert.strictEqual(stillAlice.user.id, 1, "Alice's link is untouched by the refused claim");
+
+    // An unknown Slack identity still gets the unlinked refusal, unchanged.
+    const stranger = await db.resolveTenant('T_TEAM', 'U_NOBODY');
+    assert.strictEqual(stranger.unlinked, true);
+    assert.strictEqual(stranger.tenant, null);
+    assert.strictEqual(stranger.tokens, null);
+  });
+});
+
+test('the legacy tenants.slack_* link still resolves (deprecated fallback)', async () => {
+  // A deploy can land before the backfill migration runs; existing Slack users
+  // must not all start hitting the unlinked refusal.
+  await withFakeDb(
+    {
+      tenants: [
+        { id: 'T_OLD', workspace_id: 'T_OLD', slack_team_id: 'T_TEAM', slack_user_id: 'U_LEGACY' },
+      ],
+      users: [],
+      tenant_tokens: [{ tenant_id: 'T_OLD', service: 'google', access_token: 'goog-legacy' }],
+    },
+    async ({ db }) => {
+      const ctx = await db.resolveTenant('T_TEAM', 'U_LEGACY');
+      assert.ok(!ctx.unlinked, 'a pre-migration link is not refused');
+      assert.strictEqual(ctx.tenant.id, 'T_OLD');
+      assert.strictEqual(ctx.tokens.google, 'goog-legacy');
+      assert.strictEqual(ctx.user, null, 'no user record behind a legacy tenant link');
+    }
+  );
+});
+
+// --- The acting user's token is the one that performs the write -------------
+
+// Same idea as withFakeDb, plus a stubbed `googleapis` so we can capture exactly
+// which refresh token reaches the OAuth2 client that Drive/Docs are built on.
+function withFakeGoogle(seed, fn) {
+  const saved = new Map();
+  const remember = (p) => {
+    if (!saved.has(p)) saved.set(p, require.cache[p]);
+  };
+  const rel = (r) => require.resolve(path.join(__dirname, '..', r));
+  const savedEnv = {
+    DATABASE_URL: process.env.DATABASE_URL,
+    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+    GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  };
+  const fake = makeFakePool(seed);
+  const captured = { credentials: [], driveAuth: [] };
+
+  const pgPath = require.resolve('pg');
+  remember(pgPath);
+  require.cache[pgPath] = {
+    id: pgPath, filename: pgPath, path: path.dirname(pgPath), loaded: true,
+    exports: { Pool: function () { return fake.pool; } }, children: [], paths: [],
+  };
+
+  // Minimal googleapis stand-in: enough surface for src/google.js, and it records
+  // the credentials each client is built with.
+  function OAuth2() {
+    this.kind = 'oauth2';
+    this.setCredentials = (creds) => {
+      this.credentials = creds;
+      captured.credentials.push(creds);
+    };
+  }
+  const fakeGoogle = {
+    options: () => {},
+    auth: {
+      OAuth2,
+      GoogleAuth: function () {
+        this.getClient = async () => ({ kind: 'service-account' });
+      },
+    },
+    drive: ({ auth }) => {
+      captured.driveAuth.push(auth);
+      return { kind: 'drive', auth };
+    },
+    docs: ({ auth }) => ({ kind: 'docs', auth }),
+  };
+  const gapiPath = require.resolve('googleapis');
+  remember(gapiPath);
+  require.cache[gapiPath] = {
+    id: gapiPath, filename: gapiPath, path: path.dirname(gapiPath), loaded: true,
+    exports: { google: fakeGoogle }, children: [], paths: [],
+  };
+
+  process.env.DATABASE_URL = 'postgres://fake/quillio';
+  process.env.GOOGLE_CLIENT_ID = 'fake-client-id';
+  process.env.GOOGLE_CLIENT_SECRET = 'fake-client-secret';
+  process.env.GOOGLE_SERVICE_ACCOUNT_JSON = JSON.stringify({ client_email: 'sa@example.test' });
+
+  const reloaded = {};
+  for (const [key, r] of [['config', 'src/config'], ['db', 'src/db'], ['users', 'src/db/users'], ['google', 'src/google']]) {
+    const p = rel(r);
+    remember(p);
+    delete require.cache[p];
+    reloaded[key] = require(p);
+  }
+
+  return Promise.resolve(fn(reloaded, captured, fake)).finally(() => {
+    for (const [p, mod] of saved) {
+      if (mod === undefined) delete require.cache[p];
+      else require.cache[p] = mod;
+    }
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+}
+
+test("Drive/Docs write as the ACTING user's Google identity, not the tenant's", async () => {
+  const seed = {
+    ...TWO_USER_TENANT,
+    user_tokens: [
+      { user_id: 1, service: 'google', access_token: 'goog-alice' },
+      { user_id: 2, service: 'google', access_token: 'goog-bob' },
+    ],
+  };
+  await withFakeGoogle(seed, async ({ google }, captured) => {
+    // 1. Token SELECTION, in priority order.
+    assert.deepStrictEqual(
+      await google.resolveGoogleRefreshToken({ tenantId: 'T_SHARED', userId: 1 }),
+      { token: 'goog-alice', source: 'user' }
+    );
+    assert.deepStrictEqual(
+      await google.resolveGoogleRefreshToken({ tenantId: 'T_SHARED', userId: 2 }),
+      { token: 'goog-bob', source: 'user' }
+    );
+    // No acting user → the deprecated tenant token, so pre-split data still works.
+    assert.deepStrictEqual(
+      await google.resolveGoogleRefreshToken({ tenantId: 'T_SHARED' }),
+      { token: 'goog-LEGACY-tenant', source: 'tenant' }
+    );
+    // A user with no token of their own falls back rather than failing.
+    assert.deepStrictEqual(
+      await google.resolveGoogleRefreshToken({ tenantId: 'T_SHARED', userId: 99 }),
+      { token: 'goog-LEGACY-tenant', source: 'tenant' }
+    );
+
+    // 2. The client that actually performs the write carries that token.
+    captured.credentials.length = 0;
+    const aliceClients = await google.getClientsForTenant({ tenantId: 'T_SHARED', userId: 1 });
+    assert.deepStrictEqual(captured.credentials.at(-1), { refresh_token: 'goog-alice' });
+    assert.strictEqual(aliceClients.usingOAuth, true);
+    assert.strictEqual(aliceClients.drive.auth.credentials.refresh_token, 'goog-alice');
+    assert.strictEqual(aliceClients.docs.auth.credentials.refresh_token, 'goog-alice');
+
+    const bobClients = await google.getClientsForTenant({ tenantId: 'T_SHARED', userId: 2 });
+    assert.strictEqual(bobClients.drive.auth.credentials.refresh_token, 'goog-bob');
+
+    // The two writers on one tenant are genuinely different Drive identities.
+    assert.notStrictEqual(
+      aliceClients.drive.auth.credentials.refresh_token,
+      bobClients.drive.auth.credentials.refresh_token
+    );
+
+    // 3. The legacy positional call (a bare tenant id) still works unchanged.
+    const legacy = await google.getClientsForTenant('T_SHARED');
+    assert.strictEqual(legacy.drive.auth.credentials.refresh_token, 'goog-LEGACY-tenant');
+  });
+});
+
+// --- Wiring: the acting user reaches the write + authorship paths -----------
+
+test('both adapters thread the acting user into Drive writes and project authorship', () => {
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+
+  const web = read('src/adapters/web.js');
+  assert.ok(/actingUserId\(tenantContext\)/.test(web), 'web adapter derives the acting user');
+  assert.ok(/getClientsForTenant\(\{ tenantId, userId/.test(web), 'web passes the user into the Google clients');
+  assert.ok(/createdBy: userId/.test(web), 'web records the session user as the author');
+
+  const slack = read('src/adapters/slackWorkflow.js');
+  assert.ok(/const actingUserId = \(user && user\.id\) \|\| null/.test(slack), 'slack derives the acting user from the resolved link');
+  assert.ok(/getClientsForTenant\(\{ tenantId, userId: actingUserId \}\)/.test(slack), 'slack passes the user into the Google clients');
+  assert.ok(/createdBy: actingUserId/.test(slack), 'slack records the commanding user as the author');
+
+  const review = read('src/adapters/slackReview.js');
+  assert.ok(/getClientsForTenant\(\{ tenantId, userId: actingUserId \}\)/.test(review), 'review runs as the acting user');
+
+  // The web routes must pass the session user into resolveTenant, or the adapter
+  // would see user:null and silently fall back to the tenant's credentials.
+  const routes = read('src/routes/app.js');
+  assert.ok(/resolveTenant\(sessionTenant, null, sessionUserId\)/.test(routes), 'brief/draft/review resolve for the session user');
+
+  // created_by must actually reach the INSERT.
+  const projects = read('src/db/projects.js');
+  assert.ok(/created_by/.test(projects) && /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10\)/.test(projects), 'saveProject inserts created_by');
+  const pipeline = read('src/core/pipeline.js');
+  assert.ok(/created_by: projectMeta\.createdBy/.test(pipeline), 'pipeline passes createdBy through to saveProject');
+});
+
+test('a Slack link conflict is surfaced to the user, never swallowed', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  // The old code caught 23505, logged a warning and fell through to the success
+  // redirect — so the person saw "Slack connected" while their commands kept
+  // resolving to another tenant.
+  assert.ok(!/e\.code === '23505'/.test(src), 'no longer swallows the unique-violation');
+  assert.ok(/linkSlackIdentityToUser/.test(src), 'links the Slack identity to the user');
+  assert.ok(/slackLinkFailure = 'already_linked'/.test(src), 'a conflict is recorded as a failure');
+  assert.ok(/if \(slackLinkFailure\) \{/.test(src), 'and branched on before any success response');
+  assert.ok(/slackPopupResult\('conflict'\)/.test(src) || /'conflict' : 'failed'/.test(src), 'popup installs report the conflict');
+  assert.ok(/slack=error&reason=\$\{slackLinkFailure\}/.test(src), 'redirect installs report the conflict');
+
+  // …and the Settings UI renders that state instead of a success banner.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  assert.ok(/params\.get\('slack'\) === 'error'/.test(html), 'settings handles ?slack=error');
+  assert.ok(/already_linked/.test(html), 'settings explains the already-linked case');
+});
+
+// --- Deploy-before-migration safety ----------------------------------------
+//
+// Railway auto-deploys main on merge, so this code CAN and WILL run against a
+// database that has not had scripts/migrateAddUserCredentials.js applied yet.
+// Every read and write against the new schema must degrade to the pre-migration
+// behavior instead of throwing — otherwise the merge takes the product down
+// until someone opens the Railway console.
+//
+// Unmigrated shape: a legacy tenant-row Slack link and a tenant-level Google
+// token, with none of the new schema present.
+const UNMIGRATED = {
+  missingTables: ['user_tokens', 'user_slack_links'],
+  missingColumns: ['created_by'],
+  tenants: [
+    {
+      id: 'T_LEGACY',
+      workspace_id: 'T_LEGACY',
+      workspace_name: 'Legacy Co.',
+      slack_team_id: 'T_TEAM',
+      slack_user_id: 'U_KYLE',
+    },
+    { id: 'T_RIVAL', workspace_id: 'T_RIVAL', workspace_name: 'Rival Co.' },
+  ],
+  users: [
+    { id: 1, email: 'kyle@example.test', tenant_id: 'T_LEGACY', role: 'owner' },
+    { id: 9, email: 'rival@example.test', tenant_id: 'T_RIVAL', role: 'owner' },
+  ],
+  tenant_tokens: [{ tenant_id: 'T_LEGACY', service: 'google', access_token: 'goog-legacy' }],
+};
+
+test('resolveTenant survives a deploy that lands BEFORE the migration', async () => {
+  await withFakeDb(UNMIGRATED, async ({ db }) => {
+    // The Slack path used to throw 42P01 straight out of resolveTenant, so every
+    // /quillio failed. It must fall through to the legacy tenants.slack_* read.
+    const ctx = await db.resolveTenant('T_TEAM', 'U_KYLE');
+    assert.ok(!ctx.unlinked, 'an existing Slack user is NOT refused pre-migration');
+    assert.strictEqual(ctx.tenant.id, 'T_LEGACY');
+    assert.strictEqual(ctx.tokens.google, 'goog-legacy', 'falls back to the tenant-level token');
+
+    // The unlinked refusal still works for a genuinely unknown identity.
+    const stranger = await db.resolveTenant('T_TEAM', 'U_NOBODY');
+    assert.strictEqual(stranger.unlinked, true);
+
+    // The web path also resolves, falling back to the tenant token.
+    const web = await db.resolveTenant('T_LEGACY', null, 1);
+    assert.strictEqual(web.tenant.id, 'T_LEGACY');
+    assert.strictEqual(web.tokens.google, 'goog-legacy');
+  });
+});
+
+test('per-user credential writes degrade (not throw) before the migration', async () => {
+  await withFakeDb(UNMIGRATED, async ({ users }) => {
+    // Google sign-in: a throw here aborts the OAuth callback and sends the user
+    // to /app?error=google_failed, i.e. sign-in breaks entirely.
+    assert.strictEqual(await users.saveUserToken(1, 'google', 'x'), false, 'reports "not stored" instead of throwing');
+    assert.strictEqual(await users.getUserToken(1, 'google'), null);
+
+    // Settings reads the user's links; [] lets it fall back to the tenant row.
+    assert.deepStrictEqual(await users.getSlackLinksForUser(1), []);
+
+    // Connecting Slack still works, via the legacy one-per-tenant write.
+    const linked = await users.linkSlackIdentityToUser(1, 'T_TEAM', 'U_KYLE');
+    assert.deepStrictEqual(linked, { ok: true, conflict: false, legacy: true });
+
+    // …and a taken identity is STILL refused rather than reported as connected —
+    // the whole point of the fix must hold in the unmigrated window too.
+    const stolen = await users.linkSlackIdentityToUser(9, 'T_TEAM', 'U_KYLE');
+    assert.deepStrictEqual(stolen, { ok: false, conflict: true, legacy: true });
+  });
+});
+
+test('a project is still recorded when projects.created_by is missing', async () => {
+  // Losing the row entirely would be far worse than a NULL author for a few
+  // minutes, so the INSERT retries without the column.
+  const inserts = [];
+  await withFakeDb(UNMIGRATED, async (_mods, fake) => {
+    const origQuery = fake.pool.query;
+    fake.pool.query = async (text, params) => {
+      const sql = String(text).replace(/\s+/g, ' ').trim();
+      if (sql.startsWith('INSERT INTO projects')) {
+        inserts.push(sql);
+        if (sql.includes('created_by')) {
+          const err = new Error('column "created_by" of relation "projects" does not exist');
+          err.code = '42703';
+          throw err;
+        }
+        return { rows: [{ id: 7, tenant_id: params[0], created_by: null }], rowCount: 1 };
+      }
+      if (sql.startsWith('SELECT * FROM projects')) return { rows: [], rowCount: 0 };
+      return origQuery(text, params);
+    };
+    const rel = require.resolve(path.join(__dirname, '..', 'src/db/projects'));
+    delete require.cache[rel];
+    const { saveProject } = require(rel);
+    const saved = await saveProject('T_LEGACY', { name: 'X', copy_doc_id: 'D1', created_by: 1 });
+    assert.ok(saved, 'the project row is still persisted');
+    assert.strictEqual(saved.id, 7);
+  });
+  assert.strictEqual(inserts.length, 2, 'tried with created_by, then retried without');
+  assert.ok(inserts[0].includes('created_by'));
+  assert.ok(!inserts[1].includes('created_by'));
+});
+
+test('the missing-schema catch is narrow — real errors still throw', async () => {
+  // Only 42P01 / 42703 are treated as "not migrated yet". A permissions problem,
+  // a bad connection or a constraint violation must NOT be silently swallowed.
+  await withFakeDb(UNMIGRATED, async ({ users }, fake) => {
+    fake.pool.query = async () => {
+      const err = new Error('permission denied for table user_tokens');
+      err.code = '42501'; // insufficient_privilege
+      throw err;
+    };
+    await assert.rejects(() => users.getUserToken(1, 'google'), /permission denied/);
+    await assert.rejects(() => users.saveUserToken(1, 'google', 'x'), /permission denied/);
+    await assert.rejects(() => users.getSlackLinksForUser(1), /permission denied/);
+  });
 });

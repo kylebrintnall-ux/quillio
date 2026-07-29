@@ -48,12 +48,17 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     });
     return;
   }
-  const { tenant, tokens, source } = resolved;
+  const { tenant, tokens, source, user } = resolved;
   const tenantId = tenant && tenant.id;
-  // Log the token SOURCE only (db = Postgres tenant_tokens, env = fallback) —
-  // never the tokens themselves.
+  // The acting user: the person whose Slack identity ran the command. Their own
+  // Google credentials do the Drive/Docs writes and they're recorded as the
+  // project's author. Null on the env/demo path and for a legacy tenant-level
+  // Slack link, where no user record is known.
+  const actingUserId = (user && user.id) || null;
+  // Log the token SOURCE only (db = Postgres, env = fallback) and WHO is acting
+  // — never the tokens themselves.
   console.log(
-    `[workflow] tenant resolved — source: ${source} | tenantId: ${tenantId || '(none)'}`
+    `[workflow] tenant resolved — source: ${source} | tenantId: ${tenantId || '(none)'} | user: ${actingUserId || '(none)'}`
   );
 
   // Establish a single "live" message we transform in place (chat.update is the
@@ -169,10 +174,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       console.log(
         `[workflow] pre-generateDoc references → links=${(referenceLinks || []).length} insights=${(referenceInsights || []).length}`
       );
-      // Drive/Docs writes run as the resolved tenant's Google identity (per-user
-      // OAuth); getClientsForTenant falls back to the shared env client when the
-      // tenant has no stored google token.
-      const clients = await getClientsForTenant(tenantId);
+      // Drive/Docs writes run as the ACTING USER's own Google identity, falling
+      // back to the tenant token and then the shared env client.
+      const clients = await getClientsForTenant({ tenantId, userId: actingUserId });
       docResult = await pipeline.generateDoc(
         { brief, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
         effectiveFolderId,
@@ -182,7 +186,12 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         // future in-thread action (e.g. Hand Off to Design) can resolve the
         // project by thread. Null when there's no live message (response_url
         // fallback) — the project still persists, just without thread linkage.
-        { slackChannelId: live && live.channel, slackThreadTs: live && live.ts }
+        // createdBy records who ran the command.
+        {
+          slackChannelId: live && live.channel,
+          slackThreadTs: live && live.ts,
+          createdBy: actingUserId,
+        }
       );
     } catch (err) {
       if (pipeline.isFolderAccessError(err, effectiveFolderId)) {
@@ -248,7 +257,8 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
     await refuseUnlinkedSlack({ responseUrl, channel, slackUserId });
     return;
   }
-  const { tenant, tokens } = resolved;
+  const { tenant, tokens, user } = resolved;
+  const actingUserId = (user && user.id) || null;
   const canLive = !!tokens.slack_bot && channel && messageTs;
   const isRegen = !!(direction && String(direction).trim());
   console.log(
@@ -276,10 +286,12 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   if (canLive) await updateLive(channel, messageTs, progressText, undefined, tokens.slack_bot);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 
-  // Docs read/write runs as the resolved tenant's Google identity (per-user
-  // OAuth); getClientsForTenant falls back to the shared env client when the
-  // tenant has no stored google token.
-  const clients = await getClientsForTenant(tenant && tenant.id);
+  // Docs read/write runs as the ACTING USER's own Google identity, falling back
+  // to the tenant token and then the shared env client.
+  const clients = await getClientsForTenant({
+    tenantId: tenant && tenant.id,
+    userId: actingUserId,
+  });
   const { title, fieldCount, url } = await pipeline.generateDraft(
     docId,
     direction,

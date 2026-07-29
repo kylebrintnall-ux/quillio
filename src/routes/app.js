@@ -24,6 +24,14 @@ const router = express.Router();
 // The demo tenant — used when a request doesn't carry a workspace id.
 const DEFAULT_WORKSPACE_ID = 'T0B8LPRDKHR';
 
+// The signed-in user's id (users.id), or null in demo mode where requireAuth
+// attaches a synthetic user with no row behind it. This is the ACTING USER: it
+// selects their own Google credentials for Drive/Docs writes and is recorded as
+// the author of any project they create.
+function sessionUser(req) {
+  return (req.user && req.user.id) || null;
+}
+
 // --- File attachment uploads (Phase 3 additions) ---
 // Brief reference files are uploaded to /api/upload, stored in the OS temp dir,
 // and their paths handed to /api/brief. Caps: 10MB per file, 3 files max; only
@@ -205,6 +213,7 @@ router.post('/api/brief', briefLimiter, requireAuth, (req, res) => {
   const body = req.body || {};
   const briefText = (body.briefText || '').trim();
   const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
+  const sessionUserId = sessionUser(req);
   const fileRefs = safeFileRefs(body.fileRefs);
 
   if (!briefText) {
@@ -212,7 +221,7 @@ router.post('/api/brief', briefLimiter, requireAuth, (req, res) => {
   }
 
   const jobId = startJob(`brief tenant=${sessionTenant}`, sessionTenant, async () => {
-    const tenantContext = await resolveTenant(sessionTenant);
+    const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
     return runWebBrief(briefText, tenantContext, fileRefs); // the full { docUrl, assetBlocks, … }
   });
   // Log the brief length so a truncated brief (e.g. a cut folder URL) is obvious
@@ -239,6 +248,7 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
   const docId = (body.docId || '').trim();
   const direction = (body.direction || '').trim(); // optional regenerate feedback
   const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
+  const sessionUserId = sessionUser(req);
 
   if (!docId) {
     return res.status(400).json({ success: false, error: 'docId is required' });
@@ -280,7 +290,7 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
 
   const mode = `${direction ? `regenerate (${direction.length} chars)` : 'first draft'}${scoped ? ` scoped ${scopedFields.length}` : ''}${append ? ' append' : ''}`;
   const jobId = startJob(`draft doc=${docId} ${mode}`, sessionTenant, async () => {
-    const tenantContext = await resolveTenant(sessionTenant);
+    const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
     const out = await runWebDraft(docId, tenantContext, direction, scoped ? scopedFields : undefined, append);
     return { docId: out.docId, fieldCount: out.fieldCount };
   });
@@ -301,6 +311,7 @@ router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
   const body = req.body || {};
   const docId = (body.docId || '').trim();
   const sessionTenant = (req.user && req.user.tenant_id) || DEFAULT_WORKSPACE_ID;
+  const sessionUserId = sessionUser(req);
   if (!docId) {
     return res.status(400).json({ success: false, error: 'docId is required' });
   }
@@ -315,7 +326,7 @@ router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
   const scoped = scopedFields && scopedFields.length > 0;
 
   const jobId = startJob(`review doc=${docId}${scoped ? ` scoped ${scopedFields.length}` : ''}`, sessionTenant, async () => {
-    const tenantContext = await resolveTenant(sessionTenant);
+    const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
     return runWebReview(docId, tenantContext, scoped ? scopedFields : undefined);
   });
   console.log(`[web] /api/review start → job=${jobId} doc=${docId} tenant=${sessionTenant}${scoped ? ` scoped ${scopedFields.length}` : ''}`);
@@ -391,7 +402,7 @@ router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
     // Tenant from the session, not a client param (audit HIGH 3).
-    const { tenant } = await resolveTenant(req.user && req.user.tenant_id);
+    const { tenant, user } = await resolveTenant(req.user && req.user.tenant_id, null, sessionUser(req));
     const project = await getProject(tenant && tenant.id, req.params.id);
     if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
     if (!project.copy_doc_id) {
@@ -401,7 +412,7 @@ router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
     // Drive (created via their OAuth), so the service-account fallback can't see
     // it. Without passing { tenant }, the read fails and the UI drops to the
     // "Open in Drive" fallback instead of rendering the copy inline.
-    const content = await runWebProjectContent(project.copy_doc_id, { tenant });
+    const content = await runWebProjectContent(project.copy_doc_id, { tenant, user });
     return res.status(200).json({ success: true, content });
   } catch (err) {
     console.error('[web] /api/projects/:id/content failed:', err && err.stack ? err.stack : err);

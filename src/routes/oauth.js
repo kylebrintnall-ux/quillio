@@ -8,9 +8,15 @@
 const crypto = require('crypto');
 const express = require('express');
 const config = require('../config');
-const { createTenantIfMissing, saveTenantToken, getPool, linkSlackUserToTenant, getTenantByWorkspace } = require('../db');
+const { createTenantIfMissing, saveTenantToken, getPool, getTenantByWorkspace } = require('../db');
 const { seedTenantAssets } = require('../db/assets');
-const { findUserByGoogleId, findUserById, createUser } = require('../db/users');
+const {
+  findUserByGoogleId,
+  findUserById,
+  createUser,
+  saveUserToken,
+  linkSlackIdentityToUser,
+} = require('../db/users');
 
 // Post-OAuth landing destinations we accept via ?redirect=… (whitelist).
 const ALLOWED_REDIRECTS = ['onboarding', 'settings'];
@@ -90,13 +96,21 @@ function peekState(state) {
 
 // Self-contained page returned to a POPUP-mode Slack callback: message the opener
 // with the result, then close. The <p> line is the fallback shown if the inline
-// script is blocked. `status` is 'connected' | 'failed'.
+// script is blocked. `status` is 'connected' | 'conflict' | 'failed'.
+//
+// 'conflict' is its own status on purpose: that Slack account is already linked
+// to a different Quillio user, so reporting "connected" would leave the person
+// believing /quillio runs as them while it keeps resolving to someone else.
+const SLACK_POPUP_LINES = {
+  connected: 'Slack connected — you can close this window.',
+  conflict:
+    'That Slack account is already connected to a different Quillio user, ' +
+    'so it was not linked. Sign in as that user, or connect a different Slack account.',
+  failed: 'Slack connection failed — you can close this window.',
+};
 function slackPopupResult(status) {
-  const safe = status === 'connected' ? 'connected' : 'failed';
-  const line =
-    safe === 'connected'
-      ? 'Slack connected — you can close this window.'
-      : 'Slack connection failed — you can close this window.';
+  const safe = Object.prototype.hasOwnProperty.call(SLACK_POPUP_LINES, status) ? status : 'failed';
+  const line = SLACK_POPUP_LINES[safe];
   return (
     '<!doctype html><html><head><meta charset="utf-8"><title>Quillio</title></head>' +
     '<body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem;">' +
@@ -207,31 +221,50 @@ router.get('/oauth/slack/callback', async (req, res) => {
     if (botToken) await saveTenantToken(teamId, 'slack_bot', botToken);
     if (userToken) await saveTenantToken(teamId, 'slack_user', userToken);
 
-    // Slack-user link (Stage 1): when a SIGNED-IN Quillio user connects Slack,
-    // record their Slack identity (team + user id) on THEIR tenant so /quillio
-    // can later resolve (team_id + user_id) → that tenant. Purely additive —
-    // the workspace-tenant + token writes above are untouched. Best-effort: a
-    // failed link never breaks the install or the redirect.
+    // Slack-user link: when a SIGNED-IN Quillio user connects Slack, record
+    // their Slack identity (team + user id) against THEIR USER ROW, so /quillio
+    // can resolve (team_id + user_id) → user → that user's tenant. Keyed on the
+    // identity, so every person on a tenant can hold their own link.
+    //
+    // A failure here is NOT swallowed. Previously a conflict was logged and the
+    // install still reported success, leaving the person looking at "Slack
+    // connected" while their commands resolved to a different tenant. Now it
+    // surfaces (see the slackLinkFailure branch below the seeding).
     const slackUserId = data.authed_user && data.authed_user.id;
+    let slackLinkFailure = null; // null | 'already_linked' | 'link_failed'
     if (req.session && req.session.userId && slackUserId) {
       try {
         const linkUser = await findUserById(req.session.userId);
-        if (linkUser && linkUser.tenant_id) {
-          await linkSlackUserToTenant(linkUser.tenant_id, teamId, slackUserId);
-          console.log(
-            `[oauth] slack link OK — tenant ${linkUser.tenant_id} ← team ${teamId} user ${slackUserId}`
-          );
+        if (linkUser && linkUser.id) {
+          const link = await linkSlackIdentityToUser(linkUser.id, teamId, slackUserId);
+          if (link.ok) {
+            console.log(
+              `[oauth] slack link OK — user ${linkUser.id} (tenant ${linkUser.tenant_id}) ← team ${teamId} user ${slackUserId}`
+            );
+            // The Slack USER token belongs to the person who granted it, not to
+            // the workspace. Store it on them so a second installer can't
+            // replace the first's. The tenant-level copy written above stays as
+            // the fallback for installs with nobody signed in.
+            if (userToken) {
+              try {
+                await saveUserToken(linkUser.id, 'slack_user', userToken);
+              } catch (e) {
+                console.error('[oauth] per-user slack token save failed (continuing):', e.message);
+              }
+            }
+          } else if (link.conflict) {
+            slackLinkFailure = 'already_linked';
+            console.warn(
+              `[oauth] slack link REFUSED — team ${teamId} user ${slackUserId} is already linked to another Quillio user`
+            );
+          } else {
+            slackLinkFailure = 'link_failed';
+            console.error('[oauth] slack link did not run (no database?)');
+          }
         }
       } catch (e) {
-        if (e && e.code === '23505') {
-          // uq_tenants_slack_link: this (team, user) already belongs to another
-          // tenant. Re-link policy TBD — for now log and continue.
-          console.warn(
-            `[oauth] slack link skipped — team ${teamId} user ${slackUserId} already linked to another tenant`
-          );
-        } else {
-          console.error('[oauth] slack link failed (continuing):', e.message);
-        }
+        slackLinkFailure = 'link_failed';
+        console.error('[oauth] slack link failed:', e.message);
       }
     }
 
@@ -247,6 +280,21 @@ router.get('/oauth/slack/callback', async (req, res) => {
     console.log(
       `[oauth] install OK — team ${teamId} (${teamName || '?'}) bot=${!!botToken} user=${!!userToken}`
     );
+
+    // The bot install succeeded but this person's identity was NOT linked, so
+    // their slash commands will not resolve to them. Say so instead of showing a
+    // success screen they'd have no reason to doubt.
+    if (slackLinkFailure) {
+      if (popupMode) {
+        return res
+          .set('Content-Type', 'text/html; charset=utf-8')
+          .send(slackPopupResult(slackLinkFailure === 'already_linked' ? 'conflict' : 'failed'));
+      }
+      if (slackRedirectTo === 'settings') return res.redirect(`/settings?slack=error&reason=${slackLinkFailure}`);
+      if (slackRedirectTo === 'onboarding') return res.redirect(`/onboarding?slack=error&reason=${slackLinkFailure}`);
+      return res.redirect(`/welcome?error=${slackLinkFailure}`);
+    }
+
     // Popup mode: reply in the popup and let it signal the opener — checked BEFORE
     // the redirect branches so a popup install never navigates the top window.
     if (popupMode) return res.set('Content-Type', 'text/html; charset=utf-8').send(slackPopupResult('connected'));
@@ -384,12 +432,25 @@ router.get('/oauth/google/callback', async (req, res) => {
       }
     }
 
-    // Store the Google refresh token on the user's OWN tenant — new person → the
-    // fresh tenant created just above; returning person → their existing tenant id
-    // (from their user record) — never the demo workspace. Best-effort, no-ops
-    // without a DB. Never logged.
-    if (refreshToken && userTenantId) {
-      await saveTenantToken(userTenantId, 'google', refreshToken);
+    // Store the Google refresh token on the USER, not the tenant. It is that
+    // person's own Drive identity: written to tenant_tokens it upserted on
+    // (tenant_id, 'google'), so the second person to sign in replaced the
+    // first's and every later Drive write for the whole team ran as them.
+    // Best-effort, no-ops without a DB. Never logged.
+    //
+    // The tenant-level row is deliberately no longer written here. Existing ones
+    // are left in place and still read as a fallback (see google.js
+    // resolveGoogleRefreshToken) until scripts/migrateBackfillUserCredentials.js
+    // moves them onto their owner.
+    if (refreshToken && user && user.id) {
+      const saved = await saveUserToken(user.id, 'google', refreshToken);
+      // PRE-MIGRATION FALLBACK ONLY: saveUserToken returns false when
+      // user_tokens doesn't exist yet (this code can deploy before the
+      // migration runs). Without this the token would be stored nowhere and the
+      // person's Drive writes would silently fall back to the env identity, so
+      // keep the old tenant-level write until the table is there. The read path
+      // already prefers the user's token, so nothing changes once it is.
+      if (!saved && userTenantId) await saveTenantToken(userTenantId, 'google', refreshToken);
     }
 
     if (req.session && user && user.id) req.session.userId = user.id;
@@ -443,8 +504,21 @@ async function fetchGoogleProfile(accessToken) {
 router.get('/welcome', (req, res) => {
   // Only ever reflect a sanitized known error code (no user-controlled HTML).
   const code = String(req.query.error || '').replace(/[^a-z_]/gi, '');
+  // Known codes get a message that says what to actually do; anything else keeps
+  // the generic line. Only ever reflects the sanitized code, never raw input.
+  const EXPLAINED = {
+    already_linked:
+      `<h1>That Slack account is already connected</h1>` +
+      `<p>It belongs to a different Quillio user, so it wasn't linked to your account and ` +
+      `<code>/quillio</code> won't run as you. Sign in as that user, or connect a different Slack account.</p>`,
+    link_failed:
+      `<h1>Slack wasn't connected</h1>` +
+      `<p>Quillio is installed, but your Slack account couldn't be linked to your Quillio user, ` +
+      `so <code>/quillio</code> won't run as you. Please try connecting again.</p>`,
+  };
   const body = code
-    ? `<h1>Install didn't finish</h1><p>Something went wrong (<code>${code}</code>). Please try again.</p>`
+    ? EXPLAINED[code] ||
+      `<h1>Install didn't finish</h1><p>Something went wrong (<code>${code}</code>). Please try again.</p>`
     : `<h1>You're connected 🎉</h1><p>Quillio is installed in your workspace. Head back to Slack and try <code>/quillio</code>.</p>`;
   res
     .status(200)

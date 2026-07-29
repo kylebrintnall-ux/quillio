@@ -6,10 +6,18 @@
 // test enforces it); the only platform-specific input is the resolved tenant
 // context, used read-only for token-gated reference fetching.
 //
-// tenantContext is the { tenant, tokens, source } shape resolveTenant returns.
+// tenantContext is the { tenant, tokens, source, user } shape resolveTenant
+// returns. `user` is the acting (signed-in) user; its id selects that person's
+// own Google credentials for Drive/Docs writes and is recorded as the author of
+// any project created, so two people on one tenant never write as each other.
 
 const pipeline = require('../core/pipeline');
 const { getClientsForTenant } = require('../google');
+
+// The acting user's id from a resolved tenant context, or null.
+function actingUserId(tenantContext) {
+  return (tenantContext && tenantContext.user && tenantContext.user.id) || null;
+}
 
 // Run a brief end to end and return structured data for the browser. Mirrors
 // the Slack adapter's pipeline sequence (parse → enrich → build) minus all the
@@ -18,11 +26,13 @@ const { getClientsForTenant } = require('../google');
 async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
   const tokens = tenantContext.tokens || {};
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
-  // Drive/Docs writes run as this tenant's Google OAuth user when they've
-  // connected one (else the shared env path). Reference reads stay on the SA
-  // path inside fetchAllReferences — the drive.file scope can't read arbitrary
-  // pre-existing Drive files, only ones this app created.
-  const clients = await getClientsForTenant(tenantId);
+  const userId = actingUserId(tenantContext);
+  // Drive/Docs writes run as the SIGNED-IN USER's own Google OAuth identity when
+  // they've connected one, falling back to the tenant-level token and then the
+  // shared env path. Reference reads stay on the SA path inside
+  // fetchAllReferences — the drive.file scope can't read arbitrary pre-existing
+  // Drive files, only ones this app created.
+  const clients = await getClientsForTenant({ tenantId, userId });
 
   // 1. Parse the brief into title / summary / writerPrompt / assets (+ links).
   const parsedBrief = await pipeline.parseBrief(briefText);
@@ -89,7 +99,9 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
       { brief: briefText, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
       effectiveFolderId,
       clients,
-      tenantId
+      tenantId,
+      // Authorship: the signed-in user on the web path.
+      { createdBy: userId }
     );
   } catch (err) {
     // A user-specified destination folder (brief URL or Settings default) that
@@ -154,7 +166,7 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
 // those fields (selective generate/regenerate); undefined → whole doc, as before.
 async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, append) {
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
-  const clients = await getClientsForTenant(tenantId);
+  const clients = await getClientsForTenant({ tenantId, userId: actingUserId(tenantContext) });
   const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, scopedFields, append);
   return { docId, title, fieldCount, url };
 }
@@ -163,7 +175,10 @@ async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, a
 // renders. The Docs read runs as the tenant's Google OAuth user when connected,
 // else the shared env path. Throws on read failure so the route shows a fallback.
 async function runWebProjectContent(docId, tenantContext = {}) {
-  const clients = await getClientsForTenant(tenantContext.tenant && tenantContext.tenant.id);
+  const clients = await getClientsForTenant({
+    tenantId: tenantContext.tenant && tenantContext.tenant.id,
+    userId: actingUserId(tenantContext),
+  });
   return pipeline.getProjectContent(docId, clients);
 }
 
@@ -172,7 +187,7 @@ async function runWebProjectContent(docId, tenantContext = {}) {
 // the route surfaces an error state (rather than a stuck review).
 async function runWebReview(docId, tenantContext = {}, scopedFields) {
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
-  const clients = await getClientsForTenant(tenantId);
+  const clients = await getClientsForTenant({ tenantId, userId: actingUserId(tenantContext) });
   const { runCopyReview } = require('../services/copyReview');
   return runCopyReview(docId, tenantId, clients, scopedFields);
 }

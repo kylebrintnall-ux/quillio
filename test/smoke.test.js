@@ -6167,3 +6167,284 @@ test('app selection: every consumer of the key is instance-aware', () => {
   assert.strictEqual((html.match(/instanceTotalFor\(/g) || []).length, 4, 'three renderers + the helper itself');
   assert.ok(/assetDisplayName\(asset, opts\.instanceTotal\)/.test(html), 'the card heading uses it');
 });
+
+// --- End-to-end scoped targeting: the route → googleDocs → the right instance ---
+// The two halves were each correct and the middle threw the ordinal away.
+// googleDocs.generateDraft has keyed its scopeKeys on
+// ctxKey(assetType, fieldName, instance) since the instance work landed, but the
+// /api/draft and /api/review sanitizers rebuilt each entry as {assetType,
+// fieldName, …} and dropped `instance` — and dropping it does not fail loudly,
+// because an absent ordinal and ordinal 0 serialize identically. A request naming
+// instance 2 quietly rewrote instance 0.
+//
+// Three same-named assets, each with its own copy. Drive the REAL generateDraft
+// with a stubbed docs client and a stubbed drafter, and read the batchUpdate it
+// produces: which ranges it deletes and where it inserts is the whole answer.
+const THREE_INSTANCE_PARAS = [
+  { text: 'Campaign Summary', style: 'HEADING_2' },
+  { text: 'sum', italic: true },
+  { text: 'Writer Direction', style: 'HEADING_2' },
+  { text: 'dir', italic: true },
+  { text: 'Event Invitation Email 1 — Austin', style: 'HEADING_3' },
+  { text: 'Subject Line 1 [70]', bold: true },
+  { text: 'AUSTIN-subject' },
+  { text: 'Event Invitation Email 2 — Denver', style: 'HEADING_3' },
+  { text: 'Subject Line 1 [70]', bold: true },
+  { text: 'DENVER-subject' },
+  { text: 'Event Invitation Email 3 — Chicago', style: 'HEADING_3' },
+  { text: 'Subject Line 1 [70]', bold: true },
+  { text: 'CHICAGO-subject' },
+];
+
+// Run generateDraft against the three-instance doc and report what each instance's
+// Subject Line 1 holds afterwards. `scopedFields` goes in exactly as a route would
+// hand it over. Returns { before, after, deletes, inserts }.
+async function runScopedDraft(scopedFields) {
+  const savedGemini = require.cache[require.resolve('../src/services/gemini')];
+  const savedDocs = require.cache[require.resolve('../src/destinations/googleDocs')];
+  const gp = require.resolve('../src/services/gemini');
+  const realGemini = require('../src/services/gemini');
+  require.cache[gp] = {
+    id: gp, filename: gp, path: path.dirname(gp), loaded: true, children: [], paths: [],
+    exports: Object.assign({}, realGemini, {
+      // Whatever asset/instance this is called for, return a marker naming it, so
+      // the copy that lands proves WHICH target was drafted.
+      generateFieldDraft: async ({ assetType, fieldName, siblings }) =>
+        `NEW(${assetType}/${fieldName}/siblings=${(siblings || []).length})`,
+      generateAssetDrafts: async () => { throw new Error('whole-doc path must not run on a scoped call'); },
+    }),
+  };
+  delete require.cache[require.resolve('../src/destinations/googleDocs')];
+  try {
+    const g = require('../src/destinations/googleDocs');
+    const doc = instDoc(THREE_INSTANCE_PARAS);
+    const requests = [];
+    const clients = {
+      docs: {
+        documents: {
+          get: async () => ({ data: doc }),
+          batchUpdate: async ({ requestBody }) => { requests.push(...(requestBody.requests || [])); return { data: {} }; },
+        },
+      },
+    };
+    const subjectsOf = (d) => {
+      const out = [];
+      let current = null;
+      let label = null;
+      for (const it of d.body.content) {
+        const p = it.paragraph;
+        if (!p) continue;
+        const text = (p.elements || []).map((e) => (e.textRun && e.textRun.content) || '').join('').replace(/\n$/, '');
+        const style = p.paragraphStyle && p.paragraphStyle.namedStyleType;
+        if (style === 'HEADING_3') { current = text; label = null; continue; }
+        if ((p.elements || [])[0] && p.elements[0].textRun.textStyle.bold) { label = text; continue; }
+        if (current && label === 'Subject Line 1 [70]') { out.push([current, text]); label = null; }
+      }
+      return out;
+    };
+    const before = subjectsOf(doc);
+
+    // The doc is edited by the SAME index arithmetic the Docs API applies: apply
+    // each request to the fixture in the order generateDraft emitted it, so "after"
+    // is what the document would really contain — not an assumption about it.
+    const flat = doc.body.content
+      .filter((it) => it.paragraph)
+      .map((it) => ({
+        start: it.startIndex,
+        end: it.endIndex,
+        item: it,
+        text: (it.paragraph.elements || []).map((e) => (e.textRun && e.textRun.content) || '').join(''),
+      }));
+
+    await g.generateDraft('doc-1', undefined, clients, null, null, scopedFields, false);
+
+    // Replay: an insertText at index I lands in the paragraph whose range covers I.
+    const deletes = requests.filter((r) => r.deleteContentRange).map((r) => r.deleteContentRange.range);
+    const inserts = requests.filter((r) => r.insertText).map((r) => ({ index: r.insertText.location.index, text: r.insertText.text }));
+    const after = before.map(([heading, text]) => [heading, text]);
+    for (const ins of inserts) {
+      const hit = flat.find((p) => ins.index >= p.start && ins.index < p.end);
+      assert.ok(hit, `insert at ${ins.index} lands inside a known paragraph`);
+      // Which asset heading precedes it?
+      const idx = flat.indexOf(hit);
+      let heading = null;
+      for (let i = idx; i >= 0; i -= 1) {
+        const st = flat[i].item.paragraph.paragraphStyle;
+        if (st && st.namedStyleType === 'HEADING_3') { heading = flat[i].text.replace(/\n$/, ''); break; }
+      }
+      const row = after.find((r) => r[0] === heading);
+      assert.ok(row, `insert resolved to a known asset heading (got ${heading})`);
+      row[1] = ins.text.replace(/\n/g, '');
+    }
+    return { before, after, deletes, inserts, requests };
+  } finally {
+    if (savedGemini === undefined) delete require.cache[gp]; else require.cache[gp] = savedGemini;
+    const dp = require.resolve('../src/destinations/googleDocs');
+    if (savedDocs === undefined) delete require.cache[dp]; else require.cache[dp] = savedDocs;
+  }
+}
+
+test('scoped targeting: instance 2 is rewritten; instances 0 and 1 are untouched', async () => {
+  // Exactly what /api/draft now hands to the adapter for a click on the third card.
+  const r = await runScopedDraft([
+    { assetType: 'Event Invitation Email', instance: 2, fieldName: 'Subject Line 1', count: 1, distance: 'close' },
+  ]);
+
+  assert.deepStrictEqual(r.before, [
+    ['Event Invitation Email 1 — Austin', 'AUSTIN-subject'],
+    ['Event Invitation Email 2 — Denver', 'DENVER-subject'],
+    ['Event Invitation Email 3 — Chicago', 'CHICAGO-subject'],
+  ]);
+
+  // ONE field drafted, ONE range deleted, ONE insert — the two unselected
+  // instances never enter the request list at all, so they are byte-identical.
+  assert.strictEqual(r.inserts.length, 1, 'exactly one insert');
+  assert.strictEqual(r.deletes.length, 1, 'exactly one delete');
+
+  assert.deepStrictEqual(r.after, [
+    ['Event Invitation Email 1 — Austin', 'AUSTIN-subject'],   // untouched
+    ['Event Invitation Email 2 — Denver', 'DENVER-subject'],   // untouched
+    ['Event Invitation Email 3 — Chicago', 'NEW(Event Invitation Email/Subject Line 1/siblings=0)'],
+  ]);
+
+  // The deleted range is CHICAGO's copy paragraph, not Austin's. Proven against
+  // the fixture's own indices rather than by eyeballing the numbers.
+  const doc = instDoc(THREE_INSTANCE_PARAS);
+  const paraNamed = (t) => doc.body.content.find((it) =>
+    it.paragraph && (it.paragraph.elements || []).map((e) => e.textRun.content).join('') === t + '\n');
+  const chicago = paraNamed('CHICAGO-subject');
+  const austin = paraNamed('AUSTIN-subject');
+  assert.ok(r.deletes[0].startIndex >= chicago.startIndex && r.deletes[0].startIndex < chicago.endIndex,
+    `the delete falls inside CHICAGO-subject (${chicago.startIndex}..${chicago.endIndex}), got ${r.deletes[0].startIndex}`);
+  assert.ok(r.deletes[0].startIndex >= austin.endIndex, 'and is nowhere near AUSTIN-subject');
+});
+
+test('scoped targeting: no `instance` still means instance 0 — older clients keep working', async () => {
+  // A client built before this change sends no ordinal. That must behave exactly
+  // as it always did: target the FIRST instance. This is the compatibility
+  // guarantee the whole 0-serializes-to-nothing rule exists for.
+  const bare = await runScopedDraft([{ assetType: 'Event Invitation Email', fieldName: 'Subject Line 1' }]);
+  assert.deepStrictEqual(bare.after, [
+    ['Event Invitation Email 1 — Austin', 'NEW(Event Invitation Email/Subject Line 1/siblings=0)'],
+    ['Event Invitation Email 2 — Denver', 'DENVER-subject'],
+    ['Event Invitation Email 3 — Chicago', 'CHICAGO-subject'],
+  ]);
+
+  // ...and an EXPLICIT 0 is indistinguishable from omitting it.
+  const zero = await runScopedDraft([{ assetType: 'Event Invitation Email', instance: 0, fieldName: 'Subject Line 1' }]);
+  assert.deepStrictEqual(zero.after, bare.after, 'instance 0 === absent instance');
+  assert.deepStrictEqual(zero.deletes, bare.deletes, 'down to the same deleted range');
+
+  // The middle instance, for completeness — all three ordinals are reachable and
+  // each hits exactly one.
+  const one = await runScopedDraft([{ assetType: 'Event Invitation Email', instance: 1, fieldName: 'Subject Line 1' }]);
+  assert.deepStrictEqual(one.after, [
+    ['Event Invitation Email 1 — Austin', 'AUSTIN-subject'],
+    ['Event Invitation Email 2 — Denver', 'NEW(Event Invitation Email/Subject Line 1/siblings=0)'],
+    ['Event Invitation Email 3 — Chicago', 'CHICAGO-subject'],
+  ]);
+
+  // An out-of-range ordinal matches NOTHING rather than falling back to 0. That is
+  // the failure the clamp is designed to produce: nothing is written.
+  const none = await runScopedDraft([{ assetType: 'Event Invitation Email', instance: 7, fieldName: 'Subject Line 1' }]);
+  assert.deepStrictEqual(none.after, none.before, 'nothing changed');
+  assert.strictEqual(none.requests.length, 0, 'no batchUpdate request at all');
+});
+
+test('scoped instance clamp: a client number is bounded, and junk means 0', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  const { MAX_TOTAL_INSTANCES } = require('../src/core/pipeline');
+
+  // Re-derive the route's clamp and check it, rather than trusting the source read.
+  // eslint-disable-next-line no-new-func
+  const scopedInstance = new Function('MAX_TOTAL_INSTANCES',
+    src.match(/^function scopedInstance\(raw\) \{[\s\S]*?\n\}/m)[0] + '\nreturn scopedInstance;')(MAX_TOTAL_INSTANCES);
+
+  // Junk → 0, which is the pre-instance behavior.
+  for (const v of [undefined, null, '', 'abc', NaN, {}, [], true, Infinity, -Infinity]) {
+    assert.strictEqual(scopedInstance(v), 0, `${JSON.stringify(v) || String(v)} → 0`);
+  }
+  // Negatives → 0. A doc has no instance -1.
+  assert.strictEqual(scopedInstance(-1), 0);
+  assert.strictEqual(scopedInstance(-999), 0);
+  // In range, passed through — including from a string, since JSON can carry one.
+  assert.strictEqual(scopedInstance(0), 0);
+  assert.strictEqual(scopedInstance(2), 2);
+  assert.strictEqual(scopedInstance('2'), 2);
+  assert.strictEqual(scopedInstance(2.9), 2, 'truncated, not rounded');
+  assert.strictEqual(scopedInstance(MAX_TOTAL_INSTANCES - 1), MAX_TOTAL_INSTANCES - 1);
+  // Above the ceiling → clamped to the top, which matches no asset in any real
+  // doc, so the field is skipped rather than silently hitting instance 0.
+  assert.strictEqual(scopedInstance(MAX_TOTAL_INSTANCES), MAX_TOTAL_INSTANCES - 1);
+  assert.strictEqual(scopedInstance(999999), MAX_TOTAL_INSTANCES - 1);
+
+  // BOTH sanitizers use it — /api/draft and /api/review. copyReview keys on the
+  // instance exactly as generateDraft does, so review had the same silent
+  // mistargeting until this landed.
+  assert.strictEqual((src.match(/instance: scopedInstance\(f\.instance\)/g) || []).length, 2,
+    'the draft AND review sanitizers both carry the instance');
+});
+
+test('scoped targeting: the instance survives the /api/draft and /api/review routes', async () => {
+  // The missing link. The two tests above prove googleDocs targets the right
+  // instance GIVEN one, and that the clamp is sane. This drives the real routers
+  // over a loopback listener and reads what the adapter was actually handed —
+  // which is the step that used to lose the ordinal.
+  let sawDraft = null;
+  let sawReview = null;
+  await withStubbedDb(async (router) => {
+    const express = require('express');
+    const http = require('node:http');
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.session = { userId: 'u1' }; next(); });
+    app.use(router);
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    const post = async (url, body) => {
+      const res = await fetch(`http://127.0.0.1:${port}${url}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      const scoped = [
+        { assetType: 'Event Invitation Email', instance: 2, fieldName: 'Subject Line 1' },
+        { assetType: 'Event Invitation Email', fieldName: 'Preheader' },        // no ordinal → 0
+        { assetType: 'Event Invitation Email', instance: '1', fieldName: 'Headline' }, // JSON string
+        { assetType: 'Event Invitation Email', instance: 999, fieldName: 'CTA' },      // clamped
+      ];
+      const d = await post('/api/draft', { docId: 'DOC1', scopedFields: scoped });
+      assert.strictEqual(d.status, 202);
+      const rv = await post('/api/review', { docId: 'DOC1', scopedFields: scoped });
+      assert.strictEqual(rv.status, 202);
+      // Both jobs are fire-and-forget; give them a tick to invoke the adapter.
+      for (let i = 0; i < 40 && !(sawDraft && sawReview); i += 1) await new Promise((r) => setTimeout(r, 10));
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  }, {
+    runWebDraft: async (_docId, _ctx, _direction, scopedFields) => { sawDraft = scopedFields; return {}; },
+    runWebReview: async (_docId, _ctx, scopedFields) => { sawReview = scopedFields; return {}; },
+  });
+
+  const { MAX_TOTAL_INSTANCES } = require('../src/core/pipeline');
+  assert.ok(sawDraft, 'the draft adapter ran');
+  assert.ok(sawReview, 'the review adapter ran');
+
+  // /api/draft: the ordinal arrives, clamped, alongside the variation controls.
+  assert.deepStrictEqual(
+    sawDraft.map((f) => [f.fieldName, f.instance]),
+    [['Subject Line 1', 2], ['Preheader', 0], ['Headline', 1], ['CTA', MAX_TOTAL_INSTANCES - 1]]
+  );
+  assert.strictEqual(sawDraft[0].count, 1, 'the existing count default is untouched');
+  assert.strictEqual(sawDraft[0].distance, 'close', 'and the distance default');
+
+  // /api/review: the same ordinals, and still only the three identity fields.
+  assert.deepStrictEqual(
+    sawReview.map((f) => [f.fieldName, f.instance]),
+    [['Subject Line 1', 2], ['Preheader', 0], ['Headline', 1], ['CTA', MAX_TOTAL_INSTANCES - 1]]
+  );
+  assert.deepStrictEqual(Object.keys(sawReview[0]).sort(), ['assetType', 'fieldName', 'instance']);
+});

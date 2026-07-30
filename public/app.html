@@ -1734,7 +1734,13 @@
 
       var blocks = data.assetBlocks || [];
       if (!blocks.length && data.assets) {
-        blocks = data.assets.map(function (n) { return { name: n, fields: [] }; });
+        // `assets` is a fallback for when assetBlocks is absent. It is a list of
+        // NAMES from the built doc's spec groups — but tolerate a plan entry
+        // ({asset, count}) too, or the name renders as "[object Object]".
+        blocks = data.assets.map(function (a) {
+          var name = typeof a === 'string' ? a : (a && (a.name || a.asset)) || '';
+          return { name: name, fields: [] };
+        });
       }
       // Remember the asset names for the draft progress-bar estimate + labels.
       state.assets = blocks.map(function (b) { return b.name; });

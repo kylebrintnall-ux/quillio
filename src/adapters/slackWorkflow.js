@@ -42,6 +42,33 @@ const SLACK_ASSET_LIMITS = {
   hint: 'Split it across briefs, or run it in the web app, which asks you to confirm a bigger plan first.',
 };
 
+// Which entries in a plan will be cut down by the per-asset ceiling, and by how
+// much. The clamp itself happens inside the expansion (core/pipeline); this only
+// reads the plan to describe it, so the doc-ready card can say what was built
+// instead of leaving the difference in a server log the writer never sees.
+//
+// A count OVER the ceiling is not an error — 3 usable emails beat a refusal — so
+// this returns advisory text, never a throw. (An over-TOTAL plan is a different
+// case and does throw, inside the expansion, with the hint above.)
+function clampNotice(plan, limits) {
+  const cut = [];
+  for (const entry of Array.isArray(plan) ? plan : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const asked = parseInt(entry.count, 10);
+    if (Number.isFinite(asked) && asked > limits.maxPerAsset) {
+      cut.push({ asset: String(entry.asset || ''), asked });
+    }
+  }
+  if (cut.length === 0) return null;
+  const each = cut
+    .map((c) => `${limits.maxPerAsset} of ${c.asked} ${c.asset}${c.asked === 1 ? '' : 's'}`)
+    .join(', ');
+  return (
+    `Built ${each} — the ceiling here is ${limits.maxPerAsset} per asset. ` +
+    'Use the web app for larger plans.'
+  );
+}
+
 // The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
 // this before the slash command's 200 response has been sent. The entire body
 // is wrapped so any failure surfaces in the logs with a full stack trace
@@ -248,6 +275,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       docId: doc.id,
       folderUrl: projectFolderUrl, // null if folder creation failed → link omitted
       folderName, // null unless the doc went to a brief-linked folder
+      // "Built 3 of 5 …" when a per-asset count hit the Slack ceiling; null when
+      // nothing was clamped (every brief reachable before instances existed).
+      notice: clampNotice(assets, SLACK_ASSET_LIMITS),
     };
     const resultBlocks = buildResultBlocks(result).blocks;
     await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
@@ -343,4 +373,4 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   console.log('[workflow] runGenerateDraft DONE');
 }
 
-module.exports = { runBriefWorkflow, runGenerateDraft, SLACK_ASSET_LIMITS };
+module.exports = { runBriefWorkflow, runGenerateDraft, SLACK_ASSET_LIMITS, clampNotice };

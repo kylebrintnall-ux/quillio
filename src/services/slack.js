@@ -24,7 +24,7 @@ async function postToSlack(url, payload) {
 // Campaign folder / Copy doc hyperlinks, an optional "Saved to <folder>" line,
 // and two buttons (Generate First Draft / Skip for now). folderUrl/folderName
 // are optional — the folder link renders only when a project folder was made.
-function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName }) {
+function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice }) {
   const assetList = assets.length
     ? assets.map((a) => `• ${a}`).join('\n')
     : '_No assets matched — included all specs._';
@@ -43,6 +43,14 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
       text: { type: 'mrkdwn', text: `*Assets:*\n${assetList}` },
     },
   ];
+
+  // An advisory line under the asset list — today, "built 3 of the 5 you asked
+  // for" when a per-asset count hit the Slack ceiling. The build SUCCEEDED, so
+  // this is context, not an error: the writer needs to know the doc holds fewer
+  // versions than the brief asked for, without the card reading as a failure.
+  if (notice) {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: notice }] });
+  }
 
   // Folder + doc links as Slack hyperlinks, below the asset list. The doc link
   // replaces the old "Open in Drive" button; the folder link only renders when a

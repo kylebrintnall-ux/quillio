@@ -315,9 +315,17 @@ function toReadableText(v) {
   return String(v);
 }
 
-// Parse a free-form campaign brief into { summary, writerPrompt, assets }.
-// Assets are constrained to the allowed list regardless of how they were
-// written in the brief (bullets, numbers, or inline prose).
+// Parse-side sanity limits on the model's numbers. These are NOT the surface
+// ceilings — core/pipeline re-clamps per surface (3 per asset / 6 total on Slack,
+// 10 / 40 on the web) and is the authority. These only stop a hallucinated
+// "count: 400" from travelling any further than the parse.
+const PARSE_MAX_COUNT_PER_ASSET = 10;
+const PARSE_MAX_TOTAL = 40;
+
+// Parse a free-form campaign brief into { summary, writerPrompt, assets, … }.
+// `assets` is an ordered PLAN — [{ asset, count, labels? }] — constrained to the
+// allowed list regardless of how the brief was written (bullets, numbers, prose).
+// Repeats are preserved: two entries naming one asset are two separate asks.
 async function parseBrief(brief) {
   // Valid asset types (exact Sheet names) — single source of truth lives in
   // config.ALLOWED_ASSETS. Used both in the prompt and the defensive filter.
@@ -334,9 +342,34 @@ async function parseBrief(brief) {
     '  Dating Event", not "Promos For A". No date, no quotes, no trailing punctuation.',
     '- summary: 2-3 sentences summarizing the campaign.',
     '- writerPrompt: ONE sentence of creative direction for a copywriter.',
-    `- assets: return ONLY asset types explicitly mentioned or clearly implied by the brief. You MUST use exact names from this list:\n\n${allowed.join(
+    `- assets: an ORDERED list of the asset types the brief asks for, in the order the brief mentions them. Each entry is an object {"asset": string, "count": number, "labels": string[]}. \`asset\` MUST be an exact name from this list:\n\n${allowed.join(
       '\n'
-    )}\n\nReturn only names from this list. Maximum 5 unless the brief explicitly requests more. If no specific assets are mentioned, return the 3 most relevant for the campaign goal described.`,
+    )}\n\nReturn only names from this list. If no specific assets are mentioned, return the 3 most relevant for the campaign goal described, each with count 1.`,
+    '',
+    'HOW MANY OF EACH (the `count` field):',
+    '- count is HOW MANY SEPARATE VERSIONS of that asset the brief wants. Default 1.',
+    '- Only go above 1 when the brief actually asks for more than one: an explicit',
+    '  number ("five nurture emails", "3 LinkedIn ads"), a per-group ask ("an email',
+    '  for each audience" with the audiences named), or an A/B test ("two versions',
+    '  to test").',
+    '- MULTIPLY when the brief crosses a number with groups: "five nurture emails for',
+    '  two audiences" is 5 per audience x 2 audiences = count 10, ONE entry.',
+    '- A vague plural is NOT a number. "some LinkedIn ads", "a few emails", "ads" →',
+    '  count 1. Do not guess a number the brief did not give.',
+    '- Never split one asset type across several entries to express a count — use one',
+    '  entry with the right count.',
+    '',
+    'NAMING THE VERSIONS (the `labels` field):',
+    '- labels names each version, in order, ONLY when the brief names the groups —',
+    '  audiences, segments, regions, waves, offers. Otherwise return [].',
+    '- "five nurture emails for two audiences: downtown and suburban" → count 10 with',
+    '  labels ["Downtown","Downtown","Downtown","Downtown","Downtown","Suburban",',
+    '  "Suburban","Suburban","Suburban","Suburban"] — one label per version, grouped.',
+    '- Keep each label to a few words. Never invent a group the brief did not name.',
+    '',
+    'SIZE: keep the TOTAL number of versions (the sum of every count) to 5 or fewer',
+    'unless the brief explicitly asks for more. An explicit number always wins — if',
+    'the brief says ten, return ten and let the system decide what it can build.',
     '',
     'INTERPRET INTENT SEMANTICALLY, do not match exact strings. Briefs use',
     'informal, abbreviated, or platform-specific language. Map what the writer',
@@ -346,7 +379,15 @@ async function parseBrief(brief) {
     'casing the same way:',
     '- "linkedin ad" or "linkedin" → LinkedIn Single Image Ad',
     '- "linkedin carousel" → LinkedIn Carousel Ad',
-    '- "linkedin variants" or "ab test" or "variant" → LinkedIn Single Image Ad — Variant A, LinkedIn Single Image Ad — Variant B',
+    // A/B-test phrasing means MORE VERSIONS OF ONE ASSET, which is `count`. It used
+    // to route to the standalone "— Variant A/B/C/D" asset types; those still exist
+    // in the library and a brief naming one explicitly still gets it, but ordinary
+    // test phrasing no longer produces them.
+    '- "ab test" or "a/b test" or "two versions" or "variants" → the BASE asset, count 2 (or the number given)',
+    '- "3 linkedin ads to a/b test" → one entry: LinkedIn Single Image Ad, count 3',
+    '  Testing language means MORE VERSIONS OF ONE ASSET — express it with count.',
+    '  Only return a "… — Variant A"/"Variant B" asset type when the brief names one',
+    '  of those types outright; never as a way of expressing "two versions".',
     '- "meta ad" or "facebook ad" → Meta Single Image Ad',
     '- "meta carousel" → Meta Carousel Ad',
     '- "twitter" or "x ad" → Twitter/X Ad',
@@ -380,7 +421,7 @@ async function parseBrief(brief) {
     '- unmatchedAssets: asset types the brief asked for that do NOT map to the',
     '  allowed list. [] if none. Never force these into assets.',
     '',
-    'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": string[], "unmatchedAssets": string[], "folderId": string|null, "referenceLinks": string[]}.',
+    'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": [{"asset": string, "count": number, "labels": string[]}], "unmatchedAssets": string[], "folderId": string|null, "referenceLinks": string[]}.',
     'Respond with valid JSON only, no markdown, no backticks.',
     '',
     'CAMPAIGN BRIEF:',
@@ -415,16 +456,59 @@ async function parseBrief(brief) {
       .trim();
   const canonicalByNorm = new Map(allowed.map((a) => [normalize(a), a]));
 
+  // `assets` is now an ordered PLAN: [{ asset, count, labels }]. Entries are NOT
+  // deduped any more — a brief can ask for the same asset more than once, and two
+  // entries naming it are two separate asks (the expansion counts ordinals across
+  // the whole plan). A bare string is still accepted, both because an older cached
+  // response could carry one and because the model occasionally emits the simpler
+  // shape; it means count 1.
+  //
+  // Every number here comes from a language model, so none of it is trusted:
+  // counts are floored at 1, capped at PARSE_MAX_COUNT_PER_ASSET, and the whole
+  // plan is capped at PARSE_MAX_TOTAL. Those are parse-side sanity limits, NOT the
+  // surface ceilings — core/pipeline clamps again per surface (3/6 on Slack,
+  // 10/40 on the web) and is the authority.
   const rawAssets = Array.isArray(parsed.assets) ? parsed.assets : [];
   const assets = [];
   const unmatchedFromAssets = [];
-  for (const a of rawAssets) {
-    const canonical = canonicalByNorm.get(normalize(a));
-    if (canonical) {
-      if (!assets.includes(canonical)) assets.push(canonical);
-    } else {
-      unmatchedFromAssets.push(a);
+  let planTotal = 0;
+  for (const entry of rawAssets) {
+    if (entry == null) continue;
+    const isString = typeof entry === 'string';
+    if (!isString && typeof entry !== 'object') continue;
+    const rawName = isString ? entry : entry.asset || entry.assetType || entry.name;
+    const name = String(rawName == null ? '' : rawName).trim();
+    if (!name) continue;
+
+    const canonical = canonicalByNorm.get(normalize(name));
+    if (!canonical) {
+      unmatchedFromAssets.push(name);
+      continue;
     }
+
+    const requested = isString ? 1 : parseInt(entry.count, 10);
+    let count = Math.max(1, Math.min(PARSE_MAX_COUNT_PER_ASSET, requested || 1));
+    if (Number.isFinite(requested) && requested > PARSE_MAX_COUNT_PER_ASSET) {
+      console.warn(`[gemini] parse: "${canonical}" count ${requested} → clamped to ${PARSE_MAX_COUNT_PER_ASSET}`);
+    }
+    // Whole-plan cap: trim the entry that crosses it and stop, rather than
+    // returning a plan the pipeline would only refuse later.
+    if (planTotal + count > PARSE_MAX_TOTAL) {
+      count = PARSE_MAX_TOTAL - planTotal;
+      if (count <= 0) {
+        console.warn(`[gemini] parse: plan hit the ${PARSE_MAX_TOTAL}-version cap — dropping "${canonical}"`);
+        continue;
+      }
+      console.warn(`[gemini] parse: plan hit the ${PARSE_MAX_TOTAL}-version cap — "${canonical}" trimmed to ${count}`);
+    }
+    planTotal += count;
+
+    // Labels are positional; blanks become null so a partly-labelled plan is fine.
+    const labels = (Array.isArray(entry && entry.labels) ? entry.labels : [])
+      .slice(0, count)
+      .map((l) => (typeof l === 'string' && l.trim() ? l.trim().slice(0, 80) : null));
+
+    assets.push(labels.some(Boolean) ? { asset: canonical, count, labels } : { asset: canonical, count });
   }
 
   const unmatchedAssets = [

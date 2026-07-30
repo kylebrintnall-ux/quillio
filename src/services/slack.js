@@ -20,10 +20,6 @@ async function postToSlack(url, payload) {
   return { status: res.status, body };
 }
 
-// Block Kit message posted after the doc is built: title, asset list, the
-// Campaign folder / Copy doc hyperlinks, an optional "Saved to <folder>" line,
-// and two buttons (Generate First Draft / Skip for now). folderUrl/folderName
-// are optional — the folder link renders only when a project folder was made.
 // The card's asset list, one bullet per asset TYPE. A doc can now hold several
 // instances of one asset, and listing the same name three times reads like a bug;
 // repeats collapse to "• Name ×3" instead. A single instance keeps its bare name,
@@ -43,6 +39,11 @@ function formatAssetList(assets) {
   return [...counts.entries()].map(([name, n]) => (n > 1 ? `• ${name} ×${n}` : `• ${name}`)).join('\n');
 }
 
+// Block Kit message posted after the doc is built: title, asset list, an optional
+// advisory notice, the Campaign folder / Copy doc hyperlinks, an optional
+// "Saved to <folder>" line, and two buttons (Generate First Draft / Skip for now).
+// folderUrl/folderName are optional — the folder link renders only when a project
+// folder was made. `notice` is optional advisory context (see below).
 function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice }) {
   const assetList = assets.length ? formatAssetList(assets) : '_No assets matched — included all specs._';
 

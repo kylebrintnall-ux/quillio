@@ -18,6 +18,7 @@ const {
   copyCompleteBlocks,
   postLive,
   updateLive,
+  canUseBotToken,
   refuseUnlinkedSlack,
 } = require('../services/slack');
 const { emoji } = require('../emoji');
@@ -120,7 +121,11 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   // message (recovery buttons); opts.channelId posts a fresh building message.
   // If neither works (no bot token), fall back to response_url posts.
   let live = opts.live || null;
-  const canLive = !!tokens.slack_bot;
+  // Ask the Slack service, not tokens.slack_bot: a workspace configured through the
+  // env SLACK_BOT_TOKEN has no `slack_bot` row in Postgres, and testing the row
+  // directly would say "no live message" while chat.update works fine — which is
+  // what stranded a "Building…" card next to its own doc-ready message.
+  const canLive = canUseBotToken(tokens.slack_bot);
   try {
     if (live && canLive) {
       await updateLive(live.channel, live.ts, BUILDING_TEXT, undefined, tokens.slack_bot);
@@ -378,7 +383,11 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   }
   const { tenant, tokens, user } = resolved;
   const actingUserId = (user && user.id) || null;
-  const canLive = !!tokens.slack_bot && channel && messageTs;
+  // canUseBotToken, not !!tokens.slack_bot — same reason as the brief flow above.
+  // Testing the Postgres row directly made an env-configured workspace take the
+  // response_url path, so the finished draft was announced in a NEW message and the
+  // doc-ready card it was launched from was left sitting there unchanged.
+  const canLive = canUseBotToken(tokens.slack_bot) && !!channel && !!messageTs;
   const isRegen = !!(direction && String(direction).trim());
   console.log(
     `[workflow] runGenerateDraft START — canLive: ${canLive} | channel: ${channel || '(none)'} | regen: ${isRegen}`
@@ -459,19 +468,39 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
   const messageTs = opts.messageTs || null;
   const responseUrl = opts.responseUrl || null;
 
-  // One place to write the outcome back, mirroring runBriefWorkflow's `emit`. Edits
-  // the clicked card in place when we can; falls back to response_url when there is
-  // no bot token (slackApi throws) or no message coordinates.
-  const say = async (text, blocks) => {
-    if (channel && messageTs) {
+  // THE message this flow owns: the plan card the user just clicked. Its channel and
+  // ts come from the click — server.js reads payload.channel.id / payload.message.ts
+  // for a button, or private_metadata for the modal submission — never from a fresh
+  // postMessage. Every write below edits THIS message, so the plan card becomes
+  // "Building…" and then becomes the doc-ready card: one message from the plan
+  // through the doc, with nothing orphaned above it.
+  let live = channel && messageTs ? { channel, ts: messageTs } : null;
+  // The per-tenant bot token, once the tenant resolves. Undefined until then, which
+  // is harmless — slackApi falls back to the env token when passed none.
+  let botToken;
+
+  // ONE writer for every message this function and buildAndPost produce.
+  //
+  // It is gated on having message COORDINATES, deliberately not on a bot token being
+  // present in Postgres. This function used to have two writers that disagreed on
+  // exactly that: `say` called updateLive with no token (so slackApi's env fallback
+  // made it succeed) while buildAndPost's emit tested `!!tokens.slack_bot` (so on an
+  // env-configured workspace it decided live editing was impossible and posted the
+  // doc-ready card through postResult instead). The result was the reported bug —
+  // the plan card turned into "Building your document…" and stayed that way forever,
+  // with the finished doc announced in a second message below it.
+  const emit = async (text, blocks, fallback) => {
+    if (live) {
       try {
-        return await updateLive(channel, messageTs, text, blocks);
+        return await updateLive(live.channel, live.ts, text, blocks, botToken);
       } catch (err) {
         console.warn('[workflow] resume: chat.update failed, falling back:', err.message);
       }
     }
-    return updateMessage(text, responseUrl, blocks ? { blocks } : undefined);
+    return fallback();
   };
+  const say = (text, blocks) =>
+    emit(text, blocks, () => updateMessage(text, responseUrl, blocks ? { blocks } : undefined));
 
   if (!pending) {
     console.log(`[workflow] resume: pending=${pendingId} is gone (expired or restarted)`);
@@ -493,6 +522,10 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
   const { tenant, tokens, user } = resolved;
   const tenantId = tenant && tenant.id;
   const actingUserId = (user && user.id) || null;
+  botToken = tokens.slack_bot; // from here on `emit` prefers the tenant's own token
+  // Only if the click carried no coordinates at all: fall back to the message the
+  // parse created. Normally these are the same message.
+  if (!live) live = pending.live || null;
 
   let plan = pending.plan;
   if (rawPlan) {
@@ -525,14 +558,8 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
     `[workflow] resume: building pending=${pendingId} ` +
       `plan=${JSON.stringify(plan.map((e) => `${e.asset}x${e.count}`))}`
   );
+  // The clicked plan card becomes "Building your document…" — same channel, same ts.
   await say(BUILDING_TEXT);
-
-  const live = channel && messageTs ? { channel, ts: messageTs } : pending.live || null;
-  const canLive = !!tokens.slack_bot;
-  const emit = async (text, blocks, fallback) => {
-    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks, tokens.slack_bot);
-    return fallback();
-  };
 
   try {
     await buildAndPost({

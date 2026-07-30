@@ -5477,19 +5477,38 @@ function withSlackBrief(overrides, fn) {
 
   const sent = [];
   const builds = [];
+  // Stands in for config.SLACK_BOT_TOKEN. Defaults to SET, because that is the
+  // deployment the "Building…" orphan showed up on: an env-configured workspace has
+  // a working bot token the whole time even when Postgres holds no slack_bot row.
+  const envBotToken = 'envBotToken' in overrides ? overrides.envBotToken : 'xoxb-env';
+  // A tenant with NO slack_bot row is the DEFAULT here for the same reason.
+  const tenantTokens = overrides.tokens || {};
   const realSlack = require('../src/services/slack');
   stub('src/services/slack', Object.assign({}, realSlack, {
-    updateMessage: async (text, url, opts = {}) => { sent.push({ via: 'response_url', text, blocks: (opts && opts.blocks) || null }); },
-    updateLive: async (channel, ts, text, blocks) => { sent.push({ via: 'chat.update', channel, ts, text, blocks: blocks || null }); },
-    postLive: async (channel, text, blocks) => { sent.push({ via: 'chat.postMessage', channel, text, blocks: blocks || null }); return { channel, ts: 'TS1' }; },
-    postResult: async (result) => { sent.push({ via: 'postResult', text: result.title, result }); },
+    // slackApi's real rule: a caller's token, else the env one, else throw. Modelling
+    // it is the point — the bug was a caller deciding chat.update was impossible
+    // while this rule said otherwise.
+    canUseBotToken: (token) => !!(token || envBotToken),
+    updateMessage: async (text, url, opts = {}) => {
+      sent.push({ api: 'response_url', ts: null, text, blocks: (opts && opts.blocks) || null, newMessage: !!(opts && opts.newMessage) });
+    },
+    updateLive: async (channel, ts, text, blocks, token) => {
+      if (!(token || envBotToken)) throw new Error('SLACK_BOT_TOKEN is not set.');
+      sent.push({ api: 'chat.update', channel, ts, text, blocks: blocks || null });
+    },
+    postLive: async (channel, text, blocks, token) => {
+      if (!(token || envBotToken)) throw new Error('SLACK_BOT_TOKEN is not set.');
+      sent.push({ api: 'chat.postMessage', channel, ts: 'TS1', text, blocks: blocks || null });
+      return { channel, ts: 'TS1' };
+    },
+    postResult: async (result) => { sent.push({ api: 'postResult', ts: null, text: result.title, result }); },
     postChatMessage: async () => {},
     postFolderAccessHelp: async () => {},
-    refuseUnlinkedSlack: async (o) => { sent.push({ via: 'refuseUnlinked', slackUserId: o.slackUserId }); },
+    refuseUnlinkedSlack: async (o) => { sent.push({ api: 'refuseUnlinked', ts: null, slackUserId: o.slackUserId }); },
   }));
   stub('src/db', {
     resolveTenant: overrides.resolveTenant || (async () => ({
-      tenant: { id: 'T1' }, tokens: { slack_bot: 'xoxb-test' }, source: 'db', user: { id: 'U-DB' },
+      tenant: { id: 'T1' }, tokens: tenantTokens, source: 'db', user: { id: 'U-DB' },
     })),
   });
   stub('src/google', { getClientsForTenant: async () => ({}) });
@@ -5575,7 +5594,7 @@ test('slack confirm: a ONE-OF-EACH brief does not pause — unchanged from today
       assert.strictEqual(pendingBriefs.planNeedsConfirmation(builds[0].plan), false);
 
       // Exactly today's message shape: a building message, then the doc-ready card.
-      assert.deepStrictEqual(sent.map((s) => s.via), ['chat.postMessage', 'chat.update']);
+      assert.deepStrictEqual(sent.map((s) => s.api), ['chat.postMessage', 'chat.update']);
       assert.match(sent[0].text, /Building your document/);
       assert.match(sent[1].text, /Your doc is ready — Spring Sale — Copy/);
       assert.ok(sent[1].blocks.some((b) => b.type === 'actions'
@@ -5591,7 +5610,7 @@ test('slack confirm: a MULTI-INSTANCE brief pauses on a card and builds nothing'
     await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
 
     assert.strictEqual(builds.length, 0, 'NOTHING was created');
-    assert.deepStrictEqual(sent.map((s) => s.via), ['chat.postMessage', 'chat.update']);
+    assert.deepStrictEqual(sent.map((s) => s.api), ['chat.postMessage', 'chat.update']);
     const card = sent[1];
     assert.match(card.text, /Here's how I read that brief — City Dinners/);
 
@@ -5643,7 +5662,7 @@ test('slack confirm: Build generates the STORED plan, from the store not the but
       'Campaign Landing Page',
     ]);
     // The card it clicked from became "Building…", then the doc-ready card.
-    assert.deepStrictEqual(sent.slice(2).map((s) => s.via), ['chat.update', 'chat.update']);
+    assert.deepStrictEqual(sent.slice(2).map((s) => s.api), ['chat.update', 'chat.update']);
     assert.match(sent[2].text, /Building your document/);
     assert.match(sent[3].text, /Your doc is ready/);
   });
@@ -5784,7 +5803,7 @@ test('slack confirm: an unlinked user is refused at Build, not just at parse', a
     { parseBrief: pauseParse, resolveTenant: async () => ({ unlinked: true, tokens: {}, tenant: null }) },
     async ({ adapter, sent, builds }) => {
       await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
-      assert.deepStrictEqual(sent.map((s) => s.via), ['refuseUnlinked'], 'refused before parsing');
+      assert.deepStrictEqual(sent.map((s) => s.api), ['refuseUnlinked'], 'refused before parsing');
       // And a pendingId minted before a token was revoked cannot be built either:
       // resume re-resolves the tenant rather than trusting the stored record.
       await adapter.resumeBriefWorkflow('anything', null, { workspaceId: 'TEAM1', slackUserId: 'USER1' });
@@ -5829,4 +5848,155 @@ test('slack confirm: the store is ONE store, shared with the web', () => {
     'one validator, in pendingBriefs');
   // And the Slack adapter still owns no express dependency by reaching for it.
   assert.ok(!/require\('\.\.\/routes\//.test(slackAdapter), 'the adapter does not depend on the web router');
+});
+
+// The plan card IS the live message. Build must chat.update THAT message through
+// Building → doc-ready, because anything else leaves a dead "Building your
+// document…" card sitting above a doc announced separately below it.
+//
+// This regressed because resumeBriefWorkflow had TWO writers that disagreed about
+// whether chat.update was possible: `say` passed no token (so slackApi's env
+// fallback made it work) while buildAndPost's emit tested `!!tokens.slack_bot` (so
+// on an env-configured workspace — no slack_bot row in Postgres, a real
+// SLACK_BOT_TOKEN in the environment — it gave up and called postResult).
+test('slack confirm: ONE message from plan card through doc-ready', async () => {
+  await withSlackBrief(
+    // The reproduction: no per-tenant bot token, a working env one.
+    { parseBrief: pauseParse, tokens: {}, envBotToken: 'xoxb-env' },
+    async ({ adapter, sent, builds }) => {
+      await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+      const pendingId = sent[1].blocks[4].elements[0].value;
+      await adapter.resumeBriefWorkflow(pendingId, null, {
+        workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1',
+        responseUrl: 'https://hooks.slack.test/r',
+      });
+      assert.strictEqual(builds.length, 1, 'the doc was built');
+
+      // THE SEQUENCE. One postMessage, then every subsequent write is a chat.update
+      // against that one ts.
+      assert.deepStrictEqual(
+        sent.map((s) => [s.api, s.ts]),
+        [
+          ['chat.postMessage', 'TS1'], // /quillio → "Building your document…"
+          ['chat.update', 'TS1'],      // parse done → the plan card
+          ['chat.update', 'TS1'],      // Build clicked → "Building your document…"
+          ['chat.update', 'TS1'],      // doc created → the doc-ready card
+        ]
+      );
+      // Exactly ONE message was ever created.
+      assert.strictEqual(sent.filter((s) => s.api === 'chat.postMessage').length, 1);
+      // And nothing was posted BESIDE it — postResult and a fresh response_url post
+      // are the two ways the orphan appeared.
+      assert.strictEqual(sent.filter((s) => s.api === 'postResult').length, 0, 'no postResult beside the card');
+      assert.strictEqual(sent.filter((s) => s.api === 'response_url').length, 0, 'no response_url post beside the card');
+
+      // The last state of that one message is the doc, not "Building…".
+      assert.match(sent[3].text, /Your doc is ready/);
+      assert.ok(sent[3].blocks.some((b) => b.type === 'actions'
+        && b.elements.some((e) => e.action_id === 'generate_first_draft')), 'with its draft button');
+      // No "Building…" survives as the final state of any message.
+      const finalPerTs = new Map();
+      for (const s of sent) finalPerTs.set(s.ts, s.text);
+      for (const [ts, text] of finalPerTs) {
+        assert.ok(!/Building your document/.test(text), `no orphan "Building…" left at ts=${ts}`);
+      }
+    }
+  );
+});
+
+test('slack confirm: Build takes its channel and ts from the CLICKED message', async () => {
+  await withSlackBrief({ parseBrief: pauseParse, tokens: {} }, async ({ adapter, sent, builds }) => {
+    await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+    const pendingId = sent[1].blocks[4].elements[0].value;
+    const before = sent.length;
+
+    // server.js reads payload.channel.id / payload.message.ts. Feed DIFFERENT
+    // coordinates than the parse used, and every write must follow the CLICK — that
+    // is what proves resume edits the clicked card rather than re-posting.
+    await adapter.resumeBriefWorkflow(pendingId, null, {
+      workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C-CLICK', messageTs: 'TS-CLICK',
+      responseUrl: 'https://hooks.slack.test/r',
+    });
+
+    assert.strictEqual(builds.length, 1);
+    const after = sent.slice(before);
+    assert.deepStrictEqual(after.map((s) => [s.api, s.channel, s.ts]), [
+      ['chat.update', 'C-CLICK', 'TS-CLICK'],
+      ['chat.update', 'C-CLICK', 'TS-CLICK'],
+    ], 'both writes hit the clicked message');
+    // The project's thread linkage records the clicked message too, so a future
+    // in-thread action resolves to the doc the user is actually looking at.
+    assert.strictEqual(builds[0].plan.length, 2);
+
+    // The modal path carries the same coordinates through private_metadata, so it
+    // lands on the same message.
+    assert.ok(!after.some((s) => s.api === 'postResult'));
+  });
+});
+
+test('slack confirm: with NO bot token anywhere it degrades instead of crashing', async () => {
+  await withSlackBrief(
+    { parseBrief: pauseParse, tokens: {}, envBotToken: null },
+    async ({ adapter, sent, builds }) => {
+      // No token at all: postLive/updateLive throw the way slackApi really does, so
+      // everything goes out over response_url. Two messages here is unavoidable —
+      // response_url cannot edit a message it did not create — but nothing crashes
+      // and the doc still gets announced.
+      await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+      assert.deepStrictEqual(sent.map((s) => s.api), ['response_url', 'response_url']);
+      const pendingId = sent[1].blocks[4].elements[0].value;
+      assert.ok(pendingId, 'the card still carries a working pendingId over response_url');
+
+      await adapter.resumeBriefWorkflow(pendingId, null, {
+        workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1',
+        responseUrl: 'https://hooks.slack.test/r',
+      });
+      assert.strictEqual(builds.length, 1, 'it still builds');
+      // emit TRIED chat.update (it had coordinates), caught the throw, and fell back.
+      assert.deepStrictEqual(sent.slice(2).map((s) => s.api), ['response_url', 'postResult']);
+    }
+  );
+});
+
+test('slack confirm: Cancel is not styled danger', () => {
+  const { buildPlanCardBlocks } = require('../src/services/slack');
+  const { blocks } = buildPlanCardBlocks({
+    pendingId: 'p', campaignTitle: 'C',
+    plan: [{ asset: 'Battle Card', count: 2 }],
+  });
+  const buttons = blocks.find((b) => b.type === 'actions').elements;
+  const byId = Object.fromEntries(buttons.map((b) => [b.action_id, b]));
+
+  // Nothing has been created when this card is shown — the context line says so —
+  // so cancelling destroys nothing and must not render as a red danger button.
+  assert.strictEqual(byId.plan_cancel.style, undefined, 'Cancel renders plain');
+  assert.strictEqual(byId.plan_edit.style, undefined, 'Edit renders plain');
+  // Build stays the primary action.
+  assert.strictEqual(byId.plan_build.style, 'primary');
+  // Exactly one styled button on the card.
+  assert.strictEqual(buttons.filter((b) => b.style).length, 1);
+});
+
+test('slack confirm: nobody tests tokens.slack_bot to decide if chat.update works', () => {
+  const adapter = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  // Comments are stripped first: the explanations of this bug legitimately QUOTE the
+  // expression being banned, and a guard that trips over its own rationale is worse
+  // than no guard.
+  const code = adapter.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  // The exact expression that stranded the "Building…" card. slackApi falls back to
+  // the env token, so this test answers "no" while chat.update would have worked.
+  assert.ok(!/!!tokens\.slack_bot/.test(code), 'must ask canUseBotToken, not the row');
+  // BOTH flows ask the service: the brief flow and the draft flow had the same gate.
+  assert.strictEqual((code.match(/canUseBotToken\(tokens\.slack_bot\)/g) || []).length, 2,
+    'runBriefWorkflow and runGenerateDraft both ask the Slack service');
+  // And the rule lives with slackApi's fallback, so the two cannot drift again.
+  const slack = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
+  assert.ok(/function canUseBotToken\(token\) \{\s*\n\s*return !!\(token \|\| config\.SLACK_BOT_TOKEN\);/.test(slack),
+    'canUseBotToken mirrors slackApi exactly');
+  assert.ok(/const botToken = token \|\| config\.SLACK_BOT_TOKEN;/.test(slack), 'slackApi still has that fallback');
+  // resume has ONE writer, not two that can disagree.
+  const resume = adapter.slice(adapter.indexOf('async function resumeBriefWorkflow'));
+  const body = resume.slice(0, resume.indexOf('async function cancelBriefWorkflow'));
+  assert.strictEqual((body.match(/const emit = /g) || []).length, 1, 'one emit in resume');
+  assert.ok(/const say = \(text, blocks\) =>\s*\n?\s*emit\(/.test(body), 'say routes through emit');
 });

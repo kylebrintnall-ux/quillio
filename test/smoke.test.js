@@ -2685,12 +2685,14 @@ test('matrix 3b: the add-a-row variations matrix (angles, count 1–10, intensit
   assert.ok(!/var-distance/.test(html) && !/setFieldMeta/.test(html), 'old count-slider + distance-pills removed');
   // Each configured row = angle trigger (custom dark menu) + 1–10 stepper +
   // Safe/Bold/Wild slide-rule + remove.
-  assert.ok(/openAngleMenu\(trigger, r\.angle, function \(angle\)/.test(html) && /updateRow\(aName, fName, i, \{ angle: angle \}\)/.test(html), 'angle picked via the dark menu sets the row angle');
+  // (aInst — the asset's instance ordinal — joined every one of these signatures
+  // when selection became instance-aware; `i` here is still the ROW index.)
+  assert.ok(/openAngleMenu\(trigger, r\.angle, function \(angle\)/.test(html) && /updateRow\(aName, aInst, fName, i, \{ angle: angle \}\)/.test(html), 'angle picked via the dark menu sets the row angle');
   assert.ok(/var ANGLE_INFO = \[/.test(html) && /The problem they feel/.test(html), 'angle menu carries name + description');
   assert.ok(/matrix-count/.test(html) && /n = Math\.max\(1, Math\.min\(10, n\)\)/.test(html), 'count stepper clamped 1–10');
   assert.ok(/className = 'var-range'/.test(html) && /range\.min = '0'; range\.max = '2'/.test(html), 'intensity is a 3-stop slide-rule');
   assert.ok(/matrix-tick/.test(html), 'Safe/Bold/Wild tick labels present');
-  assert.ok(/matrix-x/.test(html) && /removeRow\(aName, fName, i\)/.test(html), 'remove control');
+  assert.ok(/matrix-x/.test(html) && /removeRow\(aName, aInst, fName, i\)/.test(html), 'remove control');
   // iOS: inner controls stop propagation so a tap/drag never toggles the field.
   assert.ok(/function shield\(node\)/.test(html) && /e\.stopPropagation\(\)/.test(html), 'inner controls shielded');
   assert.ok(/riff on new variations/.test(html) && /generate just those/.test(html), 'affordance line present (context-aware: generate vs riff)');
@@ -2791,7 +2793,7 @@ test('matrix 3b: Riff sends the matrix; Regenerate stays name-only; dividers ren
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
 
   // State carries the matrix rows; the mutators exist.
-  assert.ok(/\{ assetType: a, fieldName: f, rows: \[\] \}/.test(html), 'selection carries matrix rows');
+  assert.ok(/\{ assetType: a, instance: i, fieldName: f, rows: \[\] \}/.test(html), 'selection carries matrix rows');
   assert.ok(/function addRow/.test(html) && /function updateRow/.test(html) && /function removeRow/.test(html), 'row mutators present');
 
   // Riff sends variations:[{angle,count,intensity}] — 3a's contract.
@@ -2802,8 +2804,11 @@ test('matrix 3b: Riff sends the matrix; Regenerate stays name-only; dividers ren
   assert.ok(/riffBtn\.textContent = total \? 'Generate options \(' \+ total \+ '\)' : 'Generate options'/.test(html), 'total shown on the generate button');
   assert.ok(/riffBtn\.disabled = rows\.length === 0/.test(html), 'Riff disabled with 0 rows');
 
-  // Regenerate path strips to {assetType, fieldName} — never the matrix rows.
-  assert.ok(/function selectedScopedFields\(\)/.test(html) && /return \{ assetType: v\.assetType, fieldName: v\.fieldName \};/.test(html), 'Regenerate sends name-only');
+  // Regenerate path strips to the field's IDENTITY — never the matrix rows. That
+  // identity gained `instance` so the server can target one of several same-named
+  // assets; it is still name-only in the sense that matters here (no variations).
+  assert.ok(/function selectedScopedFields\(\)/.test(html) && /return \{ assetType: v\.assetType, instance: v\.instance, fieldName: v\.fieldName \};/.test(html), 'Regenerate sends identity-only');
+  assert.ok(!/function selectedScopedFields\(\)[\s\S]{0,220}variations/.test(html), 'and never the matrix rows');
 
   // Riff N dividers render before each batch, from riffMarks, with the doc number.
   assert.ok(/function fieldCopyEl\(copy, riffMarks\)/.test(html), 'copy renderer takes riffMarks');
@@ -5999,4 +6004,166 @@ test('slack confirm: nobody tests tokens.slack_bot to decide if chat.update work
   const body = resume.slice(0, resume.indexOf('async function cancelBriefWorkflow'));
   assert.strictEqual((body.match(/const emit = /g) || []).length, 1, 'one emit in resume');
   assert.ok(/const say = \(text, blocks\) =>\s*\n?\s*emit\(/.test(body), 'say routes through emit');
+});
+
+// --- Instance-aware field selection in public/app.html ------------------------
+// The app keyed its selection Map on (assetType, fieldName) alone. Two instances
+// of one asset have identically-named fields, so one Map entry stood for all of
+// them: tapping "Subject Line 1" on the Denver email also selected it on Austin
+// and Chicago, and one scoped request went out where three were meant.
+//
+// The suite normally reads app.html as a STRING (no jsdom, no execution — see
+// CLAUDE.md). These key functions are pure, so here they are EXTRACTED AND RUN.
+// That matters more than usual: the whole point of the instance tag is that it
+// agrees byte-for-byte with the server's key, and only running both can show that.
+function appFns(names) {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const src = names
+    .map((n) => {
+      // Match `function n(...) { … }` up to the closing brace at its own indent.
+      const re = new RegExp(`^(\\s*)function ${n}\\([^)]*\\) \\{[\\s\\S]*?\\n\\1\\}`, 'm');
+      const m = html.match(re);
+      assert.ok(m, `found ${n}() in app.html`);
+      return m[0];
+    })
+    .join('\n');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${src}\nreturn { ${names.join(', ')} };`)();
+}
+
+test('app selection key: instance-aware, and identical to the server\'s ctxKey', () => {
+  const { instTag, selKey } = appFns(['instTag', 'selKey']);
+  const { instanceTag } = require('../src/utils/instanceKey');
+  const { ctxKey } = require('../src/destinations/googleDocs');
+
+  // 1. The tag is the SAME serialization the server uses — including the part that
+  //    carries the whole backward-compatibility guarantee: 0 → ''.
+  for (const v of [undefined, null, 0, -1, 1, 2, 9, 10, 2.7, 'x', NaN, Infinity]) {
+    assert.strictEqual(instTag(v), instanceTag(v), `instTag(${String(v)}) matches instanceTag`);
+  }
+  assert.strictEqual(instTag(0), '', 'the first instance serializes to nothing');
+  assert.strictEqual(instTag(1), '#i1');
+
+  // 2. A single-instance doc's key is BYTE-IDENTICAL to the pre-instance key, so
+  //    nothing about a one-of-each doc can behave differently. This is the item
+  //    that must not regress: it is every doc anyone has selected fields in.
+  const legacy = (a, f) => String(a || '').trim().toLowerCase() + '|' + String(f || '').trim().toLowerCase();
+  for (const [a, f] of [
+    ['Battle Card', 'Headline'],
+    ['Demand Gen Nurture Email', 'Subject Line 1'],
+    ['  Spacey  ', '  Field  '],
+    ['MiXeD Case', 'FiElD nAmE'],
+  ]) {
+    assert.strictEqual(selKey(a, 0, f), legacy(a, f), `instance 0 is the legacy key: ${a}/${f}`);
+    assert.strictEqual(selKey(a, undefined, f), legacy(a, f), 'absent instance too');
+    assert.strictEqual(selKey(a, null, f), legacy(a, f), 'null instance too');
+  }
+
+  // 3. Instances DO NOT collide — the bug.
+  const k0 = selKey('Event Invitation Email', 0, 'Subject Line 1');
+  const k1 = selKey('Event Invitation Email', 1, 'Subject Line 1');
+  const k2 = selKey('Event Invitation Email', 2, 'Subject Line 1');
+  assert.strictEqual(new Set([k0, k1, k2]).size, 3, 'three instances, three keys');
+  // ...while a different FIELD on the same instance is still its own key, and the
+  // same field on the same instance is still one key (selection stays idempotent).
+  assert.notStrictEqual(k1, selKey('Event Invitation Email', 1, 'Subject Line 2'));
+  assert.strictEqual(k1, selKey('event invitation email', 1, 'subject line 1'), 'still case-insensitive');
+
+  // 4. And the key the app computes IS the key the server scopes on. googleDocs
+  //    builds scopeKeys from ctxKey(t.assetType, t.fieldName, t.instance); if these
+  //    two ever disagreed, a scoped draft would silently target nothing.
+  for (const [a, i, f] of [
+    ['Battle Card', 0, 'Headline'],
+    ['Event Invitation Email', 1, 'Subject Line 1'],
+    ['Event Invitation Email', 2, 'Preheader'],
+    ['  Padded Name ', 3, ' Padded Field '],
+  ]) {
+    assert.strictEqual(selKey(a, i, f), ctxKey(a, f, i), `app key === server ctxKey: ${a}#${i}/${f}`);
+  }
+});
+
+test('app asset heading: shows the instance only when there IS more than one', () => {
+  const { instanceTotals, instanceTotalFor, assetDisplayName } = appFns([
+    'instanceTotals', 'instanceTotalFor', 'assetDisplayName',
+  ]);
+  const { assetHeadingText } = require('../src/destinations/googleDocs');
+
+  // A two-instance doc as getDocContent returns it: `name` is the LIBRARY name on
+  // both, with `instance` and `instanceLabel` telling them apart.
+  const assets = [
+    { name: 'Event Invitation Email', instance: 0, instanceLabel: 'Austin' },
+    { name: 'Event Invitation Email', instance: 1, instanceLabel: 'Denver' },
+    { name: 'Campaign Landing Page', instance: 0, instanceLabel: null },
+  ];
+  const totals = instanceTotals(assets);
+  assert.strictEqual(instanceTotalFor(totals, assets[0]), 2);
+  assert.strictEqual(instanceTotalFor(totals, assets[2]), 1);
+
+  const shown = assets.map((a) => assetDisplayName(a, instanceTotalFor(totals, a)));
+  assert.deepStrictEqual(shown, [
+    'Event Invitation Email 1 — Austin',
+    'Event Invitation Email 2 — Denver',
+    'Campaign Landing Page', // one instance → the bare name, exactly as today
+  ]);
+
+  // The card and the DOC agree: this is the same string googleDocs wrote into the
+  // HEADING_3, so a user reading the card and a user reading the doc see one name.
+  for (const a of assets) {
+    assert.strictEqual(
+      assetDisplayName(a, instanceTotalFor(totals, a)),
+      assetHeadingText(a.name, a.instance, a.instanceLabel, instanceTotalFor(totals, a)),
+      `card heading === doc heading for ${a.name}#${a.instance}`
+    );
+  }
+
+  // Unlabelled instances still get an ordinal — the ordinal is what disambiguates;
+  // the label is a nicety.
+  const bare = [{ name: 'Battle Card', instance: 0, instanceLabel: null }, { name: 'Battle Card', instance: 1, instanceLabel: null }];
+  const bt = instanceTotals(bare);
+  assert.deepStrictEqual(bare.map((a) => assetDisplayName(a, instanceTotalFor(bt, a))), ['Battle Card 1', 'Battle Card 2']);
+
+  // A single-instance doc is untouched no matter what else is on the asset.
+  assert.strictEqual(assetDisplayName({ name: 'Battle Card', instance: 0, instanceLabel: 'ignored' }, 1), 'Battle Card');
+  assert.strictEqual(assetDisplayName({ name: 'Battle Card' }, undefined), 'Battle Card', 'no totals → bare name');
+  assert.strictEqual(assetDisplayName({}, 5), '', 'a nameless asset renders empty, not "undefined"');
+});
+
+test('app selection: every consumer of the key is instance-aware', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // No two-argument selKey call can survive — that signature IS the bug.
+  assert.ok(!/selKey\([^,)]+,\s*[^,)]+\)/.test(html), 'no 2-arg selKey call remains');
+  assert.ok(/function selKey\(a, i, f\)/.test(html), 'selKey takes the instance');
+  // The selection API and the matrix mutators all thread it.
+  for (const fn of ['isFieldSelected', 'toggleFieldSelection', 'fieldRows', 'addRow']) {
+    assert.ok(new RegExp(`function ${fn}\\(a, i, f\\)`).test(html), `${fn} takes the instance`);
+  }
+  for (const fn of ['updateRow', 'removeRow']) {
+    assert.ok(new RegExp(`function ${fn}\\(a, i, f, r`).test(html), `${fn} takes the instance ahead of the row index`);
+  }
+  // The blank-field checks — the other pair that matched on assetType + fieldName.
+  // They now route through selKey, so they cannot disagree with the selection Map
+  // about what "the same field" is.
+  for (const fn of ['isBlankProjectField', 'isBlankCopyDoneField']) {
+    assert.ok(new RegExp(`function ${fn}\\(a, i, f\\)`).test(html), `${fn} takes the instance`);
+  }
+  assert.strictEqual(
+    (html.match(/return selKey\(x\.assetType, x\.instance, x\.fieldName\) === k;/g) || []).length, 2,
+    'both blank checks compare through selKey'
+  );
+  assert.ok(!/x\.assetType === a && x\.fieldName === f/.test(html), 'no name-only blank comparison remains');
+  // computeBlankFields must record the instance or the checks above have nothing
+  // to compare against.
+  assert.ok(/out\.push\(\{ assetType: a\.name, instance: a\.instance, fieldName: f\.fieldName \}\)/.test(html),
+    'blank fields record their instance');
+
+  // Both outbound payloads carry it: scoped regenerate/generate, and Riff.
+  assert.ok(/return \{ assetType: v\.assetType, instance: v\.instance, fieldName: v\.fieldName \};/.test(html),
+    'scoped payload carries the instance');
+  assert.ok(/onRiff\(\{\s*\n\s*assetType: aName,\s*\n\s*instance: aInst,/.test(html), 'Riff payload carries the instance');
+
+  // And every card renderer passes a total, or a multi-instance doc would render
+  // three identically-titled cards.
+  assert.strictEqual((html.match(/instanceTotalFor\(/g) || []).length, 4, 'three renderers + the helper itself');
+  assert.ok(/assetDisplayName\(asset, opts\.instanceTotal\)/.test(html), 'the card heading uses it');
 });

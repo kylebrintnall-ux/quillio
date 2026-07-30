@@ -994,28 +994,45 @@
 
     // --- Selective regeneration selection (Phase 1) ------------------------
     // Transient, client-only. Which fields are selected for a SCOPED
-    // generate/regenerate, keyed by (assetType, fieldName). Shared by the
-    // project view and the Copy Done screen so the two can't drift.
-    // value: { assetType, fieldName, rows: [{ angle, count (1-5), intensity }] }.
+    // generate/regenerate, keyed by (assetType, INSTANCE, fieldName). Shared by
+    // the project view and the Copy Done screen so the two can't drift.
+    // value: { assetType, instance, fieldName, rows: [{ angle, count (1-5), intensity }] }.
     // `rows` is the Variations Matrix (Step 3b) — used ONLY by Riff (append). A
     // fresh selection has no rows; scoped Regenerate ignores rows entirely and
     // stays the plain destructive path (selectedScopedFields strips to name only).
-    var selectedFields = new Map(); // key -> { assetType, fieldName, rows: [...] }
-    function selKey(a, f) { return String(a || '').trim().toLowerCase() + '|' + String(f || '').trim().toLowerCase(); }
-    function isFieldSelected(a, f) { return selectedFields.has(selKey(a, f)); }
-    function toggleFieldSelection(a, f) {
-      var k = selKey(a, f);
+    //
+    // The instance ordinal is part of the key because a doc can hold several
+    // instances of one asset, whose fields are identically named. Without it,
+    // selecting "Subject Line 1" on Denver also selected it on Austin and
+    // Chicago — one Map entry standing for three different fields.
+    var selectedFields = new Map(); // key -> { assetType, instance, fieldName, rows: [...] }
+    // Serialize an instance ordinal EXACTLY as src/utils/instanceKey.instanceTag
+    // does, including the part that matters most: 0 (and absent, and null) produce
+    // the empty string. So on a single-instance doc every key below is
+    // byte-identical to the pre-instance key, and the server's ctxKey — which uses
+    // the same convention — agrees with what this page sends.
+    function instTag(i) {
+      var n = Number(i);
+      if (!isFinite(n) || n <= 0) return '';
+      return '#i' + Math.floor(n);
+    }
+    function selKey(a, i, f) {
+      return String(a || '').trim().toLowerCase() + instTag(i) + '|' + String(f || '').trim().toLowerCase();
+    }
+    function isFieldSelected(a, i, f) { return selectedFields.has(selKey(a, i, f)); }
+    function toggleFieldSelection(a, i, f) {
+      var k = selKey(a, i, f);
       if (selectedFields.has(k)) { selectedFields.delete(k); return false; }
-      selectedFields.set(k, { assetType: a, fieldName: f, rows: [] });
+      selectedFields.set(k, { assetType: a, instance: i, fieldName: f, rows: [] });
       return true;
     }
     // Matrix rows for a field (live array — callers mutate then re-render).
-    function fieldRows(a, f) {
-      var cur = selectedFields.get(selKey(a, f));
+    function fieldRows(a, i, f) {
+      var cur = selectedFields.get(selKey(a, i, f));
       return cur ? cur.rows : [];
     }
-    function addRow(a, f) {
-      var cur = selectedFields.get(selKey(a, f));
+    function addRow(a, i, f) {
+      var cur = selectedFields.get(selKey(a, i, f));
       if (!cur) return;
       // Default a new row to the first angle not yet used (falls back to Pain when
       // all seven are present — repeats are allowed), count 1, Safe.
@@ -1024,20 +1041,23 @@
       var angle = ANGLES.filter(function (x) { return !used[x]; })[0] || ANGLES[0];
       cur.rows.push({ angle: angle, count: 1, intensity: 'Safe' });
     }
-    function updateRow(a, f, i, patch) {
-      var cur = selectedFields.get(selKey(a, f));
-      if (cur && cur.rows[i]) Object.assign(cur.rows[i], patch);
+    // NB `r` is the ROW index here — `i` stays the instance ordinal throughout,
+    // so every one of these functions reads (asset, instance, field, …).
+    function updateRow(a, i, f, r, patch) {
+      var cur = selectedFields.get(selKey(a, i, f));
+      if (cur && cur.rows[r]) Object.assign(cur.rows[r], patch);
     }
-    function removeRow(a, f, i) {
-      var cur = selectedFields.get(selKey(a, f));
-      if (cur) cur.rows.splice(i, 1);
+    function removeRow(a, i, f, r) {
+      var cur = selectedFields.get(selKey(a, i, f));
+      if (cur) cur.rows.splice(r, 1);
     }
     function clearFieldSelection() { selectedFields.clear(); }
-    // Regenerate path: name only — never the matrix rows (Regenerate stays plain
-    // destructive; the matrix drives Riff, not Regenerate).
+    // Regenerate path: identity only — never the matrix rows (Regenerate stays
+    // plain destructive; the matrix drives Riff, not Regenerate). `instance` rides
+    // along so the server can target the right one of several same-named assets.
     function selectedScopedFields() {
       return Array.from(selectedFields.values()).map(function (v) {
-        return { assetType: v.assetType, fieldName: v.fieldName };
+        return { assetType: v.assetType, instance: v.instance, fieldName: v.fieldName };
       });
     }
     function selectedCount() { return selectedFields.size; }
@@ -1415,7 +1435,7 @@
     // Riff fires the append path with variations:[{angle,count,intensity}] — the
     // contract 3a accepts. Everything is ink-on-white/light for legibility; gold is
     // used only as a fill/accent (rail, thumb, "+"), never as body text.
-    function buildVarControls(aName, fName, onRiff) {
+    function buildVarControls(aName, aInst, fName, onRiff) {
       var wrap = el('div', 'var-controls');
       wrap.addEventListener('click', function (e) { e.stopPropagation(); });
       // iOS: interactive inner controls must never toggle the field or get hijacked
@@ -1438,14 +1458,14 @@
       // syncs the Riff button (label total + enabled state).
       function render() {
         matrix.textContent = '';
-        var rows = fieldRows(aName, fName);
+        var rows = fieldRows(aName, aInst, fName);
         rows.forEach(function (r, i) { matrix.appendChild(buildRow(r, i)); });
 
         var add = shield(el('button', 'matrix-add', '+ Add angle'));
         add.type = 'button';
         add.addEventListener('click', function (e) {
           e.stopPropagation();
-          addRow(aName, fName);
+          addRow(aName, aInst, fName);
           render();
         });
         matrix.appendChild(add);
@@ -1459,7 +1479,7 @@
       // disables with zero rows.
       function syncRiffBtn() {
         if (!riffBtn) return;
-        var rows = fieldRows(aName, fName);
+        var rows = fieldRows(aName, aInst, fName);
         var total = rows.reduce(function (n, r) { return n + (r.count || 1); }, 0);
         riffBtn.textContent = total ? 'Generate options (' + total + ')' : 'Generate options';
         riffBtn.disabled = rows.length === 0;
@@ -1481,7 +1501,7 @@
           e.stopPropagation();
           openAngleMenu(trigger, r.angle, function (angle) {
             r.angle = angle;
-            updateRow(aName, fName, i, { angle: angle });
+            updateRow(aName, aInst, fName, i, { angle: angle });
             angleLabel.textContent = angle;
             trigger.setAttribute('aria-label', 'Angle: ' + angle);
           });
@@ -1498,7 +1518,7 @@
         var cnt = el('span', 'matrix-count-val', String(r.count));
         function setCount(n) {
           n = Math.max(1, Math.min(10, n));
-          updateRow(aName, fName, i, { count: n });
+          updateRow(aName, aInst, fName, i, { count: n });
           cnt.textContent = String(n);
           syncRiffBtn(); // count changed → refresh the button total
         }
@@ -1535,7 +1555,7 @@
         }
         paint();
         range.addEventListener('input', function () {
-          updateRow(aName, fName, i, { intensity: INTENSITIES[Number(range.value)] });
+          updateRow(aName, aInst, fName, i, { intensity: INTENSITIES[Number(range.value)] });
           paint(); // intensity doesn't change the total, so the button stays as-is
         });
         intensity.appendChild(range);
@@ -1547,7 +1567,7 @@
         rm.setAttribute('aria-label', 'Remove ' + r.angle);
         rm.addEventListener('click', function (e) {
           e.stopPropagation();
-          removeRow(aName, fName, i);
+          removeRow(aName, aInst, fName, i);
           render();
         });
         controls.appendChild(rm);
@@ -1564,10 +1584,11 @@
         riffBtn.type = 'button';
         riffBtn.addEventListener('click', function (e) {
           e.stopPropagation();
-          var rows = fieldRows(aName, fName);
+          var rows = fieldRows(aName, aInst, fName);
           if (rows.length === 0) return;
           onRiff({
             assetType: aName,
+            instance: aInst,
             fieldName: fName,
             variations: rows.map(function (r) { return { angle: r.angle, count: r.count, intensity: r.intensity }; }),
           });
@@ -1604,18 +1625,53 @@
       return wrap;
     }
 
+    // How many entries in this asset list share one library name. A doc holding
+    // three Event Invitation Emails must tell them apart on screen or a user
+    // cannot know which one they are selecting; a doc holding one of each must
+    // read exactly as it does today.
+    function instanceTotals(assets) {
+      var t = Object.create(null);
+      (assets || []).forEach(function (a) {
+        var k = String((a && a.name) || '').trim().toLowerCase();
+        t[k] = (t[k] || 0) + 1;
+      });
+      return t;
+    }
+    function instanceTotalFor(totals, asset) {
+      if (!totals) return 1;
+      return totals[String((asset && asset.name) || '').trim().toLowerCase()] || 1;
+    }
+    // The card heading. Mirrors destinations/googleDocs.assetHeadingText, which
+    // writes this same string into the doc — so the card and the doc's HEADING_3
+    // read identically ("Event Invitation Email 2 — Denver"), and a bare name when
+    // there is only one instance.
+    function assetDisplayName(asset, total) {
+      var name = String((asset && asset.name) != null ? asset.name : '');
+      // A nameless entry gets no ordinal — " 1" is worse than nothing, and several
+      // of them all key to '' in instanceTotals, so they would otherwise be
+      // "numbered" against each other.
+      if (!name || !(Number(total) > 1)) return name;
+      var ordinal = (Number(asset.instance) || 0) + 1;
+      var label = asset.instanceLabel != null ? String(asset.instanceLabel).trim() : '';
+      return label ? name + ' ' + ordinal + ' — ' + label : name + ' ' + ordinal;
+    }
+
     // Append one asset card to `container`. Each field shows its name, char
     // limit, a live character count (red when over the limit), and the drafted
     // copy beneath it. Shared by Screen 3 (post-draft) and Screen 5.
     //   opts.badge          → heading badge text (optional)
     //   opts.drafted        → add the .drafted style to the card
     //   opts.showPlaceholder → render "Not yet drafted" for empty fields
+    //   opts.instanceTotal → how many instances of this asset the doc holds; >1
+    //                        puts the ordinal (and label) in the card heading
     function appendAssetCard(container, asset, opts) {
       opts = opts || {};
       var card = el('div', 'asset-card');
 
       var header = el('div', 'asset-card-header');
-      header.appendChild(el('span', 'asset-card-name', asset.name));
+      // opts.instanceTotal (from the calling renderer, which can see the whole
+      // list) decides whether an ordinal is shown. Absent → 1 → the bare name.
+      header.appendChild(el('span', 'asset-card-name', assetDisplayName(asset, opts.instanceTotal)));
       if (opts.badge) {
         header.appendChild(el('span', 'asset-card-badge' + (opts.drafted ? ' drafted' : ''), opts.badge));
       }
@@ -1676,9 +1732,11 @@
 
         // Multi-select (Phase 1): on the project view + Copy Done, tapping a field
         // toggles it into the scoped-regen selection. Keyed by (assetType,
-        // fieldName). Reflects any pre-existing selection on re-render.
+        // instance, fieldName), so two instances of one asset select independently.
+        // Reflects any pre-existing selection on re-render.
         if (opts.selectable) {
           var aName = asset.name;
+          var aInst = asset.instance;
           var fName = f.fieldName;
           fieldEl.classList.add('selectable');
           fieldEl.appendChild(el('span', 'field-check', '✓'));
@@ -1690,7 +1748,7 @@
           // THIS field and reloads the screen in place.
           if (hasCopy && opts.riff) {
             var onRiff = function (sf) { runRiff(opts.riff.docId, sf, opts.riff.reload); };
-            var controls = buildVarControls(aName, fName, onRiff);
+            var controls = buildVarControls(aName, aInst, fName, onRiff);
 
             var expandBtn = el('button', 'field-expand');
             expandBtn.type = 'button';
@@ -1704,9 +1762,9 @@
             fieldEl.appendChild(controls);
           }
 
-          if (isFieldSelected(aName, fName)) fieldEl.classList.add('selected');
+          if (isFieldSelected(aName, aInst, fName)) fieldEl.classList.add('selected');
           fieldEl.addEventListener('click', function () {
-            var on = toggleFieldSelection(aName, fName);
+            var on = toggleFieldSelection(aName, aInst, fName);
             fieldEl.classList.toggle('selected', on);
             if (!on) fieldEl.classList.remove('expanded'); // deselect collapses the panel
             if (typeof opts.onSelectionChange === 'function') opts.onSelectionChange();
@@ -1721,7 +1779,10 @@
     function renderOutputAssets(assets, opts) {
       var wrap = document.getElementById('out-assets');
       wrap.textContent = '';
-      (assets || []).forEach(function (a) { appendAssetCard(wrap, a, opts); });
+      var totals = instanceTotals(assets);
+      (assets || []).forEach(function (a) {
+        appendAssetCard(wrap, a, Object.assign({}, opts, { instanceTotal: instanceTotalFor(totals, a) }));
+      });
       var cards = wrap.querySelectorAll('.asset-card');
       for (var i = 0; i < cards.length; i++) {
         cards[i].classList.add('reveal');
@@ -2167,8 +2228,10 @@
       var wrap = document.getElementById('copydone-assets');
       wrap.textContent = '';
       wrap.appendChild(fieldSelectHint({ hasCopy: assetsHaveCopy(assets), hasBlank: assetsHaveBlank(assets) }));
+      var totals = instanceTotals(assets);
       (assets || []).forEach(function (a) {
         appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true, selectable: true, onSelectionChange: refreshCopyDonePrimary,
+          instanceTotal: instanceTotalFor(totals, a),
           riff: { docId: state.docId, reload: async function () { await loadCopyDone(); showScreen('copydone'); } } });
       });
       var cards = wrap.querySelectorAll('.asset-card');
@@ -2509,7 +2572,7 @@
 
     // --- Screen 5: project view --------------------------------------------
     var projectState = { project: null };
-    var projectBlankFields = []; // [{assetType, fieldName}] recomputed each openProject
+    var projectBlankFields = []; // [{assetType, instance, fieldName}] recomputed each openProject
     var projectContentEl = document.getElementById('project-content');
     var projectLoading = document.getElementById('project-loading');
     var projectFallback = document.getElementById('project-fallback');
@@ -2528,8 +2591,12 @@
       }
       return false;
     }
-    function isBlankProjectField(a, f) {
-      return projectBlankFields.some(function (x) { return x.assetType === a && x.fieldName === f; });
+    // Compared through selKey, not field-by-field equality: it is the one place
+    // that decides how an instance ordinal (and case) normalizes, so the blank
+    // check and the selection Map cannot disagree about what "the same field" is.
+    function isBlankProjectField(a, i, f) {
+      var k = selKey(a, i, f);
+      return projectBlankFields.some(function (x) { return selKey(x.assetType, x.instance, x.fieldName) === k; });
     }
 
     // Decide the draft affordance from whether copy already exists. There's no
@@ -2572,7 +2639,7 @@
         // An all-blank selection reads as "Generate"; any drafted field makes it
         // a regenerate (direction modal).
         var allBlank = selectedScopedFields().every(function (f) {
-          return isBlankProjectField(f.assetType, f.fieldName);
+          return isBlankProjectField(f.assetType, f.instance, f.fieldName);
         });
         projectPrimaryBtn.textContent = allBlank ? ('Generate Selected (' + n + ')') : ('Regenerate Selected (' + n + ')');
       } else if (!projectState.hasCopy) {
@@ -2592,7 +2659,7 @@
     function onProjectPrimary() {
       var selected = selectedScopedFields();
       if (selected.length > 0) {
-        var allBlank = selected.every(function (f) { return isBlankProjectField(f.assetType, f.fieldName); });
+        var allBlank = selected.every(function (f) { return isBlankProjectField(f.assetType, f.instance, f.fieldName); });
         if (allBlank) generateProjectDraft(selected);
         else openProjectRegenModal(); // drafted/mixed selection → regenerate with direction
       } else if (projectState.hasCopy && projectBlankFields.length > 0) {
@@ -2614,7 +2681,7 @@
           // An all-blank selection reads as "Generate"; any drafted field in the
           // selection makes it a regenerate (opens the direction modal).
           var allBlank = selectedScopedFields().every(function (f) {
-            return isBlankCopyDoneField(f.assetType, f.fieldName);
+            return isBlankCopyDoneField(f.assetType, f.instance, f.fieldName);
           });
           b.textContent = allBlank ? ('Generate Selected (' + n + ')') : ('Regenerate Selected (' + n + ')');
         } else if (copydoneBlankFields.length > 0) {
@@ -2639,19 +2706,20 @@
     // --- Copy Done: blank-field tracking so the primary can offer "Generate the
     // Rest" (fill remaining blanks, no direction modal) vs "Regenerate" (rewrite
     // existing copy with direction). ---
-    var copydoneBlankFields = []; // [{assetType, fieldName}] recomputed each load
+    var copydoneBlankFields = []; // [{assetType, instance, fieldName}] recomputed each load
     function computeBlankFields(content) {
       var out = [];
       ((content && content.assets) || []).forEach(function (a) {
         (a.fields || []).forEach(function (f) {
           var copy = f.copy != null ? String(f.copy).trim() : '';
-          if (!copy) out.push({ assetType: a.name, fieldName: f.fieldName });
+          if (!copy) out.push({ assetType: a.name, instance: a.instance, fieldName: f.fieldName });
         });
       });
       return out;
     }
-    function isBlankCopyDoneField(a, f) {
-      return copydoneBlankFields.some(function (x) { return x.assetType === a && x.fieldName === f; });
+    function isBlankCopyDoneField(a, i, f) {
+      var k = selKey(a, i, f);
+      return copydoneBlankFields.some(function (x) { return selKey(x.assetType, x.instance, x.fieldName) === k; });
     }
 
     // Direct scoped generation (no direction modal) — used for "Generate the Rest"
@@ -2685,7 +2753,7 @@
     function onCopyDonePrimary() {
       var selected = selectedScopedFields();
       if (selected.length > 0) {
-        var allBlank = selected.every(function (f) { return isBlankCopyDoneField(f.assetType, f.fieldName); });
+        var allBlank = selected.every(function (f) { return isBlankCopyDoneField(f.assetType, f.instance, f.fieldName); });
         if (allBlank) copyDoneGenerate(selected);
         else openRegenModal(); // drafted/mixed selection → regenerate with direction
       } else if (copydoneBlankFields.length > 0) {
@@ -2754,8 +2822,10 @@
       var passets = content.assets || [];
       projectContentEl.appendChild(fieldSelectHint({ hasCopy: assetsHaveCopy(passets), hasBlank: assetsHaveBlank(passets) }));
       var assets = passets;
+      var ptotals = instanceTotals(assets);
       assets.forEach(function (a) {
         appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary,
+          instanceTotal: instanceTotalFor(ptotals, a),
           riff: { docId: (projectState.project && projectState.project.copy_doc_id) || null, reload: function () { return openProject(projectState.project); } } });
       });
     }

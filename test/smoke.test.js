@@ -3725,3 +3725,240 @@ test('the missing-schema catch is narrow — real errors still throw', async () 
     await assert.rejects(() => users.getSlackLinksForUser(1), /permission denied/);
   });
 });
+
+// --- Instance ordinals: widening the two composite identity keys -------------
+// Asset identity is the asset NAME, used as half of ctxKey (googleDocs) and
+// fieldKey (copyReview). Both now take an optional 0-based instance ordinal so a
+// doc carrying the same asset twice can be told apart. Nothing produces a second
+// instance yet — these lock the default and the new slot.
+
+test('instance keys: the DEFAULT ordinal serializes BYTE-IDENTICALLY', () => {
+  const { ctxKey } = require('../src/destinations/googleDocs');
+  const { fieldKey } = require('../src/services/copyReview');
+  const { instanceTag } = require('../src/utils/instanceKey');
+
+  // These literals are what the pre-instance implementations produced:
+  //   ctxKey   = `${asset.trim().toLowerCase()}|${field.trim().toLowerCase()}`
+  //   fieldKey = `${asset.trim().toLowerCase()}||${field.trim().toLowerCase()}`
+  // fieldKey's output is persisted verbatim as jsonb object keys in
+  // doc_reviews.state, so a changed default orphans live review state.
+  assert.strictEqual(ctxKey('Demand Gen Nurture Email', 'Subject Line 1'), 'demand gen nurture email|subject line 1');
+  assert.strictEqual(fieldKey('Demand Gen Nurture Email', 'Subject Line 1'), 'demand gen nurture email||subject line 1');
+
+  // Absent, 0, and every other default-ish value all serialize to the same string.
+  for (const d of [undefined, null, 0, '', '0', NaN, -1, false]) {
+    assert.strictEqual(ctxKey('Email', 'H', d), ctxKey('Email', 'H'), `ctxKey default for ${String(d)}`);
+    assert.strictEqual(fieldKey('Email', 'H', d), fieldKey('Email', 'H'), `fieldKey default for ${String(d)}`);
+  }
+  assert.strictEqual(instanceTag(0), '');
+  assert.strictEqual(instanceTag(undefined), '');
+
+  // Trim + lowercase normalization is untouched by the widening.
+  assert.strictEqual(ctxKey('  Email  ', '  Headline  '), 'email|headline');
+  assert.strictEqual(fieldKey('  Email  ', '  Headline  '), 'email||headline');
+  // fieldKey tolerates a null asset (''), ctxKey stringifies it — preserved as-is.
+  assert.strictEqual(fieldKey(null, 'H'), '||h');
+  assert.strictEqual(ctxKey(null, 'H'), 'null|h');
+});
+
+test('instance keys: distinct ordinals produce distinct keys, tagged on the ASSET half', () => {
+  const { ctxKey } = require('../src/destinations/googleDocs');
+  const { fieldKey, keyInScope } = require('../src/services/copyReview');
+
+  assert.strictEqual(ctxKey('Email', 'Headline', 1), 'email#i1|headline');
+  assert.strictEqual(ctxKey('Email', 'Headline', 2), 'email#i2|headline');
+  assert.strictEqual(fieldKey('Email', 'Headline', 1), 'email#i1||headline');
+  assert.strictEqual(fieldKey('Email', 'Headline', 2), 'email#i2||headline');
+
+  const ctx = new Set([0, 1, 2, 3].map((n) => ctxKey('Email', 'Headline', n)));
+  const fld = new Set([0, 1, 2, 3].map((n) => fieldKey('Email', 'Headline', n)));
+  assert.strictEqual(ctx.size, 4, 'four ordinals → four ctxKeys');
+  assert.strictEqual(fld.size, 4, 'four ordinals → four fieldKeys');
+
+  // The tag sits on the asset half specifically so keyInScope's variation SUFFIX
+  // match (`${fieldKey} · option N (Doorway)`) keeps working per instance.
+  const scope = new Set([fieldKey('Email', 'CTA', 1)]);
+  assert.ok(keyInScope(fieldKey('Email', 'CTA', 1) + ' · option 2 (proof)', scope), 'own variation in scope');
+  assert.ok(!keyInScope(fieldKey('Email', 'CTA', 2) + ' · option 2 (proof)', scope), 'another instance is not');
+  assert.ok(!keyInScope(fieldKey('Email', 'CTA'), scope), 'the default instance is not in instance 1 scope');
+});
+
+test('instanceCounter: 0-based per-name ordinals in document order', () => {
+  const { instanceCounter } = require('../src/utils/instanceKey');
+  const next = instanceCounter();
+  assert.strictEqual(next('Email'), 0, 'first occurrence is the unmarked default');
+  assert.strictEqual(next('Landing Page'), 0, 'per-name, not global');
+  assert.strictEqual(next('Email'), 1);
+  assert.strictEqual(next(' email '), 2, 'trim + case-insensitive: the same asset');
+  assert.strictEqual(next('EMAIL'), 3);
+  assert.strictEqual(instanceCounter()('Email'), 0, 'counters are independent');
+});
+
+test('duplicate asset heading: each instance gets its OWN siblings (byAsset fix)', () => {
+  const { selectReviewTargets, fieldKey } = require('../src/services/copyReview');
+  // What a hand-edited doc with a pasted asset section parses to: one name, twice.
+  const content = {
+    assets: [
+      { name: 'Email', fields: [
+        { fieldName: 'Headline', charMax: 60, copy: 'A-headline' },
+        { fieldName: 'Subhead', charMax: 80, copy: 'A-subhead' },
+      ] },
+      { name: 'Email', fields: [
+        { fieldName: 'Headline', charMax: 60, copy: 'B-headline' },
+        { fieldName: 'Subhead', charMax: 80, copy: 'B-subhead' },
+      ] },
+    ],
+  };
+
+  // The collectors attach the ordinal, in document order.
+  const whole = selectReviewTargets(content, null);
+  assert.deepStrictEqual(
+    whole.singles.map((f) => [f.assetType, f.instance, f.copy]),
+    [['Email', 0, 'A-headline'], ['Email', 0, 'A-subhead'], ['Email', 1, 'B-headline'], ['Email', 1, 'B-subhead']]
+  );
+
+  // Scoping instance 1's Headline selects ONLY it — instance 0's identically
+  // named field is a different key now.
+  const s1 = selectReviewTargets(content, new Set([fieldKey('Email', 'Headline', 1)]));
+  assert.strictEqual(s1.singles.length, 1);
+  assert.strictEqual(s1.singles[0].copy, 'B-headline');
+  // THE FIX: siblings come from instance 1 — not from whichever instance the
+  // byAsset Map happened to see last (which used to be instance 1 for BOTH).
+  assert.deepStrictEqual(s1.singles[0].siblings, [{ fieldName: 'Subhead', copy: 'B-subhead' }]);
+
+  const s0 = selectReviewTargets(content, new Set([fieldKey('Email', 'Headline', 0)]));
+  assert.strictEqual(s0.singles[0].copy, 'A-headline');
+  assert.deepStrictEqual(s0.singles[0].siblings, [{ fieldName: 'Subhead', copy: 'A-subhead' }]);
+});
+
+test('duplicate asset heading: reconcileComments keeps the two instances apart', () => {
+  const { reconcileComments, fieldKey } = require('../src/services/copyReview');
+  const fields = [
+    { assetType: 'Email', instance: 0, fieldName: 'Headline', copy: 'A-copy' },
+    { assetType: 'Email', instance: 1, fieldName: 'Headline', copy: 'B-copy' },
+  ];
+  const verdicts = [
+    { assetType: 'Email', instance: 0, fieldName: 'Headline', comment: 'note A' },
+    { assetType: 'Email', instance: 1, fieldName: 'Headline', comment: 'note B' },
+  ];
+  const r = reconcileComments({ fields, priorFields: {}, verdicts, liveComments: [] });
+
+  // Two state keys, each with its own verdict (pre-widening: one key, one note).
+  assert.deepStrictEqual(
+    Object.keys(r.nextState.fields).sort(),
+    [fieldKey('Email', 'Headline', 0), fieldKey('Email', 'Headline', 1)].sort()
+  );
+  assert.strictEqual(r.nextState.fields[fieldKey('Email', 'Headline', 0)].comment, 'note A');
+  assert.strictEqual(r.nextState.fields[fieldKey('Email', 'Headline', 1)].comment, 'note B');
+  assert.strictEqual(r.toAdd.length, 2, 'distinct copy → both comments anchorable');
+
+  // KNOWN LIMIT, deliberately unchanged here: when both instances hold IDENTICAL
+  // copy the collision is in Drive's comment ANCHOR (quoted text), not in the key.
+  // State stays correctly separated; the second comment is still skipped.
+  const same = reconcileComments({
+    fields: [
+      { assetType: 'Email', instance: 0, fieldName: 'Headline', copy: 'identical' },
+      { assetType: 'Email', instance: 1, fieldName: 'Headline', copy: 'identical' },
+    ],
+    priorFields: {},
+    verdicts: [
+      { assetType: 'Email', instance: 0, fieldName: 'Headline', comment: 'note A' },
+      { assetType: 'Email', instance: 1, fieldName: 'Headline', comment: 'note B' },
+    ],
+    liveComments: [],
+  });
+  assert.strictEqual(Object.keys(same.nextState.fields).length, 2, 'state keys still distinct');
+  assert.strictEqual(same.toAdd.length, 1, 'anchor-level dedupe unchanged by this refactor');
+});
+
+test('duplicate asset heading: insert indices stay per-instance (insertIndexByField fix)', () => {
+  const { parseDoc, ctxKey } = require('../src/destinations/googleDocs');
+  const { instanceCounter } = require('../src/utils/instanceKey');
+
+  function makeDoc(paras) {
+    let startIndex = 1;
+    const content = paras.map((para) => {
+      const raw = (para.text || '') + '\n';
+      const endIndex = startIndex + raw.length;
+      const item = {
+        startIndex,
+        endIndex,
+        paragraph: {
+          paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+          elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+        },
+      };
+      startIndex = endIndex;
+      return item;
+    });
+    return { body: { content } };
+  }
+
+  // Two sections with the SAME heading text and the SAME field name.
+  const doc = makeDoc([
+    { text: 'Campaign Summary', style: 'HEADING_2' },
+    { text: 'sum', italic: true },
+    { text: 'Writer Direction', style: 'HEADING_2' },
+    { text: 'dir', italic: true },
+    { text: 'Email', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true },
+    { text: '' },
+    { text: 'Email', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true },
+    { text: '' },
+  ]);
+
+  // parseDoc is positional and already instance-safe (untouched by this step).
+  const { assets } = parseDoc(doc);
+  assert.strictEqual(assets.length, 2, 'both headings parsed');
+  assert.strictEqual(assets[0].assetType, 'Email');
+  assert.strictEqual(assets[1].assetType, 'Email');
+  const idx0 = assets[0].fields[0].insertIndex;
+  const idx1 = assets[1].fields[0].insertIndex;
+  assert.ok(idx0 !== idx1 && idx0 != null && idx1 != null, 'the two instances sit at different positions');
+
+  // The mapping generateDraft's post-delete re-parse performs. Pre-fix this was
+  // keyed on ctxKey(assetType, fieldName) with no ordinal, so the second entry
+  // OVERWROTE the first and both instances' copy resolved to idx1.
+  const ordinal = instanceCounter();
+  const insertIndexByField = new Map();
+  for (const asset of assets) {
+    const instance = ordinal(asset.assetType);
+    for (const f of asset.fields) {
+      insertIndexByField.set(ctxKey(asset.assetType, f.fieldName, instance), f.insertIndex);
+    }
+  }
+  assert.strictEqual(insertIndexByField.size, 2, 'two entries, not one collapsed entry');
+  assert.strictEqual(insertIndexByField.get(ctxKey('Email', 'Headline', 0)), idx0);
+  assert.strictEqual(insertIndexByField.get(ctxKey('Email', 'Headline', 1)), idx1);
+
+  // Without the ordinal, one key — the collapse this fixes.
+  const collapsed = new Map();
+  for (const asset of assets) {
+    for (const f of asset.fields) collapsed.set(ctxKey(asset.assetType, f.fieldName), f.insertIndex);
+  }
+  assert.strictEqual(collapsed.size, 1, 'un-widened key collapses both instances');
+  assert.strictEqual(collapsed.get(ctxKey('Email', 'Headline')), idx1, 'and the LAST one wins');
+});
+
+test('structural guard: generateDraft threads the instance ordinal through ctxKey', () => {
+  const gd = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  // Every ctxKey CALL in generateDraft must pass a third argument, or a duplicate
+  // heading silently collapses again. Definition + comments are excluded.
+  const calls = gd
+    .split('\n')
+    .map((line, i) => ({ line, n: i + 1 }))
+    .filter(({ line }) => /(?<![\w.])ctxKey\(/.test(line))
+    .filter(({ line }) => !/^\s*(\/\/|\*)/.test(line))
+    .filter(({ line }) => !/function ctxKey\(/.test(line));
+  assert.ok(calls.length >= 10, `expected the known ctxKey call sites, found ${calls.length}`);
+  for (const { line, n } of calls) {
+    for (const call of line.match(/(?<![\w.])ctxKey\([^)]*\)/g) || []) {
+      const args = call.slice('ctxKey('.length, -1).split(',');
+      assert.strictEqual(args.length, 3, `googleDocs.js:${n} — ctxKey call needs an instance arg: ${call.trim()}`);
+    }
+  }
+  // The re-parse loop assigns ordinals rather than keying on the bare name.
+  assert.ok(/const freshOrdinal = instanceCounter\(\)/.test(gd), 're-parse loop counts instances');
+  assert.ok(/const draftOrdinal = instanceCounter\(\)/.test(gd), 'assetTargets counts instances');
+});

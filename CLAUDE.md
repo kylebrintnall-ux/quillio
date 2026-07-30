@@ -412,6 +412,18 @@ or field counts**, so adding, renaming, or reordering fields means editing the
 `asset_types` / `copy_fields` rows (or the default library + reseed) — no code
 change.
 
+**Names are unique per tenant, and Postgres enforces it.**
+`scripts/migrateAddAssetUniqueness.js` adds two unique indexes —
+`asset_types (tenant_id, name)` and `copy_fields (asset_type_id, field_name)` —
+**folded through the same normalizer `src/utils/normalize.js` applies**, via an
+IMMUTABLE `quillio_normalize_name(text)`. Functional, not raw-text, on purpose:
+`Nurture Email` and `nurture  email` are two rows to raw text and ONE asset to
+`tenantAssetsToSpecs`, so a raw-text UNIQUE would permit exactly the duplicates
+that break it. That normalizer is now the ONLY one — `db/assets.js` `normName`
+and the local copy inside `gemini.js` `parseBrief` were folded into it. If you
+change `normalize()`, the migration's derived character classes must change with
+it; a smoke test recomputes them and fails if they drift.
+
 The Dynamic Email block is ordered: Subject Line 1, Subject Line 2,
 Pre-header, Headline (Offer 1) [50], Offer Body 1, CTA Text (Offer 1),
 Headline (Offer 2) [50], Offer Body 2, CTA Text (Offer 2).

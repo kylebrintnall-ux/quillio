@@ -13,6 +13,7 @@
 
 const { getPool } = require('../db');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
+const { normalize } = require('../utils/normalize');
 
 // Seed the default asset library into a tenant. Idempotent: if the tenant
 // already has any asset_types rows we skip entirely (there's no unique
@@ -174,14 +175,12 @@ async function setActiveAssets(tenantId, deactivatedNames = []) {
 // (assetName) => direction|null, matched by normalized name. Degrades to a
 // function that always returns null when there's no DB / no rows / no column
 // data — so the pipeline merges nothing and renders normally.
-function normName(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/[‐-―−]/g, '-') // unicode dashes / minus → hyphen
-    .replace(/\s*-\s*/g, '-') // drop spaces around hyphens
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+//
+// `normName` used to be a third, hand-copied definition of utils/normalize —
+// byte-identical to it, so this is a pure de-duplication with no behavior
+// change. It is now the shared one, which is also what the Postgres unique
+// index folds on, so the lookup and the constraint cannot drift apart.
+const normName = normalize;
 
 async function getAssetDirections(tenantId) {
   let rows = null;

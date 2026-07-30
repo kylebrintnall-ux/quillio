@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const { reviewUnitKey } = require('../utils/instanceKey');
+const { normalize } = require('../utils/normalize');
 
 // The two repo-root markdown guides, loaded once at startup:
 //   craft.md — HOW GOOD COPY WORKS. Universal craft (headline/body/CTA
@@ -467,12 +468,16 @@ async function parseBrief(brief) {
   // dash-insensitively (Gemini may emit a hyphen where the canonical name uses
   // an em dash), then map back to the canonical name. Anything that doesn't map
   // is treated as unmatched (surfaced to the user, not silently dropped).
-  const normalize = (s) =>
-    String(s)
-      .toLowerCase()
-      .replace(/[—–\-]/g, '-')
-      .replace(/\s+/g, ' ')
-      .trim();
+  //
+  // This used a LOCAL normalizer that folded case and the three dash characters
+  // but did NOT drop the spaces around a hyphen, so it disagreed with
+  // utils/normalize (the one core/pipeline, googleDocs and pendingBriefs all
+  // use) on 14 of the 30 allowed names. Two functions deciding what "the same
+  // asset name" means is one too many — especially now that a UNIQUE INDEX
+  // enforces the same question in Postgres. Converged onto utils/normalize:
+  // strictly more tolerant here (it additionally matches "Direct Mail—Box",
+  // em dash with no spaces, which the local one rejected) and collision-free
+  // across the allowed list, which a smoke test pins.
   const canonicalByNorm = new Map(allowed.map((a) => [normalize(a), a]));
 
   // `assets` is now an ordered PLAN: [{ asset, count, labels }]. Entries are NOT

@@ -1308,9 +1308,24 @@
     // --- Screen 3: render output -------------------------------------------
     var state = { docUrl: null, docId: null, projectId: null, campaignTitle: null, assets: [] };
 
+    // Is this field's range counted in WORDS? getDocContent recovers the unit from
+    // the doc label's bracket ("[50-125 words]") and returns it as fieldType.
+    function isWordField(f) { return f && f.fieldType === 'words'; }
+    // Count the way the field is measured. Words are whitespace-separated runs —
+    // the same thing a writer counts, and close enough to what the model was asked
+    // for that the number on screen and the number in the prompt agree.
+    function countUnits(text, f) {
+      var t = String(text == null ? '' : text);
+      if (!isWordField(f)) return t.length;
+      var m = t.trim().match(/\S+/g);
+      return m ? m.length : 0;
+    }
     function charLimit(f) {
       if (!f.charMax) return '';
-      return f.charMin > 0 ? '[' + f.charMin + '–' + f.charMax + ']' : '[' + f.charMax + ']';
+      var unit = isWordField(f) ? ' words' : '';
+      return f.charMin > 0
+        ? '[' + f.charMin + '–' + f.charMax + unit + ']'
+        : '[' + f.charMax + unit + ']';
     }
     function el(tag, cls, text) {
       var n = document.createElement(tag);
@@ -1707,9 +1722,17 @@
             // without its leading "(Doorway) " tag so the number stays honest.
             var counted = door ? copy.replace(/^\s*\([A-Za-z]+\)\s+/, '') : copy;
             if (door) meta.appendChild(el('span', 'doorway-chip', door));
-            var charText = f.charMax ? (counted.length + ' / ' + f.charMax) : (counted.length + ' chars');
+            // Count in the field's own unit. Showing "612 / 125" on a 125-WORD body
+            // field reads as five times over when it is comfortably inside the band.
+            var n = countUnits(counted, f);
+            var noun = isWordField(f) ? ' words' : ' chars';
+            var charText = f.charMax ? (n + ' / ' + f.charMax) : (n + noun);
             var charSpan = el('span', 'field-char', charText);
-            if (f.charMax && counted.length > f.charMax) charSpan.classList.add('over');
+            // A word field has a real FLOOR (50–125 says "structured email", not
+            // "up to 125"), so under-range is worth flagging too — a character
+            // field's floor was removed for being meaningless.
+            if (f.charMax && n > f.charMax) charSpan.classList.add('over');
+            else if (isWordField(f) && f.charMin && n > 0 && n < f.charMin) charSpan.classList.add('over');
             meta.appendChild(charSpan);
           }
           if (limit) meta.appendChild(el('span', 'field-count', limit));

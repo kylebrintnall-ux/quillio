@@ -29,8 +29,10 @@
 //
 // Authored compactly as [name, group, [[fieldName, charMin, charMax, groupLabel?], …]]
 // and normalized below into the seed shape (adds sort_order, is_active, field_type,
-// spec metadata, asset_direction and spec_note). field_type is 'text' for every
-// current field. The optional 4th field element is a group_label: consecutive
+// spec metadata, asset_direction and spec_note). field_type is 'text' (characters)
+// for every field EXCEPT the six email body fields, which are 'words' — see
+// fieldUnit below; on those, char_min/char_max are a WORD range. The optional 4th
+// field element is a group_label: consecutive
 // fields sharing one (e.g. 'Graphic Copy') render under a single indented
 // sub-heading in the Doc — the on-graphic copy (Graphic Headline, Subhead, and
 // CTA on paid/display) grouped so it reads as one unit and maps to Figma layers.
@@ -133,10 +135,10 @@ const RAW = [
     ['Subject Line 2', 0, 130],
     ['Preheader', 85, 100],
     ['Headline (Offer 1)', 0, 60],
-    ['Offer Body 1', 0, 500],
+    ['Offer Body 1', 50, 125],
     ['CTA Text (Offer 1)', 0, 25],
     ['Headline (Offer 2)', 0, 60],
-    ['Offer Body 2', 0, 165],
+    ['Offer Body 2', 50, 125],
     ['CTA Text (Offer 2)', 0, 20],
   ]],
   ['Event Invitation Email', 'Email', [
@@ -144,7 +146,7 @@ const RAW = [
     ['Subject Line 2', 0, 130],
     ['Preheader', 85, 100],
     ['Hero Headline', 0, 60],
-    ['Event Description', 0, 300],
+    ['Event Description', 50, 125],
     ['Date / Location Line', 0, 80],
     ['CTA Text', 0, 25],
   ]],
@@ -153,7 +155,7 @@ const RAW = [
     ['Subject Line 2', 0, 130],
     ['Preheader', 85, 100],
     ['Headline', 0, 60],
-    ['Body Copy', 0, 200],
+    ['Body Copy', 25, 75],
     ['CTA Text', 0, 25],
   ]],
   ['Event Follow-Up / Recap Email', 'Email', [
@@ -161,7 +163,7 @@ const RAW = [
     ['Subject Line 2', 0, 130],
     ['Preheader', 85, 100],
     ['Headline', 0, 60],
-    ['Body Copy', 0, 350],
+    ['Body Copy', 25, 75],
     ['CTA Text', 0, 25],
   ]],
   ['Sales Basho Email', 'Email', [
@@ -169,7 +171,7 @@ const RAW = [
     ['Subject Line 2', 0, 40],
     ['Preheader', 85, 100],
     ['Opening Line', 0, 100],
-    ['Body Copy', 0, 275],
+    ['Body Copy', 50, 100],
     ['CTA / Ask', 0, 100],
   ]],
   ['Event Landing Page', 'Events', [
@@ -316,12 +318,11 @@ const DIRECTIONS = {
   'Display Banner — Standard': 'Fewest possible words. Headline does all the work. CTA is a verb.',
   'Google Responsive Display Ad':
     'System assembles combinations. Every element must work alone and together.',
-  'Demand Gen Nurture Email': 'Curiosity or tension in the subject. No clickbait. Earn the click.',
+  'Demand Gen Nurture Email': 'Curiosity or tension in the subject — they are mid-sequence, not meeting you.',
   'Event Invitation Email': 'Make the value of attending undeniable. Date and CTA above the fold.',
-  'Event Reminder Email': 'Urgency without panic. Reinforce the one reason to show up.',
+  'Event Reminder Email': 'Urgency without panic. They already said yes — reinforce, do not re-sell.',
   'Event Follow-Up / Recap Email': 'Gratitude first, value second, next step third.',
-  'Sales Basho Email':
-    'Write as a human, not a brand. Open with Dear [First Name]. Short sentences and short paragraphs. One clear ask. No marketing speak. Feels like it came from a real person, not a campaign.',
+  'Sales Basho Email': 'Open with Dear [First Name].',
   'Event Landing Page': 'The page answers one question: why should I be there? Answer it fast.',
   'On-Site Signage — General': 'Read in motion. Three seconds max. Verb first.',
   'On-Site Signage — Session Title Card': 'Clear over clever. Speaker name prominent. No jargon in the title.',
@@ -474,6 +475,45 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'Organic Social — Twitter/X||Post Copy',
 ]);
 
+// --- Field UNIT -------------------------------------------------------------
+// copy_fields.field_type carries the UNIT a field's char_min/char_max are counted
+// in. 'text' (the default, and every field before this) means characters. 'words'
+// means the numbers are a WORD range.
+//
+// Characters are the right unit where truncation is literal — a subject line, an ad
+// headline, a preheader all get cut at a real character position, so a character
+// count is the actual constraint. Email BODY copy has no truncation point. What it
+// has is an attention budget, and every study of that budget measures it in words
+// (Boomerang's 40M-email analysis: 50–125 words highest response, 75–100 the sweet
+// spot, past 200 words response drops below 40%). Rendering "[500]" on a body field
+// asked the writer to count the wrong thing.
+//
+// ONLY email body fields convert. Ad copy, headlines, CTAs, subject lines and
+// preheaders stay in characters because their limits are literal truncation points.
+// Non-email long-form (landing page body, one-pager, direct mail) stays in
+// characters for now — see the note in the migration.
+//
+// Kept BYTE-IDENTICAL to WORD_FIELDS in scripts/migrateEmailBodyWordCounts.js.
+const WORD_FIELDS = new Set([
+  // Marketing / nurture band, 50–125 words. Opt-in, branded, aiming for a click.
+  'Demand Gen Nurture Email||Offer Body 1',
+  'Demand Gen Nurture Email||Offer Body 2',
+  // An invitation is making a case to attend — marketing, not a reminder.
+  'Event Invitation Email||Event Description',
+  // Cold outreach band, 50–100 words. Plain text, 1:1 feel, aiming for a reply.
+  'Sales Basho Email||Body Copy',
+  // Follow-up band, 25–75 words. The reader already decided; these reinforce or
+  // recap rather than persuade.
+  'Event Reminder Email||Body Copy',
+  'Event Follow-Up / Recap Email||Body Copy',
+]);
+
+// 'words' | 'text'. The value stored in copy_fields.field_type and threaded through
+// the pipeline to the label, the prompt and the review.
+function fieldUnit(assetName, fieldName) {
+  return WORD_FIELDS.has(`${assetName}||${fieldName}`) ? 'words' : 'text';
+}
+
 function fieldSpecType(assetName, fieldName) {
   const key = `${assetName}||${fieldName}`;
   if (ENFORCED_SPEC_FIELDS.has(key)) return 'enforced';
@@ -529,7 +569,7 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
     field_name,
     char_min,
     char_max,
-    field_type: 'text',
+    field_type: fieldUnit(name, field_name),
     sort_order: j + 1,
     group_label: group_label || null,
     spec_note: fieldSpecNote(name, field_name),

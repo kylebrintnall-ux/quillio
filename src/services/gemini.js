@@ -752,13 +752,48 @@ function siblingContextBlock(siblings) {
   ].join('\n');
 }
 
-// character limit and creative direction. Enforces the limit: if the draft is
+// --- Length constraint, in the field's own UNIT ------------------------------
+// Every prompt below used to hard-code "Character limit: N". Email body fields now
+// carry a WORD range (copy_fields.field_type = 'words'), and telling a model to
+// write 125 CHARACTERS when the spec says 125 WORDS is a 5x error in the direction
+// that matters most — it produces a one-line email where a structured one was
+// asked for.
+//
+// One helper, four callers, so the phrasing cannot drift between the drafter, the
+// variations generator and the two reviewers.
+//
+// `charMin` only appears for word fields. On a character field a floor is close to
+// meaningless (and the subject-line work just removed the last ones); on a word
+// field the floor is half the point — 50–125 words says "this is a structured
+// email", where "up to 125" would read as "shorter is safer".
+function lengthClause(charMax, fieldType, charMin) {
+  const max = Number(charMax) > 0 ? Number(charMax) : null;
+  if (!max) return null;
+  if (String(fieldType || '') === 'words') {
+    const min = Number(charMin) > 0 ? Number(charMin) : null;
+    const range = min ? `${min}-${max} words` : `up to ${max} words`;
+    return (
+      `Length: ${range}. This is a WORD count, not characters. Structure matters more than ` +
+      'hitting a number: context in one or two sentences, the ask in one, the next step in one. ' +
+      'A well-structured email at the top of the range beats a cramped one at the bottom.'
+    );
+  }
+  return (
+    `Character limit: ${max}. Stay within this limit — write a COMPLETE, self-contained thought ` +
+    'and finish it, even a few characters short; never run up to the limit and get cut off mid-sentence.'
+  );
+}
+
+// Draft ONE field. Builds a prompt from the brief, the field's own length
+// constraint and the creative direction. Enforces the limit: if the draft is
 // over, it gets one corrective rewrite, then a hard trim as a last resort.
 async function generateFieldDraft({
   assetType,
   channel,
   fieldName,
   charMax,
+  charMin,
+  fieldType,
   toneNotes,
   notes,
   funnelStage,
@@ -769,10 +804,9 @@ async function generateFieldDraft({
   voiceGuide,
   siblings,
 }) {
-  const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
-  const limitLine = ceiling
-    ? `Character limit: ${ceiling}. Stay within this limit — write a COMPLETE, self-contained thought and finish it, even a few characters short; never run up to the limit and get cut off mid-sentence.`
-    : 'Keep it concise — a complete, self-contained thought appropriate for the field.';
+  const limitLine =
+    lengthClause(charMax, fieldType, charMin) ||
+    'Keep it concise — a complete, self-contained thought appropriate for the field.';
   const fieldGuidance = notes || builtInFieldGuidance(fieldName);
 
   const prompt = [
@@ -860,10 +894,9 @@ async function generateAssetDrafts({
 
   const fieldLines = fields
     .map((f) => {
-      const ceiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
-      const limit = ceiling
-        ? `character limit ${ceiling} — stay within this limit`
-        : 'concise';
+      const limit = f.fieldType === 'words'
+        ? `${Number(f.charMin) > 0 ? `${f.charMin}-` : 'up to '}${f.charMax} WORDS (a word count, not characters)`
+        : (Number(f.charMax) > 0 ? `character limit ${f.charMax} — stay within this limit` : 'concise');
       const guidance = f.notes || builtInFieldGuidance(f.fieldName);
       const extra = [
         f.funnelStage ? `funnel: ${f.funnelStage}` : '',
@@ -1044,6 +1077,8 @@ function buildVariationsPrompt({
   assetType,
   fieldName,
   charMax,
+  charMin,
+  fieldType,
   summary,
   writerPrompt,
   assetDirection,
@@ -1066,9 +1101,11 @@ function buildVariationsPrompt({
   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
   const allSame = new Set(doorwayList).size === 1; // Stay close: one door, N executions
   const anyIntensity = spec.some((s) => s.intensity);
-  const limitLine = ceiling
-    ? `Character limit: ${ceiling} per variation. Each is a COMPLETE, self-contained thought within this hard maximum — finish the thought, even a few characters short.`
-    : 'Keep each variation concise — a complete, self-contained thought appropriate for the field.';
+  const limitLine = fieldType === 'words'
+    ? `${lengthClause(charMax, fieldType, charMin)} EACH variation is held to this range.`
+    : (ceiling
+      ? `Character limit: ${ceiling} per variation. Each is a COMPLETE, self-contained thought within this hard maximum — finish the thought, even a few characters short.`
+      : 'Keep each variation concise — a complete, self-contained thought appropriate for the field.');
 
   const doorwayDefs = Object.entries(DOORWAYS).map(([name, def]) => `- ${name}: ${def}`);
   const intensityDefs = anyIntensity ? Object.entries(INTENSITIES).map(([name, def]) => `- ${name}: ${def}`) : [];
@@ -1158,6 +1195,8 @@ async function generateFieldVariations({
   assetType,
   fieldName,
   charMax,
+  charMin,
+  fieldType,
   summary,
   writerPrompt,
   assetDirection,
@@ -1183,6 +1222,8 @@ async function generateFieldVariations({
     assetType,
     fieldName,
     charMax,
+    charMin,
+    fieldType,
     summary,
     writerPrompt,
     assetDirection,
@@ -1545,6 +1586,10 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = fal
           assetType: f.assetType,
           fieldName: f.fieldName,
           charMax: f.charMax || 0,
+          // Unit + floor, so the reviewer flags a 300-word email for LENGTH rather
+          // than measuring it against a character number it was never written to.
+          charMin: f.charMin || 0,
+          lengthUnit: f.fieldType === 'words' ? 'words' : 'characters',
           copy: f.copy || '',
           priorCopy: f.priorCopy || null,
           priorComment: f.priorComment || null,
@@ -1632,7 +1677,7 @@ const DOORWAY_FIT_GUIDE = [
 // field's options (each carrying its assigned doorway). `siblings` (scoped review)
 // is the asset context — the stack's non-variation neighbors — read for fit +
 // cross-field interaction, never commented. Exposed for tests.
-function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, voiceGuide, briefContext, siblings } = {}) {
+function buildVariantReviewPrompt({ assetType, fieldName, charMax, charMin, fieldType, variations, voiceGuide, briefContext, siblings } = {}) {
   const opts = Array.isArray(variations) ? variations : [];
   const sibs = Array.isArray(siblings) ? siblings.filter((s) => s && s.fieldName && String(s.copy || '').trim()) : [];
   const craft = buildCraftContext(assetType);
@@ -1649,9 +1694,11 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, v
         '',
       ].filter(Boolean)
     : [];
-  const limitLine = Number(charMax) > 0
-    ? `Character limit: ${charMax} per option (a hard maximum).`
-    : 'Keep each option concise.';
+  const limitLine = fieldType === 'words'
+    ? `Length: ${Number(charMin) > 0 ? `${charMin}-` : 'up to '}${charMax} words per option — a WORD count, not characters.`
+    : (Number(charMax) > 0
+      ? `Character limit: ${charMax} per option (a hard maximum).`
+      : 'Keep each option concise.');
 
   return [
     'You are a seasoned copy strategist AND editor giving a second pass on ONE marketing',
@@ -1749,7 +1796,7 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, variations, v
 // per-variation, at the materiality bar. `siblings` (scoped review) adds asset
 // context + enables a tight cross-field `flag`. Returns [{ index, doorway,
 // strategy, craft, flag }], each axis null when clean. It does NOT pick a winner.
-async function reviewVariationStack({ assetType, fieldName, charMax, variations, voiceGuide, briefContext, siblings } = {}) {
+async function reviewVariationStack({ assetType, fieldName, charMax, charMin, fieldType, variations, voiceGuide, briefContext, siblings } = {}) {
   const opts = Array.isArray(variations) ? variations : [];
   if (opts.length === 0) return [];
 

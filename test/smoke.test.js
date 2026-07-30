@@ -551,7 +551,10 @@ test('defaultAssets is the 30-type v3 library with valid shape', () => {
       assert.strictEqual(typeof f.field_name, 'string');
       assert.strictEqual(typeof f.char_min, 'number');
       assert.strictEqual(typeof f.char_max, 'number');
-      assert.strictEqual(f.field_type, 'text');
+      // field_type is the UNIT char_min/char_max are counted in. 'text' means
+      // characters, and did for every field until the six email body fields moved
+      // to word ranges — where a character count measures the wrong thing.
+      assert.ok(['text', 'words'].includes(f.field_type), `${a.name}/${f.field_name} field_type`);
       assert.ok(f.char_max >= f.char_min, `field "${f.field_name}" max >= min`);
     }
   }
@@ -6990,4 +6993,188 @@ test('spec integrity: the LinkedIn carousel note renders BESIDE the tier line, n
     FIELD_NOTES.map(([a, f]) => `${a}||${f}`).sort(),
     'seed and migration agree on exactly which fields carry the note'
   );
+});
+
+// --- Email body copy in WORDS ------------------------------------------------
+// Characters are the right unit where truncation is literal — a subject line, an ad
+// headline, a preheader are all cut at a real character position. Body copy has no
+// truncation point, only an attention budget, and that budget is measured in words.
+// copy_fields.field_type carries the unit; these prove it survives every hop.
+
+test('word units: the seed and the migration agree, both directions', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { WORD_FIELDS, DIRECTIONS } = require('../scripts/migrateEmailBodyWordCounts');
+
+  const f = (asset, name) => {
+    const a = DEFAULT_ASSETS.find((x) => x.name === asset);
+    assert.ok(a, `asset ${asset} exists`);
+    const fl = a.fields.find((x) => x.field_name === name);
+    assert.ok(fl, `field ${asset}/${name} exists`);
+    return fl;
+  };
+
+  // FORWARD: every field the migration converts is a word field in the seed, with
+  // the same range.
+  for (const [asset, field, min, max] of WORD_FIELDS) {
+    const fl = f(asset, field);
+    assert.strictEqual(fl.field_type, 'words', `${asset}/${field} is a word field`);
+    assert.strictEqual(fl.char_min, min, `${asset}/${field} min`);
+    assert.strictEqual(fl.char_max, max, `${asset}/${field} max`);
+  }
+  // BACKWARD: the seed has no word field the migration does not convert. Without
+  // this, a field could go to words in the seed and stay in characters for every
+  // existing tenant — rendering two different specs for the same field.
+  const seedWords = [];
+  for (const a of DEFAULT_ASSETS) {
+    for (const fl of a.fields) if (fl.field_type === 'words') seedWords.push(`${a.name}||${fl.field_name}`);
+  }
+  assert.deepStrictEqual(seedWords.sort(), WORD_FIELDS.map(([a, x]) => `${a}||${x}`).sort());
+  assert.strictEqual(seedWords.length, 6, 'six email body fields, and only those');
+
+  // The bands really do differ by email type — one band for all five was the bug
+  // the subject-line pass fixed, and repeating it here would be the same mistake.
+  assert.deepStrictEqual([f('Demand Gen Nurture Email', 'Offer Body 1').char_min,
+    f('Demand Gen Nurture Email', 'Offer Body 1').char_max], [50, 125], 'marketing/nurture');
+  assert.deepStrictEqual([f('Sales Basho Email', 'Body Copy').char_min,
+    f('Sales Basho Email', 'Body Copy').char_max], [50, 100], 'cold outreach');
+  assert.deepStrictEqual([f('Event Follow-Up / Recap Email', 'Body Copy').char_min,
+    f('Event Follow-Up / Recap Email', 'Body Copy').char_max], [25, 75], 'follow-up');
+
+  // ONLY email body converts. Subject lines, preheaders, headlines, CTAs and every
+  // ad field keep characters, because their limits ARE truncation points.
+  for (const [asset, field] of [
+    ['Demand Gen Nurture Email', 'Subject Line 1'], ['Demand Gen Nurture Email', 'Preheader'],
+    ['Demand Gen Nurture Email', 'CTA Text (Offer 1)'], ['Sales Basho Email', 'Opening Line'],
+    ['Meta Single Image Ad', 'Primary Text'], ['LinkedIn Single Image Ad', 'Intro Text'],
+    ['Organic Social — Twitter/X', 'Post Copy'],
+  ]) {
+    assert.strictEqual(f(asset, field).field_type, 'text', `${asset}/${field} stays in characters`);
+  }
+  // Non-email long-form stays in characters for now (flagged in the migration as
+  // the open question this pass deliberately does not answer).
+  for (const [asset, field] of [
+    ['Event Landing Page', 'About Section Body'],
+    ['One-Pager', 'Solution Description'],
+    ['Direct Mail — Insert', 'Body Copy'],
+  ]) {
+    assert.strictEqual(f(asset, field).field_type, 'text', `${asset}/${field} stays in characters for now`);
+  }
+
+  // Trimmed directions agree with the migration byte-for-byte.
+  for (const [asset, direction] of DIRECTIONS) {
+    assert.strictEqual(DEFAULT_ASSETS.find((a) => a.name === asset).asset_direction, direction,
+      `${asset} direction`);
+  }
+});
+
+test('word units: the label carries the unit, and both readers get it back', () => {
+  const { fieldLabel, parseDoc, getDocContent } = require('../src/destinations/googleDocs');
+
+  // A word field and a character field, side by side.
+  assert.strictEqual(fieldLabel({ fieldName: 'Offer Body 1', charMin: 50, charMax: 125, fieldType: 'words' }),
+    'Offer Body 1 [50-125 words]');
+  assert.strictEqual(fieldLabel({ fieldName: 'Subject Line 1', charMin: 0, charMax: 130, fieldType: 'text' }),
+    'Subject Line 1 [130]');
+  assert.strictEqual(fieldLabel({ fieldName: 'Body Copy', charMin: 0, charMax: 100, fieldType: 'words' }),
+    'Body Copy [100 words]', 'a word field with no floor still says words');
+  // Absent fieldType is characters — every field before this change.
+  assert.strictEqual(fieldLabel({ fieldName: 'Headline', charMin: 0, charMax: 70 }), 'Headline [70]');
+  assert.strictEqual(fieldLabel({ fieldName: 'Bare', charMin: 0, charMax: 0, fieldType: 'words' }), 'Bare',
+    'no range → no bracket → nothing to carry the unit');
+
+  // THE ROUND TRIP. There is no persisted doc state: the draft, regenerate and
+  // review paths all reconstruct fields by re-parsing the Doc. If the label did not
+  // say "words", the unit would die the moment the doc was written.
+  const paras = [
+    { text: 'Campaign Summary', style: 'HEADING_2' }, { text: 's', italic: true },
+    { text: 'Writer Direction', style: 'HEADING_2' }, { text: 'd', italic: true },
+    { text: 'Demand Gen Nurture Email', style: 'HEADING_3' },
+    { text: 'Subject Line 1 [130]', bold: true }, { text: 'a subject' },
+    { text: 'Offer Body 1 [50-125 words]', bold: true }, { text: 'some body copy' },
+  ];
+  const doc = instDoc(paras);
+  const { assets } = parseDoc(doc);
+  const fields = assets[0].fields;
+  assert.deepStrictEqual(
+    fields.map((f) => [f.fieldName, f.charMin, f.charMax, f.fieldType]),
+    [['Subject Line 1', 0, 130, 'text'], ['Offer Body 1', 50, 125, 'words']]
+  );
+  // The unit survives the NAME too — "words" must not be swallowed into the field
+  // name or left in it.
+  assert.strictEqual(fields[1].fieldName, 'Offer Body 1');
+
+  // getDocContent (the web app's reader) recovers it identically — two readers, one
+  // format, or the app and the doc would disagree about what the number means.
+  return getDocContent('d', { docs: { documents: { get: async () => ({ data: doc }) } } }).then((content) => {
+    assert.deepStrictEqual(
+      content.assets[0].fields.map((f) => [f.fieldName, f.charMin, f.charMax, f.fieldType]),
+      [['Subject Line 1', 0, 130, 'text'], ['Offer Body 1', 50, 125, 'words']]
+    );
+  });
+});
+
+test('word units: the Gemini prompt states the constraint in words, not characters', () => {
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+
+  // ONE helper, so the drafter, the variations generator and the two reviewers
+  // cannot drift on how a length is phrased.
+  assert.ok(/function lengthClause\(charMax, fieldType, charMin\)/.test(gem), 'the shared clause exists');
+  const clause = new Function(`${gem.match(/^function lengthClause[\s\S]*?\n\}/m)[0]}\nreturn lengthClause;`)();
+
+  // A word field says WORDS, says it is not characters, and carries the floor.
+  const w = clause(125, 'words', 50);
+  assert.match(w, /50-125 words/);
+  assert.match(w, /WORD count, not characters/);
+  assert.match(w, /Structure matters more than hitting a number/);
+  assert.match(w, /context in one or two sentences, the ask in one, the next step in one/);
+  assert.ok(!/Character limit/.test(w), 'a word field never says "Character limit"');
+  // No floor → "up to N words", never a bare number that reads as characters.
+  assert.match(clause(100, 'words', 0), /up to 100 words/);
+
+  // A character field is UNCHANGED — this is every field but six, and the wording
+  // it produces must still be the wording it produced before.
+  assert.strictEqual(
+    clause(70, 'text', 0),
+    'Character limit: 70. Stay within this limit — write a COMPLETE, self-contained thought and finish it, ' +
+      'even a few characters short; never run up to the limit and get cut off mid-sentence.'
+  );
+  assert.strictEqual(clause(70), clause(70, 'text', 0), 'absent fieldType === characters');
+  assert.strictEqual(clause(0, 'words', 50), null, 'no ceiling → no clause, caller falls back');
+
+  // All four prompt sites branch on the unit — none still hard-codes characters.
+  assert.strictEqual((gem.match(/fieldType === 'words'/g) || []).length, 4,
+    'per-field draft line, variations, variant review, and the review payload');
+  assert.ok(/lengthUnit: f\.fieldType === 'words' \? 'words' : 'characters'/.test(gem),
+    'the copy-review payload names the unit rather than implying characters');
+});
+
+test('word units: the client counts words, and the layout heuristic is not fooled', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const grab = (n) => html.match(new RegExp(`^(\\s*)function ${n}\\([^)]*\\) \\{[\\s\\S]*?\\n\\1\\}`, 'm'))[0];
+  const c = new Function(`${grab('isWordField')}${grab('countUnits')}${grab('charLimit')}
+    return { isWordField, countUnits, charLimit };`)();
+
+  // The bracket, in the app, matches the bracket in the doc.
+  assert.strictEqual(c.charLimit({ charMin: 50, charMax: 125, fieldType: 'words' }), '[50–125 words]');
+  assert.strictEqual(c.charLimit({ charMin: 0, charMax: 130, fieldType: 'text' }), '[130]');
+  assert.strictEqual(c.charLimit({ charMax: 0 }), '');
+
+  // Counting in the field's own unit. A 90-word body is ~550 characters; showing
+  // "550 / 125" reads as four times over when it is comfortably inside the band.
+  const body = new Array(90).fill('word').join(' ');
+  assert.strictEqual(c.countUnits(body, { fieldType: 'words' }), 90);
+  assert.strictEqual(c.countUnits(body, { fieldType: 'text' }), body.length);
+  assert.strictEqual(c.countUnits('  spaced   out  ', { fieldType: 'words' }), 2, 'whitespace runs, not splits');
+  assert.strictEqual(c.countUnits('', { fieldType: 'words' }), 0);
+  assert.strictEqual(c.countUnits(null, { fieldType: 'words' }), 0);
+
+  // A word field is flagged UNDER the floor as well as over the ceiling — 50-125
+  // says "structured email", not "up to 125".
+  assert.ok(/isWordField\(f\) && f\.charMin && n > 0 && n < f\.charMin/.test(html), 'under-range is flagged too');
+
+  // The doc's short/long layout heuristic is a CHARACTER threshold (<=120). A
+  // 125-WORD field would sail under it and be laid out as a headline.
+  const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  assert.ok(/const longField = fieldType === 'words' \|\| !\(Number\(charMax\) > 0 && Number\(charMax\) <= 120\);/.test(docs),
+    'a word field is always laid out long');
 });

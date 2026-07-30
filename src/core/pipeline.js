@@ -706,6 +706,11 @@ function rowToSpecGroup(a) {
       fieldName: f.field_name,
       charMin: parseInt(f.char_min, 10) || 0,
       charMax: parseInt(f.char_max, 10) || 0,
+      // The UNIT charMin/charMax are counted in: 'words' for email body copy,
+      // 'text' (characters) for everything else. This row was previously dropped
+      // here, so field_type reached the database and stopped — the label, the
+      // prompt and the review all assumed characters.
+      fieldType: f.field_type === 'words' ? 'words' : 'text',
       groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
       specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
       specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' → tier line under the field label

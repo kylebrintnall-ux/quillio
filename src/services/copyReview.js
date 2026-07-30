@@ -79,7 +79,7 @@ function collectCopyFields(content) {
       if (!raw) continue;
       if (isNumberedStack(raw)) continue; // an unresolved stack → the variant path handles it
       const copy = stripSoloLabel(raw).trim();
-      if (copy) out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, copy });
+      if (copy) out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, charMin: f.charMin || 0, fieldType: f.fieldType || 'text', copy });
     }
   }
   return out;
@@ -97,7 +97,7 @@ function collectVariationStacks(content) {
       if (!raw || !isNumberedStack(raw)) continue;
       const variations = parseNumberedStack(raw);
       if (variations.length >= 2) {
-        out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, variations });
+        out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, charMin: f.charMin || 0, fieldType: f.fieldType || 'text', variations });
       }
     }
   }
@@ -397,7 +397,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // via its number). reconcile keys/persists on (assetType, instance, fieldName). ---
   const units = [];
   for (const f of singleFields) {
-    units.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy });
+    units.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, charMin: f.charMin, fieldType: f.fieldType, copy: f.copy });
   }
   for (const st of stacks) {
     for (const v of st.variations) {
@@ -406,6 +406,8 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
         instance: st.instance,
         fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
         charMax: st.charMax,
+        charMin: st.charMin,
+        fieldType: st.fieldType,
         copy: v.line,
       });
     }
@@ -415,7 +417,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // variant review, run concurrently. ---
   const singleInputs = singleFields.map((f) => {
     const p = priorFor(f.assetType, f.fieldName, f.instance);
-    return { assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null, siblings: f.siblings || [] };
+    return { assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, charMin: f.charMin, fieldType: f.fieldType, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null, siblings: f.siblings || [] };
   });
   const rawSingleVerdicts = singleInputs.length
     ? await reviewCopyFields({ fields: singleInputs, voiceGuide, briefContext, scoped })
@@ -435,7 +437,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
         const p = priorFor(st.assetType, variationFieldName(st.fieldName, v.index, v.doorway), st.instance);
         return { index: v.index, doorway: v.doorway, copy: v.copy, priorComment: p.comment || null };
       });
-      return reviewVariationStack({ assetType: st.assetType, fieldName: st.fieldName, charMax: st.charMax, variations: options, voiceGuide, briefContext, siblings: st.siblings || [] })
+      return reviewVariationStack({ assetType: st.assetType, fieldName: st.fieldName, charMax: st.charMax, charMin: st.charMin, fieldType: st.fieldType, variations: options, voiceGuide, briefContext, siblings: st.siblings || [] })
         .then((res) => ({ st, res }))
         .catch((err) => {
           console.warn(`[review] variant review failed for ${st.fieldName}: ${err.message}`);

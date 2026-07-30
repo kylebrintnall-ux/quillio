@@ -4223,3 +4223,258 @@ test('reviewUnitKey is the single definition of the review key template', () => 
     assert.ok(!/trim\(\)\.toLowerCase\(\)\}\|\|/.test(src), `${rel} must use reviewUnitKey, not an inline template`);
   }
 });
+
+// --- Asset PLAN expansion (tenantAssetsToSpecs) ------------------------------
+// Was a filter over library rows (≤1 group per row, library sort_order). Now an
+// expansion of an ordered plan into instances, in REQUEST order. Nothing
+// user-facing can ask for count > 1 yet — only a direct pipeline call can.
+
+// Library rows in the shape db/assets.getTenantAssets returns. The bundled
+// default library already has exactly that shape, so use a real slice of it.
+function libRows(names) {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  return names.map((n) => {
+    const a = DEFAULT_ASSETS.find((x) => x.name === n);
+    assert.ok(a, `fixture asset ${n} exists in the default library`);
+    return a;
+  });
+}
+const PLAN_ROWS = () => libRows(['Demand Gen Nurture Email', 'Campaign Landing Page', 'Battle Card']);
+
+test('asset plan: expands counts into instances, in REQUEST order', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  // Battle Card is LAST in library sort_order (30) and Email is 12th — asking for
+  // Battle Card first must put it first.
+  const specs = tenantAssetsToSpecs(PLAN_ROWS(), [
+    { asset: 'Battle Card', count: 1 },
+    { asset: 'Demand Gen Nurture Email', count: 3 },
+    { asset: 'Campaign Landing Page', count: 2 },
+  ]);
+
+  assert.deepStrictEqual(
+    specs.map((s) => [s.assetType, s.instance]),
+    [
+      ['Battle Card', 0],
+      ['Demand Gen Nurture Email', 0],
+      ['Demand Gen Nurture Email', 1],
+      ['Demand Gen Nurture Email', 2],
+      ['Campaign Landing Page', 0],
+      ['Campaign Landing Page', 1],
+    ]
+  );
+  // Field order WITHIN an asset is still the library's, and identical per instance.
+  const emails = specs.filter((s) => s.assetType === 'Demand Gen Nurture Email');
+  assert.deepStrictEqual(emails[0].fields.map((f) => f.fieldName).slice(0, 3), [
+    'Subject Line 1', 'Subject Line 2', 'Preheader',
+  ]);
+  for (const e of emails.slice(1)) {
+    assert.deepStrictEqual(e.fields.map((f) => f.fieldName), emails[0].fields.map((f) => f.fieldName));
+  }
+});
+
+test('asset plan: ordinals count across the WHOLE plan, not per entry', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  // Same asset named by two separate entries — ordinals must continue, not restart.
+  const specs = tenantAssetsToSpecs(PLAN_ROWS(), [
+    { asset: 'Demand Gen Nurture Email', count: 2 },
+    { asset: 'Battle Card', count: 1 },
+    { asset: 'Demand Gen Nurture Email', count: 2 },
+  ]);
+  assert.deepStrictEqual(
+    specs.map((s) => [s.assetType, s.instance]),
+    [
+      ['Demand Gen Nurture Email', 0],
+      ['Demand Gen Nurture Email', 1],
+      ['Battle Card', 0],
+      ['Demand Gen Nurture Email', 2],
+      ['Demand Gen Nurture Email', 3],
+    ]
+  );
+});
+
+test('asset plan: every instance is an INDEPENDENT object (no aliasing)', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const specs = tenantAssetsToSpecs(PLAN_ROWS(), [{ asset: 'Battle Card', count: 2 }]);
+  assert.notStrictEqual(specs[0], specs[1], 'distinct group objects');
+  assert.notStrictEqual(specs[0].fields, specs[1].fields, 'distinct field arrays');
+  assert.notStrictEqual(specs[0].fields[0], specs[1].fields[0], 'distinct field objects');
+  // generateDoc writes asset_direction onto each group in place — must not leak.
+  specs[0].asset_direction = 'only instance 0';
+  specs[0].fields[0].charMax = 1;
+  assert.notStrictEqual(specs[1].asset_direction, 'only instance 0');
+  assert.notStrictEqual(specs[1].fields[0].charMax, 1);
+});
+
+test('asset plan: a bare string[] is still accepted, count 1 each', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const specs = tenantAssetsToSpecs(PLAN_ROWS(), ['Battle Card', 'Demand Gen Nurture Email']);
+  assert.deepStrictEqual(
+    specs.map((s) => [s.assetType, s.instance]),
+    [['Battle Card', 0], ['Demand Gen Nurture Email', 0]]
+  );
+  // Name matching stays case- and dash-insensitive (utils/normalize).
+  assert.deepStrictEqual(
+    tenantAssetsToSpecs(PLAN_ROWS(), ['  battle card  ']).map((s) => s.assetType),
+    ['Battle Card']
+  );
+  // Mixed shapes in one array.
+  assert.deepStrictEqual(
+    tenantAssetsToSpecs(PLAN_ROWS(), ['Battle Card', { asset: 'Battle Card', count: 2 }]).map((s) => s.instance),
+    [0, 1, 2]
+  );
+});
+
+test('asset plan: an EMPTY plan still returns the whole library, in library order', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  // This is the path both adapters rely on for a vague brief with no assets —
+  // NOT the silent fallback removed below.
+  for (const empty of [[], undefined, null, 'nonsense', 42]) {
+    const specs = tenantAssetsToSpecs(DEFAULT_ASSETS, empty);
+    assert.strictEqual(specs.length, 30, `empty plan (${JSON.stringify(empty)}) → whole library`);
+    assert.deepStrictEqual(
+      specs.map((s) => s.assetType),
+      DEFAULT_ASSETS.map((a) => a.name),
+      'library sort_order preserved for the empty plan'
+    );
+    assert.ok(specs.every((s) => s.instance === 0), 'unique library names → all ordinal 0');
+  }
+});
+
+test('asset plan: an unmatched asset FAILS LOUDLY instead of rendering the library', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const rows = PLAN_ROWS();
+
+  // All unmatched — this is the case that used to return all 3 rows silently.
+  assert.throws(
+    () => tenantAssetsToSpecs(rows, ['TikTok Ad', 'Billboard']),
+    (err) => {
+      assert.match(err.message, /not in this tenant's library/);
+      assert.match(err.message, /TikTok Ad/);
+      assert.match(err.message, /Billboard/);
+      assert.match(err.message, /has 3 asset type\(s\)/);
+      return true;
+    }
+  );
+
+  // PARTIALLY unmatched — used to silently drop the miss and build the rest.
+  assert.throws(
+    () => tenantAssetsToSpecs(rows, ['Battle Card', 'TikTok Ad']),
+    /not in this tenant's library: TikTok Ad/
+  );
+
+  // A plan of only matched names is unaffected.
+  assert.strictEqual(tenantAssetsToSpecs(rows, ['Battle Card']).length, 1);
+});
+
+test('asset plan: counts are clamped and the total is capped', () => {
+  const { tenantAssetsToSpecs, normalizeAssetPlan, MAX_INSTANCES_PER_ASSET, MAX_TOTAL_INSTANCES } =
+    require('../src/core/pipeline');
+  assert.strictEqual(MAX_INSTANCES_PER_ASSET, 10);
+  assert.strictEqual(MAX_TOTAL_INSTANCES, 40);
+
+  // Per-asset clamp: never trust the caller's number.
+  const cases = [
+    [999, MAX_INSTANCES_PER_ASSET], [11, MAX_INSTANCES_PER_ASSET], [10, 10], [1, 1],
+    [0, 1], [-5, 1], [null, 1], [undefined, 1], ['3', 3], ['abc', 1], [2.9, 2],
+    // parseInt('Infinity') is NaN, so a non-finite count degrades to 1 rather than
+    // to the ceiling — the safe direction for junk input.
+    [Infinity, 1], [NaN, 1],
+  ];
+  for (const [input, want] of cases) {
+    assert.deepStrictEqual(
+      normalizeAssetPlan([{ asset: 'A', count: input }]),
+      [{ asset: 'A', count: want }],
+      `count ${String(input)} → ${want}`
+    );
+  }
+  // The clamp is enforced in the expansion too, not just the normalizer.
+  assert.strictEqual(
+    tenantAssetsToSpecs(PLAN_ROWS(), [{ asset: 'Battle Card', count: 999 }]).length,
+    MAX_INSTANCES_PER_ASSET
+  );
+
+  // Whole-plan ceiling THROWS (never truncates silently).
+  const rows = PLAN_ROWS();
+  const four = [
+    { asset: 'Battle Card', count: 10 },
+    { asset: 'Demand Gen Nurture Email', count: 10 },
+    { asset: 'Campaign Landing Page', count: 10 },
+    { asset: 'Battle Card', count: 10 },
+  ];
+  assert.strictEqual(tenantAssetsToSpecs(rows, four).length, 40, 'exactly at the ceiling is allowed');
+  assert.throws(
+    () => tenantAssetsToSpecs(rows, [...four, { asset: 'Battle Card', count: 1 }]),
+    /asks for 41 asset instances, above the 40-instance ceiling/
+  );
+
+  // Junk entries are dropped, not guessed at.
+  assert.deepStrictEqual(normalizeAssetPlan([null, '', '   ', {}, { asset: '  ' }, 7, ['x']]), []);
+  // `assetType` is honored as an alias for `asset`.
+  assert.deepStrictEqual(normalizeAssetPlan([{ assetType: 'A', count: 2 }]), [{ asset: 'A', count: 2 }]);
+});
+
+test('asset plan: request order becomes DOCUMENT order, so read-back ordinals agree', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const { appendBody, parseDoc } = require('../src/destinations/googleDocs');
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+
+  const specs = tenantAssetsToSpecs(PLAN_ROWS(), [
+    { asset: 'Battle Card', count: 1 },
+    { asset: 'Demand Gen Nurture Email', count: 2 },
+  ]);
+
+  // The UNTOUCHED writer renders groups in assetSpecs order, so the headings come
+  // out in request order — including two identical 'Demand Gen Nurture Email' ones.
+  const b = new DocBuilder();
+  appendBody(b, { summary: 'S', writerPrompt: 'W', resolvedLinks: [], referenceInsights: [], assetSpecs: specs });
+  const headingOrder = b.text
+    .split('\n')
+    .filter((l) => specs.some((s) => s.assetType === l));
+  assert.deepStrictEqual(headingOrder, ['Battle Card', 'Demand Gen Nurture Email', 'Demand Gen Nurture Email']);
+
+  // parseDoc counts ordinals positionally over those headings. Synthesize a doc
+  // with exactly that heading sequence and confirm it recovers the SAME ordinals
+  // the plan assigned — the write and read sides agree without either knowing
+  // about the other.
+  let startIndex = 1;
+  const content = headingOrder.flatMap((name) => [
+    { text: name, style: 'HEADING_3' },
+    { text: 'Field [10]', bold: true },
+    { text: '' },
+  ]).map((para) => {
+    const raw = para.text + '\n';
+    const endIndex = startIndex + raw.length;
+    const item = {
+      startIndex,
+      endIndex,
+      paragraph: {
+        paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+        elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold } } }],
+      },
+    };
+    startIndex = endIndex;
+    return item;
+  });
+  assert.deepStrictEqual(
+    parseDoc({ body: { content } }).assets.map((a) => [a.assetType, a.instance]),
+    specs.map((s) => [s.assetType, s.instance])
+  );
+});
+
+test('asset plan: nothing user-facing can request count > 1', () => {
+  // The expansion is reachable only by calling the pipeline directly. Neither
+  // adapter builds a plan, and parseBrief still returns a bare string[].
+  const rd = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  for (const p of ['src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/routes/app.js']) {
+    const src = rd(p);
+    // No adapter/route constructs a plan entry: `assets` is passed straight through
+    // from parseBrief as the bare string[] it returns.
+    assert.ok(!/assets:\s*\[?\s*\{/.test(src), `${p} does not build an asset plan object`);
+    assert.ok(!/\bMAX_INSTANCES_PER_ASSET\b|\btenantAssetsToSpecs\b/.test(src), `${p} does not touch the expansion`);
+  }
+  // parseBrief still declares a string[] of assets.
+  assert.ok(/"assets": string\[\]/.test(rd('src/services/gemini.js')), 'parseBrief schema is still string[]');
+  assert.ok(/if \(!assets\.includes\(canonical\)\) assets\.push\(canonical\)/.test(rd('src/services/gemini.js')),
+    'parseBrief still dedupes to one entry per asset name');
+});

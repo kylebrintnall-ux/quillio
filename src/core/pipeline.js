@@ -12,6 +12,7 @@ const {
   describeImage,
 } = require('../services/gemini');
 const { normalize } = require('../utils/normalize');
+const { instanceCounter } = require('../utils/instanceKey');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
 const { getAssetDirections, getTenantAssets } = require('../db/assets');
@@ -651,50 +652,167 @@ async function enrichWithReferences(parsed, refs) {
   return { summary: enriched.summary, writerPrompt: enriched.writerPrompt, referenceInsights };
 }
 
-// Convert a tenant's Postgres asset library (getTenantAssets output) into the
-// exact shape getAssetSpecs returns, so every downstream consumer (createDocument,
-// generateAssetDrafts) is identical regardless of source. Postgres has no
-// channel / toneNotes / funnelStage columns → those map to empty strings (the
-// same value the Sheet yields when those cells are blank). Per-field guidance
-// IS stored (copy_fields.spec_note) and is carried through as `specNote` → the
-// italic note fieldHint() renders under the field label. Per-field spec metadata
-// (`spec_type`, `spec_source`) is also carried through as `specType`/`specSource`
-// — both are RENDERED in the doc by googleDocs.js fieldHint(): spec_type becomes
-// the italic tier sentence under the field label (specTypeLine) and spec_source
-// supplies the platform name plus the clickable citation link (specSourceName).
-// Applies the same filter semantics as getAssetSpecs: restrict to the requested
-// assets (normalized), but return all when the filter is empty or matches nothing.
-function tenantAssetsToSpecs(rows, assetFilter = []) {
-  let result = (rows || [])
-    .map((a) => ({
-      assetType: a.name,
-      channel: '', // not stored in Postgres (Sheet-only)
-      toneNotes: '', // not stored in Postgres (Sheet-only)
-      asset_direction: a.asset_direction || null,
-      fields: (a.fields || []).map((f) => ({
-        fieldName: f.field_name,
-        charMin: parseInt(f.char_min, 10) || 0,
-        charMax: parseInt(f.char_max, 10) || 0,
-        groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
-        specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
-        specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' → tier line under the field label
-        specSource: f.spec_source || null, // provenance → platform name + citation link in the tier line
-        notes: '', // not stored in copy_fields (Sheet-only)
-        funnelStage: '', // not stored in copy_fields (Sheet-only)
-      })),
-    }))
+// === Asset-plan expansion ===
+//
+// Per-asset instance ceiling. The motivating case is "5 nurture emails for 2
+// audiences" = 10, so 10 is the top of the stated use case. Requests above it are
+// CLAMPED (not rejected) and logged, matching the count clamp on scoped variation
+// controls in routes/app.js.
+const MAX_INSTANCES_PER_ASSET = 10;
+
+// Whole-plan ceiling. The largest doc reachable before instances was the full
+// library — 30 groups / 195 fields — and every group costs a Gemini call at draft
+// time, so 40 leaves real headroom for instance work while bounding doc size and
+// cost. Exceeding it THROWS rather than truncating: silently dropping requested
+// instances is the same class of bug as silently adding 29 unrequested assets.
+const MAX_TOTAL_INSTANCES = 40;
+
+// One library row (getTenantAssets output) → the exact shape getAssetSpecs used to
+// return, so every downstream consumer (createDocument, generateAssetDrafts) is
+// identical regardless of source. Postgres has no channel / toneNotes /
+// funnelStage columns → those map to empty strings (the same value the Sheet
+// yielded when those cells were blank). Per-field guidance IS stored
+// (copy_fields.spec_note) and is carried through as `specNote` → the italic note
+// fieldHint() renders under the field label. Per-field spec metadata (`spec_type`,
+// `spec_source`) is also carried through as `specType`/`specSource` — both are
+// RENDERED in the doc by googleDocs.js fieldHint(): spec_type becomes the italic
+// tier sentence under the field label (specTypeLine) and spec_source supplies the
+// platform name plus the clickable citation link (specSourceName).
+function rowToSpecGroup(a) {
+  return {
+    assetType: a.name,
+    channel: '', // not stored in Postgres (Sheet-only)
+    toneNotes: '', // not stored in Postgres (Sheet-only)
+    asset_direction: a.asset_direction || null,
+    fields: (a.fields || []).map((f) => ({
+      fieldName: f.field_name,
+      charMin: parseInt(f.char_min, 10) || 0,
+      charMax: parseInt(f.char_max, 10) || 0,
+      groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
+      specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
+      specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' → tier line under the field label
+      specSource: f.spec_source || null, // provenance → platform name + citation link in the tier line
+      notes: '', // not stored in copy_fields (Sheet-only)
+      funnelStage: '', // not stored in copy_fields (Sheet-only)
+    })),
+  };
+}
+
+// A fresh, fully independent copy of a spec group — fields included. Every emitted
+// instance gets its own objects so nothing downstream can alias two instances
+// together (generateDoc already writes asset_direction onto each group in place).
+function cloneSpecGroup(g) {
+  return { ...g, fields: g.fields.map((f) => ({ ...f })) };
+}
+
+// Coerce the caller's asset request into an ordered plan of { asset, count }.
+// Accepts, in the same array:
+//   'Demand Gen Nurture Email'                       → count 1 (the legacy shape)
+//   { asset: 'Demand Gen Nurture Email', count: 5 }  → count 5
+// `assetType` is honored as an alias for `asset`, since that is the field name
+// used for an asset everywhere else in the codebase.
+// Counts are clamped here — a caller's number is never trusted.
+function normalizeAssetPlan(assetsOrPlan) {
+  const plan = [];
+  for (const entry of Array.isArray(assetsOrPlan) ? assetsOrPlan : []) {
+    if (entry == null) continue;
+    if (typeof entry === 'string') {
+      const asset = entry.trim();
+      if (asset) plan.push({ asset, count: 1 });
+      continue;
+    }
+    if (typeof entry !== 'object') continue;
+    const asset = String(entry.asset || entry.assetType || '').trim();
+    if (!asset) continue;
+    const requested = parseInt(entry.count, 10);
+    const count = Math.max(1, Math.min(MAX_INSTANCES_PER_ASSET, requested || 1));
+    if (Number.isFinite(requested) && requested > MAX_INSTANCES_PER_ASSET) {
+      console.warn(
+        `[pipeline] asset plan: "${asset}" requested ${requested} instances — clamped to ${MAX_INSTANCES_PER_ASSET}`
+      );
+    }
+    plan.push({ asset, count });
+  }
+  return plan;
+}
+
+// Expand an asset PLAN into spec groups, in REQUEST ORDER.
+//
+// This used to be a filter over the library: it kept the rows whose names matched
+// and emitted them in the library's own sort_order, so at most one group per row
+// and the brief's ordering was discarded. It now looks each named row up once and
+// emits `count` groups for it, in the order the plan asked for them. Field order
+// WITHIN a group is still the library's (copy_fields.sort_order, as read).
+//
+// Each emitted group carries `instance`: its 0-based ordinal among groups with the
+// same asset name, counted across the WHOLE plan. Because appendBody renders
+// groups in this order, document order equals request order, so parseDoc's
+// positional ordinals (assigned per repeated HEADING_3) come out identical — the
+// write and read sides agree without either knowing about the other.
+//
+// An EMPTY plan still returns the entire library in library order. That is a real
+// dependency, not the fallback being removed here: both adapters deliberately let
+// a vague brief with no assets through to "all assets"
+// (adapters/slackWorkflow.js, adapters/web.js — each refuses only when the brief
+// named assets and NONE matched).
+//
+// A NON-EMPTY plan naming anything the library doesn't have now THROWS. Previously
+// an all-unmatched filter fell through to the whole library, and a partially
+// matched one silently dropped the misses — both produced a plausible-looking doc
+// that answered a different question than the one asked.
+function tenantAssetsToSpecs(rows, assetsOrPlan = []) {
+  const groups = (rows || [])
+    .map(rowToSpecGroup)
     // getAssetSpecs never emits an asset with zero fields — match that.
     .filter((g) => g.fields.length > 0);
 
-  if (Array.isArray(assetFilter) && assetFilter.length > 0) {
-    const wanted = new Set(assetFilter.map(normalize));
-    const filtered = result.filter((g) => wanted.has(normalize(g.assetType)));
-    if (filtered.length > 0) result = filtered;
+  const plan = normalizeAssetPlan(assetsOrPlan);
+
+  // Empty plan → the whole library, library order. Deliberately does NOT go
+  // through the name lookup below: asset_types has no UNIQUE (tenant_id, name),
+  // so a double-seeded library has two rows with one name and both should still
+  // render (they get ordinals 0 and 1 rather than colliding).
+  if (plan.length === 0) {
+    const ordinal = instanceCounter();
+    return groups.map((g) => ({ ...cloneSpecGroup(g), instance: ordinal(g.assetType) }));
   }
-  return result;
+
+  // One pass to build the lookup — each named row is resolved once, not per
+  // instance. First row wins for a duplicated name.
+  const byName = new Map();
+  for (const g of groups) {
+    const key = normalize(g.assetType);
+    if (!byName.has(key)) byName.set(key, g);
+  }
+
+  const unmatched = plan.map((p) => p.asset).filter((asset) => !byName.has(normalize(asset)));
+  if (unmatched.length > 0) {
+    throw new Error(
+      `These assets are not in this tenant's library: ${unmatched.join(', ')}. ` +
+        `The library has ${byName.size} asset type(s). Add them to the library, or request different assets.`
+    );
+  }
+
+  const totalInstances = plan.reduce((n, p) => n + p.count, 0);
+  if (totalInstances > MAX_TOTAL_INSTANCES) {
+    throw new Error(
+      `Asset plan asks for ${totalInstances} asset instances, above the ${MAX_TOTAL_INSTANCES}-instance ceiling. ` +
+        'Split this into more than one brief.'
+    );
+  }
+
+  const ordinal = instanceCounter();
+  const out = [];
+  for (const { asset, count } of plan) {
+    const template = byName.get(normalize(asset));
+    for (let i = 0; i < count; i += 1) {
+      out.push({ ...cloneSpecGroup(template), instance: ordinal(template.assetType) });
+    }
+  }
+  return out;
 }
 
-// Read + filter asset specs, create the campaign project folder (+ empty Assets
+// Expand the asset plan into specs, create the campaign project folder (+ empty Assets
 // subfolder) inside the target folder, and build the formatted document inside
 // it. Returns { doc, assetSpecs, projectFolderUrl }. Throws createDocument
 // errors so the caller can classify them (e.g. folder-access recovery).
@@ -714,13 +832,15 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) 
         'Ensure DATABASE_URL is set and the tenant has been seeded (asset_types/copy_fields).'
     );
   }
+  // `spec.assets` is an asset PLAN: a bare string[] (each name once) or entries of
+  // { asset, count }. Expanded in request order; throws on an unmatched name.
   const assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets);
   console.log('[pipeline] asset specs source: postgres');
   console.log(
     '[workflow] asset specs read OK —',
     assetSpecs.length,
     'asset group(s):',
-    JSON.stringify(assetSpecs.map((a) => a.assetType))
+    JSON.stringify(assetSpecs.map((a) => (a.instance ? `${a.assetType}#i${a.instance}` : a.assetType)))
   );
 
   // asset_direction comes from Postgres regardless of spec source. Best-effort:
@@ -964,4 +1084,10 @@ module.exports = {
   extractCanvasId,
   isFolderAccessError,
   getServiceAccountEmail,
+  // Asset-plan expansion. Exported for unit tests (and so the ceilings are
+  // assertable) — generateDoc is its only production caller.
+  tenantAssetsToSpecs,
+  normalizeAssetPlan,
+  MAX_INSTANCES_PER_ASSET,
+  MAX_TOTAL_INSTANCES,
 };

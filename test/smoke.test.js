@@ -7864,3 +7864,152 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
   // Amber — a fact to weigh, not an error that blocked the write.
   assert.match(html, /\.msg\.warn\s*\{[^}]*--warn/);
 });
+
+// --- Asset-library uniqueness (scripts/migrateAddAssetUniqueness.js) ---------
+// There is no UNIQUE constraint on asset_types (tenant_id, name) or copy_fields
+// (asset_type_id, field_name), and duplicates do not fail loudly — they resolve
+// four different ways (pipeline takes the FIRST row, getAssetDirections the LAST,
+// copyReview's fieldKey and googleDocs' ctxKey collapse a repeated field name
+// onto one key). The migration adds the constraint; these tests pin the parts of
+// it that can be checked without a database.
+
+test('normalizer convergence: one definition, not three', () => {
+  const assets = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const gemini = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+
+  // Neither file may re-declare a normalizer of its own any more.
+  assert.ok(!/function normName\s*\(/.test(assets), 'db/assets.js no longer defines its own normName');
+  assert.match(assets, /require\('\.\.\/utils\/normalize'\)/, 'db/assets.js takes the shared one');
+  assert.ok(
+    !/const normalize = \(s\) =>/.test(gemini),
+    'gemini.js no longer defines a local normalize inside parseBrief'
+  );
+  assert.match(gemini, /require\('\.\.\/utils\/normalize'\)/, 'gemini.js takes the shared one');
+});
+
+test('normalizer convergence: no allowed asset name collides under the shared fold', () => {
+  const { normalize } = require('../src/utils/normalize');
+  const { ALLOWED_ASSETS } = require('../src/config');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  // If two allowed names folded together, parseBrief's canonicalByNorm would
+  // silently drop one — and the unique index would refuse to build at all.
+  const seen = new Map();
+  for (const n of ALLOWED_ASSETS) {
+    const k = normalize(n);
+    assert.ok(!seen.has(k), `"${n}" and "${seen.get(k)}" both normalize to "${k}"`);
+    seen.set(k, n);
+  }
+  assert.strictEqual(seen.size, ALLOWED_ASSETS.length);
+});
+
+test('the bundled library can actually satisfy the unique index', () => {
+  // The precondition for the migration: seedTenantAssets must not itself create
+  // a conflict. A duplicate introduced into defaultAssets.js would make the
+  // migration refuse for EVERY tenant, so this fails CI instead.
+  const { normalize } = require('../src/utils/normalize');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  const names = new Map();
+  for (const a of DEFAULT_ASSETS) {
+    const k = normalize(a.name);
+    assert.ok(!names.has(k), `asset "${a.name}" and "${names.get(k)}" both normalize to "${k}"`);
+    names.set(k, a.name);
+  }
+  // And no asset may carry two fields whose names fold together.
+  for (const a of DEFAULT_ASSETS) {
+    const fields = new Map();
+    for (const f of a.fields) {
+      const k = normalize(f.field_name);
+      assert.ok(
+        !fields.has(k),
+        `${a.name}: fields "${f.field_name}" and "${fields.get(k)}" both normalize to "${k}"`
+      );
+      fields.set(k, f.field_name);
+    }
+  }
+});
+
+test('gemini parse matching got MORE tolerant, and stayed collision-free', () => {
+  const { normalize } = require('../src/utils/normalize');
+  // The local normalizer folded dashes but kept the spaces around them, so an
+  // em dash written WITHOUT spaces missed. The shared one matches it.
+  assert.strictEqual(normalize('Direct Mail—Box / Mailer'), normalize('Direct Mail — Box / Mailer'));
+  assert.strictEqual(normalize('Direct Mail - Box / Mailer'), normalize('Direct Mail — Box / Mailer'));
+  assert.strictEqual(normalize('direct mail  —  box / mailer'), normalize('Direct Mail — Box / Mailer'));
+  // Still distinguishes genuinely different assets.
+  assert.notStrictEqual(normalize('One-Pager'), normalize('Battle Card'));
+  assert.notStrictEqual(
+    normalize('LinkedIn Single Image Ad — Variant A'),
+    normalize('LinkedIn Single Image Ad — Variant B')
+  );
+});
+
+test('migration SQL character classes are DERIVED from the JS regexes, not retyped', () => {
+  // The drift guard. The index must fold exactly what utils/normalize folds; if
+  // a future edit changes either JS class, these recomputed strings stop
+  // matching the migration's constants and CI fails instead of the index
+  // quietly disagreeing with the pipeline.
+  const { WS, DASH } = require('../scripts/migrateAddAssetUniqueness');
+
+  const esc = (c) => '\\u' + c.toString(16).toLowerCase().padStart(4, '0');
+  const classFor = (re) => {
+    const cps = [];
+    for (let c = 0; c <= 0xffff; c += 1) if (re.test(String.fromCodePoint(c))) cps.push(c);
+    const parts = [];
+    let i = 0;
+    while (i < cps.length) {
+      let j = i;
+      while (j + 1 < cps.length && cps[j + 1] === cps[j] + 1) j += 1;
+      parts.push(j - i >= 2 ? `${esc(cps[i])}-${esc(cps[j])}` : cps.slice(i, j + 1).map(esc).join(''));
+      i = j + 1;
+    }
+    return parts.join('');
+  };
+
+  assert.strictEqual(WS, classFor(/\s/), 'WS class still equals every character JS \\s matches');
+  assert.strictEqual(DASH, classFor(/[‐-―−]/), 'DASH class still equals the normalize() dash set');
+
+  // Postgres \s is locale-dependent and does NOT match U+00A0, so using it would
+  // make the index LAXER than the pipeline. The class must stay spelled out.
+  assert.ok(WS.includes('\\u00a0'), 'the whitespace class covers NBSP explicitly');
+  const { NORMALIZE_SQL } = require('../scripts/migrateAddAssetUniqueness');
+  assert.ok(!/\\\\s/.test(NORMALIZE_SQL), 'the SQL never falls back to Postgres \\s');
+});
+
+test('migration SQL mirrors normalize() step for step, in order', () => {
+  const { NORMALIZE_SQL, CREATE_FUNCTION_SQL } = require('../scripts/migrateAddAssetUniqueness');
+  // lower → fold dashes → drop spaces around hyphens → collapse runs → trim.
+  // The order is load-bearing: dropping spaces around hyphens BEFORE collapsing
+  // runs is what turns 'A  —  B' into 'a-b' rather than 'a - b'.
+  const dashAt = NORMALIZE_SQL.indexOf("'-', 'g'");
+  const collapseAt = NORMALIZE_SQL.indexOf("' ', 'g'");
+  assert.ok(NORMALIZE_SQL.includes('lower(coalesce($1'), 'lowercases first, null-safe like String(s || "")');
+  assert.ok(dashAt > 0 && collapseAt > dashAt, 'dash/hyphen folding happens before whitespace collapsing');
+  assert.ok(NORMALIZE_SQL.includes("btrim("), 'and trims last');
+  // The index expression needs an IMMUTABLE function or Postgres refuses it.
+  assert.match(CREATE_FUNCTION_SQL, /IMMUTABLE/);
+  assert.match(CREATE_FUNCTION_SQL, /quillio_normalize_name/);
+});
+
+test('migration is dry-run by default, refuses on conflict, and never auto-resolves', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateAddAssetUniqueness.js'),
+    'utf8'
+  );
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/, 'writes are opt-in');
+  assert.match(src, /REFUSING TO CREATE THE INDEXES/, 'a conflict stops the run');
+  assert.match(src, /process\.exit\(refused \? 2 : 0\)/, 'and exits non-zero so a pipeline notices');
+  // Everything is one transaction, so a refusal leaves no function and no index.
+  assert.match(src, /await client\.query\('BEGIN'\)/);
+  // It must not delete, rename or otherwise pick a winner among duplicates.
+  assert.ok(!/DELETE FROM asset_types|UPDATE asset_types SET name/.test(src), 'never resolves a conflict itself');
+
+  const { INDEXES } = require('../scripts/migrateAddAssetUniqueness');
+  assert.strictEqual(INDEXES.length, 2);
+  assert.ok(INDEXES.every((i) => /CREATE UNIQUE INDEX IF NOT EXISTS/.test(i.sql)), 're-runnable');
+  // Both nullable owner columns are coalesced — a unique index treats NULLs as
+  // distinct, so two orphan rows sharing a name would otherwise slip through.
+  assert.match(INDEXES[0].sql, /coalesce\(tenant_id, ''\)/);
+  assert.match(INDEXES[1].sql, /coalesce\(asset_type_id, -1\)/);
+});

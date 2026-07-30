@@ -234,8 +234,31 @@ function specSourceName(specSource) {
   if (s.includes('twitter') || s.includes('x.com')) return 'X';
   if (s.includes('google') || s.includes('dv360') || s.includes('doubleclick')) return 'Google';
   if (s.includes('instagram')) return 'Instagram';
+  if (s.includes('constantcontact')) return 'Constant Contact';
   return null; // unrecognized → no source name (never print the raw value)
 }
+
+// What a RESEARCH source actually measured, and what it found — for the sources
+// that are studies rather than platform spec pages.
+//
+// A platform spec page needs no qualifier: "Recommended by Meta" is unambiguous
+// because Meta is describing its own product. A research finding is not. Constant
+// Contact's number comes from small-business campaigns, and a writer deciding
+// whether to apply it to a B2B nurture email needs to know that before they trust
+// it. Stating the population is the difference between a citation and an appeal to
+// authority.
+//
+// `scope` goes in parentheses after the name; `finding` replaces the generic
+// "Not a hard limit — adjust for your brand and goal." A source with no entry here
+// renders exactly as it did before, so every platform line is unchanged.
+const SPEC_SOURCE_DETAIL = {
+  'https://www.constantcontact.com/blog/best-length-email-newsletter/': {
+    // 2.1 million CUSTOMERS, not emails — the distinction matters, because a
+    // per-customer figure says nothing about how many campaigns are behind it.
+    scope: '2.1M customers, small-business campaigns',
+    finding: 'Longer bodies click less.',
+  },
+};
 
 // Render-only citation links for hand-written spec_notes. Some notes end in a
 // plain-text source credit like "(Litmus)"; this maps a note to the specific
@@ -264,7 +287,7 @@ const NOTE_SOURCE_LINKS = [
 // "by name" clause only appears once a real spec_source resolves to a platform
 // name (see specSourceName); until then enforced/recommended render without naming
 // a source — so nothing bogus (e.g. 'quillio_default') is shown.
-function specTypeLine(specType, sourceName) {
+function specTypeLine(specType, sourceName, detail) {
   if (specType === 'enforced') {
     if (sourceName) {
       const prefix = 'Platform limit (';
@@ -279,8 +302,14 @@ function specTypeLine(specType, sourceName) {
   if (specType === 'recommended') {
     if (sourceName) {
       const prefix = 'Recommended by ';
+      // A research source names its population and its finding; a platform source
+      // has neither and falls through to the wording it has always produced.
+      const scope = detail && detail.scope ? ` (${detail.scope})` : '';
+      const tail = detail && detail.finding
+        ? ` ${detail.finding}`
+        : ' Not a hard limit — adjust for your brand and goal.';
       return {
-        text: `${prefix}${sourceName}. Not a hard limit — adjust for your brand and goal.`,
+        text: `${prefix}${sourceName}${scope}.${tail}`,
         nameStart: prefix.length,
         nameLen: sourceName.length,
       };
@@ -310,7 +339,9 @@ function specTypeLine(specType, sourceName) {
 // within that one paragraph, so the notes-branch still consumes it whole.
 function fieldHint(field) {
   const note = field && field.specNote != null ? String(field.specNote).trim() : '';
-  const tier = field ? specTypeLine(field.specType, specSourceName(field.specSource)) : null;
+  const tier = field
+    ? specTypeLine(field.specType, specSourceName(field.specSource), SPEC_SOURCE_DETAIL[field.specSource])
+    : null;
   const parts = [note, tier && tier.text].filter(Boolean);
   if (!parts.length) return null;
   const text = parts.join(' ');

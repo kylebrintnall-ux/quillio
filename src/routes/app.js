@@ -22,6 +22,7 @@ const {
   runWebReview,
 } = require('../adapters/web');
 const { getTenantAssets } = require('../db/assets');
+const { MAX_TOTAL_INSTANCES } = require('../core/pipeline');
 const {
   putPending,
   getPending,
@@ -85,6 +86,34 @@ function safeFileRefs(refs) {
       filename: String(f.filename || 'attachment'),
       mimetype: String(f.mimetype || ''),
     }));
+}
+
+// --- Scoped-field instance ordinal ---
+//
+// A doc can hold several instances of one asset, whose fields are identically
+// named, so a scoped draft/review target is only unambiguous with the instance
+// ordinal attached. Both consumers already key on it —
+// googleDocs.generateDraft builds its scopeKeys from
+// `ctxKey(assetType, fieldName, instance)`, and copyReview's `inScope` uses the
+// same composite — but the two sanitizers below used to drop the field, so the
+// ordinal never survived the HTTP boundary.
+//
+// Dropping it did NOT fail loudly. An absent ordinal serializes to nothing, and
+// so does 0 (the backward-compatibility rule in utils/instanceKey), so a request
+// naming instance 2 silently matched INSTANCE 0 — a user selecting the Chicago
+// email got the Austin one rewritten, with no error anywhere.
+//
+// Client-supplied, so never trusted:
+//   - anything non-finite (absent, null, '', 'abc', NaN, Infinity) → 0, which is
+//     exactly the pre-instance behavior every older client depends on;
+//   - clamped to 0..MAX_TOTAL_INSTANCES-1, since no doc can hold more instances
+//     than the whole-plan ceiling allows. An in-range ordinal with no matching
+//     asset simply matches nothing and that field is skipped — the right failure,
+//     and better than a huge number quietly landing on instance 0.
+function scopedInstance(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(MAX_TOTAL_INSTANCES - 1, n));
 }
 
 // In-memory async job store (Week 12). Brief runs (~30-90s) and draft runs
@@ -361,7 +390,7 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
   }
 
   // Optional scoping: only draft the named fields (selective generate/regen).
-  // Sanitize to [{assetType, fieldName}] strings; empty/absent → whole doc.
+  // Sanitize to [{assetType, instance, fieldName}]; empty/absent → whole doc.
   // count (1–4) and distance (close|explore|wide) are the optional per-field
   // variation controls (Phase 2/3); absent/invalid → 1 / 'close' = Phase-1.
   const scopedFields = Array.isArray(body.scopedFields)
@@ -369,6 +398,9 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
         .filter((f) => f && typeof f.assetType === 'string' && typeof f.fieldName === 'string')
         .map((f) => ({
           assetType: f.assetType,
+          // Which of several same-named assets this field belongs to (see
+          // scopedInstance). Absent → 0, so an older client is unaffected.
+          instance: scopedInstance(f.instance),
           fieldName: f.fieldName,
           count: Math.max(1, Math.min(4, parseInt(f.count, 10) || 1)),
           distance: ['close', 'explore', 'wide'].includes(f.distance) ? f.distance : 'close',
@@ -422,11 +454,13 @@ router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
     return res.status(400).json({ success: false, error: 'docId is required' });
   }
   // Optional scoping: review only the named fields (with asset context). Sanitize
-  // to [{assetType, fieldName}]; empty/absent → whole-doc review, exactly as today.
+  // to [{assetType, instance, fieldName}]; empty/absent → whole-doc review, exactly
+  // as today. copyReview's inScope keys on the instance the same way generateDraft
+  // does, so the ordinal has to survive this map or it targets instance 0.
   const scopedFields = Array.isArray(body.scopedFields)
     ? body.scopedFields
         .filter((f) => f && typeof f.assetType === 'string' && typeof f.fieldName === 'string')
-        .map((f) => ({ assetType: f.assetType, fieldName: f.fieldName }))
+        .map((f) => ({ assetType: f.assetType, instance: scopedInstance(f.instance), fieldName: f.fieldName }))
         .slice(0, 200)
     : null;
   const scoped = scopedFields && scopedFields.length > 0;

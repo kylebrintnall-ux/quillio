@@ -434,7 +434,14 @@
     #progress-back { width: 100%; max-width: 360px; margin-top: 10px; }
 
     /* ── OUTPUT (v8) ── */
+    /* Screens whose last child is an .output-ctas bar must reserve room for it:
+       that bar is position:fixed at the bottom (see .output-ctas below), so it
+       floats OVER the end of the page instead of taking up flow space. Without
+       this padding the final ~150px of content sits under the bar permanently —
+       the page has nothing left to scroll, so it can never be brought into view.
+       150px ≈ the bar's two buttons (17px padding each) plus its 14/28px padding. */
     #screen-output { padding-bottom: 150px; }
+    #screen-confirm { padding-bottom: 150px; }
     .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
     .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--ink); letter-spacing: 0.02em; flex: 1; margin: 0; }
     .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
@@ -1722,7 +1729,29 @@
       }
     }
 
+    // Message shown when this shell is behind the live deploy. Reload is the fix —
+    // /app is served no-store, so a normal reload picks up the new HTML.
+    var STALE_MSG = 'This page is running an older version of Quillio. Reload and run the brief again.';
+
     function renderOutput(data) {
+      // GUARD: only ever render a payload that is actually a BUILT DOC.
+      //
+      // A confirmation payload ({ needsConfirmation, pendingId, interpretation })
+      // has no docUrl and keeps its title/summary/plan nested under
+      // `interpretation`, so rendering it produced a screen that LOOKED fine —
+      // "Campaign", em-dashes for every field, no asset cards — with an enabled
+      // draft button that could only ever answer "No document to draft." That is
+      // what a stale shell did tonight: an old shell has no needsConfirmation
+      // branch, so the pause payload fell straight through to here.
+      //
+      // Throwing hands this to the caller's catch, which surfaces it via
+      // failBriefBar with a Back button — a dead end that says why beats a dead
+      // end that looks like a result.
+      if (data && data.needsConfirmation) throw new Error(STALE_MSG);
+      // No doc id means every action on this screen is inert (draft, open, riff),
+      // so an empty output screen is never the right outcome either.
+      if (!data || !data.docUrl) throw new Error('That run didn’t come back with a document. Please try again.');
+
       state.docUrl = data.docUrl || null;
       state.docId = docIdFromUrl(data.docUrl);
       state.projectId = data.projectId != null ? data.projectId : null;
@@ -1842,6 +1871,14 @@
       var briefText = briefEl.value.trim();
       clearError(briefError);
       if (!briefText) { showError(briefError, 'Add a brief first.'); return; }
+
+      // Re-check the deploy before spending a brief on it. A tab open across a
+      // deploy is running HTML that may not understand what the new server
+      // returns — which is how tonight's empty output screen happened. Stop here
+      // rather than after a 30-90s job: the brief text stays in the box, the
+      // banner is already up, and a reload costs nothing. An inconclusive check
+      // (offline, /health down) resolves false and never blocks a run.
+      if (await checkShellFresh()) { showError(briefError, STALE_MSG); return; }
 
       // Estimate: base 8s + links×5 + files×8 + assets×4. Assets are unknown
       // until the brief is parsed server-side, so default to 3.
@@ -2978,21 +3015,34 @@
     // the live deploy (/health) reports a DIFFERENT commit, this HTML is a stale
     // copy an edge cache is still serving — surface a reload banner so the user is
     // never silently stuck on old UI (e.g. a missing Review Copy button).
+    //
+    // This used to run ONCE, on load. A tab opened BEFORE a deploy and used after
+    // it therefore never re-checked: the banner never appeared, and the shell went
+    // on talking to a newer server. That is how a brief that should have paused for
+    // confirmation rendered an empty output screen instead. It is now a reusable
+    // function, called on load AND again before every brief run (see runBrief).
     var APP_BUILD = '__BUILD__';
-    (function checkShellFresh() {
-      fetch('/health', { cache: 'no-store' })
+
+    // Resolves true when this shell is DEFINITELY behind the live deploy, false in
+    // every other case — including when the check itself fails. A network blip must
+    // never block a brief, so uncertainty always resolves to "not stale".
+    function checkShellFresh() {
+      return fetch('/health', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (h) {
           var live = h && h.commit;
           window.LIVE_COMMIT = live || '?';
           console.log('[app] shell build=' + APP_BUILD + ' live deploy=' + live);
-          if (live && live !== 'unknown' && APP_BUILD !== '__BUILD' + '__' && live !== APP_BUILD) {
+          var stale = !!(live && live !== 'unknown' && APP_BUILD !== '__BUILD' + '__' && live !== APP_BUILD);
+          if (stale) {
             var b = document.getElementById('stale-shell-banner');
             if (b) b.style.display = 'block';
           }
+          return stale;
         })
-        .catch(function () {});
-    })();
+        .catch(function () { return false; });
+    }
+    checkShellFresh();
   </script>
 </body>
 </html>

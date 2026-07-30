@@ -30,6 +30,9 @@
 //   5. PROMOTE — Organic Social — Twitter/X "Post Copy" 280 from an uncited house
 //      default to 'enforced' citing X's spec page. 280 is a hard cap on an organic
 //      post exactly as it is on a paid one.
+//   6. FIELD_NOTES — the LinkedIn Carousel card headlines gain a note saying the
+//      45 applies to a destination-URL carousel and that a Lead Gen Form CTA caps
+//      them at 30. A conditional limit the label cannot express.
 //
 // SCOPE: every tenant, matched by (asset_types.name, copy_fields.field_name) — the
 // same cross-tenant, match-by-name pattern services/specReview.js uses. Asset and
@@ -124,7 +127,7 @@ const SOURCE_URLS = {
   'LinkedIn Single Image Ad':
     'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
   'LinkedIn Carousel Ad':
-    'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads-specs',
+    'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs',
   'Twitter/X Ad': 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
   'Organic Social — Twitter/X': 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
   'Google Responsive Display Ad': 'https://support.google.com/google-ads/answer/17090561',
@@ -132,6 +135,26 @@ const SOURCE_URLS = {
 
 // --- 4. Asset rename ----------------------------------------------------------
 const RENAME = { from: 'Google DV360 / Responsive Display', to: 'Google Responsive Display Ad' };
+
+// --- 6. Field notes -----------------------------------------------------------
+// LinkedIn's 45-character carousel card headline is CONDITIONAL: it holds for a
+// carousel driving to a destination URL, but a carousel whose CTA opens a Lead Gen
+// Form caps its cards at 30. The label can only carry one number, so the note
+// carries the other — otherwise a writer building a Lead Gen carousel writes to 45
+// and is silently 15 characters over.
+//
+// Kept BYTE-IDENTICAL to LINKEDIN_CAROUSEL_CARD_NOTE in
+// src/data/defaultAssets.js (a smoke test asserts it).
+const CARD_HEADLINE_NOTE =
+  'Applies to carousels driving to a destination URL; with a Lead Gen Form CTA the cap is 30.';
+
+// [assetName, fieldName, note]. Per-asset-pair, never a bare field_name sweep:
+// "Card N Headline" also exists on Meta Carousel Ad, where this caveat is false.
+const FIELD_NOTES = [1, 2, 3, 4, 5].map((n) => [
+  'LinkedIn Carousel Ad',
+  `Card ${n} Headline`,
+  CARD_HEADLINE_NOTE,
+]);
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -256,6 +279,25 @@ async function main() {
     }
     console.log(`${TAG} repointed ${sources} spec_source value(s)`);
 
+    // --- 6. FIELD NOTES. Non-clobbering: only rows with no note are touched, so a
+    //        hand-written note already on a field is never overwritten and a re-run
+    //        changes nothing.
+    let notes = 0;
+    for (const [asset, field, note] of FIELD_NOTES) {
+      const r = await client.query(
+        `UPDATE copy_fields cf
+            SET spec_note = $3
+           FROM asset_types at
+          WHERE cf.asset_type_id = at.id
+            AND at.name = $1 AND cf.field_name = $2
+            AND cf.spec_note IS NULL`,
+        [asset, field, note]
+      );
+      if (r.rowCount) console.log(`${TAG}   note ${asset} / ${field}: ${r.rowCount} row(s)`);
+      notes += r.rowCount;
+    }
+    console.log(`${TAG} added ${notes} field note(s)`);
+
     // Post-state, so the operator sees the shape rather than only the deltas.
     const after = await client.query(
       `SELECT spec_type, COUNT(*)::int AS n FROM copy_fields GROUP BY spec_type ORDER BY spec_type`
@@ -287,4 +329,7 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { RETIER, PROMOTE, CHAR_FIXES, SUBJECT_BANDS, PREHEADER_BAND, SOURCE_URLS, RENAME };
+module.exports = {
+  RETIER, PROMOTE, CHAR_FIXES, SUBJECT_BANDS, PREHEADER_BAND, SOURCE_URLS, RENAME,
+  CARD_HEADLINE_NOTE, FIELD_NOTES,
+};

@@ -361,6 +361,24 @@ const HOOK_SPEC_NOTE =
 // BYTE-IDENTICAL to NOTE in scripts/migrateFixLinkedInIntroText.js.
 const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150; 600 is the technical max.';
 
+// LinkedIn Carousel Ad → Card N Headline note. The 45 in the label is CONDITIONAL:
+// it holds for a carousel driving to a destination URL, but a carousel whose CTA
+// opens a Lead Gen Form caps its cards at 30. One field, two limits, and the label
+// can only carry one number — so the note carries the other. Applied to all five
+// card headlines. BYTE-IDENTICAL to CARD_HEADLINE_NOTE in
+// scripts/migrateSpecIntegrityFixes.js.
+const LINKEDIN_CAROUSEL_CARD_NOTE =
+  'Applies to carousels driving to a destination URL; with a Lead Gen Form CTA the cap is 30.';
+
+// The five LinkedIn Carousel card-headline fields that carry the note above.
+const LINKEDIN_CAROUSEL_CARD_FIELDS = new Set([
+  'Card 1 Headline',
+  'Card 2 Headline',
+  'Card 3 Headline',
+  'Card 4 Headline',
+  'Card 5 Headline',
+]);
+
 // Email mobile-truncation notes. Subject Lines cap at 40 (cold outreach) or 130
 // (opt-in) with NO minimum, and Preheaders run 85–100, but mobile inboxes clip far
 // earlier (Litmus) — these tell the writer to front-load. Applied to Subject Line
@@ -383,12 +401,16 @@ const EMAIL_NOTE_ASSETS = new Set([
 ]);
 
 // Resolve a field's spec_note, keyed on (assetName, fieldName): the LinkedIn SIA
-// Intro Text explainer for that exact pair; the mobile-truncation note for email
+// Intro Text explainer for that exact pair; the Lead-Gen-Form caveat for the
+// LinkedIn Carousel card headlines; the mobile-truncation note for email
 // Subject Line 1/2 and Preheader; else the visible-then-"…more" Hook explainer
 // for any Hook field (mirrors the migration's `field_name ~* '^Hook\y'` match).
 // Byte-identical to the corresponding migrations so seed and backfill agree.
 function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'LinkedIn Single Image Ad' && fieldName === 'Intro Text') return LINKEDIN_SIA_INTRO_NOTE;
+  if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
+    return LINKEDIN_CAROUSEL_CARD_NOTE;
+  }
   if (EMAIL_NOTE_ASSETS.has(assetName)) {
     if (fieldName === 'Subject Line 1' || fieldName === 'Subject Line 2') return EMAIL_SUBJECT_NOTE;
     if (fieldName === 'Preheader') return EMAIL_PREHEADER_NOTE;
@@ -477,7 +499,7 @@ const SPEC_SOURCE_URLS = {
   'LinkedIn Single Image Ad':
     'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
   'LinkedIn Carousel Ad':
-    'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads-specs',
+    'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs',
   'Twitter/X Ad': 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
   // The organic X post cites the same X page as the paid asset — one platform, one
   // 280-character cap.

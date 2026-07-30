@@ -679,7 +679,7 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     const f = DEFAULT_ASSETS.find((x) => x.name === asset).fields.find((x) => x.field_name === field);
     return f.spec_source;
   };
-  assert.match(urlOf('LinkedIn Carousel Ad', 'Card 1 Headline'), /carousel-ads-specs$/,
+  assert.match(urlOf('LinkedIn Carousel Ad', 'Card 1 Headline'), /\/carousel-ads\/specs$/,
     'LinkedIn Carousel cites the CAROUSEL page');
   assert.notStrictEqual(
     urlOf('LinkedIn Carousel Ad', 'Card 1 Headline'),
@@ -6858,9 +6858,9 @@ test('spec integrity: the migration is idempotent-by-construction and dry-run by
   // Every UPDATE is conditioned so a re-run writes nothing — that is what makes it
   // idempotent, rather than a claim in a comment.
   const updates = src.match(/UPDATE copy_fields cf[\s\S]*?`/g) || [];
-  assert.strictEqual(updates.length, 4, 'four copy_fields updates: retier, promote, bands, sources');
+  assert.strictEqual(updates.length, 5, 'five copy_fields updates: retier, promote, bands, sources, notes');
   for (const u of updates) {
-    assert.ok(/IS DISTINCT FROM|spec_type = 'house_default'/.test(u),
+    assert.ok(/IS DISTINCT FROM|spec_type = 'house_default'|spec_note IS NULL/.test(u),
       `each update is guarded against re-writing the same value:\n${u.slice(0, 120)}`);
   }
   // It matches by NAME across all tenants, never by id — the specReview.js pattern.
@@ -6916,4 +6916,78 @@ test('spec integrity: the seed and the migration agree on every band, both direc
   }
   assert.deepStrictEqual([...seedCiting].sort(), Object.keys(SOURCE_URLS).sort(),
     'the seed cites exactly the assets the migration repoints');
+});
+
+test('spec integrity: the LinkedIn carousel note renders BESIDE the tier line, not instead of it', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { fieldHint, fieldLabel } = require('../src/destinations/googleDocs');
+  const { CARD_HEADLINE_NOTE, FIELD_NOTES, SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
+
+  const CAROUSEL_URL = 'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs';
+  assert.strictEqual(SOURCE_URLS['LinkedIn Carousel Ad'], CAROUSEL_URL, 'the corrected carousel URL');
+
+  const carousel = DEFAULT_ASSETS.find((a) => a.name === 'LinkedIn Carousel Ad');
+  const cards = carousel.fields.filter((f) => /^Card \d Headline$/.test(f.field_name));
+  assert.strictEqual(cards.length, 5, 'five card headlines');
+
+  for (const f of cards) {
+    // Seed note is byte-identical to the migration's.
+    assert.strictEqual(f.spec_note, CARD_HEADLINE_NOTE, `${f.field_name} seeds the migration note byte-for-byte`);
+    // The tier and the number are untouched by adding a note.
+    assert.strictEqual(f.spec_type, 'enforced');
+    assert.strictEqual(f.char_max, 45);
+    assert.strictEqual(f.spec_source, CAROUSEL_URL);
+
+    // THE POINT: the note does not REPLACE the tier sentence. fieldHint composes
+    // both into ONE paragraph — note first, tier second — because b.fieldNote()
+    // emits one paragraph and parseDoc reads a SECOND paragraph after a label as
+    // drafted copy. Two paragraphs here would make the tier line get deleted on the
+    // first "Generate Draft".
+    const hint = fieldHint({ specType: f.spec_type, specSource: f.spec_source, specNote: f.spec_note });
+    assert.strictEqual(
+      hint.text,
+      'Applies to carousels driving to a destination URL; with a Lead Gen Form CTA the cap is 30. ' +
+        'Platform limit (LinkedIn). Stay within this count.'
+    );
+    assert.ok(hint.text.includes(CARD_HEADLINE_NOTE), 'the note survives');
+    assert.ok(hint.text.includes('Platform limit (LinkedIn). Stay within this count.'), 'the tier line survives');
+    assert.ok(!hint.text.includes('\n'), 'ONE paragraph — a second one would be read as drafted copy');
+
+    // The hyperlink still lands on the platform name, whose offset moved by the
+    // note's length. It is computed structurally (specTypeLine reports nameStart,
+    // fieldHint adds the note prefix), never re-searched in the flat text — so the
+    // word "LinkedIn" appearing in a note could not steal the link.
+    assert.strictEqual(hint.links.length, 1, 'exactly one link');
+    assert.strictEqual(hint.text.substring(hint.links[0].start, hint.links[0].end), 'LinkedIn');
+    assert.strictEqual(hint.links[0].url, CAROUSEL_URL);
+    assert.strictEqual(hint.links[0].start, CARD_HEADLINE_NOTE.length + 1 + 'Platform limit ('.length,
+      'offset = note + joining space + the tier prefix');
+  }
+
+  // The label still shows the unconditional number; the note carries the other one.
+  const c1 = cards[0];
+  assert.strictEqual(fieldLabel({ fieldName: c1.field_name, charMin: c1.char_min, charMax: c1.char_max }),
+    'Card 1 Headline [45]');
+
+  // Per-asset-pair, never a bare field_name sweep: Meta Carousel has identically
+  // named fields where this caveat is false, and they must stay noteless.
+  const meta = DEFAULT_ASSETS.find((a) => a.name === 'Meta Carousel Ad');
+  for (const f of meta.fields.filter((x) => /^Card \d Headline$/.test(x.field_name))) {
+    assert.strictEqual(f.spec_note, null, `Meta ${f.field_name} must not pick up LinkedIn's caveat`);
+  }
+  // LinkedIn Carousel's OTHER fields are untouched too — this is the card headlines
+  // only, not the whole asset.
+  assert.strictEqual(carousel.fields.find((f) => f.field_name === 'Intro Text').spec_note, null);
+
+  // FORWARD + BACKWARD on the note table itself: every pair the migration writes is
+  // in the seed with that note, and the seed carries the note on exactly those pairs.
+  const seedNoted = [];
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) if (f.spec_note === CARD_HEADLINE_NOTE) seedNoted.push(`${a.name}||${f.field_name}`);
+  }
+  assert.deepStrictEqual(
+    seedNoted.sort(),
+    FIELD_NOTES.map(([a, f]) => `${a}||${f}`).sort(),
+    'seed and migration agree on exactly which fields carry the note'
+  );
 });

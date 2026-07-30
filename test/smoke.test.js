@@ -6448,3 +6448,177 @@ test('scoped targeting: the instance survives the /api/draft and /api/review rou
   );
   assert.deepStrictEqual(Object.keys(sawReview[0]).sort(), ['assetType', 'fieldName', 'instance']);
 });
+
+// --- Stale-shell check: hooked into the fetch funnel, cached ------------------
+// This check existed but was called from exactly two hand-picked places — page
+// load, and the top of runBrief. Every other screen rendered server data with no
+// warning, which produced three bug reports against code that was correct.
+//
+// It is now called from fetchWithTimeout, which every server read in the app goes
+// through, so a screen added later inherits it. These tests EXECUTE the real
+// function (extracted from app.html) against a fake fetch rather than matching
+// source strings, because the parts that matter are the caching and the
+// fail-open behavior.
+
+// Extract the stale-shell block and run it with a controllable fetch + clock.
+function shellChecker({ build, liveSeq, failSeq }) {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const body = html.match(/^(\s*)function checkShellFresh\(\) \{[\s\S]*?\n\1\}/m);
+  assert.ok(body, 'found checkShellFresh() in app.html');
+  const state = html.match(/var shellStale = null;[\s\S]*?var SHELL_TTL_MS = \d+;/);
+  assert.ok(state, 'found the cache state + TTL');
+
+  const calls = { health: 0 };
+  let i = 0;
+  const fakeFetch = () => {
+    calls.health += 1;
+    const n = i; i += 1;
+    if ((failSeq || [])[n]) return Promise.reject(new Error('offline'));
+    return Promise.resolve({ json: async () => ({ ok: true, commit: (liveSeq || [])[n] }) });
+  };
+  const banner = { style: { display: 'none' } };
+  const sandbox = {
+    fetch: fakeFetch,
+    window: {},
+    console: { log() {} },
+    document: { getElementById: (id) => (id === 'stale-shell-banner' ? banner : null) },
+    Date: { now: () => sandbox.__now },
+    __now: 1000,
+  };
+  // The real source, with APP_BUILD supplied by the test instead of the server's
+  // __BUILD__ substitution.
+  // eslint-disable-next-line no-new-func
+  const make = new Function(
+    'fetch', 'window', 'console', 'document', 'Date', 'APP_BUILD',
+    `${state[0]}\n${body[0]}\nreturn checkShellFresh;`
+  );
+  const fn = make(sandbox.fetch, sandbox.window, sandbox.console, sandbox.document, sandbox.Date, build);
+  return {
+    check: fn,
+    calls,
+    banner,
+    advance: (ms) => { sandbox.__now += ms; },
+    ttl: Number(state[0].match(/SHELL_TTL_MS = (\d+)/)[1]),
+  };
+}
+
+test('stale shell: a matching build is fresh, a different one is stale and banners', async () => {
+  const same = shellChecker({ build: 'abc1234', liveSeq: ['abc1234'] });
+  assert.strictEqual(await same.check(), false, 'same commit → fresh');
+  assert.strictEqual(same.banner.style.display, 'none', 'no banner');
+
+  const diff = shellChecker({ build: 'abc1234', liveSeq: ['def5678'] });
+  assert.strictEqual(await diff.check(), true, 'different commit → stale');
+  assert.strictEqual(diff.banner.style.display, 'block', 'the reload banner is shown');
+
+  // The two cases that must NOT raise a banner: a server that does not know its
+  // own commit, and a shell whose placeholder was never substituted (local dev).
+  const unknown = shellChecker({ build: 'abc1234', liveSeq: ['unknown'] });
+  assert.strictEqual(await unknown.check(), false, "live 'unknown' → inconclusive");
+  assert.strictEqual(unknown.banner.style.display, 'none');
+  const unstamped = shellChecker({ build: '__BUILD__', liveSeq: ['abc1234'] });
+  assert.strictEqual(await unstamped.check(), false, 'unsubstituted placeholder → inconclusive');
+  assert.strictEqual(unstamped.banner.style.display, 'none');
+});
+
+test('stale shell: a failed check resolves FALSE and never banners', async () => {
+  // The whole contract on uncertainty: let the user work. A blip must not block a
+  // brief and must not raise a banner the user cannot act on.
+  const s = shellChecker({ build: 'abc1234', failSeq: [true] });
+  assert.strictEqual(await s.check(), false, 'a rejected /health resolves false');
+  assert.strictEqual(s.banner.style.display, 'none');
+
+  // A failure is not remembered as a VERDICT — only as an attempt. Once the TTL
+  // expires the next call re-probes and can still discover staleness.
+  const s2 = shellChecker({ build: 'abc1234', failSeq: [true, false], liveSeq: [undefined, 'def5678'] });
+  assert.strictEqual(await s2.check(), false);
+  s2.advance(s2.ttl + 1);
+  assert.strictEqual(await s2.check(), true, 'recovers and reports stale');
+  assert.strictEqual(s2.calls.health, 2);
+});
+
+test('stale shell: cached, so hooking it into every fetch costs no round trip', async () => {
+  const s = shellChecker({ build: 'abc1234', liveSeq: ['abc1234', 'abc1234'] });
+
+  // A burst of renders — this is runJob's 3s status poll, the projects list, the
+  // project view — shares ONE /health.
+  for (let i = 0; i < 25; i += 1) assert.strictEqual(await s.check(), false);
+  assert.strictEqual(s.calls.health, 1, '25 fetches, one /health');
+
+  // Still cached just under the TTL; re-probed just past it, because a deploy can
+  // land while the tab sits open. A verdict that never expired would be the
+  // original bug.
+  s.advance(s.ttl - 1);
+  await s.check();
+  assert.strictEqual(s.calls.health, 1, 'inside the TTL → still cached');
+  s.advance(2);
+  await s.check();
+  assert.strictEqual(s.calls.health, 2, 'past the TTL → re-probed');
+
+  // Concurrent callers share one in-flight probe rather than racing.
+  const c = shellChecker({ build: 'abc1234', liveSeq: ['abc1234'] });
+  const all = await Promise.all([c.check(), c.check(), c.check(), c.check()]);
+  assert.deepStrictEqual(all, [false, false, false, false]);
+  assert.strictEqual(c.calls.health, 1, 'four concurrent calls, one /health');
+});
+
+test('stale shell: once stale, it stops asking — a shell cannot un-stale itself', async () => {
+  const s = shellChecker({ build: 'abc1234', liveSeq: ['def5678', 'abc1234'] });
+  assert.strictEqual(await s.check(), true);
+  assert.strictEqual(s.calls.health, 1);
+
+  // Even far past the TTL, and even though the next canned answer would say
+  // "fresh", the verdict is terminal: a loaded shell cannot update itself, so yes
+  // can never become no. This also means a stale tab makes no further requests.
+  s.advance(s.ttl * 100);
+  for (let i = 0; i < 10; i += 1) assert.strictEqual(await s.check(), true);
+  assert.strictEqual(s.calls.health, 1, 'no further /health once stale');
+  assert.strictEqual(s.banner.style.display, 'block', 'and the banner stays up');
+});
+
+test('stale shell: the check is wired to the fetch funnel, not a hand-picked list', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // THE hook: inside fetchWithTimeout, which is the single funnel for every server
+  // read. This is what makes a future screen inherit the check.
+  assert.ok(/function fetchWithTimeout\(url, opts, timeoutMs\) \{[\s\S]{0,900}?\n      checkShellFresh\(\);/.test(html),
+    'checkShellFresh is called inside fetchWithTimeout');
+  // NOT awaited there — it only drives a banner, so it must add no latency and must
+  // never delay or block a render.
+  assert.ok(!/await checkShellFresh\(\);\s*\n\s*var ctrl = new AbortController/.test(html),
+    'the funnel does not await it');
+
+  // Every server READ in the app goes through that funnel. If a new call site
+  // appears here, it needs the check (or needs to use fetchWithTimeout).
+  const rawFetches = (html.match(/[^.\w]fetch\(/g) || []).length;
+  assert.strictEqual(rawFetches, 4, 'exactly four raw fetch() call sites — see below');
+  // 1. fetchWithTimeout itself (the funnel)
+  assert.ok(/merged\.signal = ctrl\.signal;\s*\n\s*return fetch\(url, merged\)/.test(html));
+  // 2. /health inside checkShellFresh — MUST stay a raw fetch or it recurses.
+  assert.ok(/fetch\('\/health', \{ cache: 'no-store' \}\)/.test(html), '/health probe');
+  assert.ok(!/fetchWithTimeout\('\/health'/.test(html), '/health must not route through the funnel');
+  // 3-4. Two WRITES (upload, status PATCH), each reached from a screen that already
+  //      fetched through the funnel, so both are covered by a preceding check.
+  assert.ok(/await fetch\('\/api\/upload'/.test(html), 'upload is a write');
+  assert.ok(/await fetch\('\/api\/projects\/' \+ encodeURIComponent\(projectId\) \+\s*\n\s*'\/status/.test(html),
+    'status PATCH is a write');
+
+  // The reads that used to be unguarded, all now funnelled: the job start + status
+  // poll, doc content, the projects list, and the project view.
+  assert.strictEqual((html.match(/fetchWithTimeout\(/g) || []).length, 6,
+    'the definition plus five call sites');
+
+  // runBrief keeps its HARD block — the one place where proceeding is expensive
+  // enough to be worth stopping for. Everywhere else the banner is the warning.
+  assert.ok(/if \(await checkShellFresh\(\)\) \{ showError\(briefError, STALE_MSG\); return; \}/.test(html),
+    'runBrief still blocks outright');
+
+  // And the load-time probe survives, so a tab opened onto an already-stale shell
+  // warns before the user touches anything.
+  assert.ok(/\n    checkShellFresh\(\);\n  <\/script>/.test(html), 'load-time probe at the end of the script');
+
+  // The ordering hazard: APP_BUILD's assignment must precede fetchWithTimeout, or a
+  // hoisted `undefined` would compare unequal to the live commit and banner falsely.
+  assert.ok(html.indexOf("var APP_BUILD = '__BUILD__';") < html.indexOf('function fetchWithTimeout'),
+    'APP_BUILD is assigned before the funnel that reads it');
+});

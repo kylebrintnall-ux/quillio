@@ -216,6 +216,12 @@ next step in one. A well-structured 150-word email outperforms a poorly structur
 minimise. Analysis of 40M emails puts the response sweet spot at 75–100 words;
 past 200, response falls below 40%.
 
+**Longer bodies click less.** The relationship is consistent enough to plan
+around: as body length goes up, click-through goes down. It holds in a
+peer-reviewed study of 1,679 promotional campaigns across 50 countries, and in
+every practitioner dataset published since. Treat length as something you spend,
+not something you fill — if a sentence isn't earning the click, it's costing it.
+
 **Proof before pitch.** Earn the right to ask. A result, a name, a number, a
 specific observation — something that shows you did the work — and then the ask.
 Asking first spends credibility you haven't established.

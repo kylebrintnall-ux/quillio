@@ -456,6 +456,32 @@ words-to-cut list *outside* the mediums section so they stay universal. The same
 guide that happens to carry its own mediums section; a typical one has none and
 passes through whole.
 
+## What goes on the LiveSpecs watch list — and what doesn't
+
+`spec_watch_list` feeds the detector (`services/specDetector.js`), which fetches a
+page, normalizes it and compares a hash. It exists for pages that publish
+**platform limits**: Meta's ads guide, LinkedIn's ad specs, X's creative specs,
+Google Ads' responsive display specs, Litmus's truncation numbers. Those pages
+change when the platform changes a limit, which is exactly the event worth waking
+someone up for.
+
+**Research citations do not go on the watch list.** Constant Contact's newsletter
+length study, Gong's cold-email analysis, academic papers — these are cited in
+`copy_fields.spec_source` and rendered in the doc, but they are never watched. Two
+reasons, and the second is the one that bites:
+
+1. A published finding does not change. The study measured what it measured; if
+   someone runs a better one it will be at a different URL, and noticing that is a
+   human judgement, not a hash comparison.
+2. The detector is a fetch-hash-compare over rendered content, so it fires on any
+   layout tweak, nav change or A/B test the publisher ships. A marketing blog
+   redesigns far more often than a platform changes a character limit — the queue
+   would fill with diffs that mean nothing, and a review queue nobody trusts is
+   worse than no review queue.
+
+So: if the page states a limit the platform enforces, watch it. If the page reports
+what someone measured, cite it and leave it alone.
+
 ## Vision & roadmap
 
 `ROADMAP.md` and `docs/` hold product intent and historical build plans. They

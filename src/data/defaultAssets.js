@@ -40,6 +40,108 @@
 const SPEC_SOURCE = 'quillio_default';
 const SPEC_VERSION = '1.0';
 
+// Marker in RAW for a field whose band comes from EMAIL_CLASSES below, not from a
+// literal here. Resolved by classBand() when the seed is built.
+const FROM_CLASS = null;
+
+// Both classes share this. A preheader is cut at the same point regardless of how
+// the reader came to be receiving the email — Litmus: mobile shows ~35–40
+// characters, published sweet spot 85–100. Named once rather than written twice,
+// for the same reason the classes exist at all. It stays a per-class KEY so a
+// future class can differ without restructuring anything.
+const PREHEADER_BAND = [85, 100];
+
+// --- EMAIL CLASSES -----------------------------------------------------------
+// The two kinds of email Quillio writes, and the ONE place their inbox-facing
+// numbers live. Every email asset derives its subject and preheader bands from its
+// class; the RAW rows above carry FROM_CLASS instead of literals, so there is
+// nothing to keep in sync and nothing to fix in five places.
+//
+// That five-places problem is not hypothetical. Subject lines were 50–75 on all
+// five assets, and correcting them meant five identical edits in the seed plus five
+// rows in a migration; the preheader ceiling was wrong on all five for the same
+// reason. One value, one edit, five assets.
+//
+// WHAT A CLASS GOVERNS — inbox-facing fields ONLY: subject line, preheader, and how
+// many CTAs the email carries. These are properties of the CHANNEL. A subject line
+// is cut at the same pixel whoever sent it, and an unsolicited email gets a
+// different amount of patience than one the reader asked for.
+//
+// WHAT A CLASS DOES NOT GOVERN — BODY LENGTH. Deliberately, and this is the part a
+// future session is most likely to "tidy up": the five assets have different body
+// bands and that inconsistency is CORRECT. A reminder to someone who already
+// registered has a different job than a nurture email trying to earn a click, and a
+// recap has a different job again. Body length is a property of the MESSAGE, not
+// the channel, so it stays per-asset. Unifying it would make four of the five
+// assets wrong in order to make a table look neat.
+//
+// NOT A COLUMN ON asset_types, deliberately. Custom assets do not exist yet, so a
+// class column would be written at seed time and read by nothing — the same dead
+// column field_type was until the word-count work wired it end to end. A constant
+// buys the single-source-of-truth benefit today, and converting it to a column when
+// tenants can define their own assets is a small, mechanical change.
+const EMAIL_CLASSES = {
+  // Opted-in. HTML, branded. The reader asked for this. Goal: a CLICK.
+  marketing: {
+    label: 'marketing',
+    subject: [0, 130],
+    preheader: PREHEADER_BAND,
+    ctas: 'one primary CTA',
+    assets: [
+      'Demand Gen Nurture Email',
+      'Event Invitation Email',
+      'Event Reminder Email',
+      'Event Follow-Up / Recap Email',
+    ],
+  },
+  // Unsolicited. Plain text, 1:1 feel. The reader did not ask for this. Goal: a
+  // REPLY. The shorter subject is the whole difference at the inbox: cold B2B
+  // performs best at roughly 2–4 words, where an opt-in subject keeps earning
+  // clicks well past 130 characters.
+  cold: {
+    label: 'cold outreach',
+    subject: [0, 40],
+    preheader: PREHEADER_BAND,
+    ctas: 'one ask',
+    assets: ['Sales Basho Email'],
+  },
+};
+
+// Which fields a class governs, and which key on the class supplies each one.
+const CLASS_GOVERNED_FIELDS = {
+  'Subject Line 1': 'subject',
+  'Subject Line 2': 'subject',
+  Preheader: 'preheader',
+};
+
+// assetName → its class entry. Every email asset must belong to exactly one class;
+// classBand throws otherwise rather than silently seeding a null band.
+const EMAIL_CLASS_BY_ASSET = new Map();
+for (const cls of Object.values(EMAIL_CLASSES)) {
+  for (const name of cls.assets) {
+    if (EMAIL_CLASS_BY_ASSET.has(name)) {
+      throw new Error(`defaultAssets: "${name}" is in two email classes`);
+    }
+    EMAIL_CLASS_BY_ASSET.set(name, cls);
+  }
+}
+
+// Resolve a FROM_CLASS field's [min, max]. Throws rather than returning nulls: a
+// class-governed field on an asset with no class would otherwise seed [0, 0], which
+// renders as a field with NO bracket at all — a silently unlimited subject line.
+function classBand(assetName, fieldName) {
+  const cls = EMAIL_CLASS_BY_ASSET.get(assetName);
+  if (!cls) {
+    throw new Error(
+      `defaultAssets: "${assetName}/${fieldName}" is class-governed but "${assetName}" ` +
+        'is in no EMAIL_CLASSES member list'
+    );
+  }
+  const key = CLASS_GOVERNED_FIELDS[fieldName];
+  if (!key) throw new Error(`defaultAssets: no class key for field "${fieldName}"`);
+  return cls[key];
+}
+
 const RAW = [
   ['LinkedIn Single Image Ad', 'Paid Social', [
     ['Intro Text', 0, 150],
@@ -131,45 +233,45 @@ const RAW = [
     ['CTA Button', 0, 30, 'Graphic Copy'],
   ]],
   ['Demand Gen Nurture Email', 'Email', [
-    ['Subject Line 1', 0, 130],
-    ['Subject Line 2', 0, 130],
-    ['Preheader', 85, 100],
+    ['Subject Line 1', FROM_CLASS, FROM_CLASS],
+    ['Subject Line 2', FROM_CLASS, FROM_CLASS],
+    ['Preheader', FROM_CLASS, FROM_CLASS],
     ['Headline (Offer 1)', 0, 60],
-    ['Offer Body 1', 50, 125],
+    ['Offer Body 1', 50, 200],
     ['CTA Text (Offer 1)', 0, 25],
     ['Headline (Offer 2)', 0, 60],
     ['Offer Body 2', 25, 60],
     ['CTA Text (Offer 2)', 0, 20],
   ]],
   ['Event Invitation Email', 'Email', [
-    ['Subject Line 1', 0, 130],
-    ['Subject Line 2', 0, 130],
-    ['Preheader', 85, 100],
+    ['Subject Line 1', FROM_CLASS, FROM_CLASS],
+    ['Subject Line 2', FROM_CLASS, FROM_CLASS],
+    ['Preheader', FROM_CLASS, FROM_CLASS],
     ['Hero Headline', 0, 60],
     ['Event Description', 50, 125],
     ['Date / Location Line', 0, 80],
     ['CTA Text', 0, 25],
   ]],
   ['Event Reminder Email', 'Email', [
-    ['Subject Line 1', 0, 130],
-    ['Subject Line 2', 0, 130],
-    ['Preheader', 85, 100],
+    ['Subject Line 1', FROM_CLASS, FROM_CLASS],
+    ['Subject Line 2', FROM_CLASS, FROM_CLASS],
+    ['Preheader', FROM_CLASS, FROM_CLASS],
     ['Headline', 0, 60],
     ['Body Copy', 25, 75],
     ['CTA Text', 0, 25],
   ]],
   ['Event Follow-Up / Recap Email', 'Email', [
-    ['Subject Line 1', 0, 130],
-    ['Subject Line 2', 0, 130],
-    ['Preheader', 85, 100],
+    ['Subject Line 1', FROM_CLASS, FROM_CLASS],
+    ['Subject Line 2', FROM_CLASS, FROM_CLASS],
+    ['Preheader', FROM_CLASS, FROM_CLASS],
     ['Headline', 0, 60],
     ['Body Copy', 25, 75],
     ['CTA Text', 0, 25],
   ]],
   ['Sales Basho Email', 'Email', [
-    ['Subject Line 1', 0, 40],
-    ['Subject Line 2', 0, 40],
-    ['Preheader', 85, 100],
+    ['Subject Line 1', FROM_CLASS, FROM_CLASS],
+    ['Subject Line 2', FROM_CLASS, FROM_CLASS],
+    ['Preheader', FROM_CLASS, FROM_CLASS],
     ['Opening Line', 0, 100],
     ['Body Copy', 50, 100],
     ['CTA / Ask', 0, 100],
@@ -441,6 +543,13 @@ function fieldSpecNote(assetName, fieldName) {
 // therefore 'recommended' — including the carousel's card fields, which are the
 // carousel's equivalents of the same three numbers.
 const RECOMMENDED_SPEC_FIELDS = new Set([
+  // The only NON-platform recommendation in the library: a research finding rather
+  // than a spec page. Constant Contact reports ~20 lines / ~200 words as the
+  // highest click-through length. It is tiered 'recommended' because that is what
+  // it is — an advisory number from a real source — and the tier line says exactly
+  // what was measured, because small-business campaign data is not B2B nurture data
+  // and a writer deciding whether to trust the number needs to know that.
+  'Demand Gen Nurture Email||Offer Body 1',
   'Meta Single Image Ad||Primary Text',
   'Meta Single Image Ad||Headline',
   'Meta Single Image Ad||Description',
@@ -556,9 +665,20 @@ const SPEC_SOURCE_URLS = {
   'Google Responsive Display Ad': 'https://support.google.com/google-ads/answer/17090561',
 };
 
+// Per-FIELD spec source, for the handful of fields whose citation is not their
+// asset's platform page. Checked before SPEC_SOURCE_URLS. Email has no platform
+// spec page — nobody publishes a "limit" for a nurture body — so a research finding
+// is cited directly on the one field it measured.
+const FIELD_SPEC_SOURCE_URLS = {
+  'Demand Gen Nurture Email||Offer Body 1':
+    'https://www.constantcontact.com/blog/best-length-email-newsletter/',
+};
+
 function fieldSpecSource(assetName, fieldName) {
   if (fieldSpecType(assetName, fieldName) === 'house_default') return SPEC_SOURCE;
-  return SPEC_SOURCE_URLS[assetName] || SPEC_SOURCE;
+  return (
+    FIELD_SPEC_SOURCE_URLS[`${assetName}||${fieldName}`] || SPEC_SOURCE_URLS[assetName] || SPEC_SOURCE
+  );
 }
 
 const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
@@ -570,10 +690,12 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   spec_version: SPEC_VERSION,
   asset_direction: DIRECTIONS[name] || '',
   spec_note: SPEC_NOTES[name] || null,
-  fields: fields.map(([field_name, char_min, char_max, group_label], j) => ({
+  fields: fields.map(([field_name, rawMin, rawMax, group_label], j) => ({
     field_name,
-    char_min,
-    char_max,
+    // FROM_CLASS (null) means the band is the CLASS's, not this row's — resolved
+    // here so EMAIL_CLASSES is the only place those numbers appear.
+    char_min: rawMin === FROM_CLASS ? classBand(name, field_name)[0] : rawMin,
+    char_max: rawMax === FROM_CLASS ? classBand(name, field_name)[1] : rawMax,
     field_type: fieldUnit(name, field_name),
     sort_order: j + 1,
     group_label: group_label || null,

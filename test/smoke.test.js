@@ -599,9 +599,14 @@ test('spec tiers: the seed equals what the migration chain produces, in both dir
   }
   // 5. PROMOTE — one uncited house default becomes a real enforced cap.
   for (const [a, f] of fix.PROMOTE) enforced.add(`${a}||${f}`);
+  // migrateEmailClassesAndCitedBands: a RESEARCH source, not a platform one — the
+  // first recommended field whose citation is a study rather than a spec page.
+  for (const [asset, field, , , tier] of require('../scripts/migrateEmailClassesAndCitedBands').CITED_BANDS) {
+    if (tier === 'recommended') recommended.add(`${asset}||${field}`);
+  }
 
   assert.strictEqual(enforced.size, 16, '16 enforced pairs after the integrity migration');
-  assert.strictEqual(recommended.size, 10, '10 recommended pairs — the tier is no longer empty');
+  assert.strictEqual(recommended.size, 11, '10 platform recommendations + 1 research citation');
 
   // FORWARD: everything the migrations produce is in the seed at that tier.
   const seedTier = new Map();
@@ -629,6 +634,10 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { fieldHint } = require('../src/destinations/googleDocs');
   const { SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
+  const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
+  const FIELD_SOURCES = Object.fromEntries(
+    CITED_BANDS.map(([asset, field, , , , url]) => [`${asset}||${field}`, url])
+  );
 
   // The tier sentence each tier is supposed to produce. house_default produces
   // NOTHING — that is what makes an uncited number read as a house convention
@@ -650,32 +659,42 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
       if (f.spec_type === 'enforced') enforcedSeen += 1;
       else recommendedSeen += 1;
 
-      // Seed URL is byte-identical to the migration's URL FOR THAT ASSET. Per-asset
-      // is the point: a per-platform map is how LinkedIn Carousel came to cite the
-      // single-image page, which does not contain the carousel's numbers.
+      // Seed URL is byte-identical to the migration's URL FOR THAT ASSET — unless
+      // the field carries its own. Per-asset is the point (a per-platform map is
+      // how LinkedIn Carousel came to cite the single-image page); per-FIELD is the
+      // exception for a research citation, which measured one field, not a platform.
+      const fieldSource = FIELD_SOURCES[`${a.name}||${f.field_name}`];
       assert.strictEqual(
         f.spec_source,
-        SOURCE_URLS[a.name],
-        `${a.name}/${f.field_name} seed spec_source === migration URL for that ASSET`
+        fieldSource || SOURCE_URLS[a.name],
+        `${a.name}/${f.field_name} seed spec_source === its migration URL`
       );
 
-      // It renders the tier line for its own tier, with the platform name
-      // hyperlinked to that URL.
       const hint = fieldHint({ specType: f.spec_type, specSource: f.spec_source });
-      const p = hint.text.match(/^Platform limit \((.+?)\)|^Recommended by (\S+?)\./);
-      assert.ok(p, `${a.name}/${f.field_name} names a platform`);
-      const name = p[1] || p[2];
-      assert.strictEqual(hint.text, SENTENCE[f.spec_type](name), `${a.name}/${f.field_name} renders its tier sentence`);
       assert.strictEqual(hint.links.length, 1, `${a.name}/${f.field_name} has one link range`);
-      assert.strictEqual(
-        hint.text.substring(hint.links[0].start, hint.links[0].end), name,
-        `${a.name}/${f.field_name} link covers only the platform name`
-      );
       assert.strictEqual(hint.links[0].url, f.spec_source, `${a.name}/${f.field_name} link points at spec_source`);
+      if (fieldSource) {
+        // A research source names its POPULATION and its finding, because
+        // "Recommended by Constant Contact" alone would be an appeal to authority.
+        assert.match(hint.text, /^Recommended by .+ \(.+\)\. .+\.$/,
+          `${a.name}/${f.field_name} names what was measured`);
+        assert.ok(!/Not a hard limit — adjust for your brand and goal/.test(hint.text),
+          'a research source states its own finding, not the generic hedge');
+      } else {
+        // Platform sources render exactly the sentence they always have.
+        const p = hint.text.match(/^Platform limit \((.+?)\)|^Recommended by (\S+?)\./);
+        assert.ok(p, `${a.name}/${f.field_name} names a platform`);
+        const name = p[1] || p[2];
+        assert.strictEqual(hint.text, SENTENCE[f.spec_type](name), `${a.name}/${f.field_name} renders its tier sentence`);
+        assert.strictEqual(
+          hint.text.substring(hint.links[0].start, hint.links[0].end), name,
+          `${a.name}/${f.field_name} link covers only the platform name`
+        );
+      }
     }
   }
   assert.strictEqual(enforcedSeen, 16, 'exactly 16 enforced fields carry a real spec_source');
-  assert.strictEqual(recommendedSeen, 10, 'exactly 10 recommended fields — the tier is populated');
+  assert.strictEqual(recommendedSeen, 11, '10 platform recommendations + 1 research citation');
 
   // The two citations this migration corrected, pinned by value.
   const urlOf = (asset, field) => {
@@ -6888,13 +6907,19 @@ test('spec integrity: the migration is idempotent-by-construction and dry-run by
 test('spec integrity: the seed and the migration agree on every band, both directions', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { CHAR_FIXES, SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
+  const { CITED_BANDS: CITED_BANDS_259 } = require('../scripts/migrateEmailClassesAndCitedBands');
   const f = (asset, name) =>
     DEFAULT_ASSETS.find((x) => x.name === asset).fields.find((x) => x.field_name === name);
 
   // FORWARD: every band the migration writes is the band the seed carries. If these
   // drift, a migrated tenant and a freshly seeded one render different limits for
   // the same field.
+  // Skip any field a LATER migration moved again — the seed must match the END of
+  // the chain, not an intermediate step. (Subject lines and preheaders are now
+  // derived from EMAIL_CLASSES, which writes the same numbers this pass set.)
+  const supersededBy259 = new Set(CITED_BANDS_259.map(([as, fi]) => `${as}||${fi}`));
   for (const [asset, field, min, max] of CHAR_FIXES) {
+    if (supersededBy259.has(`${asset}||${field}`)) continue;
     const fl = f(asset, field);
     assert.ok(fl, `${asset}/${field} exists in the seed`);
     assert.strictEqual(fl.char_min, min, `${asset}/${field} char_min`);
@@ -6904,7 +6929,8 @@ test('spec integrity: the seed and the migration agree on every band, both direc
   for (const [asset, url] of Object.entries(SOURCE_URLS)) {
     const a = DEFAULT_ASSETS.find((x) => x.name === asset);
     assert.ok(a, `${asset} exists in the seed`);
-    const tiered = a.fields.filter((x) => x.spec_type !== 'house_default');
+    const own = new Set(CITED_BANDS_259.map(([as, fi]) => `${as}||${fi}`));
+    const tiered = a.fields.filter((x) => x.spec_type !== 'house_default' && !own.has(`${asset}||${x.field_name}`));
     assert.ok(tiered.length > 0, `${asset} has at least one tiered field`);
     for (const fl of tiered) assert.strictEqual(fl.spec_source, url, `${asset}/${fl.field_name} cites ${url}`);
   }
@@ -6917,8 +6943,12 @@ test('spec integrity: the seed and the migration agree on every band, both direc
   for (const a of DEFAULT_ASSETS) {
     for (const fl of a.fields) if (fl.spec_source !== 'quillio_default') seedCiting.add(a.name);
   }
-  assert.deepStrictEqual([...seedCiting].sort(), Object.keys(SOURCE_URLS).sort(),
-    'the seed cites exactly the assets the migration repoints');
+  // Plus the assets whose citation is per-FIELD rather than per-asset (a research
+  // source measured one field, not a platform's whole surface).
+  const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
+  const expectCiting = new Set([...Object.keys(SOURCE_URLS), ...CITED_BANDS.map(([asset]) => asset)]);
+  assert.deepStrictEqual([...seedCiting].sort(), [...expectCiting].sort(),
+    'the seed cites exactly the assets some migration repoints');
 });
 
 test('spec integrity: the LinkedIn carousel note renders BESIDE the tier line, not instead of it', () => {
@@ -7014,13 +7044,21 @@ test('word units: the seed and the migration agree, both directions', () => {
   };
 
   // FORWARD: every field the migration converts is a word field in the seed, with
-  // the same range.
+  // the same range — EXCEPT where a later migration moved the band again. The seed
+  // must match the END of the chain, so a superseded row is checked against the
+  // migration that superseded it, not against this one.
+  const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
+  const superseded = new Map(CITED_BANDS.map(([a2, f2, mn, mx]) => [`${a2}||${f2}`, [mn, mx]]));
   for (const [asset, field, min, max] of WORD_FIELDS) {
     const fl = f(asset, field);
     assert.strictEqual(fl.field_type, 'words', `${asset}/${field} is a word field`);
-    assert.strictEqual(fl.char_min, min, `${asset}/${field} min`);
-    assert.strictEqual(fl.char_max, max, `${asset}/${field} max`);
+    const [expMin, expMax] = superseded.get(`${asset}||${field}`) || [min, max];
+    assert.strictEqual(fl.char_min, expMin, `${asset}/${field} min`);
+    assert.strictEqual(fl.char_max, expMax, `${asset}/${field} max`);
   }
+  // The one superseded band, pinned by value so the indirection above cannot hide a
+  // change: the cited Constant Contact ceiling replaced the uncited 125.
+  assert.deepStrictEqual(superseded.get('Demand Gen Nurture Email||Offer Body 1'), [50, 200]);
   // BACKWARD: the seed has no word field the migration does not convert. Without
   // this, a field could go to words in the seed and stay in characters for every
   // existing tenant — rendering two different specs for the same field.
@@ -7034,7 +7072,7 @@ test('word units: the seed and the migration agree, both directions', () => {
   // The bands really do differ by email type — one band for all five was the bug
   // the subject-line pass fixed, and repeating it here would be the same mistake.
   assert.deepStrictEqual([f('Demand Gen Nurture Email', 'Offer Body 1').char_min,
-    f('Demand Gen Nurture Email', 'Offer Body 1').char_max], [50, 125], 'marketing/nurture');
+    f('Demand Gen Nurture Email', 'Offer Body 1').char_max], [50, 200], 'marketing/nurture, cited');
   assert.deepStrictEqual([f('Sales Basho Email', 'Body Copy').char_min,
     f('Sales Basho Email', 'Body Copy').char_max], [50, 100], 'cold outreach');
   assert.deepStrictEqual([f('Event Follow-Up / Recap Email', 'Body Copy').char_min,
@@ -7049,20 +7087,36 @@ test('word units: the seed and the migration agree, both directions', () => {
   // defensible, and the research these bands come from puts response below 40% past
   // 200 words. Asserted per asset rather than for this one pair, so a body field
   // added to any email later cannot quietly push it over.
+  // WHOLE-EMAIL WORD BUDGET, and a live conflict this pins rather than hides.
+  //
+  // The two offer bodies STACK — craft.md § Email: "Secondary offers come after and
+  // read as lighter" — so a Demand Gen email's body budget is their SUM, exactly as
+  // established when Offer Body 2 got its own band. That rule has not changed.
+  //
+  // What changed is that Offer Body 1 now carries a CITED 200-word ceiling, and the
+  // page it cites reports ~200 words as the best length for an email NEWSLETTER —
+  // a whole-email figure, not a per-field one. Applied to one field of an email
+  // that has two body fields, the citation's own number is exceeded: 200 + 60 =
+  // 260. Flagged to the user; the number stands as specified until they rule.
+  //
+  // Pinned at the real value so this is a recorded conflict rather than a silently
+  // relaxed guard. If either band moves, this fails and someone re-reads the above.
   const WORD_CLIFF = 200;
+  const bodyTotals = new Map();
   for (const a2 of DEFAULT_ASSETS) {
     const bodies = a2.fields.filter((x) => x.field_type === 'words');
     if (bodies.length < 2) continue;
-    const total = bodies.reduce((n, x) => n + x.char_max, 0);
-    assert.ok(total <= WORD_CLIFF,
-      `${a2.name}: its word fields (${bodies.map((x) => `${x.field_name} ${x.char_max}`).join(' + ')}) ` +
-      `total ${total}, over the ${WORD_CLIFF}-word cliff`);
+    bodyTotals.set(a2.name, bodies.reduce((n, x) => n + x.char_max, 0));
   }
-  assert.strictEqual(
-    DEFAULT_ASSETS.find((x) => x.name === 'Demand Gen Nurture Email')
-      .fields.filter((x) => x.field_type === 'words').length, 2,
-    'the pair check has something to check — Demand Gen is the only two-body email'
-  );
+  assert.deepStrictEqual([...bodyTotals], [['Demand Gen Nurture Email', 260]],
+    'Demand Gen is the only multi-body email, and its budget is 260 — OVER the ' +
+    `${WORD_CLIFF}-word figure its own citation reports. Known conflict, see the comment above.`);
+  // No OTHER multi-body email may exceed the cliff — the guard still bites for
+  // anything added later.
+  for (const [name, total] of bodyTotals) {
+    if (name === 'Demand Gen Nurture Email') continue;
+    assert.ok(total <= WORD_CLIFF, `${name}: word bodies total ${total}, over the ${WORD_CLIFF}-word cliff`);
+  }
 
   // ONLY email body converts. Subject lines, preheaders, headlines, CTAs and every
   // ad field keep characters, because their limits ARE truncation points.
@@ -7201,4 +7255,231 @@ test('word units: the client counts words, and the layout heuristic is not foole
   const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
   assert.ok(/const longField = fieldType === 'words' \|\| !\(Number\(charMax\) > 0 && Number\(charMax\) <= 120\);/.test(docs),
     'a word field is always laid out long');
+});
+
+// --- Email classes -----------------------------------------------------------
+// The five email assets used to carry their own copies of the same subject and
+// preheader bands, which is why one wrong preheader ceiling took five edits in the
+// seed plus five rows in a migration. EMAIL_CLASSES is now the only place those
+// numbers appear.
+
+test('email classes: the constant is the SINGLE source of the inbox-facing bands', () => {
+  const seedSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'data', 'defaultAssets.js'), 'utf8');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { EMAIL_CLASSES: MIG } = require('../scripts/migrateEmailClassesAndCitedBands');
+
+  const EMAILS = ['Demand Gen Nurture Email', 'Event Invitation Email', 'Event Reminder Email',
+    'Event Follow-Up / Recap Email', 'Sales Basho Email'];
+  const band = (asset, field) => {
+    const f = DEFAULT_ASSETS.find((a) => a.name === asset).fields.find((x) => x.field_name === field);
+    return [f.char_min, f.char_max];
+  };
+
+  // What the seed actually produces.
+  for (const asset of MIG.marketing.assets) {
+    assert.deepStrictEqual(band(asset, 'Subject Line 1'), MIG.marketing.subject, `${asset} subject`);
+    assert.deepStrictEqual(band(asset, 'Subject Line 2'), MIG.marketing.subject, `${asset} subject 2`);
+    assert.deepStrictEqual(band(asset, 'Preheader'), MIG.marketing.preheader, `${asset} preheader`);
+  }
+  for (const asset of MIG.cold.assets) {
+    assert.deepStrictEqual(band(asset, 'Subject Line 1'), MIG.cold.subject, `${asset} subject`);
+    assert.deepStrictEqual(band(asset, 'Preheader'), MIG.cold.preheader, `${asset} preheader`);
+  }
+  // Every email asset belongs to exactly one class — no asset silently outside.
+  const claimed = [...MIG.marketing.assets, ...MIG.cold.assets];
+  assert.deepStrictEqual(claimed.slice().sort(), EMAILS.slice().sort(), 'all five emails are classed');
+  assert.strictEqual(new Set(claimed).size, claimed.length, 'no asset is in two classes');
+
+  // SINGLE SOURCE, proven structurally: no email asset's RAW row carries a literal
+  // subject or preheader band. They all say FROM_CLASS. This is the assertion that
+  // would have caught the five-places problem.
+  const rawBlock = seedSrc.slice(seedSrc.indexOf('const RAW = ['), seedSrc.indexOf('const DIRECTIONS'));
+  for (const asset of EMAILS) {
+    const i = rawBlock.indexOf(`['${asset}', 'Email', [`);
+    assert.ok(i >= 0, `${asset} is in RAW`);
+    const rows = rawBlock.slice(i, rawBlock.indexOf('  ]],', i));
+    for (const field of ['Subject Line 1', 'Subject Line 2', 'Preheader']) {
+      const start = rows.indexOf(`['${field}',`);
+      assert.ok(start >= 0, `${asset} has a ${field} row`);
+      const row = rows.slice(start, rows.indexOf(']', start) + 1);
+      assert.strictEqual(row, `['${field}', FROM_CLASS, FROM_CLASS]`,
+        `${asset}/${field} must read FROM_CLASS, not a literal (got ${row})`);
+    }
+  }
+  // And the numbers appear ONCE each in the whole seed file.
+  for (const literal of ['[0, 130]', '[0, 40]', '[85, 100]']) {
+    const n = (seedSrc.match(new RegExp(literal.replace(/[[\]]/g, '\\$&'), 'g')) || []).length;
+    assert.strictEqual(n, 1, `${literal} appears once in the seed (in EMAIL_CLASSES), found ${n}`);
+  }
+});
+
+test('email classes: changing ONE value in the constant moves all four marketing assets', () => {
+  // Load the seed twice from source, once with the marketing subject ceiling
+  // rewritten, and diff. This is the actual claim — "single source of truth" means
+  // one edit propagates — and only executing it proves it.
+  const p = path.join(__dirname, '..', 'src', 'data', 'defaultAssets.js');
+  const src = fs.readFileSync(p, 'utf8');
+  const load = (text) => {
+    const m = new (require('module')).Module();
+    m._compile(text, p);
+    return m.exports.DEFAULT_ASSETS;
+  };
+  const subjectOf = (assets, name) =>
+    assets.find((a) => a.name === name).fields.find((f) => f.field_name === 'Subject Line 1').char_max;
+
+  const before = load(src);
+  // ONE edit, inside EMAIL_CLASSES only.
+  const patched = src.replace('    subject: [0, 130],', '    subject: [0, 999],');
+  assert.notStrictEqual(patched, src, 'the marketing subject band was found and rewritten');
+  assert.strictEqual((src.match(/subject: \[0, 130\],/g) || []).length, 1, 'and it appears exactly once');
+  const after = load(patched);
+
+  const MARKETING = ['Demand Gen Nurture Email', 'Event Invitation Email', 'Event Reminder Email',
+    'Event Follow-Up / Recap Email'];
+  for (const a of MARKETING) {
+    assert.strictEqual(subjectOf(before, a), 130, `${a} before`);
+    assert.strictEqual(subjectOf(after, a), 999, `${a} after ONE edit`);
+  }
+  // Cold is a different class and must NOT move.
+  assert.strictEqual(subjectOf(before, 'Sales Basho Email'), 40);
+  assert.strictEqual(subjectOf(after, 'Sales Basho Email'), 40, 'cold outreach is unaffected');
+  // Neither is anything outside email.
+  assert.strictEqual(subjectOf(before, 'Demand Gen Nurture Email'), 130);
+  const headline = (assets) =>
+    assets.find((a) => a.name === 'Meta Single Image Ad').fields.find((f) => f.field_name === 'Headline').char_max;
+  assert.strictEqual(headline(after), headline(before), 'no ad field moved');
+});
+
+test('email classes: BODY length is deliberately NOT derived from the class', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const seedSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'data', 'defaultAssets.js'), 'utf8');
+  const body = (asset, field) => {
+    const f = DEFAULT_ASSETS.find((a) => a.name === asset).fields.find((x) => x.field_name === field);
+    return [f.char_min, f.char_max];
+  };
+
+  // The four MARKETING assets share a class and therefore share an inbox, but their
+  // bodies differ — and that inconsistency is the correct answer, not an oversight.
+  // A reminder to someone who already registered has a different job than a nurture
+  // email trying to earn a click.
+  assert.deepStrictEqual(body('Demand Gen Nurture Email', 'Offer Body 1'), [50, 200]);
+  assert.deepStrictEqual(body('Event Invitation Email', 'Event Description'), [50, 125]);
+  assert.deepStrictEqual(body('Event Reminder Email', 'Body Copy'), [25, 75]);
+  assert.deepStrictEqual(body('Event Follow-Up / Recap Email', 'Body Copy'), [25, 75]);
+  const marketingBodies = [[50, 200], [50, 125], [25, 75], [25, 75]];
+  assert.ok(new Set(marketingBodies.map(String)).size > 1,
+    'one class, several body bands — unifying them would make three of four wrong');
+
+  // The class object itself must not carry a body key, or a future session will
+  // wire it. The reason is stated in the constant; this makes it structural.
+  const cls = seedSrc.slice(seedSrc.indexOf('const EMAIL_CLASSES = {'), seedSrc.indexOf('const CLASS_GOVERNED_FIELDS'));
+  assert.ok(!/\bbody\b\s*:/.test(cls), 'EMAIL_CLASSES has no body key');
+  assert.ok(/WHAT A CLASS DOES NOT GOVERN — BODY LENGTH/.test(seedSrc), 'and says why, in the constant');
+  // Only the three inbox-facing fields are class-governed.
+  const governed = seedSrc.slice(seedSrc.indexOf('const CLASS_GOVERNED_FIELDS'), seedSrc.indexOf('// assetName → its class entry'));
+  assert.deepStrictEqual(
+    (governed.match(/: '(subject|preheader)'/g) || []).sort(),
+    [": 'preheader'", ": 'subject'", ": 'subject'"],
+    'exactly three governed fields: two subject lines and the preheader'
+  );
+
+  // NOT a column on asset_types — custom assets do not exist, so a column would be
+  // written at seed and read by nothing.
+  const assetsDb = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  assert.ok(!/email_class|\bclass\b\s*,/.test(assetsDb), 'no class column is read or written');
+  assert.ok(!DEFAULT_ASSETS.some((a) => 'email_class' in a || 'class' in a), 'and none is seeded');
+});
+
+test('email classes: a class-governed field on an unclassed asset FAILS LOUDLY', () => {
+  // classBand throws rather than returning nulls. [0, 0] renders as a field with NO
+  // bracket at all — a silently unlimited subject line, which is worse than a build
+  // that stops.
+  const p = path.join(__dirname, '..', 'src', 'data', 'defaultAssets.js');
+  const src = fs.readFileSync(p, 'utf8');
+  const load = (text) => {
+    const m = new (require('module')).Module();
+    m._compile(text, p);
+    return m.exports;
+  };
+  // Drop one asset out of its class and rebuild.
+  const orphaned = src.replace("      'Event Reminder Email',\n", '');
+  assert.notStrictEqual(orphaned, src);
+  assert.throws(() => load(orphaned), /is class-governed but "Event Reminder Email" is in no EMAIL_CLASSES member list/);
+
+  // Two classes claiming one asset is also a build error.
+  const doubled = src.replace("    assets: ['Sales Basho Email'],", "    assets: ['Sales Basho Email', 'Event Reminder Email'],");
+  assert.throws(() => load(doubled), /is in two email classes/);
+});
+
+test('cited bands: the research tier line says what was measured, and what stayed uncited', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { fieldHint } = require('../src/destinations/googleDocs');
+  const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
+  const f = (asset, name) =>
+    DEFAULT_ASSETS.find((a) => a.name === asset).fields.find((x) => x.field_name === name);
+
+  // Seed and migration agree on the citation, both directions.
+  assert.strictEqual(CITED_BANDS.length, 1, 'exactly one cited body band');
+  const [asset, field, min, max, tier, url] = CITED_BANDS[0];
+  const fl = f(asset, field);
+  assert.deepStrictEqual([fl.char_min, fl.char_max, fl.spec_type, fl.spec_source], [min, max, tier, url]);
+  assert.strictEqual(url, 'https://www.constantcontact.com/blog/best-length-email-newsletter/');
+
+  // THE TIER LINE. It names the population, states the finding, and hyperlinks the
+  // source — because "Recommended by Constant Contact" with no scope would be an
+  // appeal to authority, and small-business campaign data is not B2B nurture data.
+  const hint = fieldHint({ specType: fl.spec_type, specSource: fl.spec_source, specNote: fl.spec_note });
+  assert.strictEqual(
+    hint.text,
+    'Recommended by Constant Contact (2.1M customers, small-business campaigns). Longer bodies click less.'
+  );
+  assert.match(hint.text, /2\.1M customers/, 'CUSTOMERS, not emails — the distinction is load-bearing');
+  assert.ok(!/2\.1M emails/.test(hint.text));
+  assert.strictEqual(hint.links.length, 1);
+  assert.strictEqual(hint.text.substring(hint.links[0].start, hint.links[0].end), 'Constant Contact');
+  assert.strictEqual(hint.links[0].url, url);
+
+  // A PLATFORM recommendation is untouched by adding the research branch.
+  const meta = f('Meta Single Image Ad', 'Primary Text');
+  assert.strictEqual(
+    fieldHint({ specType: meta.spec_type, specSource: meta.spec_source }).text,
+    'Recommended by Meta. Not a hard limit — adjust for your brand and goal.'
+  );
+
+  // WHAT STAYED UNCITED — nobody measured these, so they claim nothing. An uncited
+  // house default renders NO tier line at all, which is the honest output.
+  for (const [a, n] of [
+    ['Demand Gen Nurture Email', 'Offer Body 2'],   // no source measured a secondary offer
+    ['Sales Basho Email', 'Body Copy'],             // Gong unverifiable — see the migration
+    ['Event Invitation Email', 'Event Description'],
+    ['Event Reminder Email', 'Body Copy'],
+    ['Event Follow-Up / Recap Email', 'Body Copy'],
+  ]) {
+    const u = f(a, n);
+    assert.strictEqual(u.spec_type, 'house_default', `${a}/${n} stays house_default`);
+    assert.strictEqual(u.spec_source, 'quillio_default', `${a}/${n} stays uncited`);
+    const h = fieldHint({ specType: u.spec_type, specSource: u.spec_source, specNote: u.spec_note });
+    if (h) assert.ok(!/Recommended by|Platform limit/.test(h.text), `${a}/${n} claims no authority`);
+  }
+  // Sales Basho's number is unchanged by being uncited — only the claim is withheld.
+  assert.deepStrictEqual(
+    [f('Sales Basho Email', 'Body Copy').char_min, f('Sales Basho Email', 'Body Copy').char_max], [50, 100]
+  );
+});
+
+test('watch list: the rule against watching research citations is written down', () => {
+  const claude = fs.readFileSync(path.join(__dirname, '..', 'CLAUDE.md'), 'utf8');
+  assert.ok(/## What goes on the LiveSpecs watch list/.test(claude), 'the rule has its own section');
+  assert.ok(/Research citations do not go on the watch list/.test(claude));
+  assert.ok(/Constant Contact.*Gong.*academic papers|Gong.*academic/.test(claude), 'names the sources it excludes');
+  assert.ok(/fetch-hash-compare/.test(claude), 'and gives the mechanical reason');
+
+  // craft.md carries the length finding as CRAFT — uncited, in the Email section,
+  // not as a spec with a source URL.
+  const craft = fs.readFileSync(path.join(__dirname, '..', 'craft.md'), 'utf8');
+  const email = craft.slice(craft.indexOf('### Email'), craft.indexOf('### Print / Out-of-Home'));
+  assert.ok(/Longer bodies click less/.test(email), 'the finding is in the Email section');
+  assert.ok(/1,679 promotional campaigns across 50 countries/.test(email), 'with its evidence named');
+  assert.ok(!/http/.test(email.slice(email.indexOf('Longer bodies click less'), email.indexOf('Proof before pitch'))),
+    'stated as craft, with no URL — a spec_source is for a field, not a paragraph');
 });

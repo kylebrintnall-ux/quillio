@@ -7,7 +7,14 @@ const session = require('express-session');
 
 const config = require('./config');
 const { getPool } = require('./db');
-const { runBriefWorkflow, runGenerateDraft } = require('./workflow');
+const {
+  runBriefWorkflow,
+  runGenerateDraft,
+  resumeBriefWorkflow,
+  cancelBriefWorkflow,
+  peekPendingPlan,
+} = require('./workflow');
+const { emoji } = require('./emoji');
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
 const onboardingRoutes = require('./routes/onboarding');
@@ -18,6 +25,7 @@ const {
   openInDriveBlocks,
   logBotIdentity,
   buildRegenerateModalView,
+  buildPlanEditModalView,
   openModal,
 } = require('./services/slack');
 const { oauthLimiter, slackLimiter } = require('./middleware/rateLimit');
@@ -378,6 +386,52 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
   if (payload.type === 'view_submission') {
     res.status(200).send('');
     const view = payload.view || {};
+
+    // --- Modal submission (Edit the plan) ---
+    // The plan-confirmation card's "Edit counts" modal. private_metadata carries
+    // { pendingId, channel, messageTs } exactly the way the regenerate modal below
+    // carries { docId, channel, messageTs } — no internal id is ever shown.
+    //
+    // Block ids are POSITIONAL (count_0, count_1, …) and resolved against the
+    // stored plan, so a submission can only change counts: it cannot name an asset,
+    // and a tampered payload can only produce numbers that resumeBriefWorkflow then
+    // validates and clamps against the tenant's real library.
+    if (view.callback_id === 'plan_modal') {
+      let meta = {};
+      try {
+        meta = JSON.parse(view.private_metadata || '{}');
+      } catch {
+        /* fall through with empty meta */
+      }
+      const { pendingId, channel, messageTs } = meta;
+      if (!pendingId) {
+        console.error('[interactions] plan_modal submission missing pendingId');
+        return;
+      }
+      const workspaceId = payload.team && payload.team.id;
+      const slackUserId = payload.user && payload.user.id;
+      const stored = peekPendingPlan(pendingId, workspaceId);
+      if (!stored) {
+        // Expired or lost to a restart between opening the modal and submitting it.
+        // resumeBriefWorkflow says so on the card rather than failing silently.
+        resumeBriefWorkflow(pendingId, null, { workspaceId, slackUserId, channel, messageTs }).catch((err) =>
+          console.error('plan_modal (expired) failed:', err)
+        );
+        return;
+      }
+      const values = (view.state && view.state.values) || {};
+      const edited = stored.map((entry, i) => {
+        const block = values[`count_${i}`];
+        const raw = block && block.count_input && block.count_input.value;
+        const n = parseInt(raw, 10);
+        return { asset: entry.asset, count: Number.isFinite(n) ? n : entry.count, labels: entry.labels || [] };
+      });
+      resumeBriefWorkflow(pendingId, edited, { workspaceId, slackUserId, channel, messageTs }).catch((err) =>
+        console.error('plan_modal resume failed:', err)
+      );
+      return;
+    }
+
     if (view.callback_id !== 'regenerate_modal') return;
 
     let meta = {};
@@ -429,7 +483,51 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
   const slackUserId = payload.user && payload.user.id;
   const canLive = !!config.SLACK_BOT_TOKEN && channelId && messageTs;
 
-  if (action.action_id === 'generate_first_draft') {
+  if (action.action_id === 'plan_build') {
+    // Build the plan exactly as parsed. Only the pendingId came from the button —
+    // the plan is read from the server-side store, so nothing a client could edit
+    // reaches generateDoc on this path.
+    resumeBriefWorkflow(action.value, null, {
+      workspaceId,
+      slackUserId,
+      channel: channelId,
+      messageTs,
+      responseUrl,
+    }).catch(async (err) => {
+      console.error('plan_build failed:', err);
+      try {
+        await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+      } catch (e) {
+        console.error('Failed to report plan_build error to Slack:', e);
+      }
+    });
+  } else if (action.action_id === 'plan_edit') {
+    // Open the count-editing modal on this click's FRESH trigger_id (~3s to use it,
+    // which is why the plan arrived as a card and not a modal). The ownership check
+    // is against the WORKSPACE and synchronous for the same reason — a resolveTenant
+    // round-trip first could blow the window.
+    const pendingId = action.value;
+    const plan = peekPendingPlan(pendingId, workspaceId);
+    if (!plan) {
+      const gone =
+        `${emoji('quillio-scroll')} That plan is no longer available — Quillio restarted or it sat for more than ` +
+        '30 minutes. Nothing was created. Run `/quillio` again with the same brief.';
+      const done = canLive ? updateLive(channelId, messageTs, gone) : updateMessage(gone, responseUrl);
+      done.catch((err) => console.error('plan_edit expired notice failed:', err.message));
+    } else {
+      const meta = JSON.stringify({ pendingId, channel: channelId, messageTs });
+      openModal(payload.trigger_id, buildPlanEditModalView(meta, plan)).catch((err) =>
+        console.error('plan_edit openModal failed:', err)
+      );
+    }
+  } else if (action.action_id === 'plan_cancel') {
+    cancelBriefWorkflow(action.value, {
+      workspaceId,
+      channel: channelId,
+      messageTs,
+      responseUrl,
+    }).catch((err) => console.error('plan_cancel failed:', err.message));
+  } else if (action.action_id === 'generate_first_draft') {
     const docId = action.value;
     runGenerateDraft(docId, responseUrl, channelId, messageTs, workspaceId, undefined, slackUserId).catch(async (err) => {
       console.error('runGenerateDraft failed:', err);

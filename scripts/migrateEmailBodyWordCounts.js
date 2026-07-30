@@ -24,8 +24,12 @@
 //   1. WORD_FIELDS — six email body fields get field_type 'words' plus a word
 //      range, by email type:
 //        marketing / nurture  50–125   opt-in, branded, aiming for a CLICK
+//        secondary offer      25–60    the lighter of two offers in one email
 //        cold outreach        50–100   plain text, 1:1 feel, aiming for a REPLY
 //        follow-up            25–75    the reader already decided; reinforce or recap
+//      Bands are checked as a PAIR where two land in one email: Demand Gen carries
+//      both offer bodies, and 125 + 60 = 185 keeps the whole email under the
+//      200-word cliff.
 //   2. DIRECTIONS — the five email assets' asset_direction is trimmed to what is
 //      genuinely asset-specific. One ask per email, proof before pitch, specific
 //      over general, the wall of text / over-apologizer / multi-ask failure modes,
@@ -73,7 +77,11 @@ const COMMIT = process.argv.includes('--commit');
 const WORD_FIELDS = [
   // Marketing / nurture, 50–125 words.
   ['Demand Gen Nurture Email', 'Offer Body 1', 50, 125],
-  ['Demand Gen Nurture Email', 'Offer Body 2', 50, 125],
+  // The deliberately LIGHTER second offer, so a smaller band of its own. Both at
+  // 125 would permit a 250-word nurture email, and response falls below 40% past
+  // 200 — the pair has to clear the bar, not just each field on its own.
+  // 125 + 60 = 185.
+  ['Demand Gen Nurture Email', 'Offer Body 2', 25, 60],
   // An invitation is making a case to attend — it is marketing, not a reminder.
   ['Event Invitation Email', 'Event Description', 50, 125],
   // Cold outreach, 50–100 words.

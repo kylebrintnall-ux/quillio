@@ -7039,6 +7039,30 @@ test('word units: the seed and the migration agree, both directions', () => {
     f('Sales Basho Email', 'Body Copy').char_max], [50, 100], 'cold outreach');
   assert.deepStrictEqual([f('Event Follow-Up / Recap Email', 'Body Copy').char_min,
     f('Event Follow-Up / Recap Email', 'Body Copy').char_max], [25, 75], 'follow-up');
+  // The lighter SECOND offer gets its own smaller band, not the nurture one.
+  assert.deepStrictEqual([f('Demand Gen Nurture Email', 'Offer Body 2').char_min,
+    f('Demand Gen Nurture Email', 'Offer Body 2').char_max], [25, 60], 'secondary offer');
+
+  // A band has to clear the bar for the EMAIL, not just for its own field. Demand
+  // Gen carries two offer bodies, so their ceilings ADD: at 125 + 125 the doc would
+  // have sanctioned a 250-word nurture email while every individual number looked
+  // defensible, and the research these bands come from puts response below 40% past
+  // 200 words. Asserted per asset rather than for this one pair, so a body field
+  // added to any email later cannot quietly push it over.
+  const WORD_CLIFF = 200;
+  for (const a2 of DEFAULT_ASSETS) {
+    const bodies = a2.fields.filter((x) => x.field_type === 'words');
+    if (bodies.length < 2) continue;
+    const total = bodies.reduce((n, x) => n + x.char_max, 0);
+    assert.ok(total <= WORD_CLIFF,
+      `${a2.name}: its word fields (${bodies.map((x) => `${x.field_name} ${x.char_max}`).join(' + ')}) ` +
+      `total ${total}, over the ${WORD_CLIFF}-word cliff`);
+  }
+  assert.strictEqual(
+    DEFAULT_ASSETS.find((x) => x.name === 'Demand Gen Nurture Email')
+      .fields.filter((x) => x.field_type === 'words').length, 2,
+    'the pair check has something to check — Demand Gen is the only two-body email'
+  );
 
   // ONLY email body converts. Subject lines, preheaders, headlines, CTAs and every
   // ad field keep characters, because their limits ARE truncation points.

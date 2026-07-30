@@ -138,7 +138,7 @@ const RAW = [
     ['Offer Body 1', 50, 125],
     ['CTA Text (Offer 1)', 0, 25],
     ['Headline (Offer 2)', 0, 60],
-    ['Offer Body 2', 50, 125],
+    ['Offer Body 2', 25, 60],
     ['CTA Text (Offer 2)', 0, 20],
   ]],
   ['Event Invitation Email', 'Email', [
@@ -497,6 +497,11 @@ const ENFORCED_SPEC_FIELDS = new Set([
 const WORD_FIELDS = new Set([
   // Marketing / nurture band, 50–125 words. Opt-in, branded, aiming for a click.
   'Demand Gen Nurture Email||Offer Body 1',
+  // Offer Body 2 is the deliberately LIGHTER second offer, so it gets its own
+  // smaller band (25–60) rather than the nurture one. Two fields at 125 would
+  // permit a 250-word nurture email, and the research behind these numbers puts
+  // response below 40% past 200 words — a per-field band that is individually
+  // defensible can still be wrong for the email the two of them add up to.
   'Demand Gen Nurture Email||Offer Body 2',
   // An invitation is making a case to attend — marketing, not a reminder.
   'Event Invitation Email||Event Description',

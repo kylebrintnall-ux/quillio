@@ -44,13 +44,29 @@ function instanceTag(instance) {
   return `${INSTANCE_MARKER}${Math.floor(n)}`;
 }
 
+// The canonical review-unit key: `asset[#iN]||field`, lowercased and trimmed.
+//
+// THREE call sites used to carry their own inline copy of this exact template —
+// copyReview.fieldKey, and two inside gemini.reviewCopyFields' result-matching
+// map. This is now the only definition. (googleDocs.ctxKey has a DIFFERENT
+// serialization — a single `|`, and it stringifies a null asset as 'null' rather
+// than '' — so it stays separate, but it shares instanceTag above, which is the
+// only part that could drift.)
+//
+// Byte-identical to the pre-instance key whenever `instance` is the default; see
+// instanceTag. That is load-bearing — these strings are persisted verbatim as
+// jsonb object keys in doc_reviews.state.
+function reviewUnitKey(assetType, fieldName, instance) {
+  return `${String(assetType || '').trim().toLowerCase()}${instanceTag(instance)}||${String(fieldName || '').trim().toLowerCase()}`;
+}
+
 // A stateful counter that hands out the 0-based ordinal for each asset name as
 // it is encountered, in document order: first occurrence → 0, second → 1, …
 //
-// Callers must drive this over the FULL positional asset list from parseDoc /
-// getDocContent (both of which already push one entry per HEADING_3 without
-// deduping), and must not skip entries — two loops over the same doc only agree
-// on ordinals if they count the same headings.
+// Driven by the two doc READERS (parseDoc / getDocContent), which push one entry
+// per HEADING_3 without deduping and now stamp each entry with its ordinal. Any
+// other loop over an asset list should read that stamped `instance` rather than
+// re-count, so there is one source of truth per document.
 //
 // Names are normalized the same way the key functions normalize them (trim +
 // lowercase) so 'Email' and 'email ' are one asset, not two.
@@ -64,4 +80,4 @@ function instanceCounter() {
   };
 }
 
-module.exports = { INSTANCE_MARKER, instanceTag, instanceCounter };
+module.exports = { INSTANCE_MARKER, instanceTag, reviewUnitKey, instanceCounter };

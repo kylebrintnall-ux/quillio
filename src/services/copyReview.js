@@ -22,7 +22,7 @@ const { getDestination } = require('../destinations');
 const { reviewCopyFields, reviewVariationStack } = require('./gemini');
 const { getVoiceGuide, getReviewState, saveReviewState } = require('../db');
 const { isNumberedStack, stripSoloLabel, parseNumberedStack } = require('../utils/variants');
-const { instanceTag, instanceCounter } = require('../utils/instanceKey');
+const { instanceTag, reviewUnitKey, instanceCounter } = require('../utils/instanceKey');
 
 // Repo voice.md fallback — the BRAND half only, loaded once (same source
 // gemini.js uses for drafting). The craft half (craft.md) is added by gemini.js
@@ -38,16 +38,27 @@ function repoVoiceGuide() {
   return repoVoice;
 }
 
-// Reconcile/state key for one review unit.
+// Reconcile/state key for one review unit — `fieldKey(assetType, fieldName,
+// instance)`. THE shared implementation, not a local one: it is an alias for
+// utils/instanceKey.reviewUnitKey, which gemini.reviewCopyFields' result-matching
+// map also calls. That map used to carry its own inline copy of this template,
+// free to drift from this one; now there is a single definition.
 //
 // `instance` is the asset's 0-based instance ordinal, for a doc carrying the same
 // asset more than once. It defaults to 0, which serializes to nothing at all, so
 // `fieldKey(a, f)` and `fieldKey(a, f, 0)` are byte-identical to each other and to
 // the pre-instance key. That is load-bearing, not cosmetic: these strings are the
 // jsonb object keys persisted in doc_reviews.state, so a changed default would
-// orphan every tenant's stored review state. See utils/instanceKey.js.
-function fieldKey(assetType, fieldName, instance) {
-  return `${String(assetType || '').trim().toLowerCase()}${instanceTag(instance)}||${String(fieldName || '').trim().toLowerCase()}`;
+// orphan every tenant's stored review state.
+const fieldKey = reviewUnitKey;
+
+// The instance ordinal for one asset entry from getDocContent. Prefers the
+// ordinal the READER stamped (the authority: it saw document order). Falls back
+// to counting when absent, so a hand-built `content` — tests, or any future
+// caller that assembles asset lists itself — still distinguishes repeated names
+// instead of silently collapsing them to 0.
+function assetInstance(asset, countFallback) {
+  return asset && asset.instance != null ? asset.instance : countFallback(asset && asset.name);
 }
 
 // Flatten getDocContent → the SINGLE-copy reviewable fields (non-empty). Numbered
@@ -62,7 +73,7 @@ function collectCopyFields(content) {
   const out = [];
   const ordinal = instanceCounter();
   for (const asset of (content && content.assets) || []) {
-    const instance = ordinal(asset.name);
+    const instance = assetInstance(asset, ordinal);
     for (const f of asset.fields || []) {
       const raw = String(f.copy || '').trim();
       if (!raw) continue;
@@ -80,7 +91,7 @@ function collectVariationStacks(content) {
   const out = [];
   const ordinal = instanceCounter();
   for (const asset of (content && content.assets) || []) {
-    const instance = ordinal(asset.name);
+    const instance = assetInstance(asset, ordinal);
     for (const f of asset.fields || []) {
       const raw = String(f.copy || '').trim();
       if (!raw || !isNumberedStack(raw)) continue;
@@ -126,7 +137,7 @@ function selectReviewTargets(content, scopeKeys) {
       const raw = String(f.copy || '').trim();
       if (raw) list.push({ fieldName: f.fieldName, copy: raw });
     }
-    byAsset.set(assetKey(asset.name, ordinal(asset.name)), list);
+    byAsset.set(assetKey(asset.name, assetInstance(asset, ordinal)), list);
   }
   const siblingsFor = (assetName, fieldName, instance) =>
     (byAsset.get(assetKey(assetName, instance)) || [])

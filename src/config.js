@@ -15,7 +15,7 @@ const ALLOWED_ASSETS = [
   'Meta Carousel Ad',
   'Twitter/X Ad',
   'Display Banner — Standard',
-  'Google DV360 / Responsive Display',
+  'Google Responsive Display Ad',
   'Demand Gen Nurture Email',
   'Event Invitation Email',
   'Event Reminder Email',

@@ -562,10 +562,11 @@ test('defaultAssets is the 30-type v3 library with valid shape', () => {
   );
 });
 
-test('defaultAssets spec_type tiers match the migrations enforced set byte-for-byte', () => {
+test('spec tiers: the seed equals what the migration chain produces, in both directions', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { ENFORCED } = require('../scripts/migrateAddCopyFieldSpecType');
-  const { PROMOTE } = require('../scripts/migrateAddCopyFieldSpecTypeFixes');
+  const { PROMOTE: PROMOTE_2025 } = require('../scripts/migrateAddCopyFieldSpecTypeFixes');
+  const fix = require('../scripts/migrateSpecIntegrityFixes');
   const VALID = new Set(['enforced', 'recommended', 'house_default']);
 
   // Every field carries a valid tier.
@@ -575,77 +576,121 @@ test('defaultAssets spec_type tiers match the migrations enforced set byte-for-b
     }
   }
 
-  // The seed's 'enforced' set === the UNION of every migration's enforced pairs
-  // (initial ENFORCED + the corrective PROMOTE), exactly — so existing
-  // (backfilled) and new (seeded) tenants get identical tiers.
-  const seedEnforced = new Set();
-  for (const a of DEFAULT_ASSETS) {
-    for (const f of a.fields) {
-      if (f.spec_type === 'enforced') seedEnforced.add(`${a.name}||${f.field_name}`);
-    }
+  // DERIVE the expected tiers by REPLAYING every migration in order, exactly as a
+  // long-lived tenant's rows have been through them. A fresh tenant is seeded
+  // instead, so if these two disagree the two populations render different specs
+  // for the same field — which is the whole reason CLAUDE.md requires the seed and
+  // the migration to stay byte-identical.
+  let enforced = new Set([...ENFORCED, ...PROMOTE_2025].map(([a, f]) => `${a}||${f}`));
+  assert.strictEqual(enforced.size, 25, 'the 2025 chain left 25 enforced pairs');
+
+  // migrateSpecIntegrityFixes, step by step:
+  // 4. RENAME — the Google asset's four pairs move to the new name.
+  enforced = new Set([...enforced].map((k) =>
+    k.startsWith(`${fix.RENAME.from}||`) ? `${fix.RENAME.to}||${k.split('||')[1]}` : k));
+  // 1. RETIER — Meta's ten leave 'enforced' and become the recommended set.
+  const recommended = new Set(fix.RETIER.map(([a, f]) => `${a}||${f}`));
+  for (const k of recommended) {
+    assert.ok(enforced.has(k), `${k} must currently be enforced for the retier to apply`);
+    enforced.delete(k);
   }
-  const migEnforced = new Set([...ENFORCED, ...PROMOTE].map(([asset, field]) => `${asset}||${field}`));
-  assert.deepStrictEqual(
-    [...seedEnforced].sort(),
-    [...migEnforced].sort(),
-    'seed enforced pairs must equal the union of migration enforced pairs'
-  );
-  // Guard the pair count so an accidental add/drop on either side is caught.
-  assert.strictEqual(migEnforced.size, 25, 'expected 25 enforced pairs (23 initial + 2 corrective)');
+  // 5. PROMOTE — one uncited house default becomes a real enforced cap.
+  for (const [a, f] of fix.PROMOTE) enforced.add(`${a}||${f}`);
+
+  assert.strictEqual(enforced.size, 16, '16 enforced pairs after the integrity migration');
+  assert.strictEqual(recommended.size, 10, '10 recommended pairs — the tier is no longer empty');
+
+  // FORWARD: everything the migrations produce is in the seed at that tier.
+  const seedTier = new Map();
+  for (const a of DEFAULT_ASSETS) for (const f of a.fields) seedTier.set(`${a.name}||${f.field_name}`, f.spec_type);
+  for (const k of enforced) assert.strictEqual(seedTier.get(k), 'enforced', `${k} seeds enforced`);
+  for (const k of recommended) assert.strictEqual(seedTier.get(k), 'recommended', `${k} seeds recommended`);
+
+  // BACKWARD: the seed has NOTHING the migrations did not produce. A one-directional
+  // check would miss a tier added to the seed and never migrated — the exact drift
+  // that leaves old tenants behind.
+  const seedEnforced = new Set(), seedRecommended = new Set();
+  for (const [k, t] of seedTier) {
+    if (t === 'enforced') seedEnforced.add(k);
+    if (t === 'recommended') seedRecommended.add(k);
+  }
+  assert.deepStrictEqual([...seedEnforced].sort(), [...enforced].sort(), 'seed enforced === migrated enforced');
+  assert.deepStrictEqual([...seedRecommended].sort(), [...recommended].sort(), 'seed recommended === migrated recommended');
+
+  // The old Google name is gone from the seed entirely, not merely re-tiered.
+  assert.ok(!DEFAULT_ASSETS.some((a) => a.name === fix.RENAME.from), 'the old asset name is gone');
+  assert.ok(DEFAULT_ASSETS.some((a) => a.name === fix.RENAME.to), 'the new asset name is present');
 });
 
-test('enforced fields seed a real spec_source that resolves to the right platform; house_default stays quillio_default', () => {
+test('spec sources: every TIERED field cites its own asset\'s page and renders it hyperlinked', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { fieldHint } = require('../src/destinations/googleDocs');
-  const { PLATFORM_URLS } = require('../scripts/migrateSetEnforcedSpecSource');
+  const { SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
 
-  const platformForAsset = (a) => {
-    if (a.startsWith('Meta ')) return 'Meta';
-    if (a.startsWith('LinkedIn ')) return 'LinkedIn';
-    if (a === 'Twitter/X Ad') return 'X';
-    if (a.startsWith('Google DV360')) return 'Google';
-    return null;
+  // The tier sentence each tier is supposed to produce. house_default produces
+  // NOTHING — that is what makes an uncited number read as a house convention
+  // rather than a rule.
+  const SENTENCE = {
+    enforced: (p) => `Platform limit (${p}). Stay within this count.`,
+    recommended: (p) => `Recommended by ${p}. Not a hard limit — adjust for your brand and goal.`,
   };
 
   let enforcedSeen = 0;
+  let recommendedSeen = 0;
   for (const a of DEFAULT_ASSETS) {
     for (const f of a.fields) {
-      if (f.spec_type === 'enforced') {
-        enforcedSeen++;
-        const p = platformForAsset(a.name);
-        assert.ok(p, `enforced field ${a.name}/${f.field_name} maps to a platform`);
-        // Seed URL is byte-identical to the migration's URL for that platform.
-        assert.strictEqual(
-          f.spec_source,
-          PLATFORM_URLS[p],
-          `${a.name}/${f.field_name} seed spec_source must equal migration URL for ${p}`
-        );
-        // And it renders the NAMED tier line, with the platform name hyperlinked
-        // to the spec_source URL (Phase B).
-        const hint = fieldHint({ specType: 'enforced', specSource: f.spec_source });
-        assert.strictEqual(
-          hint.text,
-          `Platform limit (${p}). Stay within this count.`,
-          `${a.name}/${f.field_name} renders "(${p})"`
-        );
-        assert.strictEqual(hint.links.length, 1, `${a.name}/${f.field_name} has one link range`);
-        assert.strictEqual(
-          hint.text.substring(hint.links[0].start, hint.links[0].end),
-          p,
-          `${a.name}/${f.field_name} link covers only the platform name`
-        );
-        assert.strictEqual(hint.links[0].url, f.spec_source, `${a.name}/${f.field_name} link points at spec_source`);
-      } else {
-        // Non-enforced (house_default) fields keep the sentinel — not re-anchored.
-        assert.strictEqual(
-          f.spec_source,
-          'quillio_default',
-          `${a.name}/${f.field_name} must stay quillio_default`
-        );
+      if (f.spec_type === 'house_default') {
+        // Untiered fields keep the sentinel and render no tier line at all.
+        assert.strictEqual(f.spec_source, 'quillio_default', `${a.name}/${f.field_name} stays quillio_default`);
+        continue;
       }
+      if (f.spec_type === 'enforced') enforcedSeen += 1;
+      else recommendedSeen += 1;
+
+      // Seed URL is byte-identical to the migration's URL FOR THAT ASSET. Per-asset
+      // is the point: a per-platform map is how LinkedIn Carousel came to cite the
+      // single-image page, which does not contain the carousel's numbers.
+      assert.strictEqual(
+        f.spec_source,
+        SOURCE_URLS[a.name],
+        `${a.name}/${f.field_name} seed spec_source === migration URL for that ASSET`
+      );
+
+      // It renders the tier line for its own tier, with the platform name
+      // hyperlinked to that URL.
+      const hint = fieldHint({ specType: f.spec_type, specSource: f.spec_source });
+      const p = hint.text.match(/^Platform limit \((.+?)\)|^Recommended by (\S+?)\./);
+      assert.ok(p, `${a.name}/${f.field_name} names a platform`);
+      const name = p[1] || p[2];
+      assert.strictEqual(hint.text, SENTENCE[f.spec_type](name), `${a.name}/${f.field_name} renders its tier sentence`);
+      assert.strictEqual(hint.links.length, 1, `${a.name}/${f.field_name} has one link range`);
+      assert.strictEqual(
+        hint.text.substring(hint.links[0].start, hint.links[0].end), name,
+        `${a.name}/${f.field_name} link covers only the platform name`
+      );
+      assert.strictEqual(hint.links[0].url, f.spec_source, `${a.name}/${f.field_name} link points at spec_source`);
     }
   }
-  assert.strictEqual(enforcedSeen, 25, 'exactly 25 enforced fields carry a real spec_source');
+  assert.strictEqual(enforcedSeen, 16, 'exactly 16 enforced fields carry a real spec_source');
+  assert.strictEqual(recommendedSeen, 10, 'exactly 10 recommended fields — the tier is populated');
+
+  // The two citations this migration corrected, pinned by value.
+  const urlOf = (asset, field) => {
+    const f = DEFAULT_ASSETS.find((x) => x.name === asset).fields.find((x) => x.field_name === field);
+    return f.spec_source;
+  };
+  assert.match(urlOf('LinkedIn Carousel Ad', 'Card 1 Headline'), /\/carousel-ads\/specs$/,
+    'LinkedIn Carousel cites the CAROUSEL page');
+  assert.notStrictEqual(
+    urlOf('LinkedIn Carousel Ad', 'Card 1 Headline'),
+    urlOf('LinkedIn Single Image Ad', 'Headline'),
+    'and no longer shares the single-image URL'
+  );
+  assert.strictEqual(
+    urlOf('Organic Social — Twitter/X', 'Post Copy'),
+    urlOf('Twitter/X Ad', 'Ad Copy'),
+    'the organic X post cites the same X page as the paid asset'
+  );
 });
 
 test('LinkedIn Single Image Ad Intro Text seeds char_max 150 + note; Carousel Intro Text untouched', () => {
@@ -690,25 +735,36 @@ test('email Subject Line + Preheader seed mobile-truncation notes; reused names 
   assert.strictEqual(SUBJECT_NOTE, 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)');
   assert.strictEqual(PREHEADER_NOTE, 'Mobile shows ~35–40 characters of preheader — keep the key part first. (Litmus)');
 
-  // All 15 (asset, field) pairs the migration targets seed the matching note —
-  // and nothing numeric moved (Subject 50–75, Preheader 85–120), tier untouched.
+  // All 15 (asset, field) pairs the migration targets seed the matching note.
+  //
+  // The BANDS moved in the July 2026 integrity pass and are asserted from the new
+  // migration's own tables rather than from literals here, so this test cannot
+  // drift from the numbers that ship. The NOTE text did not move: ~40 characters of
+  // subject and ~35–40 of preheader is what the inbox shows regardless of the band.
+  const { SUBJECT_BANDS, PREHEADER_BAND } = require('../scripts/migrateSpecIntegrityFixes');
+  const subjectMaxFor = new Map(SUBJECT_BANDS);
   let count = 0;
   for (const assetName of EMAIL_ASSETS) {
     for (const [fieldName, note] of FIELD_NOTES) {
       const f = fieldOf(assetName, fieldName);
       assert.strictEqual(f.spec_note, note, `${assetName}/${fieldName} seeds the migration note byte-for-byte`);
       if (fieldName === 'Preheader') {
-        assert.strictEqual(f.char_min, 85, `${assetName}/Preheader char_min stays 85`);
-        assert.strictEqual(f.char_max, 120, `${assetName}/Preheader char_max stays 120`);
+        assert.strictEqual(f.char_min, PREHEADER_BAND[0], `${assetName}/Preheader char_min`);
+        assert.strictEqual(f.char_max, PREHEADER_BAND[1], `${assetName}/Preheader char_max is 100, not 120`);
       } else {
-        assert.strictEqual(f.char_min, 50, `${assetName}/${fieldName} char_min stays 50`);
-        assert.strictEqual(f.char_max, 75, `${assetName}/${fieldName} char_max stays 75`);
+        // NO minimum on a subject line. `[50-75]` told a writer they had to REACH
+        // 50 characters, which is actively wrong for cold outreach.
+        assert.strictEqual(f.char_min, 0, `${assetName}/${fieldName} has no char_min floor`);
+        assert.strictEqual(f.char_max, subjectMaxFor.get(assetName), `${assetName}/${fieldName} char_max by email type`);
       }
       assert.strictEqual(f.spec_type, 'house_default', `${assetName}/${fieldName} spec_type stays house_default`);
       assert.strictEqual(f.spec_source, 'quillio_default', `${assetName}/${fieldName} spec_source stays quillio_default`);
       count++;
     }
   }
+  // The bands really do differ by email type — a single shared band was the bug.
+  assert.strictEqual(fieldOf('Sales Basho Email', 'Subject Line 1').char_max, 40, 'cold outreach caps at 40');
+  assert.strictEqual(fieldOf('Demand Gen Nurture Email', 'Subject Line 1').char_max, 130, 'opt-in nurture caps at 130');
   assert.strictEqual(count, 15, 'exactly 15 email field defs (3 × 5) carry the notes');
 
   // Reused field names on NON-email assets must stay noteless — per-pair match,
@@ -6621,4 +6677,317 @@ test('stale shell: the check is wired to the fetch funnel, not a hand-picked lis
   // hoisted `undefined` would compare unequal to the live commit and banner falsely.
   assert.ok(html.indexOf("var APP_BUILD = '__BUILD__';") < html.indexOf('function fetchWithTimeout'),
     'APP_BUILD is assigned before the funnel that reads it');
+});
+
+// --- July 2026 spec-integrity pass -------------------------------------------
+// The library shipped numbers that were wrong, tiers that overstated what the
+// platform actually requires, and citations pointing at pages that do not contain
+// the number being cited. All three are USER-VISIBLE: spec_type becomes the italic
+// sentence under the field label and spec_source is the link behind the platform
+// name (see "Spec metadata renders" in CLAUDE.md).
+
+test('spec integrity: the three tier sentences, rendered', () => {
+  const { fieldHint } = require('../src/destinations/googleDocs');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const field = (asset, name) =>
+    DEFAULT_ASSETS.find((a) => a.name === asset).fields.find((f) => f.field_name === name);
+  const hintOf = (asset, name) => {
+    const f = field(asset, name);
+    return fieldHint({ specType: f.spec_type, specSource: f.spec_source, specNote: f.spec_note });
+  };
+
+  // ENFORCED — a real cap, stated as one.
+  const enf = hintOf('LinkedIn Single Image Ad', 'Headline');
+  assert.strictEqual(enf.text, 'Platform limit (LinkedIn). Stay within this count.');
+  assert.strictEqual(enf.text.substring(enf.links[0].start, enf.links[0].end), 'LinkedIn');
+  assert.strictEqual(enf.links[0].url,
+    'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs');
+
+  // RECOMMENDED — the branch that existed in the renderer but had no data. It says
+  // "not a hard limit", and it still hyperlinks the platform name.
+  const rec = hintOf('Meta Single Image Ad', 'Primary Text');
+  assert.strictEqual(rec.text, 'Recommended by Meta. Not a hard limit — adjust for your brand and goal.');
+  assert.strictEqual(rec.links.length, 1, 'the platform name is still a link');
+  assert.strictEqual(rec.text.substring(rec.links[0].start, rec.links[0].end), 'Meta');
+  assert.strictEqual(rec.links[0].url, 'https://www.facebook.com/business/ads-guide/update');
+
+  // HOUSE_DEFAULT with no note — renders NOTHING. An unsourced number must not
+  // claim any authority at all.
+  assert.strictEqual(hintOf('Event Landing Page', 'Hero Headline'), null);
+
+  // HOUSE_DEFAULT with a note — the note alone, no tier sentence appended.
+  const note = hintOf('Demand Gen Nurture Email', 'Subject Line 1');
+  assert.strictEqual(note.text, 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)');
+  assert.ok(!/Platform limit|Recommended by/.test(note.text), 'no tier sentence on a house default');
+  assert.strictEqual(note.text.substring(note.links[0].start, note.links[0].end), 'Litmus',
+    'the hand-written note credit is still hyperlinked');
+
+  // And a field carrying BOTH: the note first, then the tier line, one paragraph,
+  // with two independent link ranges that do not overlap.
+  const both = hintOf('LinkedIn Single Image Ad', 'Intro Text');
+  assert.strictEqual(both.text,
+    'In-feed preview truncates near 150; 600 is the technical max. Platform limit (LinkedIn). Stay within this count.');
+  assert.strictEqual(both.links.length, 1, 'only the tier line has a link here (the note has no known credit)');
+  assert.strictEqual(both.text.substring(both.links[0].start, both.links[0].end), 'LinkedIn');
+});
+
+test('spec integrity: the corrected numbers, and what was deliberately NOT changed', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const f = (asset, name) => {
+    const a = DEFAULT_ASSETS.find((x) => x.name === asset);
+    assert.ok(a, `asset ${asset} exists`);
+    const fl = a.fields.find((x) => x.field_name === name);
+    assert.ok(fl, `field ${asset}/${name} exists`);
+    return fl;
+  };
+
+  // 2. Meta Carousel: 45 was LinkedIn's carousel number, 18 matched nothing published.
+  for (let i = 1; i <= 5; i += 1) assert.strictEqual(f('Meta Carousel Ad', `Card ${i} Headline`).char_max, 40);
+  assert.strictEqual(f('Meta Carousel Ad', 'Card Description').char_max, 20);
+  // LinkedIn keeps 45 — that IS LinkedIn's number, and it stays enforced.
+  for (let i = 1; i <= 5; i += 1) {
+    assert.strictEqual(f('LinkedIn Carousel Ad', `Card ${i} Headline`).char_max, 45);
+    assert.strictEqual(f('LinkedIn Carousel Ad', `Card ${i} Headline`).spec_type, 'enforced');
+  }
+
+  // 1. The numbers that stay ENFORCED because the platform's own page states them
+  //    as limits — untouched in value as well as tier.
+  assert.strictEqual(f('LinkedIn Single Image Ad', 'Headline').char_max, 70);
+  assert.strictEqual(f('LinkedIn Single Image Ad', 'Intro Text').char_max, 150);
+  assert.strictEqual(f('LinkedIn Single Image Ad', 'LAN Description').char_max, 70);
+  assert.strictEqual(f('Twitter/X Ad', 'Ad Copy').char_max, 280);
+  for (const [a, n] of [['LinkedIn Single Image Ad', 'Headline'], ['LinkedIn Single Image Ad', 'Intro Text'],
+    ['LinkedIn Single Image Ad', 'LAN Description'], ['Twitter/X Ad', 'Ad Copy']]) {
+    assert.strictEqual(f(a, n).spec_type, 'enforced', `${a}/${n} stays enforced`);
+  }
+
+  // 1. Meta's values are unchanged in NUMBER — only the claim about them changed.
+  assert.strictEqual(f('Meta Single Image Ad', 'Primary Text').char_max, 125);
+  assert.strictEqual(f('Meta Single Image Ad', 'Headline').char_max, 40);
+  assert.strictEqual(f('Meta Single Image Ad', 'Description').char_max, 30);
+
+  // 4. Organic X: a genuine hard cap that was an uncited house default.
+  const x = f('Organic Social — Twitter/X', 'Post Copy');
+  assert.strictEqual(x.char_max, 280, 'the number was already right');
+  assert.strictEqual(x.spec_type, 'enforced', 'now tiered as the cap it is');
+  assert.match(x.spec_source, /^https:\/\/business\.x\.com\//, 'and cited');
+
+  // 5 + 6. Email bands.
+  const EMAILS = ['Demand Gen Nurture Email', 'Event Invitation Email', 'Event Reminder Email',
+    'Event Follow-Up / Recap Email', 'Sales Basho Email'];
+  for (const e of EMAILS) {
+    assert.deepStrictEqual([f(e, 'Preheader').char_min, f(e, 'Preheader').char_max], [85, 100], `${e} preheader`);
+    for (const sl of ['Subject Line 1', 'Subject Line 2']) {
+      assert.strictEqual(f(e, sl).char_min, 0, `${e}/${sl} has no floor`);
+      assert.strictEqual(f(e, sl).char_max, e === 'Sales Basho Email' ? 40 : 130, `${e}/${sl} ceiling`);
+    }
+  }
+
+  // The dropped floor is visible in the LABEL, which is what a writer actually
+  // reads: `[50-75]` became `[130]`. That instruction — "reach 50 characters" —
+  // was the wrong one to give, and it is now simply absent.
+  const { fieldLabel } = require('../src/destinations/googleDocs');
+  const label = (asset, name) => {
+    const fl = f(asset, name);
+    return fieldLabel({ fieldName: fl.field_name, charMin: fl.char_min, charMax: fl.char_max });
+  };
+  assert.strictEqual(label('Demand Gen Nurture Email', 'Subject Line 1'), 'Subject Line 1 [130]');
+  assert.strictEqual(label('Sales Basho Email', 'Subject Line 1'), 'Subject Line 1 [40]');
+  assert.strictEqual(label('Demand Gen Nurture Email', 'Preheader'), 'Preheader [85-100]');
+});
+
+test('spec integrity: the Google asset was renamed to match its source, everywhere', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { RENAME } = require('../scripts/migrateSpecIntegrityFixes');
+  const config = require('../src/config');
+
+  assert.strictEqual(RENAME.from, 'Google DV360 / Responsive Display');
+  assert.strictEqual(RENAME.to, 'Google Responsive Display Ad');
+
+  const asset = DEFAULT_ASSETS.find((a) => a.name === RENAME.to);
+  assert.ok(asset, 'the renamed asset is in the seed');
+  // The NUMBERS were right and are untouched — Google Ads Responsive Display
+  // values. The name was what disagreed with the source, so the name changed.
+  assert.deepStrictEqual(
+    asset.fields.filter((f) => f.spec_type === 'enforced').map((f) => [f.field_name, f.char_max]),
+    [['Short Headline', 30], ['Long Headline', 90], ['Description', 90], ['Business Name', 25]]
+  );
+  assert.ok(asset.fields.every((f) => f.spec_type === 'house_default'
+    || f.spec_source === 'https://support.google.com/google-ads/answer/17090561'));
+
+  // ALLOWED_ASSETS is the single source of truth Gemini output is filtered against
+  // (config.js). A rename that missed it would make every brief naming this asset
+  // silently unmatched.
+  assert.ok(config.ALLOWED_ASSETS.includes(RENAME.to), 'ALLOWED_ASSETS carries the new name');
+  assert.ok(!config.ALLOWED_ASSETS.includes(RENAME.from), 'and not the old one');
+  // Every seeded asset name must be allowed, or generateDoc drops it.
+  for (const a of DEFAULT_ASSETS) {
+    assert.ok(config.ALLOWED_ASSETS.includes(a.name), `${a.name} is in ALLOWED_ASSETS`);
+  }
+  // The parse prompt's taxonomy hint routes to the new name too, and still accepts
+  // "dv360" as a phrase a user would type.
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  assert.ok(gem.includes(`→ ${RENAME.to}`), 'the prompt maps to the new name');
+  assert.ok(!gem.includes(RENAME.from), 'the old name is gone from the prompt');
+  assert.ok(/"dv360"/.test(gem), 'but "dv360" is still a recognised phrase');
+
+  // The instance-heading parser reasons about digits in asset names. Before the
+  // rename, "DV360" was the one name containing a digit; now none does. The comment
+  // in googleDocs.js asserts that, so verify it against the real library rather
+  // than trusting the comment.
+  const withDigits = DEFAULT_ASSETS.map((a) => a.name).filter((n) => /\d/.test(n));
+  assert.deepStrictEqual(withDigits, [], 'no bundled asset name contains a digit');
+  for (const a of DEFAULT_ASSETS) {
+    assert.ok(!/ \d+$/.test(a.name), `${a.name} does not end in an ordinal`);
+    assert.ok(!/ \d+ — /.test(a.name), `${a.name} does not contain " N — "`);
+  }
+});
+
+test('spec integrity: the migration is idempotent-by-construction and dry-run by default', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateSpecIntegrityFixes.js'), 'utf8');
+  const fix = require('../scripts/migrateSpecIntegrityFixes');
+
+  // Dry run unless --commit, and it really rolls back rather than just printing.
+  assert.ok(/const COMMIT = process\.argv\.includes\('--commit'\);/.test(src), 'reads --commit');
+  assert.ok(/await client\.query\('BEGIN'\)/.test(src), 'opens a transaction');
+  assert.ok(/await client\.query\('ROLLBACK'\);\s*\n\s*console\.log\(`\$\{TAG\} ROLLED BACK \(dry run\)/.test(src),
+    'rolls back when not committing');
+  assert.ok(/if \(COMMIT\) \{\s*\n\s*await client\.query\('COMMIT'\)/.test(src), 'commits only with the flag');
+  assert.ok(/DATABASE_URL/.test(src) && /process\.exit\(1\)/.test(src), 'requires DATABASE_URL');
+
+  // Every UPDATE is conditioned so a re-run writes nothing — that is what makes it
+  // idempotent, rather than a claim in a comment.
+  const updates = src.match(/UPDATE copy_fields cf[\s\S]*?`/g) || [];
+  assert.strictEqual(updates.length, 5, 'five copy_fields updates: retier, promote, bands, sources, notes');
+  for (const u of updates) {
+    assert.ok(/IS DISTINCT FROM|spec_type = 'house_default'|spec_note IS NULL/.test(u),
+      `each update is guarded against re-writing the same value:\n${u.slice(0, 120)}`);
+  }
+  // It matches by NAME across all tenants, never by id — the specReview.js pattern.
+  assert.ok(/at\.name = \$1 AND cf\.field_name = \$2/.test(src), 'matched by (asset name, field name)');
+  assert.ok(!/tenant_id = \$/.test(src), 'not scoped to one tenant');
+  // Requiring it must not connect to a database (the tests above do exactly that).
+  assert.ok(/if \(require\.main === module\) \{\s*\n\s*main\(\);/.test(src), 'main() is gated on require.main');
+
+  // The rename runs BEFORE the lookups that use the new name, and refuses to
+  // collide with an existing row of the target name.
+  assert.ok(src.indexOf("UPDATE asset_types SET name") < src.indexOf('UPDATE copy_fields cf'),
+    'rename precedes the copy_fields updates');
+  assert.ok(/already have an asset named/.test(src), 'guards against a rename collision');
+
+  // The tables the seed is compared against are exported, and non-empty.
+  assert.strictEqual(fix.RETIER.length, 10);
+  assert.strictEqual(fix.PROMOTE.length, 1);
+  assert.strictEqual(fix.CHAR_FIXES.length, 6 + 5 * 3, '6 Meta carousel + 15 email fields');
+  assert.strictEqual(Object.keys(fix.SOURCE_URLS).length, 7);
+});
+
+test('spec integrity: the seed and the migration agree on every band, both directions', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { CHAR_FIXES, SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
+  const f = (asset, name) =>
+    DEFAULT_ASSETS.find((x) => x.name === asset).fields.find((x) => x.field_name === name);
+
+  // FORWARD: every band the migration writes is the band the seed carries. If these
+  // drift, a migrated tenant and a freshly seeded one render different limits for
+  // the same field.
+  for (const [asset, field, min, max] of CHAR_FIXES) {
+    const fl = f(asset, field);
+    assert.ok(fl, `${asset}/${field} exists in the seed`);
+    assert.strictEqual(fl.char_min, min, `${asset}/${field} char_min`);
+    assert.strictEqual(fl.char_max, max, `${asset}/${field} char_max`);
+  }
+  // ...and every source URL.
+  for (const [asset, url] of Object.entries(SOURCE_URLS)) {
+    const a = DEFAULT_ASSETS.find((x) => x.name === asset);
+    assert.ok(a, `${asset} exists in the seed`);
+    const tiered = a.fields.filter((x) => x.spec_type !== 'house_default');
+    assert.ok(tiered.length > 0, `${asset} has at least one tiered field`);
+    for (const fl of tiered) assert.strictEqual(fl.spec_source, url, `${asset}/${fl.field_name} cites ${url}`);
+  }
+
+  // BACKWARD: every asset the SEED cites a real URL for is one the migration knows
+  // about. A one-directional check would let the seed gain a citation the migration
+  // never applies, leaving existing tenants behind — the exact drift CLAUDE.md's
+  // byte-identical rule exists to prevent.
+  const seedCiting = new Set();
+  for (const a of DEFAULT_ASSETS) {
+    for (const fl of a.fields) if (fl.spec_source !== 'quillio_default') seedCiting.add(a.name);
+  }
+  assert.deepStrictEqual([...seedCiting].sort(), Object.keys(SOURCE_URLS).sort(),
+    'the seed cites exactly the assets the migration repoints');
+});
+
+test('spec integrity: the LinkedIn carousel note renders BESIDE the tier line, not instead of it', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { fieldHint, fieldLabel } = require('../src/destinations/googleDocs');
+  const { CARD_HEADLINE_NOTE, FIELD_NOTES, SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
+
+  const CAROUSEL_URL = 'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs';
+  assert.strictEqual(SOURCE_URLS['LinkedIn Carousel Ad'], CAROUSEL_URL, 'the corrected carousel URL');
+
+  const carousel = DEFAULT_ASSETS.find((a) => a.name === 'LinkedIn Carousel Ad');
+  const cards = carousel.fields.filter((f) => /^Card \d Headline$/.test(f.field_name));
+  assert.strictEqual(cards.length, 5, 'five card headlines');
+
+  for (const f of cards) {
+    // Seed note is byte-identical to the migration's.
+    assert.strictEqual(f.spec_note, CARD_HEADLINE_NOTE, `${f.field_name} seeds the migration note byte-for-byte`);
+    // The tier and the number are untouched by adding a note.
+    assert.strictEqual(f.spec_type, 'enforced');
+    assert.strictEqual(f.char_max, 45);
+    assert.strictEqual(f.spec_source, CAROUSEL_URL);
+
+    // THE POINT: the note does not REPLACE the tier sentence. fieldHint composes
+    // both into ONE paragraph — note first, tier second — because b.fieldNote()
+    // emits one paragraph and parseDoc reads a SECOND paragraph after a label as
+    // drafted copy. Two paragraphs here would make the tier line get deleted on the
+    // first "Generate Draft".
+    const hint = fieldHint({ specType: f.spec_type, specSource: f.spec_source, specNote: f.spec_note });
+    assert.strictEqual(
+      hint.text,
+      'Applies to carousels driving to a destination URL; with a Lead Gen Form CTA the cap is 30. ' +
+        'Platform limit (LinkedIn). Stay within this count.'
+    );
+    assert.ok(hint.text.includes(CARD_HEADLINE_NOTE), 'the note survives');
+    assert.ok(hint.text.includes('Platform limit (LinkedIn). Stay within this count.'), 'the tier line survives');
+    assert.ok(!hint.text.includes('\n'), 'ONE paragraph — a second one would be read as drafted copy');
+
+    // The hyperlink still lands on the platform name, whose offset moved by the
+    // note's length. It is computed structurally (specTypeLine reports nameStart,
+    // fieldHint adds the note prefix), never re-searched in the flat text — so the
+    // word "LinkedIn" appearing in a note could not steal the link.
+    assert.strictEqual(hint.links.length, 1, 'exactly one link');
+    assert.strictEqual(hint.text.substring(hint.links[0].start, hint.links[0].end), 'LinkedIn');
+    assert.strictEqual(hint.links[0].url, CAROUSEL_URL);
+    assert.strictEqual(hint.links[0].start, CARD_HEADLINE_NOTE.length + 1 + 'Platform limit ('.length,
+      'offset = note + joining space + the tier prefix');
+  }
+
+  // The label still shows the unconditional number; the note carries the other one.
+  const c1 = cards[0];
+  assert.strictEqual(fieldLabel({ fieldName: c1.field_name, charMin: c1.char_min, charMax: c1.char_max }),
+    'Card 1 Headline [45]');
+
+  // Per-asset-pair, never a bare field_name sweep: Meta Carousel has identically
+  // named fields where this caveat is false, and they must stay noteless.
+  const meta = DEFAULT_ASSETS.find((a) => a.name === 'Meta Carousel Ad');
+  for (const f of meta.fields.filter((x) => /^Card \d Headline$/.test(x.field_name))) {
+    assert.strictEqual(f.spec_note, null, `Meta ${f.field_name} must not pick up LinkedIn's caveat`);
+  }
+  // LinkedIn Carousel's OTHER fields are untouched too — this is the card headlines
+  // only, not the whole asset.
+  assert.strictEqual(carousel.fields.find((f) => f.field_name === 'Intro Text').spec_note, null);
+
+  // FORWARD + BACKWARD on the note table itself: every pair the migration writes is
+  // in the seed with that note, and the seed carries the note on exactly those pairs.
+  const seedNoted = [];
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) if (f.spec_note === CARD_HEADLINE_NOTE) seedNoted.push(`${a.name}||${f.field_name}`);
+  }
+  assert.deepStrictEqual(
+    seedNoted.sort(),
+    FIELD_NOTES.map(([a, f]) => `${a}||${f}`).sort(),
+    'seed and migration agree on exactly which fields carry the note'
+  );
 });

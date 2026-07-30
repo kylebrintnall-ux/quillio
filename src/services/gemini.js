@@ -411,7 +411,7 @@ async function parseBrief(brief) {
     '- "meta carousel" → Meta Carousel Ad',
     '- "twitter" or "x ad" → Twitter/X Ad',
     '- "display" or "banner" → Display Banner — Standard',
-    '- "dv360" or "programmatic" → Google DV360 / Responsive Display',
+    '- "responsive display", "dv360" or "programmatic" → Google Responsive Display Ad',
     '- "email" or "nurture" → Demand Gen Nurture Email',
     '- "event email" or "invite" → Event Invitation Email',
     '- "reminder email" → Event Reminder Email',

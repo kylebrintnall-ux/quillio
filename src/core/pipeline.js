@@ -712,6 +712,11 @@ function cloneSpecGroup(g) {
 // `assetType` is honored as an alias for `asset`, since that is the field name
 // used for an asset everywhere else in the codebase.
 // Counts are clamped here — a caller's number is never trusted.
+//
+// An optional `labels: string[]` names the instances, positionally, and surfaces in
+// the doc heading ('… 2 — Downtown residents'). NOTHING populates it: parseBrief
+// returns a bare string[], so only a direct pipeline call can supply one. It exists
+// so the path is wired and tested ahead of the parse step.
 function normalizeAssetPlan(assetsOrPlan) {
   const plan = [];
   for (const entry of Array.isArray(assetsOrPlan) ? assetsOrPlan : []) {
@@ -731,7 +736,12 @@ function normalizeAssetPlan(assetsOrPlan) {
         `[pipeline] asset plan: "${asset}" requested ${requested} instances — clamped to ${MAX_INSTANCES_PER_ASSET}`
       );
     }
-    plan.push({ asset, count });
+    // Positional instance labels, trimmed; absent/blank entries stay null so a
+    // partly-labeled plan is fine. Extra labels beyond `count` are dropped.
+    const labels = (Array.isArray(entry.labels) ? entry.labels : [])
+      .slice(0, count)
+      .map((l) => (typeof l === 'string' && l.trim() ? l.trim() : null));
+    plan.push(labels.some(Boolean) ? { asset, count, labels } : { asset, count });
   }
   return plan;
 }
@@ -774,7 +784,7 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = []) {
   // render (they get ordinals 0 and 1 rather than colliding).
   if (plan.length === 0) {
     const ordinal = instanceCounter();
-    return groups.map((g) => ({ ...cloneSpecGroup(g), instance: ordinal(g.assetType) }));
+    return groups.map((g) => ({ ...cloneSpecGroup(g), instance: ordinal(g.assetType), instanceLabel: null }));
   }
 
   // One pass to build the lookup — each named row is resolved once, not per
@@ -803,10 +813,16 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = []) {
 
   const ordinal = instanceCounter();
   const out = [];
-  for (const { asset, count } of plan) {
+  for (const { asset, count, labels } of plan) {
     const template = byName.get(normalize(asset));
     for (let i = 0; i < count; i += 1) {
-      out.push({ ...cloneSpecGroup(template), instance: ordinal(template.assetType) });
+      out.push({
+        ...cloneSpecGroup(template),
+        instance: ordinal(template.assetType),
+        // Positional within THIS plan entry (not the whole plan), so a second entry
+        // naming the same asset labels its own instances from its own list.
+        instanceLabel: (labels && labels[i]) || null,
+      });
     }
   }
   return out;

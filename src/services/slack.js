@@ -20,14 +20,32 @@ async function postToSlack(url, payload) {
   return { status: res.status, body };
 }
 
-// Block Kit message posted after the doc is built: title, asset list, the
-// Campaign folder / Copy doc hyperlinks, an optional "Saved to <folder>" line,
-// and two buttons (Generate First Draft / Skip for now). folderUrl/folderName
-// are optional — the folder link renders only when a project folder was made.
-function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName }) {
-  const assetList = assets.length
-    ? assets.map((a) => `• ${a}`).join('\n')
-    : '_No assets matched — included all specs._';
+// The card's asset list, one bullet per asset TYPE. A doc can now hold several
+// instances of one asset, and listing the same name three times reads like a bug;
+// repeats collapse to "• Name ×3" instead. A single instance keeps its bare name,
+// so every card written before instances existed is unchanged.
+//
+// Grouped by name in FIRST-APPEARANCE order, not by contiguous run: two separate
+// plan entries naming one asset are still one line, which is what a reader
+// scanning "what's in this doc" wants. Independent of the clamp notice below —
+// the list says what the doc contains, the notice says what was cut, and a
+// clamped build shows both.
+function formatAssetList(assets) {
+  const counts = new Map();
+  for (const name of assets || []) {
+    const key = String(name);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()].map(([name, n]) => (n > 1 ? `• ${name} ×${n}` : `• ${name}`)).join('\n');
+}
+
+// Block Kit message posted after the doc is built: title, asset list, an optional
+// advisory notice, the Campaign folder / Copy doc hyperlinks, an optional
+// "Saved to <folder>" line, and two buttons (Generate First Draft / Skip for now).
+// folderUrl/folderName are optional — the folder link renders only when a project
+// folder was made. `notice` is optional advisory context (see below).
+function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice }) {
+  const assetList = assets.length ? formatAssetList(assets) : '_No assets matched — included all specs._';
 
   const blocks = [
     {
@@ -43,6 +61,14 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
       text: { type: 'mrkdwn', text: `*Assets:*\n${assetList}` },
     },
   ];
+
+  // An advisory line under the asset list — today, "built 3 of the 5 you asked
+  // for" when a per-asset count hit the Slack ceiling. The build SUCCEEDED, so
+  // this is context, not an error: the writer needs to know the doc holds fewer
+  // versions than the brief asked for, without the card reading as a failure.
+  if (notice) {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: notice }] });
+  }
 
   // Folder + doc links as Slack hyperlinks, below the asset list. The doc link
   // replaces the old "Open in Drive" button; the folder link only renders when a

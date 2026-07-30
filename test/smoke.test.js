@@ -4464,33 +4464,64 @@ test('asset plan: request order becomes DOCUMENT order, so read-back ordinals ag
   );
 });
 
-test('asset plan: nothing user-facing can request count > 1', () => {
-  // The expansion is reachable only by calling the pipeline directly. Neither
-  // adapter builds a plan, and parseBrief still returns a bare string[].
+test('asset plan: counts are bounded at every layer', () => {
+  // This replaced a guard asserting that NOTHING user-facing could request
+  // count > 1 — which was true only while parseBrief deduped. It now can, so the
+  // invariant that matters is that no layer trusts the number it is handed.
   const rd = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
-  for (const p of ['src/adapters/slackWorkflow.js', 'src/adapters/web.js']) {
-    const src = rd(p);
-    // No adapter hard-codes a plan entry with a count above 1.
-    assert.ok(!/count:\s*(?!1\b)\d/.test(src), `${p} does not hard-code count > 1`);
-    assert.ok(!/\bMAX_INSTANCES_PER_ASSET\b|\btenantAssetsToSpecs\b/.test(src), `${p} does not touch the expansion`);
-  }
-  // routes/app.js DOES reference the ceiling now — it clamps a user-edited plan on
-  // the confirm endpoint. What matters is that it only ever clamps DOWNWARD from
-  // what a user typed and never originates a count itself. (This assertion used to
-  // forbid the route touching the expansion at all; the confirm step is exactly the
-  // place that has to.)
+  const gem = rd('src/services/gemini.js');
+  const core = rd('src/core/pipeline.js');
   const route = rd('src/routes/app.js');
-  assert.ok(/Math\.min\(MAX_INSTANCES_PER_ASSET, parseInt\(entry\.count, 10\) \|\| 1\)/.test(route),
-    'route clamps a client count rather than inventing one');
-  assert.ok(!/count:\s*(?!1\b)\d/.test(route), 'route does not hard-code count > 1');
 
-  // THE ACTUAL DORMANCY GUARANTEE, unchanged: parseBrief cannot emit count > 1, so
-  // no brief can reach the confirm screen, so no user can raise a count.
-  assert.ok(/"assets": string\[\]/.test(rd('src/services/gemini.js')), 'parseBrief schema is still string[]');
-  assert.ok(/if \(!assets\.includes\(canonical\)\) assets\.push\(canonical\)/.test(rd('src/services/gemini.js')),
-    'parseBrief still dedupes to one entry per asset name');
-  assert.ok(/plan = assets\.map\(\(asset\) => \(\{ asset, count: 1, labels: \[\] \}\)\)/.test(rd('src/adapters/web.js')),
-    'the web parse half builds every entry at count 1');
+  // 1. parseBrief clamps the MODEL's number on arrival.
+  assert.ok(/Math\.min\(PARSE_MAX_COUNT_PER_ASSET, requested \|\| 1\)/.test(gem), 'parse clamps per asset');
+  assert.ok(/planTotal \+ count > PARSE_MAX_TOTAL/.test(gem), 'parse caps the whole plan');
+  // 2. The expansion clamps again, per surface, and is the authority.
+  assert.ok(/Math\.min\(maxPerAsset, requested \|\| 1\)/.test(core), 'expansion clamps per surface');
+  assert.ok(/requestedTotal > maxTotal/.test(core), 'expansion refuses an over-total ask');
+  // 3. The confirm route clamps the USER's edited number.
+  assert.ok(/Math\.min\(MAX_INSTANCES_PER_ASSET, parseInt\(entry\.count, 10\) \|\| 1\)/.test(route),
+    'route clamps a client count');
+  // No layer hard-codes a count above 1 of its own accord. Comments are stripped
+  // first — the docs and clamp explanations legitimately quote counts like
+  // "count: 5" and "count: 400" as examples.
+  const stripComments = (src) => src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  for (const [name, src] of [['gemini', gem], ['pipeline', core], ['route', route]]) {
+    assert.ok(!/count:\s*(?!1\b)\d/.test(stripComments(src)), `${name} does not hard-code count > 1`);
+  }
+});
+
+test('asset plan: a one-of-each brief is byte-identical to the pre-instance behavior', () => {
+  // REQUIREMENT 8, the regression that matters most: every brief anyone has run so
+  // far is one of each. A plan of count-1 entries must expand exactly the way the
+  // old bare string[] did — same groups, same order, same ordinals, no labels.
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const rows = PLAN_ROWS();
+  const names = ['Battle Card', 'Demand Gen Nurture Email', 'Campaign Landing Page'];
+
+  const asStrings = tenantAssetsToSpecs(rows, names);
+  const asPlan = tenantAssetsToSpecs(rows, names.map((asset) => ({ asset, count: 1, labels: [] })));
+  assert.deepStrictEqual(
+    asPlan.map((s) => [s.assetType, s.instance, s.instanceLabel]),
+    asStrings.map((s) => [s.assetType, s.instance, s.instanceLabel]),
+    'plan entries at count 1 == bare names'
+  );
+  assert.ok(asPlan.every((s) => s.instance === 0 && s.instanceLabel === null), 'no ordinals, no labels');
+  assert.strictEqual(JSON.stringify(asPlan), JSON.stringify(asStrings), 'identical down to the field specs');
+
+  // Identical on Slack's tighter ceiling too — count 1 is under every ceiling.
+  assert.strictEqual(
+    JSON.stringify(tenantAssetsToSpecs(rows, names, SLACK_ASSET_LIMITS)),
+    JSON.stringify(asStrings)
+  );
+  // And the doc renders bare headings, exactly as before instances existed.
+  const { appendBody } = require('../src/destinations/googleDocs');
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const b = new DocBuilder();
+  appendBody(b, { summary: 'S', writerPrompt: 'W', resolvedLinks: [], referenceInsights: [], assetSpecs: asPlan });
+  for (const n of names) assert.ok(b.text.includes('\n' + n + '\n'), `bare heading for ${n}`);
+  assert.ok(!/ \d+\n/.test(b.text.split('Battle Card')[1] || ''), 'no ordinal suffix anywhere');
 });
 
 // --- Instance headings: the writer renders them, the readers decompose them ----
@@ -4978,29 +5009,32 @@ test('confirm: the client only branches when the server says to', () => {
 // Slack acks and builds fire-and-forget, so a misread is only found once the doc
 // exists — it builds under 3 / 6.
 
-test('surface ceilings: Slack declares a tighter pair than the defaults', () => {
+test('surface ceilings: Slack builds under the DEFAULTS, and the mechanism remains', () => {
   const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
   const { MAX_INSTANCES_PER_ASSET, MAX_TOTAL_INSTANCES, DEFAULT_ASSET_LIMITS } = require('../src/core/pipeline');
 
-  assert.strictEqual(SLACK_ASSET_LIMITS.maxPerAsset, 3);
-  assert.strictEqual(SLACK_ASSET_LIMITS.maxTotal, 6);
-  assert.ok(SLACK_ASSET_LIMITS.maxPerAsset < MAX_INSTANCES_PER_ASSET, 'stricter per asset');
-  assert.ok(SLACK_ASSET_LIMITS.maxTotal < MAX_TOTAL_INSTANCES, 'stricter in total');
-  assert.match(SLACK_ASSET_LIMITS.hint, /web app/, 'points at the surface that can take more');
-
-  // The defaults are the WEB's, unchanged.
+  // Slack was briefly 3 / 6, on the reasoning that it has no confirmation step.
+  // That over-weighted the cost of a misread: building a doc is a Drive write,
+  // while the expensive part — Gemini drafting, one call per asset group — is a
+  // separate deliberate button press on BOTH surfaces. So the surfaces are equal.
+  assert.strictEqual(SLACK_ASSET_LIMITS.maxPerAsset, MAX_INSTANCES_PER_ASSET);
+  assert.strictEqual(SLACK_ASSET_LIMITS.maxTotal, MAX_TOTAL_INSTANCES);
+  assert.deepStrictEqual(SLACK_ASSET_LIMITS, DEFAULT_ASSET_LIMITS, 'Slack takes the defaults verbatim');
   assert.strictEqual(DEFAULT_ASSET_LIMITS.maxPerAsset, 10);
   assert.strictEqual(DEFAULT_ASSET_LIMITS.maxTotal, 40);
 
-  // The SLACK ceiling is declared by the Slack adapter, not baked into the
-  // platform-agnostic core. (pipeline.js does mention Slack — canvas ingestion,
-  // attachments, slack_channel_id — the rule is no Slack IMPORTS, which a
-  // separate test covers. What matters here is that core carries no
-  // surface-specific ceiling.)
+  // The MECHANISM is deliberately kept so a surface can be made stricter later:
+  // core still takes a limits argument and still honours a tighter pair.
   const core = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  assert.ok(!/SLACK_ASSET_LIMITS|maxPerAsset:\s*3\b|maxTotal:\s*6\b/.test(core),
-    'core does not hardcode the Slack pair');
-  assert.strictEqual(require('../src/core/pipeline').SLACK_ASSET_LIMITS, undefined, 'core exports no Slack ceiling');
+  assert.ok(/function tenantAssetsToSpecs\(rows, assetsOrPlan = \[\], limits\)/.test(core), 'expansion still takes limits');
+  assert.ok(/function resolveAssetLimits/.test(core), 'the resolver is still there');
+  assert.ok(/projectMeta = \{\}, assetLimits\)/.test(core), 'generateDoc still takes assetLimits');
+  // And core still names no surface.
+  assert.ok(!/SLACK_ASSET_LIMITS/.test(core), 'core hardcodes no surface pair');
+  assert.strictEqual(require('../src/core/pipeline').SLACK_ASSET_LIMITS, undefined);
+  // Pointing the adapter's one constant at a tighter pair is the whole change.
+  const adapter = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  assert.ok(/const SLACK_ASSET_LIMITS = pipeline\.DEFAULT_ASSET_LIMITS;/.test(adapter), 'one constant to change');
 });
 
 test('surface ceilings: a surface can be stricter than the defaults, never looser', () => {
@@ -5025,56 +5059,65 @@ test('surface ceilings: a surface can be stricter than the defaults, never loose
   assert.strictEqual(resolveAssetLimits({ hint: '   ' }).hint, null);
 });
 
-test('surface ceilings: the same plan expands differently per surface', () => {
+// A surface that IS stricter than the defaults. Nothing ships with these today —
+// Slack and the web are both 10 / 40 — but the mechanism that would honour them is
+// live, so it stays tested against an explicit pair rather than against whatever
+// Slack happens to be set to.
+const STRICT_LIMITS = { maxPerAsset: 3, maxTotal: 6, hint: 'Split it across briefs.' };
+
+test('surface ceilings: Slack and the web now expand a plan identically', () => {
   const { tenantAssetsToSpecs } = require('../src/core/pipeline');
   const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
   const rows = PLAN_ROWS();
+  for (const plan of [
+    ['Battle Card', 'Demand Gen Nurture Email'],
+    [{ asset: 'Demand Gen Nurture Email', count: 5 }],
+    [{ asset: 'Demand Gen Nurture Email', count: 10, labels: ['A'] }],
+    [{ asset: 'Demand Gen Nurture Email', count: 3 }, { asset: 'Campaign Landing Page', count: 3 }],
+    [],
+  ]) {
+    assert.strictEqual(
+      JSON.stringify(tenantAssetsToSpecs(rows, plan, SLACK_ASSET_LIMITS)),
+      JSON.stringify(tenantAssetsToSpecs(rows, plan)),
+      `same expansion on both surfaces: ${JSON.stringify(plan)}`
+    );
+  }
+  // The multiply case — 5 emails x 2 audiences — now BUILDS on Slack.
+  const ten = [{ asset: 'Demand Gen Nurture Email', count: 10 }];
+  assert.strictEqual(tenantAssetsToSpecs(rows, ten, SLACK_ASSET_LIMITS).length, 10, 'count 10 builds on Slack');
+});
 
-  // Per asset: 5 requested. Web clamps to 5 (under its 10); Slack clamps to 3.
-  const five = [{ asset: 'Demand Gen Nurture Email', count: 5 }];
-  assert.strictEqual(tenantAssetsToSpecs(rows, five).length, 5, 'web honors 5');
-  assert.strictEqual(tenantAssetsToSpecs(rows, five, SLACK_ASSET_LIMITS).length, 3, 'Slack clamps to 3');
-  // Ordinals still run 0..n-1 after the clamp.
+test('surface ceilings: a stricter surface would still be honoured', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const rows = PLAN_ROWS();
+  // Per-asset clamp.
+  assert.strictEqual(tenantAssetsToSpecs(rows, [{ asset: 'Demand Gen Nurture Email', count: 5 }], STRICT_LIMITS).length, 3);
   assert.deepStrictEqual(
-    tenantAssetsToSpecs(rows, five, SLACK_ASSET_LIMITS).map((s) => s.instance),
-    [0, 1, 2]
+    tenantAssetsToSpecs(rows, [{ asset: 'Demand Gen Nurture Email', count: 5 }], STRICT_LIMITS).map((s) => s.instance),
+    [0, 1, 2],
+    'ordinals still run 0..n-1 after a clamp'
   );
-
-  // Total: 3 assets x 3 = 9, over Slack's 6 → throws, with the Slack hint.
-  const nine = [
-    { asset: 'Demand Gen Nurture Email', count: 3 },
-    { asset: 'Campaign Landing Page', count: 3 },
-    { asset: 'Battle Card', count: 3 },
-  ];
-  assert.strictEqual(tenantAssetsToSpecs(rows, nine).length, 9, 'web builds all 9');
+  // Over-total refusal, with that surface's own hint.
   assert.throws(
-    () => tenantAssetsToSpecs(rows, nine, SLACK_ASSET_LIMITS),
+    () => tenantAssetsToSpecs(rows, [
+      { asset: 'Demand Gen Nurture Email', count: 3 },
+      { asset: 'Campaign Landing Page', count: 3 },
+      { asset: 'Battle Card', count: 3 },
+    ], STRICT_LIMITS),
     (err) => {
       assert.match(err.message, /asks for 9 asset instances, above the 6-instance ceiling/);
-      assert.match(err.message, /web app/, 'the Slack hint replaces the generic sentence');
+      assert.match(err.message, /Split it across briefs/);
       return true;
     }
   );
-  // Exactly at Slack's ceiling is allowed.
+  // Exactly at the ceiling builds.
   assert.strictEqual(
-    tenantAssetsToSpecs(
-      rows,
-      [{ asset: 'Battle Card', count: 3 }, { asset: 'Campaign Landing Page', count: 3 }],
-      SLACK_ASSET_LIMITS
-    ).length,
+    tenantAssetsToSpecs(rows, [{ asset: 'Battle Card', count: 3 }, { asset: 'Campaign Landing Page', count: 3 }], STRICT_LIMITS).length,
     6
   );
-
-  // THE DORMANT PATH IS IDENTICAL ON BOTH SURFACES: today's plans are all count 1.
-  const today = ['Battle Card', 'Demand Gen Nurture Email', 'Campaign Landing Page'];
-  assert.deepStrictEqual(
-    tenantAssetsToSpecs(rows, today, SLACK_ASSET_LIMITS).map((s) => [s.assetType, s.instance]),
-    tenantAssetsToSpecs(rows, today).map((s) => [s.assetType, s.instance])
-  );
-  // And so is the whole-library (empty plan) path — 30 assets is not 30 instances.
+  // A vague brief still renders the whole library — 30 assets is not 30 instances.
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
-  assert.strictEqual(tenantAssetsToSpecs(DEFAULT_ASSETS, [], SLACK_ASSET_LIMITS).length, 30,
-    'a vague brief still renders the whole library on Slack');
+  assert.strictEqual(tenantAssetsToSpecs(DEFAULT_ASSETS, [], STRICT_LIMITS).length, 30);
 });
 
 test('surface ceilings: the Slack adapter passes its limits to generateDoc', () => {
@@ -5091,8 +5134,10 @@ test('surface ceilings: the Slack adapter passes its limits to generateDoc', () 
 });
 
 test('surface ceilings: the per-asset clamp cannot launder an over-total ask', () => {
+  // Uses the hypothetical strict pair — the property belongs to the MECHANISM, not
+  // to whatever Slack is currently set to (it is 10 / 40 now, same as the web).
   const { tenantAssetsToSpecs } = require('../src/core/pipeline');
-  const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const SLACK_ASSET_LIMITS = STRICT_LIMITS;
   const rows = PLAN_ROWS();
 
   // 5 + 5 = 10 requested. Clamping each to Slack's 3 first would give 6, which is
@@ -5128,4 +5173,262 @@ test('surface ceilings: the per-asset clamp cannot launder an over-total ask', (
   );
   // Web is unaffected: 10 requested is under its 40.
   assert.strictEqual(tenantAssetsToSpecs(rows, tenAsked).length, 10);
+});
+
+// --- parseBrief emits an asset PLAN ------------------------------------------
+// The last step of the instance work: a brief can now ask for more than one of an
+// asset. These drive the REAL parseBrief — prompt build, JSON parse, canonical
+// matching, clamping — with the network stubbed, so everything except the model's
+// judgement is exercised.
+
+// Run parseBrief against a canned model response. Returns { result, prompt } so
+// the prompt the model would have seen is assertable too.
+async function parseBriefWith(modelJson, briefText) {
+  const configPath = require.resolve('../src/config');
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  let sentPrompt = '';
+  cfg.GEMINI_API_KEY = 'test-key';
+  global.fetch = async (_url, opts) => {
+    const body = JSON.parse(opts.body);
+    sentPrompt = body.contents[0].parts[0].text;
+    return {
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: typeof modelJson === 'string' ? modelJson : JSON.stringify(modelJson) }] } }],
+      }),
+    };
+  };
+  try {
+    const { parseBrief } = require('../src/services/gemini');
+    const result = await parseBrief(briefText || 'a brief');
+    return { result, prompt: sentPrompt };
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+    void configPath;
+  }
+}
+const MODEL_BASE = { campaignTitle: 'T', summary: 'S', writerPrompt: 'W', unmatchedAssets: [], folderId: null, referenceLinks: [] };
+
+test('parseBrief: repeats survive — the dedupe is gone', async () => {
+  // Two entries naming one asset are two separate asks; one entry with count 5 is
+  // five versions. Neither used to be expressible.
+  const { result } = await parseBriefWith({
+    ...MODEL_BASE,
+    assets: [
+      { asset: 'Demand Gen Nurture Email', count: 5, labels: [] },
+      { asset: 'Battle Card', count: 1, labels: [] },
+      { asset: 'Demand Gen Nurture Email', count: 2, labels: [] },
+    ],
+  });
+  assert.deepStrictEqual(result.assets, [
+    { asset: 'Demand Gen Nurture Email', count: 5 },
+    { asset: 'Battle Card', count: 1 },
+    { asset: 'Demand Gen Nurture Email', count: 2 },
+  ]);
+});
+
+test('parseBrief: a one-of-each brief is unchanged in substance', async () => {
+  // The backward-compat case. Names still canonicalize case- and dash-insensitively,
+  // order is still the brief's, and every count is 1 with no labels — so everything
+  // downstream expands exactly as it did before counts existed.
+  const { result } = await parseBriefWith({
+    ...MODEL_BASE,
+    assets: [
+      { asset: 'campaign landing page', count: 1, labels: [] },
+      { asset: 'Organic Social - LinkedIn', count: 1, labels: [] }, // hyphen, not em dash
+      'Battle Card', // a bare string still works
+    ],
+  });
+  assert.deepStrictEqual(result.assets, [
+    { asset: 'Campaign Landing Page', count: 1 },
+    { asset: 'Organic Social — LinkedIn', count: 1 },
+    { asset: 'Battle Card', count: 1 },
+  ]);
+  assert.ok(result.assets.every((e) => e.labels === undefined), 'no labels key when there are none');
+  assert.deepStrictEqual(result.unmatchedAssets, []);
+});
+
+test("parseBrief: the model's numbers are never trusted", async () => {
+  // Per-asset clamp.
+  const big = await parseBriefWith({ ...MODEL_BASE, assets: [{ asset: 'Battle Card', count: 400 }] });
+  assert.deepStrictEqual(big.result.assets, [{ asset: 'Battle Card', count: 10 }]);
+  // Junk / missing / zero / negative all floor to 1.
+  for (const bad of [0, -3, null, undefined, 'five', NaN, {}]) {
+    const r = await parseBriefWith({ ...MODEL_BASE, assets: [{ asset: 'Battle Card', count: bad }] });
+    assert.deepStrictEqual(r.result.assets, [{ asset: 'Battle Card', count: 1 }], `count ${String(bad)} → 1`);
+  }
+  // Whole-plan cap: the entry that crosses it is trimmed, later ones dropped.
+  const flood = await parseBriefWith({
+    ...MODEL_BASE,
+    assets: Array.from({ length: 8 }, () => ({ asset: 'Battle Card', count: 10 })), // 80 asked
+  });
+  const total = flood.result.assets.reduce((n, e) => n + e.count, 0);
+  assert.strictEqual(total, 40, 'plan capped at PARSE_MAX_TOTAL');
+  assert.ok(flood.result.assets.length < 8, 'entries past the cap are dropped, not kept at 0');
+  assert.ok(flood.result.assets.every((e) => e.count >= 1));
+});
+
+test('parseBrief: unmatched names are still surfaced, never coerced', async () => {
+  const { result } = await parseBriefWith({
+    ...MODEL_BASE,
+    assets: [{ asset: 'TikTok Ad', count: 3 }, { asset: 'Battle Card', count: 1 }],
+    unmatchedAssets: ['Podcast spot'],
+  });
+  assert.deepStrictEqual(result.assets, [{ asset: 'Battle Card', count: 1 }]);
+  assert.deepStrictEqual(result.unmatchedAssets, ['Podcast spot', 'TikTok Ad']);
+  // Entries with no usable name are dropped rather than becoming empty assets.
+  const junk = await parseBriefWith({ ...MODEL_BASE, assets: [null, 7, {}, { asset: '   ' }, 'Battle Card'] });
+  assert.deepStrictEqual(junk.result.assets, [{ asset: 'Battle Card', count: 1 }]);
+});
+
+test('parseBrief: labels are positional, trimmed, and bounded by count', async () => {
+  const { result } = await parseBriefWith({
+    ...MODEL_BASE,
+    assets: [{ asset: 'Demand Gen Nurture Email', count: 3, labels: ['  Downtown  ', '', 'Suburban', 'extra'] }],
+  });
+  assert.deepStrictEqual(result.assets, [
+    { asset: 'Demand Gen Nurture Email', count: 3, labels: ['Downtown', null, 'Suburban'] },
+  ]);
+  // An all-blank label list is dropped entirely, so the entry stays label-free.
+  const blank = await parseBriefWith({
+    ...MODEL_BASE,
+    assets: [{ asset: 'Battle Card', count: 2, labels: ['', '   '] }],
+  });
+  assert.deepStrictEqual(blank.result.assets, [{ asset: 'Battle Card', count: 2 }]);
+});
+
+test('parseBrief: the prompt asks for a plan and routes A/B tests to counts', async () => {
+  const { prompt } = await parseBriefWith({ ...MODEL_BASE, assets: [] }, 'anything');
+  // The declared shape is a plan, not a string[].
+  assert.ok(/"assets": \[\{"asset": string, "count": number, "labels": string\[\]\}\]/.test(prompt),
+    'schema declares the plan shape');
+  assert.ok(!/"assets": string\[\]/.test(prompt), 'the old string[] schema is gone');
+  // A/B phrasing must produce counts, NOT the standalone Variant asset types.
+  assert.ok(/"ab test".*→ the BASE asset, count 2/.test(prompt), 'A/B routes to a count');
+  // No mapping arrow anywhere points AT a Variant asset type.
+  assert.ok(!/→[^\n]*Variant [A-D]/.test(prompt), 'nothing routes to Variant A-D any more');
+  assert.ok(/never as a way of expressing "two versions"/.test(prompt), 'and the model is told why');
+  // The Variant A-D types still EXIST — they were not deleted from the taxonomy.
+  const { ALLOWED_ASSETS } = require('../src/config');
+  assert.strictEqual(ALLOWED_ASSETS.length, 30);
+  assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad — Variant A'));
+  assert.ok(prompt.includes('LinkedIn Single Image Ad — Variant A'), 'still offered in the allowed list');
+  // The cap is on TOTAL VERSIONS now, not distinct names, and it only binds when
+  // the brief gave no numbers of its own.
+  assert.ok(/when the brief gives NO numbers, keep the total number of versions to 5 or\nfewer/.test(prompt),
+    'cap is on versions, and only when the brief is silent');
+  assert.ok(/Numbers the brief actually states always win/.test(prompt));
+  // A vague plural must not become a guessed number.
+  assert.ok(/A vague plural is NOT a number/.test(prompt));
+
+  // MULTIPLICATION across groups — the reading is N x M, stated as the default,
+  // with the "shared total" phrasing called out as the only exception.
+  assert.ok(/A NUMBER CROSSED WITH GROUPS MULTIPLIES/.test(prompt), 'the rule has its own heading');
+  assert.ok(/"five nurture emails for two audiences" = 5 emails FOR EACH audience =\n  count 10/.test(prompt),
+    'the worked example says 10, not 5');
+  assert.ok(/ALWAYS N x M, not N shared between the groups/.test(prompt), 'the default reading is explicit');
+  assert.ok(/ONLY treat the number as a shared total when the brief says so outright/.test(prompt),
+    'the counter-case is explicit too');
+  assert.ok(/count 5, not 10/.test(prompt), 'and it names the number the counter-case produces');
+  assert.ok(/Never shrink 10 back to 5 to look tidier/.test(prompt), 'the size cap cannot undo a multiply');
+  // Labels must match the multiplied count, grouped — 10 labels for count 10.
+  assert.ok(/labels must have EXACTLY `count` entries, GROUPED/.test(prompt));
+  assert.ok(/NOT five labels for ten versions, and NOT\n  two labels/.test(prompt),
+    'the two wrong label shapes are named');
+  assert.strictEqual(
+    (prompt.match(/"Downtown"/g) || []).length + (prompt.match(/"Suburban"/g) || []).length,
+    10,
+    'the worked label example really does list ten entries'
+  );
+});
+
+test('Slack clamp notice: says what was built, without failing the card', () => {
+  const { clampNotice, SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const { buildResultBlocks } = require('../src/services/slack');
+
+  // Nothing over the ceiling → no notice at all. Slack's ceiling is 10 per asset
+  // now, and parseBrief caps a count at 10 too, so no BRIEF can currently trigger
+  // this — the notice is retained (and tested) for a stricter surface or a direct
+  // pipeline call, and it is what would tell a writer the doc holds fewer versions
+  // than they asked for.
+  assert.strictEqual(clampNotice([{ asset: 'Battle Card', count: 1 }], SLACK_ASSET_LIMITS), null);
+  assert.strictEqual(clampNotice([{ asset: 'Battle Card', count: 10 }], SLACK_ASSET_LIMITS), null, 'at the ceiling is fine');
+  assert.strictEqual(clampNotice([{ asset: 'Battle Card', count: 5 }], SLACK_ASSET_LIMITS), null, 'well under it, too');
+  assert.strictEqual(clampNotice([], SLACK_ASSET_LIMITS), null);
+  assert.strictEqual(clampNotice(['Battle Card'], SLACK_ASSET_LIMITS), null, 'bare names carry no count');
+
+  // Over the ceiling → advisory text naming what was built vs asked.
+  const notice = clampNotice([{ asset: 'Demand Gen Nurture Email', count: 12 }], SLACK_ASSET_LIMITS);
+  assert.match(notice, /Built 10 of 12 Demand Gen Nurture Emails/);
+  assert.match(notice, /ceiling here is 10 per asset/);
+  assert.match(notice, /web app for larger plans/);
+  // And on a stricter surface it reports that surface's number.
+  assert.match(
+    clampNotice([{ asset: 'Battle Card', count: 5 }], STRICT_LIMITS),
+    /Built 3 of 5 Battle Cards — the ceiling here is 3 per asset/
+  );
+
+  // The card still reads as a SUCCESS — the notice is a context line, and the
+  // header, links and draft button are all untouched.
+  const { blocks } = buildResultBlocks({
+    title: 'T', webViewLink: 'https://d/1', assets: ['Demand Gen Nurture Email'], docId: '1',
+    folderUrl: null, folderName: null, notice,
+  });
+  const ctx = blocks.filter((b) => b.type === 'context');
+  assert.strictEqual(ctx.length, 1, 'exactly one context line');
+  assert.strictEqual(ctx[0].elements[0].text, notice);
+  assert.ok(blocks.some((b) => b.type === 'header' && /doc is ready/.test(b.text.text)), 'still the ready card');
+  assert.ok(blocks.some((b) => b.type === 'actions'), 'draft button intact');
+
+  // With no notice the card is byte-identical to before this change.
+  const without = buildResultBlocks({
+    title: 'T', webViewLink: 'https://d/1', assets: ['Demand Gen Nurture Email'], docId: '1',
+    folderUrl: null, folderName: null,
+  });
+  assert.strictEqual(without.blocks.filter((b) => b.type === 'context').length, 0, 'no stray context block');
+});
+
+test('Slack card: repeated instances collapse to "Name xN"', () => {
+  const { buildResultBlocks } = require('../src/services/slack');
+  const listOf = (assets, notice) => {
+    const { blocks } = buildResultBlocks({
+      title: 'T', webViewLink: 'https://d/1', assets, docId: '1', folderUrl: null, folderName: null, notice,
+    });
+    return blocks.find((b) => b.type === 'section' && /^\*Assets:\*/.test(b.text.text)).text.text;
+  };
+
+  // Single instances are untouched — every card written before instances existed.
+  assert.strictEqual(
+    listOf(['Demand Gen Nurture Email', 'Battle Card']),
+    '*Assets:*\n• Demand Gen Nurture Email\n• Battle Card'
+  );
+  // Repeats collapse; the single one alongside them keeps its bare name.
+  assert.strictEqual(
+    listOf(['Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Battle Card']),
+    '*Assets:*\n• Demand Gen Nurture Email ×3\n• Battle Card'
+  );
+  // Grouped by name in FIRST-APPEARANCE order, even when not contiguous.
+  assert.strictEqual(
+    listOf(['Battle Card', 'Demand Gen Nurture Email', 'Battle Card']),
+    '*Assets:*\n• Battle Card ×2\n• Demand Gen Nurture Email'
+  );
+  // The empty fallback is unchanged.
+  assert.match(listOf([]), /No assets matched/);
+
+  // THE LIST AND THE CLAMP NOTICE ARE INDEPENDENT and appear together: the list
+  // says what the doc holds (3), the notice says what was cut (3 of 5).
+  const { clampNotice, SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const notice = clampNotice([{ asset: 'Demand Gen Nurture Email', count: 12 }], SLACK_ASSET_LIMITS);
+  const built = ['Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Battle Card'];
+  const { blocks } = buildResultBlocks({
+    title: 'T', webViewLink: 'https://d/1', assets: built, docId: '1', folderUrl: null, folderName: null, notice,
+  });
+  assert.strictEqual(
+    blocks.find((b) => b.type === 'section' && /^\*Assets:\*/.test(b.text.text)).text.text,
+    '*Assets:*\n• Demand Gen Nurture Email ×3\n• Battle Card'
+  );
+  assert.match(blocks.find((b) => b.type === 'context').elements[0].text, /Built 10 of 12/);
 });

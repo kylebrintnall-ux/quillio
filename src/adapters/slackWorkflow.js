@@ -23,24 +23,49 @@ const { emoji } = require('../emoji');
 
 const BUILDING_TEXT = `${emoji('quillio-scroll')} Building your document…`;
 
-// Instance ceilings for the SLACK surface — deliberately tighter than the web's
-// 10-per-asset / 40-total defaults.
+// Instance ceilings for the SLACK surface — the SAME as the web's defaults
+// (10 per asset / 40 total).
 //
-// The difference is confirmation, not capability. The web flow pauses after parse
-// and shows the interpretation before creating anything (routes/app.js
-// /api/brief → /api/brief/confirm), so a misread plan costs a click to correct.
-// Slack acks and builds fire-and-forget by design — the 3s ack window and the
-// ~2000-char button value leave nowhere to put a review step today — so a misread
-// plan is only discovered once the doc exists.
+// These were briefly tighter (3 / 6), on the reasoning that Slack has no
+// confirmation step so a misread plan is only discovered once the doc exists.
+// That over-weighted what a misread actually costs. Building a doc is a Drive
+// write and some Docs batchUpdate calls — cheap, and easy to throw away. The
+// expensive operation is Gemini DRAFTING, one call per asset group, and that is a
+// separate deliberate button press on both surfaces: "Generate First Draft" here,
+// the same on the web. A misread plan costs a discarded doc either way, not a pile
+// of Gemini calls, so there was nothing for the asymmetry to buy.
 //
-// 3 per asset is enough for a real A/B test or a short sequence; 6 total keeps a
-// misread to one small doc rather than a doc plus a dozen Gemini calls (every
-// asset group is its own call at draft time).
-const SLACK_ASSET_LIMITS = {
-  maxPerAsset: 3,
-  maxTotal: 6,
-  hint: 'Split it across briefs, or run it in the web app, which asks you to confirm a bigger plan first.',
-};
+// The per-surface mechanism in core/pipeline stays — pointing this at a tighter
+// pair is all it takes to make Slack stricter again, and both the expansion and
+// the card's clamp notice follow from this one constant.
+const SLACK_ASSET_LIMITS = pipeline.DEFAULT_ASSET_LIMITS;
+
+// Which entries in a plan will be cut down by the per-asset ceiling, and by how
+// much. The clamp itself happens inside the expansion (core/pipeline); this only
+// reads the plan to describe it, so the doc-ready card can say what was built
+// instead of leaving the difference in a server log the writer never sees.
+//
+// A count OVER the ceiling is not an error — 3 usable emails beat a refusal — so
+// this returns advisory text, never a throw. (An over-TOTAL plan is a different
+// case and does throw, inside the expansion, with the hint above.)
+function clampNotice(plan, limits) {
+  const cut = [];
+  for (const entry of Array.isArray(plan) ? plan : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const asked = parseInt(entry.count, 10);
+    if (Number.isFinite(asked) && asked > limits.maxPerAsset) {
+      cut.push({ asset: String(entry.asset || ''), asked });
+    }
+  }
+  if (cut.length === 0) return null;
+  const each = cut
+    .map((c) => `${limits.maxPerAsset} of ${c.asked} ${c.asset}${c.asked === 1 ? '' : 's'}`)
+    .join(', ');
+  return (
+    `Built ${each} — the ceiling here is ${limits.maxPerAsset} per asset. ` +
+    'Use the web app for larger plans.'
+  );
+}
 
 // The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
 // this before the slash command's 200 response has been sent. The entire body
@@ -248,6 +273,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       docId: doc.id,
       folderUrl: projectFolderUrl, // null if folder creation failed → link omitted
       folderName, // null unless the doc went to a brief-linked folder
+      // "Built 3 of 5 …" when a per-asset count hit the Slack ceiling; null when
+      // nothing was clamped (every brief reachable before instances existed).
+      notice: clampNotice(assets, SLACK_ASSET_LIMITS),
     };
     const resultBlocks = buildResultBlocks(result).blocks;
     await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
@@ -343,4 +371,4 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   console.log('[workflow] runGenerateDraft DONE');
 }
 
-module.exports = { runBriefWorkflow, runGenerateDraft, SLACK_ASSET_LIMITS };
+module.exports = { runBriefWorkflow, runGenerateDraft, SLACK_ASSET_LIMITS, clampNotice };

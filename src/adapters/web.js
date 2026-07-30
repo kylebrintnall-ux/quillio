@@ -78,10 +78,16 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
     await pipeline.cleanupAttachedFiles(fileRefs);
   }
 
-  // The asset PLAN. parseBrief returns a deduped string[], so every count is 1 and
-  // there are no labels — nothing to confirm yet. The shape is what a later parse
-  // step will fill in, and what the confirm endpoint accepts back (possibly edited).
-  const plan = assets.map((asset) => ({ asset, count: 1, labels: [] }));
+  // The asset PLAN, straight from parseBrief: an ordered [{ asset, count, labels? }].
+  // A one-of-each brief yields every count 1 and no labels, so planNeedsConfirmation
+  // is false and the flow runs through without a pause, exactly as before counts
+  // existed. `labels` is normalized to an array so the confirm screen and the
+  // interpretation payload always see the same shape.
+  const plan = (Array.isArray(assets) ? assets : []).map((e) =>
+    typeof e === 'string'
+      ? { asset: e, count: 1, labels: [] }
+      : { asset: e.asset, count: e.count || 1, labels: Array.isArray(e.labels) ? e.labels : [] }
+  );
 
   return { briefText, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights, plan };
 }

@@ -24,10 +24,27 @@ async function postToSlack(url, payload) {
 // Campaign folder / Copy doc hyperlinks, an optional "Saved to <folder>" line,
 // and two buttons (Generate First Draft / Skip for now). folderUrl/folderName
 // are optional — the folder link renders only when a project folder was made.
+// The card's asset list, one bullet per asset TYPE. A doc can now hold several
+// instances of one asset, and listing the same name three times reads like a bug;
+// repeats collapse to "• Name ×3" instead. A single instance keeps its bare name,
+// so every card written before instances existed is unchanged.
+//
+// Grouped by name in FIRST-APPEARANCE order, not by contiguous run: two separate
+// plan entries naming one asset are still one line, which is what a reader
+// scanning "what's in this doc" wants. Independent of the clamp notice below —
+// the list says what the doc contains, the notice says what was cut, and a
+// clamped build shows both.
+function formatAssetList(assets) {
+  const counts = new Map();
+  for (const name of assets || []) {
+    const key = String(name);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()].map(([name, n]) => (n > 1 ? `• ${name} ×${n}` : `• ${name}`)).join('\n');
+}
+
 function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice }) {
-  const assetList = assets.length
-    ? assets.map((a) => `• ${a}`).join('\n')
-    : '_No assets matched — included all specs._';
+  const assetList = assets.length ? formatAssetList(assets) : '_No assets matched — included all specs._';
 
   const blocks = [
     {

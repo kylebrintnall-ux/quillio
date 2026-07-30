@@ -5302,11 +5302,33 @@ test('parseBrief: the prompt asks for a plan and routes A/B tests to counts', as
   assert.strictEqual(ALLOWED_ASSETS.length, 30);
   assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad — Variant A'));
   assert.ok(prompt.includes('LinkedIn Single Image Ad — Variant A'), 'still offered in the allowed list');
-  // The cap is on TOTAL VERSIONS now, not distinct names, and an explicit number wins.
-  assert.ok(/TOTAL number of versions \(the sum of every count\) to 5 or fewer/.test(prompt), 'cap is on versions');
-  assert.ok(/An explicit number always wins/.test(prompt));
+  // The cap is on TOTAL VERSIONS now, not distinct names, and it only binds when
+  // the brief gave no numbers of its own.
+  assert.ok(/when the brief gives NO numbers, keep the total number of versions to 5 or\nfewer/.test(prompt),
+    'cap is on versions, and only when the brief is silent');
+  assert.ok(/Numbers the brief actually states always win/.test(prompt));
   // A vague plural must not become a guessed number.
   assert.ok(/A vague plural is NOT a number/.test(prompt));
+
+  // MULTIPLICATION across groups — the reading is N x M, stated as the default,
+  // with the "shared total" phrasing called out as the only exception.
+  assert.ok(/A NUMBER CROSSED WITH GROUPS MULTIPLIES/.test(prompt), 'the rule has its own heading');
+  assert.ok(/"five nurture emails for two audiences" = 5 emails FOR EACH audience =\n  count 10/.test(prompt),
+    'the worked example says 10, not 5');
+  assert.ok(/ALWAYS N x M, not N shared between the groups/.test(prompt), 'the default reading is explicit');
+  assert.ok(/ONLY treat the number as a shared total when the brief says so outright/.test(prompt),
+    'the counter-case is explicit too');
+  assert.ok(/count 5, not 10/.test(prompt), 'and it names the number the counter-case produces');
+  assert.ok(/Never shrink 10 back to 5 to look tidier/.test(prompt), 'the size cap cannot undo a multiply');
+  // Labels must match the multiplied count, grouped — 10 labels for count 10.
+  assert.ok(/labels must have EXACTLY `count` entries, GROUPED/.test(prompt));
+  assert.ok(/NOT five labels for ten versions, and NOT\n  two labels/.test(prompt),
+    'the two wrong label shapes are named');
+  assert.strictEqual(
+    (prompt.match(/"Downtown"/g) || []).length + (prompt.match(/"Suburban"/g) || []).length,
+    10,
+    'the worked label example really does list ten entries'
+  );
 });
 
 test('Slack clamp notice: says what was built, without failing the card', () => {
@@ -5343,4 +5365,46 @@ test('Slack clamp notice: says what was built, without failing the card', () => 
     folderUrl: null, folderName: null,
   });
   assert.strictEqual(without.blocks.filter((b) => b.type === 'context').length, 0, 'no stray context block');
+});
+
+test('Slack card: repeated instances collapse to "Name xN"', () => {
+  const { buildResultBlocks } = require('../src/services/slack');
+  const listOf = (assets, notice) => {
+    const { blocks } = buildResultBlocks({
+      title: 'T', webViewLink: 'https://d/1', assets, docId: '1', folderUrl: null, folderName: null, notice,
+    });
+    return blocks.find((b) => b.type === 'section' && /^\*Assets:\*/.test(b.text.text)).text.text;
+  };
+
+  // Single instances are untouched — every card written before instances existed.
+  assert.strictEqual(
+    listOf(['Demand Gen Nurture Email', 'Battle Card']),
+    '*Assets:*\n• Demand Gen Nurture Email\n• Battle Card'
+  );
+  // Repeats collapse; the single one alongside them keeps its bare name.
+  assert.strictEqual(
+    listOf(['Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Battle Card']),
+    '*Assets:*\n• Demand Gen Nurture Email ×3\n• Battle Card'
+  );
+  // Grouped by name in FIRST-APPEARANCE order, even when not contiguous.
+  assert.strictEqual(
+    listOf(['Battle Card', 'Demand Gen Nurture Email', 'Battle Card']),
+    '*Assets:*\n• Battle Card ×2\n• Demand Gen Nurture Email'
+  );
+  // The empty fallback is unchanged.
+  assert.match(listOf([]), /No assets matched/);
+
+  // THE LIST AND THE CLAMP NOTICE ARE INDEPENDENT and appear together: the list
+  // says what the doc holds (3), the notice says what was cut (3 of 5).
+  const { clampNotice, SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const notice = clampNotice([{ asset: 'Demand Gen Nurture Email', count: 5 }], SLACK_ASSET_LIMITS);
+  const built = ['Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Demand Gen Nurture Email', 'Battle Card'];
+  const { blocks } = buildResultBlocks({
+    title: 'T', webViewLink: 'https://d/1', assets: built, docId: '1', folderUrl: null, folderName: null, notice,
+  });
+  assert.strictEqual(
+    blocks.find((b) => b.type === 'section' && /^\*Assets:\*/.test(b.text.text)).text.text,
+    '*Assets:*\n• Demand Gen Nurture Email ×3\n• Battle Card'
+  );
+  assert.match(blocks.find((b) => b.type === 'context').elements[0].text, /Built 3 of 5/);
 });

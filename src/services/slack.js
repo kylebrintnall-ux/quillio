@@ -234,9 +234,12 @@ function buildPlanCardBlocks({ pendingId, campaignTitle, plan }) {
             action_id: 'plan_edit',
             value: pendingId,
           },
+          // No `style` — deliberately plain, not danger. Nothing has been created
+          // at this point (the context line above says so), so cancelling destroys
+          // nothing and a red button would overstate the stakes of the safest
+          // choice on the card.
           {
             type: 'button',
-            style: 'danger',
             text: { type: 'plain_text', text: 'Cancel', emoji: true },
             action_id: 'plan_cancel',
             value: pendingId,
@@ -487,6 +490,20 @@ async function slackApi(method, payload, token) {
   return data;
 }
 
+// Can chat.postMessage / chat.update actually run for this caller?
+//
+// slackApi above falls back to config.SLACK_BOT_TOKEN when a caller passes no
+// token, so a tenant having no `slack_bot` row in Postgres does NOT mean live
+// editing is impossible — an env-configured workspace has a working token the
+// whole time. Callers must ask THIS function rather than testing
+// `tokens.slack_bot` themselves, because the two answers diverging is a real bug
+// with a visible symptom: a caller that decides "no live message" while
+// updateLive would have succeeded posts its final card as a NEW message and
+// leaves the "Building…" one orphaned above it.
+function canUseBotToken(token) {
+  return !!(token || config.SLACK_BOT_TOKEN);
+}
+
 // Post a "live" (editable) message; returns { channel, ts }.
 async function postLive(channel, text, blocks, token) {
   const data = await slackApi(
@@ -583,6 +600,7 @@ module.exports = {
   buildFolderAccessBlocks,
   postLive,
   updateLive,
+  canUseBotToken,
   refuseUnlinkedSlack,
   postEphemeral,
   copyCompleteBlocks,

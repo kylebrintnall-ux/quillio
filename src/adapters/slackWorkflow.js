@@ -23,6 +23,25 @@ const { emoji } = require('../emoji');
 
 const BUILDING_TEXT = `${emoji('quillio-scroll')} Building your document…`;
 
+// Instance ceilings for the SLACK surface — deliberately tighter than the web's
+// 10-per-asset / 40-total defaults.
+//
+// The difference is confirmation, not capability. The web flow pauses after parse
+// and shows the interpretation before creating anything (routes/app.js
+// /api/brief → /api/brief/confirm), so a misread plan costs a click to correct.
+// Slack acks and builds fire-and-forget by design — the 3s ack window and the
+// ~2000-char button value leave nowhere to put a review step today — so a misread
+// plan is only discovered once the doc exists.
+//
+// 3 per asset is enough for a real A/B test or a short sequence; 6 total keeps a
+// misread to one small doc rather than a doc plus a dozen Gemini calls (every
+// asset group is its own call at draft time).
+const SLACK_ASSET_LIMITS = {
+  maxPerAsset: 3,
+  maxTotal: 6,
+  hint: 'Split it across briefs, or run it in the web app, which asks you to confirm a bigger plan first.',
+};
+
 // The full 7s+ workflow. Runs AFTER Slack has been acknowledged — never call
 // this before the slash command's 200 response has been sent. The entire body
 // is wrapped so any failure surfaces in the logs with a full stack trace
@@ -191,7 +210,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
           slackChannelId: live && live.channel,
           slackThreadTs: live && live.ts,
           createdBy: actingUserId,
-        }
+        },
+        // Slack has no confirmation step, so it builds under a tighter ceiling.
+        SLACK_ASSET_LIMITS
       );
     } catch (err) {
       if (pipeline.isFolderAccessError(err, effectiveFolderId)) {
@@ -322,4 +343,4 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   console.log('[workflow] runGenerateDraft DONE');
 }
 
-module.exports = { runBriefWorkflow, runGenerateDraft };
+module.exports = { runBriefWorkflow, runGenerateDraft, SLACK_ASSET_LIMITS };

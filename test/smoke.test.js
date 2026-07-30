@@ -4972,3 +4972,160 @@ test('confirm: the client only branches when the server says to', () => {
   assert.ok(/'\/api\/brief\/confirm',\s*\n?\s*\{ pendingId: pendingBrief\.pendingId, plan: plan \},\s*\n?\s*'\/api\/brief'/.test(html),
     'confirm job polls /api/brief/:jobId/status');
 });
+
+// --- Per-surface instance ceilings -------------------------------------------
+// The web pauses to confirm a big plan, so it can afford 10-per-asset / 40-total.
+// Slack acks and builds fire-and-forget, so a misread is only found once the doc
+// exists — it builds under 3 / 6.
+
+test('surface ceilings: Slack declares a tighter pair than the defaults', () => {
+  const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const { MAX_INSTANCES_PER_ASSET, MAX_TOTAL_INSTANCES, DEFAULT_ASSET_LIMITS } = require('../src/core/pipeline');
+
+  assert.strictEqual(SLACK_ASSET_LIMITS.maxPerAsset, 3);
+  assert.strictEqual(SLACK_ASSET_LIMITS.maxTotal, 6);
+  assert.ok(SLACK_ASSET_LIMITS.maxPerAsset < MAX_INSTANCES_PER_ASSET, 'stricter per asset');
+  assert.ok(SLACK_ASSET_LIMITS.maxTotal < MAX_TOTAL_INSTANCES, 'stricter in total');
+  assert.match(SLACK_ASSET_LIMITS.hint, /web app/, 'points at the surface that can take more');
+
+  // The defaults are the WEB's, unchanged.
+  assert.strictEqual(DEFAULT_ASSET_LIMITS.maxPerAsset, 10);
+  assert.strictEqual(DEFAULT_ASSET_LIMITS.maxTotal, 40);
+
+  // The SLACK ceiling is declared by the Slack adapter, not baked into the
+  // platform-agnostic core. (pipeline.js does mention Slack — canvas ingestion,
+  // attachments, slack_channel_id — the rule is no Slack IMPORTS, which a
+  // separate test covers. What matters here is that core carries no
+  // surface-specific ceiling.)
+  const core = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.ok(!/SLACK_ASSET_LIMITS|maxPerAsset:\s*3\b|maxTotal:\s*6\b/.test(core),
+    'core does not hardcode the Slack pair');
+  assert.strictEqual(require('../src/core/pipeline').SLACK_ASSET_LIMITS, undefined, 'core exports no Slack ceiling');
+});
+
+test('surface ceilings: a surface can be stricter than the defaults, never looser', () => {
+  const { resolveAssetLimits, MAX_INSTANCES_PER_ASSET, MAX_TOTAL_INSTANCES } = require('../src/core/pipeline');
+  // Omitted / junk → the defaults.
+  for (const l of [undefined, null, {}, { maxPerAsset: 'x', maxTotal: null }]) {
+    assert.deepStrictEqual(
+      { p: resolveAssetLimits(l).maxPerAsset, t: resolveAssetLimits(l).maxTotal },
+      { p: MAX_INSTANCES_PER_ASSET, t: MAX_TOTAL_INSTANCES },
+      `${JSON.stringify(l)} → defaults`
+    );
+  }
+  // Stricter is honored.
+  assert.strictEqual(resolveAssetLimits({ maxPerAsset: 3 }).maxPerAsset, 3);
+  assert.strictEqual(resolveAssetLimits({ maxTotal: 6 }).maxTotal, 6);
+  // Looser is REFUSED — a caller cannot raise its own ceiling past the absolute one.
+  assert.strictEqual(resolveAssetLimits({ maxPerAsset: 999 }).maxPerAsset, MAX_INSTANCES_PER_ASSET);
+  assert.strictEqual(resolveAssetLimits({ maxTotal: 999 }).maxTotal, MAX_TOTAL_INSTANCES);
+  // Never below 1.
+  assert.strictEqual(resolveAssetLimits({ maxPerAsset: 0, maxTotal: -5 }).maxPerAsset, MAX_INSTANCES_PER_ASSET);
+  // A blank hint is dropped so the generic sentence is used.
+  assert.strictEqual(resolveAssetLimits({ hint: '   ' }).hint, null);
+});
+
+test('surface ceilings: the same plan expands differently per surface', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const rows = PLAN_ROWS();
+
+  // Per asset: 5 requested. Web clamps to 5 (under its 10); Slack clamps to 3.
+  const five = [{ asset: 'Demand Gen Nurture Email', count: 5 }];
+  assert.strictEqual(tenantAssetsToSpecs(rows, five).length, 5, 'web honors 5');
+  assert.strictEqual(tenantAssetsToSpecs(rows, five, SLACK_ASSET_LIMITS).length, 3, 'Slack clamps to 3');
+  // Ordinals still run 0..n-1 after the clamp.
+  assert.deepStrictEqual(
+    tenantAssetsToSpecs(rows, five, SLACK_ASSET_LIMITS).map((s) => s.instance),
+    [0, 1, 2]
+  );
+
+  // Total: 3 assets x 3 = 9, over Slack's 6 → throws, with the Slack hint.
+  const nine = [
+    { asset: 'Demand Gen Nurture Email', count: 3 },
+    { asset: 'Campaign Landing Page', count: 3 },
+    { asset: 'Battle Card', count: 3 },
+  ];
+  assert.strictEqual(tenantAssetsToSpecs(rows, nine).length, 9, 'web builds all 9');
+  assert.throws(
+    () => tenantAssetsToSpecs(rows, nine, SLACK_ASSET_LIMITS),
+    (err) => {
+      assert.match(err.message, /asks for 9 asset instances, above the 6-instance ceiling/);
+      assert.match(err.message, /web app/, 'the Slack hint replaces the generic sentence');
+      return true;
+    }
+  );
+  // Exactly at Slack's ceiling is allowed.
+  assert.strictEqual(
+    tenantAssetsToSpecs(
+      rows,
+      [{ asset: 'Battle Card', count: 3 }, { asset: 'Campaign Landing Page', count: 3 }],
+      SLACK_ASSET_LIMITS
+    ).length,
+    6
+  );
+
+  // THE DORMANT PATH IS IDENTICAL ON BOTH SURFACES: today's plans are all count 1.
+  const today = ['Battle Card', 'Demand Gen Nurture Email', 'Campaign Landing Page'];
+  assert.deepStrictEqual(
+    tenantAssetsToSpecs(rows, today, SLACK_ASSET_LIMITS).map((s) => [s.assetType, s.instance]),
+    tenantAssetsToSpecs(rows, today).map((s) => [s.assetType, s.instance])
+  );
+  // And so is the whole-library (empty plan) path — 30 assets is not 30 instances.
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  assert.strictEqual(tenantAssetsToSpecs(DEFAULT_ASSETS, [], SLACK_ASSET_LIMITS).length, 30,
+    'a vague brief still renders the whole library on Slack');
+});
+
+test('surface ceilings: the Slack adapter passes its limits to generateDoc', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  // The 6th argument of the generateDoc call, or the ceiling silently reverts to
+  // the web's on the surface that can least afford it.
+  assert.ok(/SLACK_ASSET_LIMITS\s*\n?\s*\);/.test(src), 'passed as the last generateDoc argument');
+  assert.ok(/async function generateDoc\(spec, folderId, clients, tenantId, projectMeta = \{\}, assetLimits\)/.test(
+    fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8')
+  ), 'generateDoc accepts assetLimits');
+  // The WEB adapter passes none, so it gets the defaults.
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  assert.ok(!/assetLimits|maxPerAsset|maxTotal/.test(web), 'web adapter takes the defaults');
+});
+
+test('surface ceilings: the per-asset clamp cannot launder an over-total ask', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
+  const rows = PLAN_ROWS();
+
+  // 5 + 5 = 10 requested. Clamping each to Slack's 3 first would give 6, which is
+  // EXACTLY the total ceiling — so a post-clamp check would let it through and
+  // quietly build 6 of the 10 asked for, on the surface with no confirmation.
+  // The total is measured on the REQUEST, so it is refused instead.
+  const tenAsked = [
+    { asset: 'Demand Gen Nurture Email', count: 5 },
+    { asset: 'Campaign Landing Page', count: 5 },
+  ];
+  const clampedTotal = tenAsked.reduce((n, e) => n + Math.min(SLACK_ASSET_LIMITS.maxPerAsset, e.count), 0);
+  assert.strictEqual(clampedTotal, SLACK_ASSET_LIMITS.maxTotal, 'the clamp really would land exactly on the ceiling');
+  assert.throws(
+    () => tenantAssetsToSpecs(rows, tenAsked, SLACK_ASSET_LIMITS),
+    /asks for 10 asset instances, above the 6-instance ceiling/,
+    'refused on what was asked for, not on what the clamp would leave'
+  );
+
+  // A plan genuinely at the ceiling still builds.
+  assert.strictEqual(
+    tenantAssetsToSpecs(
+      rows,
+      [{ asset: 'Demand Gen Nurture Email', count: 3 }, { asset: 'Campaign Landing Page', count: 3 }],
+      SLACK_ASSET_LIMITS
+    ).length,
+    6
+  );
+  // A junk count can't inflate the message past the absolute per-asset maximum.
+  assert.throws(
+    () => tenantAssetsToSpecs(rows, [{ asset: 'Battle Card', count: 1e9 }], SLACK_ASSET_LIMITS),
+    /asks for 10 asset instances/,
+    'a garbage count counts as the absolute max (10), not 1e9'
+  );
+  // Web is unaffected: 10 requested is under its 40.
+  assert.strictEqual(tenantAssetsToSpecs(rows, tenAsked).length, 10);
+});

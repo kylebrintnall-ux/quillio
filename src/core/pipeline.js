@@ -667,6 +667,24 @@ const MAX_INSTANCES_PER_ASSET = 10;
 // instances is the same class of bug as silently adding 29 unrequested assets.
 const MAX_TOTAL_INSTANCES = 40;
 
+// The ceilings are PER SURFACE, because the cost of a misread is per surface.
+// These are the defaults — the web's, which can afford them because /api/brief
+// pauses and shows the interpretation before building anything. A surface with no
+// confirmation step passes its own tighter pair (see adapters/slackWorkflow.js).
+// `hint` is an optional surface-specific sentence appended to the over-total
+// error, so the message can suggest a way forward without core knowing what
+// surface it is running on.
+const DEFAULT_ASSET_LIMITS = { maxPerAsset: MAX_INSTANCES_PER_ASSET, maxTotal: MAX_TOTAL_INSTANCES, hint: null };
+
+// Coerce a caller's limits to sane numbers, never above the absolute ceilings —
+// a surface can be STRICTER than the defaults, never looser.
+function resolveAssetLimits(limits) {
+  const l = limits || {};
+  const perAsset = Math.max(1, Math.min(MAX_INSTANCES_PER_ASSET, parseInt(l.maxPerAsset, 10) || MAX_INSTANCES_PER_ASSET));
+  const total = Math.max(1, Math.min(MAX_TOTAL_INSTANCES, parseInt(l.maxTotal, 10) || MAX_TOTAL_INSTANCES));
+  return { maxPerAsset: perAsset, maxTotal: total, hint: typeof l.hint === 'string' && l.hint.trim() ? l.hint.trim() : null };
+}
+
 // One library row (getTenantAssets output) → the exact shape getAssetSpecs used to
 // return, so every downstream consumer (createDocument, generateAssetDrafts) is
 // identical regardless of source. Postgres has no channel / toneNotes /
@@ -717,7 +735,7 @@ function cloneSpecGroup(g) {
 // the doc heading ('… 2 — Downtown residents'). NOTHING populates it: parseBrief
 // returns a bare string[], so only a direct pipeline call can supply one. It exists
 // so the path is wired and tested ahead of the parse step.
-function normalizeAssetPlan(assetsOrPlan) {
+function normalizeAssetPlan(assetsOrPlan, maxPerAsset = MAX_INSTANCES_PER_ASSET) {
   const plan = [];
   for (const entry of Array.isArray(assetsOrPlan) ? assetsOrPlan : []) {
     if (entry == null) continue;
@@ -730,10 +748,10 @@ function normalizeAssetPlan(assetsOrPlan) {
     const asset = String(entry.asset || entry.assetType || '').trim();
     if (!asset) continue;
     const requested = parseInt(entry.count, 10);
-    const count = Math.max(1, Math.min(MAX_INSTANCES_PER_ASSET, requested || 1));
-    if (Number.isFinite(requested) && requested > MAX_INSTANCES_PER_ASSET) {
+    const count = Math.max(1, Math.min(maxPerAsset, requested || 1));
+    if (Number.isFinite(requested) && requested > maxPerAsset) {
       console.warn(
-        `[pipeline] asset plan: "${asset}" requested ${requested} instances — clamped to ${MAX_INSTANCES_PER_ASSET}`
+        `[pipeline] asset plan: "${asset}" requested ${requested} instances — clamped to ${maxPerAsset}`
       );
     }
     // Positional instance labels, trimmed; absent/blank entries stay null so a
@@ -744,6 +762,25 @@ function normalizeAssetPlan(assetsOrPlan) {
     plan.push(labels.some(Boolean) ? { asset, count, labels } : { asset, count });
   }
   return plan;
+}
+
+// How many instances the caller ASKED for, before any per-asset clamping. Each
+// count is floored at 1 and capped at the absolute per-asset maximum, so a junk
+// 1e9 can't produce a nonsense number in the error message — but a genuine
+// over-ask is counted at full size so it can be refused rather than quietly cut.
+function requestedInstanceTotal(assetsOrPlan) {
+  let total = 0;
+  for (const entry of Array.isArray(assetsOrPlan) ? assetsOrPlan : []) {
+    if (entry == null) continue;
+    if (typeof entry === 'string') {
+      if (entry.trim()) total += 1;
+      continue;
+    }
+    if (typeof entry !== 'object') continue;
+    if (!String(entry.asset || entry.assetType || '').trim()) continue;
+    total += Math.max(1, Math.min(MAX_INSTANCES_PER_ASSET, parseInt(entry.count, 10) || 1));
+  }
+  return total;
 }
 
 // Expand an asset PLAN into spec groups, in REQUEST ORDER.
@@ -770,13 +807,14 @@ function normalizeAssetPlan(assetsOrPlan) {
 // an all-unmatched filter fell through to the whole library, and a partially
 // matched one silently dropped the misses — both produced a plausible-looking doc
 // that answered a different question than the one asked.
-function tenantAssetsToSpecs(rows, assetsOrPlan = []) {
+function tenantAssetsToSpecs(rows, assetsOrPlan = [], limits) {
+  const { maxPerAsset, maxTotal, hint } = resolveAssetLimits(limits);
   const groups = (rows || [])
     .map(rowToSpecGroup)
     // getAssetSpecs never emits an asset with zero fields — match that.
     .filter((g) => g.fields.length > 0);
 
-  const plan = normalizeAssetPlan(assetsOrPlan);
+  const plan = normalizeAssetPlan(assetsOrPlan, maxPerAsset);
 
   // Empty plan → the whole library, library order. Deliberately does NOT go
   // through the name lookup below: asset_types has no UNIQUE (tenant_id, name),
@@ -803,11 +841,16 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = []) {
     );
   }
 
-  const totalInstances = plan.reduce((n, p) => n + p.count, 0);
-  if (totalInstances > MAX_TOTAL_INSTANCES) {
+  // The total is checked against what was REQUESTED, not against the per-asset
+  // clamped counts. Otherwise the clamp launders an oversized ask into compliance:
+  // under a 3-per-asset / 6-total ceiling, "5 emails and 5 landing pages" would be
+  // cut to 3 + 3 = 6, pass the total check, and quietly build something the brief
+  // did not ask for — on the surface that has no confirmation step to show it.
+  const requestedTotal = requestedInstanceTotal(assetsOrPlan);
+  if (requestedTotal > maxTotal) {
     throw new Error(
-      `Asset plan asks for ${totalInstances} asset instances, above the ${MAX_TOTAL_INSTANCES}-instance ceiling. ` +
-        'Split this into more than one brief.'
+      `Asset plan asks for ${requestedTotal} asset instances, above the ${maxTotal}-instance ceiling. ` +
+        (hint || 'Split this into more than one brief.')
     );
   }
 
@@ -839,7 +882,9 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = []) {
 // source (the Google Sheet was fully retired) — and supplies asset_direction.
 // Throws if the tenant has no Postgres asset library (no DB / unseeded tenant):
 // Postgres is mandatory, there is no Sheet fallback.
-async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) {
+// `assetLimits` (optional) is the CALLING SURFACE's instance ceiling — omit for
+// the defaults. A surface with no confirmation step should pass a tighter pair.
+async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, assetLimits) {
   // Asset specs come exclusively from the tenant's Postgres library.
   const tenantAssets = await getTenantAssets(tenantId);
   if (!tenantAssets || tenantAssets.length === 0) {
@@ -850,7 +895,7 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}) 
   }
   // `spec.assets` is an asset PLAN: a bare string[] (each name once) or entries of
   // { asset, count }. Expanded in request order; throws on an unmatched name.
-  const assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets);
+  const assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets, assetLimits);
   console.log('[pipeline] asset specs source: postgres');
   console.log(
     '[workflow] asset specs read OK —',
@@ -1104,6 +1149,9 @@ module.exports = {
   // assertable) — generateDoc is its only production caller.
   tenantAssetsToSpecs,
   normalizeAssetPlan,
+  resolveAssetLimits,
+  // The DEFAULT (web) ceilings, and the absolute maximum a surface can ask for.
   MAX_INSTANCES_PER_ASSET,
   MAX_TOTAL_INSTANCES,
+  DEFAULT_ASSET_LIMITS,
 };

@@ -17,6 +17,7 @@ const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
 const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, cleanDraft, DOORWAYS, INTENSITIES } = require('../services/gemini');
+const { instanceTag, instanceCounter } = require('../utils/instanceKey');
 
 // Allowed matrix names (Variations Matrix, Step 3), sourced from gemini so there's
 // one taxonomy. Used to validate a scoped field's `variations` rows.
@@ -649,8 +650,13 @@ function parseDoc(doc) {
 }
 
 // Lookup key for matching a doc field back to its Sheet row.
-function ctxKey(assetType, fieldName) {
-  return `${String(assetType).trim().toLowerCase()}|${String(fieldName).trim().toLowerCase()}`;
+//
+// `instance` is the asset's 0-based instance ordinal, for a doc carrying the same
+// asset more than once. It defaults to 0, which serializes to nothing at all —
+// `ctxKey(a, f)` and `ctxKey(a, f, 0)` are byte-identical to each other and to
+// the pre-instance key (see utils/instanceKey.js for why that matters).
+function ctxKey(assetType, fieldName, instance) {
+  return `${String(assetType).trim().toLowerCase()}${instanceTag(instance)}|${String(fieldName).trim().toLowerCase()}`;
 }
 
 // Normalize a scoped field's variation controls into one of two shapes:
@@ -730,7 +736,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   // (Named scopedFields, not `targets`, to avoid colliding with `assetTargets`.)
   const scopeKeys =
     Array.isArray(scopedFields) && scopedFields.length > 0
-      ? new Set(scopedFields.map((t) => ctxKey(t.assetType, t.fieldName)))
+      ? new Set(scopedFields.map((t) => ctxKey(t.assetType, t.fieldName, t.instance)))
       : null;
 
   // ADDITIVE (append) write — Variations Matrix Step 1. When `append` is set on a
@@ -750,7 +756,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   const scopeMeta = new Map();
   if (scopeKeys) {
     for (const t of scopedFields) {
-      scopeMeta.set(ctxKey(t.assetType, t.fieldName), normalizeVarControls(t));
+      scopeMeta.set(ctxKey(t.assetType, t.fieldName, t.instance), normalizeVarControls(t));
     }
   }
 
@@ -758,10 +764,17 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   // been retired — per-field Notes / Funnel Stage / channel / tone no longer
   // feed the prompt; asset-level direction (from Postgres) carries the creative
   // guidance, and the doc carries field labels + char limits + positions.
+  //
+  // Instance ordinals are assigned over the FULL parsed list in document order —
+  // BEFORE the zero-field filter — so they agree with the ordinals the
+  // post-delete re-parse assigns further down (which also counts every heading).
+  const draftOrdinal = instanceCounter();
   const assetTargets = assets
-    .filter((asset) => asset.fields.length > 0)
-    .map((asset) => ({
+    .map((asset) => ({ asset, instance: draftOrdinal(asset.assetType) }))
+    .filter(({ asset }) => asset.fields.length > 0)
+    .map(({ asset, instance }) => ({
       assetType: asset.assetType,
+      instance,
       assetDirection: lookupDirection ? lookupDirection(asset.assetType) : null,
       fields: asset.fields.map((field) => ({
         fieldName: field.fieldName,
@@ -773,7 +786,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
       })),
     }))
     // Scoped: drop assets with no selected field so we don't even iterate them.
-    .filter((a) => !scopeKeys || a.fields.some((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName))));
+    .filter((a) => !scopeKeys || a.fields.some((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName, a.instance))));
 
   // Scoped drafts per field (not the cohesive whole-asset batch), so read the
   // current copy of every field once to feed each field its siblings' copy as
@@ -783,8 +796,12 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
     try {
       const content = await getDocContent(id, clients);
       copyByKey = new Map();
+      // Same positional heading order as parseDoc above, so these ordinals line
+      // up with assetTargets' — getDocContent pushes one entry per HEADING_3 too.
+      const contentOrdinal = instanceCounter();
       for (const a of content.assets || []) {
-        for (const f of a.fields || []) copyByKey.set(ctxKey(a.name, f.fieldName), String(f.copy || ''));
+        const instance = contentOrdinal(a.name);
+        for (const f of a.fields || []) copyByKey.set(ctxKey(a.name, f.fieldName, instance), String(f.copy || ''));
       }
     } catch (err) {
       console.warn('[googleDocs] scoped sibling-copy read failed (continuing without):', err.message);
@@ -800,7 +817,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
 
   const perAsset = await mapWithConcurrency(assetTargets, DRAFT_CONCURRENCY, async (a, idx) => {
     const fieldsToDraft = scopeKeys
-      ? a.fields.filter((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName)))
+      ? a.fields.filter((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName, a.instance)))
       : a.fields;
     if (fieldsToDraft.length === 0) return [];
     console.log(`[googleDocs] generating asset ${idx + 1}/${total}: ${a.assetType} (${fieldsToDraft.length} field(s))`);
@@ -813,9 +830,9 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
         for (const f of fieldsToDraft) {
           const siblings = a.fields
             .filter((s) => s.fieldName !== f.fieldName)
-            .map((s) => ({ fieldName: s.fieldName, copy: (copyByKey.get(ctxKey(a.assetType, s.fieldName)) || '').trim() }))
+            .map((s) => ({ fieldName: s.fieldName, copy: (copyByKey.get(ctxKey(a.assetType, s.fieldName, a.instance)) || '').trim() }))
             .filter((s) => s.copy);
-          const meta = scopeMeta.get(ctxKey(a.assetType, f.fieldName)) || { count: 1, distance: 'close' };
+          const meta = scopeMeta.get(ctxKey(a.assetType, f.fieldName, a.instance)) || { count: 1, distance: 'close' };
           const hasMatrix = Array.isArray(meta.matrix) && meta.matrix.length > 0;
           const wantsVariations = hasMatrix || meta.count > 1 || meta.distance !== 'close';
           try {
@@ -845,7 +862,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
                 direction,
                 voiceGuide,
                 ...genArgs,
-                currentCopy: copyByKey.get(ctxKey(a.assetType, f.fieldName)) || '',
+                currentCopy: copyByKey.get(ctxKey(a.assetType, f.fieldName, a.instance)) || '',
                 siblings,
               });
             } else {
@@ -909,6 +926,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
           // explicit deleteEnd:null; everything else uses the parsed field meta.
           return {
             assetType: a.assetType,
+            instance: a.instance,
             fieldName: d.fieldName,
             insertIndex: d.insertIndex != null ? d.insertIndex : meta.insertIndex,
             deleteEnd: Object.prototype.hasOwnProperty.call(d, 'deleteEnd') ? d.deleteEnd : meta.deleteEnd,
@@ -964,12 +982,26 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
     });
 
     // Re-parse the cleaned doc to recover fresh, correct insertion indices.
+    //
+    // Keyed WITH the instance ordinal. parseDoc pushes one entry per HEADING_3
+    // without deduping, so a doc carrying the same asset heading twice (today only
+    // reachable by hand-editing — pasting an asset section) used to collapse here:
+    // the second occurrence's indices overwrote the first's, and every drafted
+    // field for BOTH headings then resolved to the second one's positions, so
+    // instance 1's copy landed inside instance 2. Counting occurrences the same
+    // way assetTargets did keeps the two headings apart. Ordinals agree because
+    // the delete pass removed copy paragraphs only — never a heading — so this
+    // re-parse sees the same headings in the same order as the original parse.
     const freshDoc = (await docs.documents.get({ documentId: id })).data;
     const fresh = parseDoc(freshDoc);
+    const freshOrdinal = instanceCounter();
     insertIndexByField = new Map();
     for (const asset of fresh.assets) {
+      const instance = freshOrdinal(asset.assetType);
       for (const f of asset.fields) {
-        insertIndexByField.set(ctxKey(asset.assetType, f.fieldName), f.insertIndex);
+        // Two fields sharing a name WITHIN one instance still last-wins, matching
+        // metaByName above; only the cross-instance collapse is fixed here.
+        insertIndexByField.set(ctxKey(asset.assetType, f.fieldName, instance), f.insertIndex);
       }
     }
   }
@@ -980,7 +1012,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   const inserts = drafted
     .map((d) => {
       const idx = insertIndexByField
-        ? insertIndexByField.get(ctxKey(d.assetType, d.fieldName))
+        ? insertIndexByField.get(ctxKey(d.assetType, d.fieldName, d.instance))
         : d.insertIndex;
       return idx != null ? { insertIndex: idx, copy: d.copy, riffN: d.riffN } : null;
     })
@@ -1284,4 +1316,8 @@ module.exports = {
   parseDoc,
   appendBody,
   buildVariantBlock,
+  // The composite (asset, field, instance) lookup key — exposed so its DEFAULT
+  // serialization can be pinned byte-for-byte (it is not persisted like
+  // copyReview's fieldKey, but a drift would silently mis-place drafted copy).
+  ctxKey,
 };

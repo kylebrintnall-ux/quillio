@@ -22,6 +22,7 @@ const { getDestination } = require('../destinations');
 const { reviewCopyFields, reviewVariationStack } = require('./gemini');
 const { getVoiceGuide, getReviewState, saveReviewState } = require('../db');
 const { isNumberedStack, stripSoloLabel, parseNumberedStack } = require('../utils/variants');
+const { instanceTag, instanceCounter } = require('../utils/instanceKey');
 
 // Repo voice.md fallback — the BRAND half only, loaded once (same source
 // gemini.js uses for drafting). The craft half (craft.md) is added by gemini.js
@@ -37,8 +38,16 @@ function repoVoiceGuide() {
   return repoVoice;
 }
 
-function fieldKey(assetType, fieldName) {
-  return `${String(assetType || '').trim().toLowerCase()}||${String(fieldName || '').trim().toLowerCase()}`;
+// Reconcile/state key for one review unit.
+//
+// `instance` is the asset's 0-based instance ordinal, for a doc carrying the same
+// asset more than once. It defaults to 0, which serializes to nothing at all, so
+// `fieldKey(a, f)` and `fieldKey(a, f, 0)` are byte-identical to each other and to
+// the pre-instance key. That is load-bearing, not cosmetic: these strings are the
+// jsonb object keys persisted in doc_reviews.state, so a changed default would
+// orphan every tenant's stored review state. See utils/instanceKey.js.
+function fieldKey(assetType, fieldName, instance) {
+  return `${String(assetType || '').trim().toLowerCase()}${instanceTag(instance)}||${String(fieldName || '').trim().toLowerCase()}`;
 }
 
 // Flatten getDocContent → the SINGLE-copy reviewable fields (non-empty). Numbered
@@ -46,31 +55,38 @@ function fieldKey(assetType, fieldName) {
 // + reviewVariationStack), so they're routed out here, not reviewed as one blob.
 // A SOLO labeled variation (`(Reframe) …`) is already resolved and IS reviewed —
 // its leading doorway tag is stripped so the length/voice check sees the sentence.
+// Each unit carries its asset's `instance` ordinal (0 for the first/only
+// occurrence of that asset name), counted over getDocContent's positional asset
+// list so repeated headings stay distinguishable downstream.
 function collectCopyFields(content) {
   const out = [];
+  const ordinal = instanceCounter();
   for (const asset of (content && content.assets) || []) {
+    const instance = ordinal(asset.name);
     for (const f of asset.fields || []) {
       const raw = String(f.copy || '').trim();
       if (!raw) continue;
       if (isNumberedStack(raw)) continue; // an unresolved stack → the variant path handles it
       const copy = stripSoloLabel(raw).trim();
-      if (copy) out.push({ assetType: asset.name, fieldName: f.fieldName, charMax: f.charMax || 0, copy });
+      if (copy) out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, copy });
     }
   }
   return out;
 }
 
 // getDocContent → the unresolved NUMBERED STACKS, each with its parsed options.
-// [{ assetType, fieldName, charMax, variations: [{ index, doorway, copy, line }] }].
+// [{ assetType, instance, fieldName, charMax, variations: [{ index, doorway, copy, line }] }].
 function collectVariationStacks(content) {
   const out = [];
+  const ordinal = instanceCounter();
   for (const asset of (content && content.assets) || []) {
+    const instance = ordinal(asset.name);
     for (const f of asset.fields || []) {
       const raw = String(f.copy || '').trim();
       if (!raw || !isNumberedStack(raw)) continue;
       const variations = parseNumberedStack(raw);
       if (variations.length >= 2) {
-        out.push({ assetType: asset.name, fieldName: f.fieldName, charMax: f.charMax || 0, variations });
+        out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, variations });
       }
     }
   }
@@ -93,29 +109,39 @@ function selectReviewTargets(content, scopeKeys) {
   if (!scopeKeys) return { singles, stacks, scoped: false };
 
   // Per-asset list of every non-empty field's { fieldName, copy } (for siblings).
+  //
+  // Keyed by (asset name, instance ordinal), NOT by name alone. A doc carrying the
+  // same asset heading twice (today only reachable by hand-editing — pasting an
+  // asset section) used to collapse here: the later occurrence overwrote the
+  // earlier, so BOTH instances were handed the LAST one's sibling copy as context
+  // and the review judged instance 1's fields against instance 2's neighbours.
+  // Reuses fieldKey with an empty field name so the asset half normalizes and
+  // tags exactly the way the scope keys below do.
+  const assetKey = (assetName, instance) => fieldKey(assetName, '', instance);
   const byAsset = new Map();
+  const ordinal = instanceCounter();
   for (const asset of (content && content.assets) || []) {
     const list = [];
     for (const f of asset.fields || []) {
       const raw = String(f.copy || '').trim();
       if (raw) list.push({ fieldName: f.fieldName, copy: raw });
     }
-    byAsset.set(asset.name, list);
+    byAsset.set(assetKey(asset.name, ordinal(asset.name)), list);
   }
-  const siblingsFor = (assetName, fieldName) =>
-    (byAsset.get(assetName) || [])
+  const siblingsFor = (assetName, fieldName, instance) =>
+    (byAsset.get(assetKey(assetName, instance)) || [])
       .filter((s) => s.fieldName !== fieldName)
       .map((s) => ({ fieldName: s.fieldName, copy: stripSoloLabel(s.copy).trim() }));
 
-  const inScope = (assetType, fieldName) => scopeKeys.has(fieldKey(assetType, fieldName));
+  const inScope = (assetType, fieldName, instance) => scopeKeys.has(fieldKey(assetType, fieldName, instance));
   return {
     scoped: true,
     singles: singles
-      .filter((f) => inScope(f.assetType, f.fieldName))
-      .map((f) => ({ ...f, siblings: siblingsFor(f.assetType, f.fieldName) })),
+      .filter((f) => inScope(f.assetType, f.fieldName, f.instance))
+      .map((f) => ({ ...f, siblings: siblingsFor(f.assetType, f.fieldName, f.instance) })),
     stacks: stacks
-      .filter((st) => inScope(st.assetType, st.fieldName))
-      .map((st) => ({ ...st, siblings: siblingsFor(st.assetType, st.fieldName) })),
+      .filter((st) => inScope(st.assetType, st.fieldName, st.instance))
+      .map((st) => ({ ...st, siblings: siblingsFor(st.assetType, st.fieldName, st.instance) })),
   };
 }
 
@@ -165,7 +191,10 @@ function buildDigest(results) {
   const clean = total - flagged;
   if (total === 0) return 'No drafted copy to review yet.';
   if (flagged === 0) return `Reviewed ${total} field${total === 1 ? '' : 's'} — all clean. Nothing to change.`;
-  const assets = new Set(results.filter((r) => r.comment).map((r) => r.assetType));
+  // Distinct asset INSTANCES, so two instances of one asset read as two assets.
+  // Only .size is used, and units without an instance produce one entry each
+  // exactly as before, so the sentence is unchanged for a single-instance doc.
+  const assets = new Set(results.filter((r) => r.comment).map((r) => `${r.assetType}${instanceTag(r.instance)}`));
   return (
     `Reviewed ${total} field${total === 1 ? '' : 's'}: ${clean} clean, ${flagged} with a note ` +
     `across ${assets.size} asset${assets.size === 1 ? '' : 's'}. Open the doc for the inline notes.`
@@ -183,16 +212,16 @@ function buildDigest(results) {
 //   • copy CHANGED + verdict note → replace: delete stale + add anchored to new copy.
 //   • new field / no prior + verdict note → add.
 // A comment vanishes ONLY when the writer fixed the copy or manually resolved it.
-//   fields: [{ assetType, fieldName, copy }]
+//   fields: [{ assetType, instance, fieldName, copy }]  (instance optional → 0)
 //   priorFields: { key: { copy, comment, resolved } }
-//   verdicts: [{ assetType, fieldName, comment }] (comment: string|null)
+//   verdicts: [{ assetType, instance, fieldName, comment }] (comment: string|null)
 //   liveComments: [{ id, content, resolved, quote }]
 function reconcileComments({ fields, priorFields, verdicts, liveComments } = {}) {
   const prior = priorFields || {};
   const verdictByKey = new Map();
   for (const v of verdicts || []) {
     const c = v && typeof v.comment === 'string' && v.comment.trim() ? v.comment.trim() : null;
-    verdictByKey.set(fieldKey(v.assetType, v.fieldName), c);
+    verdictByKey.set(fieldKey(v.assetType, v.fieldName, v.instance), c);
   }
   // Index live comments two ways. CONTENT is the reliable key: Google does not
   // change a comment's text when the doc is edited, so it still matches the stored
@@ -230,7 +259,7 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
   };
 
   for (const f of fields) {
-    const key = fieldKey(f.assetType, f.fieldName);
+    const key = fieldKey(f.assetType, f.fieldName, f.instance);
     const cur = String(f.copy || '');
     const p = prior[key] || {};
     const priorCopy = p.copy != null ? String(p.copy) : null;
@@ -253,7 +282,7 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
     if (!changed && ((existing && existing.resolved) || p.resolved === true)) {
       if (existing) { activeQuotes.add(cur); kept += 1; }
       nextState.fields[key] = { copy: cur, comment: (existing && existing.content) || p.comment || null, resolved: true };
-      results.push({ assetType: f.assetType, fieldName: f.fieldName, comment: null }); // dismissed → not an active note
+      results.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, comment: null }); // dismissed → not an active note
       continue;
     }
 
@@ -283,7 +312,7 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
     }
 
     nextState.fields[key] = { copy: cur, comment: activeComment, resolved: false };
-    results.push({ assetType: f.assetType, fieldName: f.fieldName, comment: activeComment });
+    results.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, comment: activeComment });
   }
 
   // claimedIds = every live comment bound to a current review unit (kept OR
@@ -311,7 +340,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // its asset/sibling context) and comment only on them. Absent → whole-doc.
   const scopeKeys =
     Array.isArray(scopedFields) && scopedFields.length > 0
-      ? new Set(scopedFields.map((t) => fieldKey(t.assetType, t.fieldName)))
+      ? new Set(scopedFields.map((t) => fieldKey(t.assetType, t.fieldName, t.instance)))
       : null;
   const { singles: singleFields, stacks, scoped } = selectReviewTargets(content, scopeKeys);
 
@@ -339,7 +368,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
     console.warn('[review] prior review state lookup failed — treating as first review:', err.message);
   }
   const priorFields = (prior && prior.fields) || {};
-  const priorFor = (assetType, fieldName) => priorFields[fieldKey(assetType, fieldName)] || {};
+  const priorFor = (assetType, fieldName, instance) => priorFields[fieldKey(assetType, fieldName, instance)] || {};
 
   // Brief context: the campaign's summary + writer direction carry the brief's
   // stated audience/goal. The BRIEF's audience is authoritative (the brand
@@ -354,15 +383,16 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // --- Review UNITS. One per single field; one per stack VARIATION. Each unit's
   // `copy` is what a comment anchors to and what change-detection compares: a
   // single field's copy, or a variation's full "N. (Doorway) …" doc line (unique
-  // via its number). reconcile keys/persists on (assetType, fieldName). ---
+  // via its number). reconcile keys/persists on (assetType, instance, fieldName). ---
   const units = [];
   for (const f of singleFields) {
-    units.push({ assetType: f.assetType, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy });
+    units.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy });
   }
   for (const st of stacks) {
     for (const v of st.variations) {
       units.push({
         assetType: st.assetType,
+        instance: st.instance,
         fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
         charMax: st.charMax,
         copy: v.line,
@@ -373,17 +403,25 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // --- Verdicts. Single fields → the batch review; each stack → its own focused
   // variant review, run concurrently. ---
   const singleInputs = singleFields.map((f) => {
-    const p = priorFor(f.assetType, f.fieldName);
-    return { assetType: f.assetType, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null, siblings: f.siblings || [] };
+    const p = priorFor(f.assetType, f.fieldName, f.instance);
+    return { assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null, siblings: f.siblings || [] };
   });
-  const singleVerdicts = singleInputs.length
+  const rawSingleVerdicts = singleInputs.length
     ? await reviewCopyFields({ fields: singleInputs, voiceGuide, briefContext, scoped })
     : [];
+  // reviewCopyFields returns exactly one verdict per input, in input order, echoing
+  // each input's own assetType/fieldName — but it rebuilds the objects and so does
+  // NOT carry `instance` through. Re-attach it positionally instead of trusting the
+  // model round trip to preserve it.
+  const singleVerdicts = rawSingleVerdicts.map((v, i) => {
+    const src = singleInputs[i];
+    return src ? { ...v, instance: src.instance } : v;
+  });
 
   const stackResults = await Promise.all(
     stacks.map((st) => {
       const options = st.variations.map((v) => {
-        const p = priorFor(st.assetType, variationFieldName(st.fieldName, v.index, v.doorway));
+        const p = priorFor(st.assetType, variationFieldName(st.fieldName, v.index, v.doorway), st.instance);
         return { index: v.index, doorway: v.doorway, copy: v.copy, priorComment: p.comment || null };
       });
       return reviewVariationStack({ assetType: st.assetType, fieldName: st.fieldName, charMax: st.charMax, variations: options, voiceGuide, briefContext, siblings: st.siblings || [] })
@@ -405,6 +443,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
       const parts = [r.strategy, r.craft, r.flag].filter((s) => typeof s === 'string' && s.trim());
       variationVerdicts.push({
         assetType: st.assetType,
+        instance: st.instance,
         fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
         comment: parts.length ? parts.join(' ') : null,
       });

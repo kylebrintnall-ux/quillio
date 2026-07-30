@@ -19,20 +19,14 @@ function actingUserId(tenantContext) {
   return (tenantContext && tenantContext.user && tenantContext.user.id) || null;
 }
 
-// Run a brief end to end and return structured data for the browser. Mirrors
-// the Slack adapter's pipeline sequence (parse → enrich → build) minus all the
-// chat.update lifecycle. Throws on failure so the route can shape the error
-// response; never leaks anything to the caller beyond the thrown message.
-async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
+// FIRST HALF of a brief run: parse + reference enrichment, stopping BEFORE any
+// doc is created. Returns everything the second half needs, plus the asset PLAN
+// (an ordered [{ asset, count, labels }]) for the user to review. Splitting here
+// is what lets the route show an interpretation before building anything — a
+// misread brief that asked for ten sections is cheap to correct at this point and
+// expensive after. Throws on failure, same as the combined path.
+async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
   const tokens = tenantContext.tokens || {};
-  const tenantId = tenantContext.tenant && tenantContext.tenant.id;
-  const userId = actingUserId(tenantContext);
-  // Drive/Docs writes run as the SIGNED-IN USER's own Google OAuth identity when
-  // they've connected one, falling back to the tenant-level token and then the
-  // shared env path. Reference reads stay on the SA path inside
-  // fetchAllReferences — the drive.file scope can't read arbitrary pre-existing
-  // Drive files, only ones this app created.
-  const clients = await getClientsForTenant({ tenantId, userId });
 
   // 1. Parse the brief into title / summary / writerPrompt / assets (+ links).
   const parsedBrief = await pipeline.parseBrief(briefText);
@@ -83,6 +77,31 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
     // Ensure temp uploads are removed even if processing threw before its finally.
     await pipeline.cleanupAttachedFiles(fileRefs);
   }
+
+  // The asset PLAN. parseBrief returns a deduped string[], so every count is 1 and
+  // there are no labels — nothing to confirm yet. The shape is what a later parse
+  // step will fill in, and what the confirm endpoint accepts back (possibly edited).
+  const plan = assets.map((asset) => ({ asset, count: 1, labels: [] }));
+
+  return { briefText, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights, plan };
+}
+
+// SECOND HALF: folder routing + doc creation, resuming from a parse result and an
+// asset plan (which the user may have edited). `parsed` is runWebBriefParse's
+// return value; `plan` overrides the plan it carried. Returns the structured
+// payload the browser renders — identical whether or not a confirmation step ran.
+async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
+  const tenantId = tenantContext.tenant && tenantContext.tenant.id;
+  const userId = actingUserId(tenantContext);
+  // Drive/Docs writes run as the SIGNED-IN USER's own Google OAuth identity when
+  // they've connected one, falling back to the tenant-level token and then the
+  // shared env path. Reference reads stayed on the SA path inside
+  // fetchAllReferences — the drive.file scope can't read arbitrary pre-existing
+  // Drive files, only ones this app created.
+  const clients = await getClientsForTenant({ tenantId, userId });
+
+  const { briefText, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights } = parsed;
+  const assets = Array.isArray(plan) ? plan : parsed.plan;
 
   // 3. Folder routing (priority): a Drive folder URL embedded in the brief, else
   //    the tenant's saved default folder (Settings → default_folder_id), else
@@ -158,6 +177,15 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
   };
 }
 
+// Run a brief end to end — parse, enrich, build — with no confirmation pause.
+// The composition of the two halves above, kept because it IS the flow whenever
+// there is nothing to confirm (the only flow reachable today), and because the
+// Slack adapter's sequence has no pause either.
+async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
+  const parsed = await runWebBriefParse(briefText, tenantContext, fileRefs);
+  return runWebBriefGenerate(parsed, parsed.plan, tenantContext);
+}
+
 // Generate (or, with `direction`, regenerate) the draft for an existing doc.
 // tenantContext is accepted for a consistent signature (and future per-tenant
 // config); generateDraft re-reads the doc itself, so no tokens are needed today.
@@ -192,4 +220,12 @@ async function runWebReview(docId, tenantContext = {}, scopedFields) {
   return runCopyReview(docId, tenantId, clients, scopedFields);
 }
 
-module.exports = { runWebBrief, runWebDraft, runWebProjectContent, runWebReview };
+module.exports = {
+  runWebBrief,
+  // The two halves, for the parse-then-confirm route split.
+  runWebBriefParse,
+  runWebBriefGenerate,
+  runWebDraft,
+  runWebProjectContent,
+  runWebReview,
+};

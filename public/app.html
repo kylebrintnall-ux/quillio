@@ -453,6 +453,14 @@
     .asset-card.reveal { animation: cardIn 0.45s ease both; }
     .asset-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 5px; }
     .asset-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--ink); letter-spacing: 0.02em; }
+    /* How-many stepper on the confirm screen. margin-left:auto pushes it to the
+       right of the asset name inside the existing flex .asset-card-header. */
+    .confirm-count {
+      margin-left: auto; width: 62px; padding: 5px 8px; text-align: center;
+      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 13px; color: var(--ink);
+      background: rgba(255,255,255,0.7); border: 1.5px solid rgba(255,255,255,0.9);
+      border-radius: 10px;
+    }
     .asset-card-badge { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 10px; font-weight: 600; color: rgba(26,26,46,0.5); background: rgba(26,26,46,0.06); border-radius: 100px; padding: 2px 9px; }
     .asset-card-badge.drafted { color: #0A5C32; background: #C6F0D8; }
     .asset-direction { font-size: 12px; font-style: italic; color: rgba(26,26,46,0.48); margin: 0 0 12px; line-height: 1.5; }
@@ -805,6 +813,32 @@
       <button class="cta-secondary hidden" id="progress-back">← Back to brief</button>
     </section>
 
+    <!-- SCREEN 2b — CONFIRM INTERPRETATION. Only shown when the parsed plan has
+         something a user could correct (an asset asked for more than once, or a
+         labelled instance). A plain one-of-each brief never reaches this screen —
+         it goes straight from progress to output, exactly as it always has. -->
+    <section id="screen-confirm" class="screen">
+      <div class="output-header">
+        <h2 class="output-title" id="confirm-title">Campaign</h2>
+      </div>
+      <p class="field-select-hint">Here's how the brief was read. Adjust the counts if that's not right — nothing has been created yet.</p>
+
+      <div class="section-label">Campaign Summary</div>
+      <p class="section-body" id="confirm-summary"></p>
+
+      <div class="section-label">Writer Direction</div>
+      <p class="section-body" id="confirm-direction"></p>
+
+      <div class="assets-label">Assets</div>
+      <div id="confirm-assets"></div>
+      <div id="confirm-error" class="error hidden"></div>
+
+      <div class="output-ctas">
+        <button class="cta-primary" id="confirm-build-btn">Build the doc</button>
+        <button class="cta-secondary" id="confirm-back-btn">← Back to brief</button>
+      </div>
+    </section>
+
     <!-- SCREEN 3 — DOC OUTPUT (pre-draft spec view) -->
     <section id="screen-output" class="screen">
       <div class="output-header">
@@ -1018,6 +1052,7 @@
     var screens = {
       brief: document.getElementById('screen-brief'),
       progress: document.getElementById('screen-progress'),
+      confirm: document.getElementById('screen-confirm'),
       output: document.getElementById('screen-output'),
       generating: document.getElementById('screen-generating'),
       copydone: document.getElementById('screen-copydone'),
@@ -1025,7 +1060,7 @@
       project: document.getElementById('screen-project')
     };
     // Which nav link is highlighted for each screen (cosmetic only).
-    var NAV_FOR_SCREEN = { brief: 'nav-new', progress: 'nav-new', output: 'nav-new', generating: 'nav-new', copydone: 'nav-new', history: 'nav-history', project: 'nav-history' };
+    var NAV_FOR_SCREEN = { brief: 'nav-new', progress: 'nav-new', confirm: 'nav-new', output: 'nav-new', generating: 'nav-new', copydone: 'nav-new', history: 'nav-history', project: 'nav-history' };
     function setNavActive(name) {
       ['nav-new', 'nav-history', 'nav-settings'].forEach(function (id) {
         document.getElementById(id).classList.toggle('active', id === NAV_FOR_SCREEN[name]);
@@ -1720,6 +1755,82 @@
       clearError(document.getElementById('output-error'));
     }
 
+    // --- Confirm the interpretation before building ---------------------------
+    // Populated by renderConfirm; read by the Build button. Nothing has been
+    // created at this point — the server holds the parse result against this id.
+    var pendingBrief = { pendingId: null, plan: [] };
+    var MAX_INSTANCES_PER_ASSET = 10; // mirrors the server clamp; the server re-clamps
+
+    function renderConfirm(data) {
+      var interp = (data && data.interpretation) || {};
+      pendingBrief = { pendingId: data.pendingId, plan: (interp.plan || []).slice() };
+      document.getElementById('confirm-title').textContent = interp.campaignTitle || 'Campaign';
+      document.getElementById('confirm-summary').textContent = interp.summary || '—';
+      document.getElementById('confirm-direction').textContent = interp.writerDirection || '—';
+      clearError(document.getElementById('confirm-error'));
+
+      var host = document.getElementById('confirm-assets');
+      host.textContent = '';
+      pendingBrief.plan.forEach(function (entry, i) {
+        var row = el('div', 'asset-card');
+        var head = el('div', 'asset-card-header');
+        head.appendChild(el('span', 'asset-card-name', entry.asset));
+        var input = document.createElement('input');
+        input.type = 'number';
+        input.min = '1';
+        input.max = String(MAX_INSTANCES_PER_ASSET);
+        input.value = String(Math.max(1, Math.min(MAX_INSTANCES_PER_ASSET, entry.count || 1)));
+        input.className = 'confirm-count';
+        input.setAttribute('aria-label', 'How many ' + entry.asset);
+        input.setAttribute('data-plan-index', String(i));
+        head.appendChild(input);
+        row.appendChild(head);
+        if (Array.isArray(entry.labels) && entry.labels.some(Boolean)) {
+          row.appendChild(el('div', 'field-select-hint', entry.labels.filter(Boolean).join(' · ')));
+        }
+        host.appendChild(row);
+      });
+    }
+
+    // Read the (possibly edited) counts back off the inputs. The server validates
+    // and re-clamps everything here — this is only to keep the UI honest.
+    function collectConfirmPlan() {
+      return pendingBrief.plan.map(function (entry, i) {
+        var input = document.querySelector('#confirm-assets [data-plan-index="' + i + '"]');
+        var n = input ? parseInt(input.value, 10) : entry.count;
+        if (!(n > 0)) n = 1;
+        return { asset: entry.asset, count: Math.min(MAX_INSTANCES_PER_ASSET, n), labels: entry.labels || [] };
+      });
+    }
+
+    async function confirmBrief() {
+      var btn = document.getElementById('confirm-build-btn');
+      var errEl = document.getElementById('confirm-error');
+      clearError(errEl);
+      var plan = collectConfirmPlan();
+      var total = plan.reduce(function (n, e) { return n + e.count; }, 0);
+      btn.disabled = true;
+      showScreen('progress');
+      startBriefBar(8 + total * 4, false);
+      try {
+        // Same polling contract as /api/brief — the confirm job is a brief job.
+        var data = await runJob(
+          '/api/brief/confirm',
+          { pendingId: pendingBrief.pendingId, plan: plan },
+          '/api/brief'
+        );
+        finishBriefBar();
+        renderOutput(data);
+        showScreen('output');
+      } catch (e) {
+        var msg = e.message || 'Network error — please try again.';
+        var mayHaveStarted = msg === NET_MSG || /taking longer than expected/i.test(msg);
+        failBriefBar(msg, mayHaveStarted);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     // --- Actions ------------------------------------------------------------
     async function runBrief() {
       var briefText = briefEl.value.trim();
@@ -1745,6 +1856,14 @@
         if (attachedFiles.length) { fileRefs = await uploadFiles(attachedFiles); }
         var data = await runJob('/api/brief', { briefText: briefText, workspaceId: WORKSPACE_ID, fileRefs: fileRefs }, '/api/brief');
         finishBriefBar();
+        // The server pauses ONLY when the plan has something to correct. Today it
+        // never does, so this branch is dormant and the flow below is unchanged.
+        if (data && data.needsConfirmation) {
+          renderConfirm(data);
+          showScreen('confirm');
+          clearAttachedFiles();
+          return;
+        }
         renderOutput(data);
         showScreen('output');
         clearAttachedFiles();
@@ -2764,6 +2883,8 @@
 
     // --- Wiring -------------------------------------------------------------
     document.getElementById('run-btn').addEventListener('click', runBrief);
+    document.getElementById('confirm-build-btn').addEventListener('click', confirmBrief);
+    document.getElementById('confirm-back-btn').addEventListener('click', function () { showScreen('brief'); });
     document.getElementById('attach-btn').addEventListener('click', function () { fileInput.click(); });
     fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
     document.getElementById('draft-btn').addEventListener('click', generateDraft);

@@ -1050,6 +1050,7 @@ test('routes/app mounts and exposes its routes', () => {
   assert.deepStrictEqual(paths, [
     '/api/brief',
     '/api/brief/:jobId/status',
+    '/api/brief/confirm',
     '/api/draft',
     '/api/draft/:jobId/status',
     '/api/projects',
@@ -1080,7 +1081,7 @@ test('routes/app does NOT import the Slack messaging layer', () => {
 //
 // Everything it touches in require.cache is restored afterwards, so the modules
 // the other tests see are unchanged regardless of ordering.
-function withStubbedDb(fn) {
+function withStubbedDb(fn, webStub) {
   const saved = new Map();
   const remember = (p) => {
     if (!saved.has(p)) saved.set(p, require.cache[p]); // may be undefined = wasn't loaded
@@ -1108,14 +1109,32 @@ function withStubbedDb(fn) {
     findUserById: async (id) => ({ id, email: `${id}@example.test`, tenant_id: id === 'u1' ? 'TENANT_A' : 'TENANT_B', role: 'owner' }),
   });
   stub('src/db/projects', { getProjects: async () => [], getProject: async () => null, setProjectStatus: async () => {} });
+  // A small asset library so /api/brief/confirm can validate a plan against real
+  // names without a database.
+  stub('src/db/assets', {
+    getTenantAssets: async () => [
+      { name: 'Battle Card', fields: [] },
+      { name: 'One-Pager', fields: [] },
+      { name: 'Demand Gen Nurture Email', fields: [] },
+    ],
+    getAssetDirections: async () => () => null,
+    seedTenantAssets: async () => {},
+  });
   // No Gemini / Docs / Drive: the job body resolves instantly with a marker the
-  // owner's poll must see (and nobody else's).
-  stub('src/adapters/web', {
-    runWebBrief: async () => ({ docUrl: 'https://docs.google.com/document/d/TENANT_A_ONLY/edit' }),
+  // owner's poll must see (and nobody else's). /api/brief now calls the two HALVES
+  // (parse, then generate) rather than runWebBrief, so both are stubbed; a caller
+  // can pass `webStub` to override them and drive the confirm path.
+  const DOC = 'https://docs.google.com/document/d/TENANT_A_ONLY/edit';
+  stub('src/adapters/web', Object.assign({
+    runWebBrief: async () => ({ docUrl: DOC }),
+    // Default: a one-of-each plan, i.e. nothing to confirm — the dormant path.
+    runWebBriefParse: async () => ({ campaignTitle: 'C', summary: 'S', writerPrompt: 'W',
+      referenceInsights: [], plan: [{ asset: 'Battle Card', count: 1, labels: [] }] }),
+    runWebBriefGenerate: async () => ({ docUrl: DOC }),
     runWebDraft: async () => ({}),
     runWebReview: async () => ({}),
     runWebProjectContent: async () => ({}),
-  });
+  }, webStub || {}));
   reload('src/middleware/auth');
   const router = reload('src/routes/app');
 
@@ -4449,17 +4468,29 @@ test('asset plan: nothing user-facing can request count > 1', () => {
   // The expansion is reachable only by calling the pipeline directly. Neither
   // adapter builds a plan, and parseBrief still returns a bare string[].
   const rd = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
-  for (const p of ['src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/routes/app.js']) {
+  for (const p of ['src/adapters/slackWorkflow.js', 'src/adapters/web.js']) {
     const src = rd(p);
-    // No adapter/route constructs a plan entry: `assets` is passed straight through
-    // from parseBrief as the bare string[] it returns.
-    assert.ok(!/assets:\s*\[?\s*\{/.test(src), `${p} does not build an asset plan object`);
+    // No adapter hard-codes a plan entry with a count above 1.
+    assert.ok(!/count:\s*(?!1\b)\d/.test(src), `${p} does not hard-code count > 1`);
     assert.ok(!/\bMAX_INSTANCES_PER_ASSET\b|\btenantAssetsToSpecs\b/.test(src), `${p} does not touch the expansion`);
   }
-  // parseBrief still declares a string[] of assets.
+  // routes/app.js DOES reference the ceiling now — it clamps a user-edited plan on
+  // the confirm endpoint. What matters is that it only ever clamps DOWNWARD from
+  // what a user typed and never originates a count itself. (This assertion used to
+  // forbid the route touching the expansion at all; the confirm step is exactly the
+  // place that has to.)
+  const route = rd('src/routes/app.js');
+  assert.ok(/Math\.min\(MAX_INSTANCES_PER_ASSET, parseInt\(entry\.count, 10\) \|\| 1\)/.test(route),
+    'route clamps a client count rather than inventing one');
+  assert.ok(!/count:\s*(?!1\b)\d/.test(route), 'route does not hard-code count > 1');
+
+  // THE ACTUAL DORMANCY GUARANTEE, unchanged: parseBrief cannot emit count > 1, so
+  // no brief can reach the confirm screen, so no user can raise a count.
   assert.ok(/"assets": string\[\]/.test(rd('src/services/gemini.js')), 'parseBrief schema is still string[]');
   assert.ok(/if \(!assets\.includes\(canonical\)\) assets\.push\(canonical\)/.test(rd('src/services/gemini.js')),
     'parseBrief still dedupes to one entry per asset name');
+  assert.ok(/plan = assets\.map\(\(asset\) => \(\{ asset, count: 1, labels: \[\] \}\)\)/.test(rd('src/adapters/web.js')),
+    'the web parse half builds every entry at count 1');
 });
 
 // --- Instance headings: the writer renders them, the readers decompose them ----
@@ -4703,6 +4734,241 @@ test('instance labels: threaded through the plan, populated by nothing', () => {
   // Match the plan-entry PROPERTY, not the English word — gemini.js prompts
   // legitimately say "no labels, quotes, options" and "Reproduce labels ... VERBATIM".
   for (const p of ['src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/routes/app.js', 'src/services/gemini.js']) {
-    assert.ok(!/\blabels\s*:/.test(rd(p)), `${p} must not supply instance labels`);
+    // A NON-EMPTY label literal. `labels: []` (the web parse half's empty default,
+    // which keeps the returned plan shape uniform) supplies no label content.
+    assert.ok(!/labels\s*:\s*\[\s*[^\]\s]/.test(rd(p)), `${p} must not supply instance labels`);
   }
+});
+
+// --- Parse-then-confirm on the web brief flow --------------------------------
+// /api/brief pauses ONLY when the parsed plan has something to correct. Today it
+// never does (parseBrief returns a deduped string[]), so the dormant path — one
+// POST, one poll, straight to a doc — is the only reachable one.
+
+// Drive the real router over a loopback listener with the DB + web adapter
+// stubbed. `webStub` overrides the adapter halves so a test can force a
+// multi-instance plan that parseBrief itself cannot produce.
+function withBriefServer(webStub, fn) {
+  return withStubbedDb(async (router) => {
+    const express = require('express');
+    const http = require('node:http');
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.session = { userId: req.headers['x-user'] || 'u1' }; next(); });
+    app.use(router);
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    let calls = 0;
+    const call = async (method, url, user, body) => {
+      calls += 1;
+      const res = await fetch(`http://127.0.0.1:${port}${url}`, {
+        method,
+        headers: { 'Content-Type': 'application/json', 'X-User': user },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    // Poll a job to completion (the stubs settle immediately).
+    const finish = async (jobId, user) => {
+      for (let i = 0; i < 40; i += 1) {
+        const s = await call('GET', `/api/brief/${jobId}/status`, user);
+        if (s.body.status !== 'pending') return s.body;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error('job never settled');
+    };
+    try {
+      return await fn({ call, finish, callCount: () => calls });
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  }, webStub);
+}
+
+test('confirm: the DORMANT path builds a doc with no confirmation and no extra request', async () => {
+  let generateCalls = 0;
+  await withBriefServer(
+    {
+      // A one-of-each plan — exactly what parseBrief produces today.
+      runWebBriefParse: async () => ({
+        campaignTitle: 'Spring Sale', summary: 'S', writerPrompt: 'W', referenceInsights: [],
+        plan: [{ asset: 'Battle Card', count: 1, labels: [] }, { asset: 'One-Pager', count: 1, labels: [] }],
+      }),
+      runWebBriefGenerate: async () => { generateCalls += 1; return { docUrl: 'https://docs.google.com/document/d/DOC/edit' }; },
+    },
+    async ({ call, finish, callCount }) => {
+      const before = callCount();
+      const start = await call('POST', '/api/brief', 'u1', { briefText: 'spring sale' });
+      assert.strictEqual(start.status, 202);
+      const done = await finish(start.body.jobId, 'u1');
+
+      assert.strictEqual(done.status, 'complete');
+      // The doc came back from the FIRST job — no confirmation, no pendingId.
+      assert.strictEqual(done.result.docUrl, 'https://docs.google.com/document/d/DOC/edit');
+      assert.ok(!done.result.needsConfirmation, 'no confirmation for a one-of-each plan');
+      assert.strictEqual(done.result.pendingId, undefined);
+      assert.strictEqual(generateCalls, 1, 'generation ran inside the brief job');
+      // Exactly ONE POST — the rest are status polls. No extra round trip.
+      const posts = callCount() - before;
+      assert.ok(posts >= 2, 'at least the POST plus one poll happened');
+      assert.strictEqual(done.result.needsConfirmation, undefined);
+    }
+  );
+});
+
+test('confirm: a multi-instance plan PAUSES, is edited, and generates from the edit', async () => {
+  let seenPlan = null;
+  await withBriefServer(
+    {
+      runWebBriefParse: async () => ({
+        campaignTitle: 'Nurture Wave', summary: 'Two audiences', writerPrompt: 'Direct', referenceInsights: [],
+        plan: [{ asset: 'Demand Gen Nurture Email', count: 5, labels: [] }, { asset: 'Battle Card', count: 1, labels: [] }],
+      }),
+      runWebBriefGenerate: async (_parsed, plan) => { seenPlan = plan; return { docUrl: 'https://docs.google.com/document/d/DOC2/edit' }; },
+    },
+    async ({ call, finish }) => {
+      // 1. The brief job stops WITHOUT building anything.
+      const start = await call('POST', '/api/brief', 'u1', { briefText: '5 nurture emails' });
+      const paused = await finish(start.body.jobId, 'u1');
+      assert.strictEqual(paused.status, 'complete');
+      assert.strictEqual(paused.result.needsConfirmation, true);
+      assert.ok(paused.result.pendingId, 'a pendingId to resume from');
+      assert.strictEqual(paused.result.docUrl, undefined, 'no doc was created');
+      assert.strictEqual(seenPlan, null, 'generate never ran');
+      // The interpretation carries everything the screen renders.
+      assert.strictEqual(paused.result.interpretation.campaignTitle, 'Nurture Wave');
+      assert.strictEqual(paused.result.interpretation.summary, 'Two audiences');
+      assert.strictEqual(paused.result.interpretation.writerDirection, 'Direct');
+      assert.deepStrictEqual(paused.result.interpretation.plan.map((e) => [e.asset, e.count]), [
+        ['Demand Gen Nurture Email', 5], ['Battle Card', 1],
+      ]);
+
+      // 2. The user corrects 5 → 2 and builds.
+      const confirm = await call('POST', '/api/brief/confirm', 'u1', {
+        pendingId: paused.result.pendingId,
+        plan: [{ asset: 'Demand Gen Nurture Email', count: 2 }, { asset: 'Battle Card', count: 1 }],
+      });
+      assert.strictEqual(confirm.status, 202);
+      const built = await finish(confirm.body.jobId, 'u1');
+      assert.strictEqual(built.status, 'complete');
+      assert.strictEqual(built.result.docUrl, 'https://docs.google.com/document/d/DOC2/edit');
+      // Generation used the EDITED plan, not the parsed one.
+      assert.deepStrictEqual(seenPlan, [
+        { asset: 'Demand Gen Nurture Email', count: 2 }, { asset: 'Battle Card', count: 1 },
+      ]);
+    }
+  );
+});
+
+test('confirm: a client-supplied plan is validated and clamped server-side', async () => {
+  let seenPlan = null;
+  const PAUSED = {
+    runWebBriefParse: async () => ({
+      campaignTitle: 'C', summary: 'S', writerPrompt: 'W', referenceInsights: [],
+      plan: [{ asset: 'Battle Card', count: 3, labels: [] }],
+    }),
+    runWebBriefGenerate: async (_p, plan) => { seenPlan = plan; return { docUrl: 'd' }; },
+  };
+  await withBriefServer(PAUSED, async ({ call, finish }) => {
+    const start = await call('POST', '/api/brief', 'u1', { briefText: 'x' });
+    const pendingId = (await finish(start.body.jobId, 'u1')).result.pendingId;
+
+    // An asset the tenant's library does not have → 400, named, no job started.
+    const bogus = await call('POST', '/api/brief/confirm', 'u1', {
+      pendingId, plan: [{ asset: 'TikTok Ad', count: 1 }],
+    });
+    assert.strictEqual(bogus.status, 400);
+    assert.match(bogus.body.error, /not in your library: TikTok Ad/);
+    assert.strictEqual(bogus.body.jobId, undefined);
+    assert.strictEqual(seenPlan, null, 'nothing generated');
+
+    // An absurd per-asset count is CLAMPED to the ceiling, not obeyed.
+    const huge = await call('POST', '/api/brief/confirm', 'u1', {
+      pendingId, plan: [{ asset: 'Battle Card', count: 9999 }],
+    });
+    assert.strictEqual(huge.status, 202);
+    await finish(huge.body.jobId, 'u1');
+    assert.deepStrictEqual(seenPlan, [{ asset: 'Battle Card', count: 10 }], 'clamped to MAX_INSTANCES_PER_ASSET');
+
+    // A total above the whole-plan ceiling → 400 rather than a 400-section doc.
+    seenPlan = null;
+    const over = await call('POST', '/api/brief/confirm', 'u1', {
+      pendingId,
+      plan: Array.from({ length: 6 }, () => ({ asset: 'Battle Card', count: 10 })), // 60 > 40
+    });
+    assert.strictEqual(over.status, 400);
+    assert.match(over.body.error, /above the limit of 40/);
+    assert.strictEqual(seenPlan, null);
+
+    // An empty plan is refused rather than silently rendering the whole library.
+    const empty = await call('POST', '/api/brief/confirm', 'u1', { pendingId, plan: [] });
+    assert.strictEqual(empty.status, 400);
+    assert.match(empty.body.error, /at least one asset/);
+    // A non-array plan is refused too.
+    const bad = await call('POST', '/api/brief/confirm', 'u1', { pendingId, plan: 'lots' });
+    assert.strictEqual(bad.status, 400);
+    assert.match(bad.body.error, /must be an array/);
+  });
+});
+
+test('confirm: a pending parse is tenant-scoped — cross-tenant and unknown both 404', async () => {
+  await withBriefServer(
+    {
+      runWebBriefParse: async () => ({
+        campaignTitle: 'C', summary: 'S', writerPrompt: 'W', referenceInsights: [],
+        plan: [{ asset: 'Battle Card', count: 2, labels: [] }],
+      }),
+      runWebBriefGenerate: async () => ({ docUrl: 'd' }),
+    },
+    async ({ call, finish }) => {
+      // u1 → TENANT_A starts and pauses a brief.
+      const start = await call('POST', '/api/brief', 'u1', { briefText: 'x' });
+      const pendingId = (await finish(start.body.jobId, 'u1')).result.pendingId;
+      assert.ok(pendingId);
+
+      // u2 → TENANT_B knows the id and cannot use it. 404, never 403 — a 403 would
+      // confirm the id exists and make this an oracle for probing other tenants.
+      const cross = await call('POST', '/api/brief/confirm', 'u2', { pendingId, plan: [{ asset: 'Battle Card', count: 1 }] });
+      assert.strictEqual(cross.status, 404);
+      assert.match(cross.body.error, /Unknown or expired/);
+
+      // An id that never existed is indistinguishable from another tenant's.
+      const unknown = await call('POST', '/api/brief/confirm', 'u1', {
+        pendingId: '00000000-0000-4000-8000-000000000000', plan: [{ asset: 'Battle Card', count: 1 }],
+      });
+      assert.strictEqual(unknown.status, 404);
+      assert.deepStrictEqual(unknown.body.error, cross.body.error, 'same message either way');
+
+      // The owner still works.
+      const ok = await call('POST', '/api/brief/confirm', 'u1', { pendingId, plan: [{ asset: 'Battle Card', count: 1 }] });
+      assert.strictEqual(ok.status, 202);
+    }
+  );
+});
+
+test('confirm: planNeedsConfirmation only fires on a repeat or a label', () => {
+  // Pure predicate, re-derived here from the route source so the rule is pinned.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  assert.ok(/function planNeedsConfirmation/.test(src), 'the predicate exists');
+  assert.ok(/Number\(e\.count\) \|\| 1\) > 1/.test(src), 'a repeat triggers it');
+  assert.ok(/e\.labels\.some\(Boolean\)/.test(src), 'a label triggers it');
+  // The empty plan a vague brief produces must NOT trigger it — that path renders
+  // the whole library today and must keep doing so with no extra click.
+  assert.ok(/Array\.isArray\(plan\) \? plan : \[\]\)\.some\(/.test(src), 'empty plan → false');
+});
+
+test('confirm: the client only branches when the server says to', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('/api/brief/confirm'), 'client posts to the confirm endpoint');
+  assert.ok(/screen-confirm/.test(html), 'confirm screen exists');
+  assert.ok(/confirm:\s*document\.getElementById\('screen-confirm'\)/.test(html), 'registered in the screens map');
+  // The branch is gated on the server's flag, so the dormant path is untouched.
+  assert.ok(/if \(data && data\.needsConfirmation\)/.test(html), 'client branches on needsConfirmation');
+  // Both buttons are wired, or the screen would be a dead end.
+  assert.ok(/getElementById\('confirm-build-btn'\)\.addEventListener/.test(html), 'Build is wired');
+  assert.ok(/getElementById\('confirm-back-btn'\)\.addEventListener/.test(html), 'Back is wired');
+  // The confirm job is polled at the SAME status endpoint, so the contract is one.
+  assert.ok(/'\/api\/brief\/confirm',\s*\n?\s*\{ pendingId: pendingBrief\.pendingId, plan: plan \},\s*\n?\s*'\/api\/brief'/.test(html),
+    'confirm job polls /api/brief/:jobId/status');
 });

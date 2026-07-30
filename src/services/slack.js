@@ -168,6 +168,133 @@ function copyCompleteBlocks(text, webViewLink, docId) {
   ];
 }
 
+// One line per plan entry for the confirmation card: "• 3 × Event Invitation Email
+// — Austin, Denver, Chicago". Counts are shown even at 1 so the card reads as a
+// tally rather than a list, which is the whole point of showing it.
+function planLines(plan) {
+  return (plan || [])
+    .map((e) => {
+      const count = Number(e && e.count) || 1;
+      const labels = Array.isArray(e && e.labels) ? e.labels.filter(Boolean) : [];
+      const uniq = [...new Set(labels)];
+      const tail = uniq.length ? ` — ${uniq.join(', ')}` : '';
+      return `• *${count} ×* ${e.asset}${tail}`;
+    })
+    .join('\n');
+}
+
+// The plan-confirmation card: what Quillio read out of the brief, and three ways
+// forward. Shown ONLY when the plan has something worth correcting (a repeat or a
+// label) — a one-of-each brief never sees it.
+//
+// Only the pendingId rides in the button values. Slack caps an action value near
+// 2000 chars, and a plan with labels can exceed that easily, so the plan itself
+// stays server-side in pendingBriefs and the buttons carry the key to it.
+//
+// The card states that nothing exists yet, because the doc-ready card that
+// normally lands here looks similar and the difference matters.
+function buildPlanCardBlocks({ pendingId, campaignTitle, plan }) {
+  const total = (plan || []).reduce((n, e) => n + (Number(e && e.count) || 1), 0);
+  const title = String(campaignTitle || 'Your campaign');
+  const text = `${emoji('quillio-scroll')} Here's how I read that brief — ${title}`;
+  return {
+    text,
+    blocks: [
+      { type: 'header', text: { type: 'plain_text', text: "Here's how I read that brief", emoji: true } },
+      { type: 'section', text: { type: 'mrkdwn', text: `*${title}*` } },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*${total} version${total === 1 ? '' : 's'} to write:*\n${planLines(plan)}`,
+        },
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: 'Nothing has been created yet. Build it, change the counts, or cancel.',
+          },
+        ],
+      },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            style: 'primary',
+            text: { type: 'plain_text', text: 'Build the doc', emoji: true },
+            action_id: 'plan_build',
+            value: pendingId,
+          },
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Edit counts', emoji: true },
+            action_id: 'plan_edit',
+            value: pendingId,
+          },
+          {
+            type: 'button',
+            style: 'danger',
+            text: { type: 'plain_text', text: 'Cancel', emoji: true },
+            action_id: 'plan_cancel',
+            value: pendingId,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+// The "Edit counts" modal: one text input per plan entry, pre-filled with the
+// parsed count. Opened from the Edit button's FRESH trigger_id — the slash command's
+// own trigger_id is long expired by the time parsing finishes, which is why the
+// plan arrives as a card rather than a modal in the first place.
+//
+// plain_text_input rather than number_input: it renders on every Slack client and
+// the value is clamped server-side by sanitizeAssetPlan regardless, so the stricter
+// widget would buy nothing but a compatibility risk.
+//
+// The asset NAME is not editable and does not ride in the submission — block ids are
+// positional (count_0, count_1, …) and resolved against the stored plan, so a
+// submission can only ever change counts, never introduce an asset.
+function buildPlanEditModalView(privateMetadata, plan) {
+  const blocks = [
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: 'How many versions of each? Leave a row alone to keep it as-is.' },
+    },
+  ];
+  (plan || []).forEach((e, i) => {
+    const labels = Array.isArray(e.labels) ? e.labels.filter(Boolean) : [];
+    const uniq = [...new Set(labels)];
+    blocks.push({
+      type: 'input',
+      block_id: `count_${i}`,
+      label: { type: 'plain_text', text: String(e.asset).slice(0, 150), emoji: true },
+      hint: uniq.length
+        ? { type: 'plain_text', text: uniq.join(', ').slice(0, 150) }
+        : undefined,
+      element: {
+        type: 'plain_text_input',
+        action_id: 'count_input',
+        initial_value: String(Number(e.count) || 1),
+        max_length: 3,
+      },
+    });
+  });
+  return {
+    type: 'modal',
+    callback_id: 'plan_modal',
+    private_metadata: privateMetadata || '',
+    title: { type: 'plain_text', text: 'Edit the plan', emoji: true },
+    submit: { type: 'plain_text', text: 'Build the doc', emoji: true },
+    close: { type: 'plain_text', text: 'Back', emoji: true },
+    blocks,
+  };
+}
+
 // Build the "Regenerate Draft" modal view. privateMetadata is a JSON string
 // ({ docId, channel, messageTs }) — carried through the modal so the
 // view_submission handler knows which doc to regenerate and where to post the
@@ -244,7 +371,12 @@ async function postChatMessage({ channel, text, webViewLink, token }) {
 // Falls back to a fresh webhook post if no response_url is available.
 async function updateMessage(text, responseUrl, opts = {}) {
   const body = { text };
-  if (opts.webViewLink) {
+  // Explicit blocks win (the plan-confirmation card needs its buttons to survive
+  // the response_url path, which is the only path when a workspace has no bot
+  // token). webViewLink remains the shorthand for the Open-in-Drive card.
+  if (opts.blocks) {
+    body.blocks = opts.blocks;
+  } else if (opts.webViewLink) {
     body.blocks = openInDriveBlocks(text, opts.webViewLink);
   }
 
@@ -455,5 +587,8 @@ module.exports = {
   postEphemeral,
   copyCompleteBlocks,
   buildRegenerateModalView,
+  buildPlanCardBlocks,
+  buildPlanEditModalView,
+  planLines,
   openModal,
 };

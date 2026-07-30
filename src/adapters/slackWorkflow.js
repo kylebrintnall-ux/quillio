@@ -14,12 +14,22 @@ const {
   postFolderAccessHelp,
   buildFolderAccessBlocks,
   buildResultBlocks,
+  buildPlanCardBlocks,
   copyCompleteBlocks,
   postLive,
   updateLive,
   refuseUnlinkedSlack,
 } = require('../services/slack');
 const { emoji } = require('../emoji');
+const { getTenantAssets } = require('../db/assets');
+const {
+  putPending,
+  getPending,
+  dropPending,
+  planNeedsConfirmation,
+  sanitizeAssetPlan,
+  slackOwner,
+} = require('../pendingBriefs');
 
 const BUILDING_TEXT = `${emoji('quillio-scroll')} Building your document…`;
 
@@ -210,6 +220,69 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       console.error('[Quillio] reference enrichment skipped:', err.message);
     }
 
+    // 1b. PAUSE FOR CONFIRMATION when the plan has something a human would want to
+    //     correct — the same rule the web uses (pendingBriefs.planNeedsConfirmation:
+    //     any count > 1, or a label). A one-of-each brief skips this entirely: no
+    //     card, no click, no behavior change, which is every brief run before
+    //     instances existed.
+    //
+    //     Slack cannot open a modal here. A modal needs a trigger_id valid ~3s and
+    //     parse is a multi-second network round-trip, so the plan goes out as a
+    //     Block Kit card via the live message instead — chat.update/postMessage
+    //     need no trigger_id. The plan itself cannot ride in the buttons either
+    //     (Slack caps an action value near 2000 chars), so only the pendingId does;
+    //     the plan lives in the shared store keyed by workspace.
+    if (planNeedsConfirmation(assets)) {
+      const pendingId = putPending(slackOwner(opts.workspaceId), {
+        surface: 'slack',
+        brief,
+        campaignTitle,
+        summary,
+        writerPrompt,
+        referenceLinks,
+        referenceInsights,
+        plan: assets,
+        effectiveFolderId,
+        folderFromBrief,
+        workspaceId: opts.workspaceId,
+        slackUserId: opts.slackUserId,
+        responseUrl,
+        live,
+      });
+      console.log(
+        `[workflow] plan needs confirmation → pending=${pendingId} ` +
+          `plan=${JSON.stringify(assets.map((e) => `${e.asset}x${e.count}`))}`
+      );
+      const card = buildPlanCardBlocks({ pendingId, campaignTitle, plan: assets });
+      await emit(card.text, card.blocks, () =>
+        updateMessage(card.text, responseUrl, { blocks: card.blocks, label: 'plan-confirm' })
+      );
+      return;
+    }
+
+    await buildAndPost({
+      brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
+      plan: assets, effectiveFolderId, folderFromBrief,
+      tenantId, actingUserId, live, responseUrl, emit,
+    });
+
+    console.log('[workflow] runBriefWorkflow DONE');
+  } catch (err) {
+    console.error('[workflow] runBriefWorkflow FAILED:', err && err.stack ? err.stack : err);
+    throw err;
+  }
+}
+
+// The BUILD half of the brief flow: specs → project folder → doc → doc-ready card.
+// Extracted so it can run either straight after parse (nothing to confirm) or later
+// from a confirmed plan, with identical behavior. Everything it needs is passed in;
+// it holds no state of its own.
+async function buildAndPost(ctx) {
+  const {
+    brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
+    plan, effectiveFolderId, folderFromBrief, tenantId, actingUserId, live, responseUrl, emit,
+  } = ctx;
+  {
     // 2-3. Read specs, create the project folder, and build the document. If a
     //      brief-provided folder is inaccessible, surface the recoverable
     //      folder-access flow (Issue 3) instead of a dead-end error.
@@ -222,7 +295,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       // back to the tenant token and then the shared env client.
       const clients = await getClientsForTenant({ tenantId, userId: actingUserId });
       docResult = await pipeline.generateDoc(
-        { brief, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
+        { brief, campaignTitle, summary, writerPrompt, assets: plan, referenceLinks, referenceInsights },
         effectiveFolderId,
         clients,
         tenantId,
@@ -236,7 +309,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
           slackThreadTs: live && live.ts,
           createdBy: actingUserId,
         },
-        // Slack has no confirmation step, so it builds under a tighter ceiling.
+        // The Slack surface's instance ceilings (see SLACK_ASSET_LIMITS above).
         SLACK_ASSET_LIMITS
       );
     } catch (err) {
@@ -275,17 +348,14 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       folderName, // null unless the doc went to a brief-linked folder
       // "Built 3 of 5 …" when a per-asset count hit the Slack ceiling; null when
       // nothing was clamped (every brief reachable before instances existed).
-      notice: clampNotice(assets, SLACK_ASSET_LIMITS),
+      notice: clampNotice(plan, SLACK_ASSET_LIMITS),
     };
     const resultBlocks = buildResultBlocks(result).blocks;
     await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
       postResult(result, responseUrl)
     );
 
-    console.log('[workflow] runBriefWorkflow DONE — doc', doc.id);
-  } catch (err) {
-    console.error('[workflow] runBriefWorkflow FAILED:', err && err.stack ? err.stack : err);
-    throw err;
+    console.log('[workflow] build DONE — doc', doc.id);
   }
 }
 
@@ -371,4 +441,155 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   console.log('[workflow] runGenerateDraft DONE');
 }
 
-module.exports = { runBriefWorkflow, runGenerateDraft, SLACK_ASSET_LIMITS, clampNotice };
+// Resume a paused brief from its confirmed plan. Called by the Slack interaction
+// handlers (Build, and the Edit modal's submission) — never by the slash command.
+//
+// `rawPlan` is null for Build (use the plan exactly as parsed) or a user-edited
+// plan from the modal. A user-supplied plan is NEVER trusted: it goes through the
+// same sanitizeAssetPlan the web confirm route uses, validated against this
+// tenant's real asset library.
+//
+// A missing pendingId is the expected path after a restart or a 30-minute wait, so
+// it reports rather than throwing: the card becomes a plain explanation that
+// nothing was created and the brief needs running again.
+async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
+  const owner = slackOwner(opts.workspaceId);
+  const pending = getPending(pendingId, owner);
+  const channel = opts.channel || null;
+  const messageTs = opts.messageTs || null;
+  const responseUrl = opts.responseUrl || null;
+
+  // One place to write the outcome back, mirroring runBriefWorkflow's `emit`. Edits
+  // the clicked card in place when we can; falls back to response_url when there is
+  // no bot token (slackApi throws) or no message coordinates.
+  const say = async (text, blocks) => {
+    if (channel && messageTs) {
+      try {
+        return await updateLive(channel, messageTs, text, blocks);
+      } catch (err) {
+        console.warn('[workflow] resume: chat.update failed, falling back:', err.message);
+      }
+    }
+    return updateMessage(text, responseUrl, blocks ? { blocks } : undefined);
+  };
+
+  if (!pending) {
+    console.log(`[workflow] resume: pending=${pendingId} is gone (expired or restarted)`);
+    await say(
+      `${emoji('quillio-scroll')} That plan is no longer available — Quillio restarted or it sat for more than 30 minutes. ` +
+        'Nothing was created. Run `/quillio` again with the same brief.'
+    );
+    return;
+  }
+
+  // Re-resolve the tenant: tokens are never parked in the pending record, and the
+  // acting user must be the person whose Google identity does the Drive write.
+  const resolved = await resolveTenant(opts.workspaceId, opts.slackUserId);
+  if (resolved.unlinked) {
+    console.log('[workflow] resume: unlinked Slack user, refusing');
+    await refuseUnlinkedSlack({ responseUrl, channel, slackUserId: opts.slackUserId });
+    return;
+  }
+  const { tenant, tokens, user } = resolved;
+  const tenantId = tenant && tenant.id;
+  const actingUserId = (user && user.id) || null;
+
+  let plan = pending.plan;
+  if (rawPlan) {
+    let libraryNames = [];
+    try {
+      const rows = await getTenantAssets(tenantId);
+      libraryNames = (rows || []).map((r) => r.name);
+    } catch (err) {
+      console.error('[workflow] resume: library read failed:', err.message);
+      await say(`⚠️ Couldn't read your asset library: ${err.message}`);
+      return;
+    }
+    if (libraryNames.length === 0) {
+      await say("⚠️ This workspace has no asset library yet, so there's nothing to build from.");
+      return;
+    }
+    const checked = sanitizeAssetPlan(rawPlan, libraryNames);
+    if (checked.error) {
+      await say(`⚠️ ${checked.error}`);
+      return;
+    }
+    if (checked.plan.length === 0) {
+      await say('⚠️ That plan had no assets left in it — run `/quillio` again.');
+      return;
+    }
+    plan = checked.plan;
+  }
+
+  console.log(
+    `[workflow] resume: building pending=${pendingId} ` +
+      `plan=${JSON.stringify(plan.map((e) => `${e.asset}x${e.count}`))}`
+  );
+  await say(BUILDING_TEXT);
+
+  const live = channel && messageTs ? { channel, ts: messageTs } : pending.live || null;
+  const canLive = !!tokens.slack_bot;
+  const emit = async (text, blocks, fallback) => {
+    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks, tokens.slack_bot);
+    return fallback();
+  };
+
+  try {
+    await buildAndPost({
+      brief: pending.brief,
+      campaignTitle: pending.campaignTitle,
+      summary: pending.summary,
+      writerPrompt: pending.writerPrompt,
+      referenceLinks: pending.referenceLinks,
+      referenceInsights: pending.referenceInsights,
+      plan,
+      effectiveFolderId: pending.effectiveFolderId,
+      folderFromBrief: pending.folderFromBrief,
+      tenantId,
+      actingUserId,
+      live,
+      responseUrl,
+      emit,
+    });
+    // Built successfully — the plan has served its purpose.
+    dropPending(pendingId, owner);
+  } catch (err) {
+    console.error('[workflow] resume FAILED:', err && err.stack ? err.stack : err);
+    // Leave the pending record in place so the user can hit Build again rather
+    // than re-paying for the whole parse.
+    await say(`⚠️ Quillio hit an error building that plan: ${err.message}`);
+  }
+}
+
+// Discard a paused brief without building. The record would expire on its own; this
+// just frees it early and confirms to the user that nothing was created.
+async function cancelBriefWorkflow(pendingId, opts = {}) {
+  dropPending(pendingId, slackOwner(opts.workspaceId));
+  const text = '✓ Cancelled — nothing was created.';
+  if (opts.channel && opts.messageTs) {
+    try {
+      return await updateLive(opts.channel, opts.messageTs, text);
+    } catch (err) {
+      console.warn('[workflow] cancel: chat.update failed, falling back:', err.message);
+    }
+  }
+  return updateMessage(text, opts.responseUrl);
+}
+
+// Read a paused brief's plan for the Edit modal. Ownership is checked against the
+// WORKSPACE, synchronously — a button click has ~3s to open a modal, so it cannot
+// afford a resolveTenant round-trip first. Returns null when the record is gone.
+function peekPendingPlan(pendingId, workspaceId) {
+  const pending = getPending(pendingId, slackOwner(workspaceId));
+  return pending ? pending.plan : null;
+}
+
+module.exports = {
+  runBriefWorkflow,
+  runGenerateDraft,
+  resumeBriefWorkflow,
+  cancelBriefWorkflow,
+  peekPendingPlan,
+  SLACK_ASSET_LIMITS,
+  clampNotice,
+};

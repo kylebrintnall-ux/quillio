@@ -22,8 +22,12 @@ const {
   runWebReview,
 } = require('../adapters/web');
 const { getTenantAssets } = require('../db/assets');
-const { MAX_INSTANCES_PER_ASSET, MAX_TOTAL_INSTANCES } = require('../core/pipeline');
-const { normalize } = require('../utils/normalize');
+const {
+  putPending,
+  getPending,
+  planNeedsConfirmation,
+  sanitizeAssetPlan,
+} = require('../pendingBriefs');
 const { requireAuth } = require('../middleware/auth');
 const { briefLimiter, draftLimiter, uploadLimiter } = require('../middleware/rateLimit');
 const { clientErrorMessage } = require('../utils/errors');
@@ -150,89 +154,14 @@ function startJob(label, tenantId, work, timeoutMs = JOB_TIMEOUT_MS) {
 
 // === Parse-then-confirm ===
 //
-// A parse result waiting on the user to confirm its asset plan. Same shape of
-// store as JOBS above, and deliberately the same TTL: 30 minutes is far longer
-// than the seconds it takes to glance at an interpretation and hit Build, short
-// enough that abandoned parses can't accumulate, and one number to reason about
-// rather than two. Same single-instance caveat as JOBS.
+// The pending-brief store, the pause rule and the plan validator all live in
+// src/pendingBriefs.js — ONE of each, shared with the Slack flow, which needs the
+// same three things. They were module-local here until Slack grew a confirmation
+// step; reaching them from the Slack adapter would have made it depend on this
+// web router. Web records are owned by the session tenant id.
 //
-// A pending entry is NOT consumed on confirm. Generation can fail (a Drive folder
-// the user can't write to, a Gemini timeout), and re-parsing to retry would mean
-// paying for the whole Gemini + reference-ingestion pass again; the TTL sweeps it.
-const PENDING = new Map(); // pendingId -> { tenantId, parsed, ts }
-const PENDING_TTL_MS = JOB_TTL_MS;
-
-function sweepPending() {
-  const now = Date.now();
-  for (const [id, p] of PENDING) {
-    if (now - p.ts > PENDING_TTL_MS) PENDING.delete(id);
-  }
-}
-
-function putPending(tenantId, parsed) {
-  sweepPending();
-  const pendingId = crypto.randomUUID();
-  PENDING.set(pendingId, { tenantId, parsed, ts: Date.now() });
-  return pendingId;
-}
-
-// Read a pending parse for THIS tenant. Missing, expired, or owned by another
-// tenant all return null, so the route answers 404 in every case — a 403 would
-// confirm the id exists and turn the endpoint into an oracle for probing other
-// tenants' ids, exactly as sendJobStatus avoids below.
-function getPending(pendingId, tenantId) {
-  const entry = PENDING.get(pendingId);
-  if (!entry || entry.tenantId !== tenantId) return null;
-  if (Date.now() - entry.ts > PENDING_TTL_MS) {
-    PENDING.delete(pendingId);
-    return null;
-  }
-  return entry;
-}
-
-// Does this plan have anything a user could meaningfully correct? Only a repeated
-// asset or a label does. One instance of every asset — and the empty plan a vague
-// brief produces, which renders the whole library exactly as it does today — goes
-// straight to generation with no extra round trip and no extra click.
-function planNeedsConfirmation(plan) {
-  return (Array.isArray(plan) ? plan : []).some(
-    (e) => e && ((Number(e.count) || 1) > 1 || (Array.isArray(e.labels) && e.labels.some(Boolean)))
-  );
-}
-
-// Validate + clamp a CLIENT-SUPPLIED asset plan. Never trusts the browser: same
-// posture as the scopedFields sanitizer below. Returns { plan } or { error }.
-// `libraryNames` is the tenant's actual asset_types names — an entry naming
-// anything else is rejected by name rather than silently dropped (dropping is the
-// silent-narrowing bug tenantAssetsToSpecs was changed to stop doing).
-function sanitizeAssetPlan(raw, libraryNames) {
-  if (!Array.isArray(raw)) return { error: 'plan must be an array' };
-  const known = new Set(libraryNames.map(normalize));
-  const plan = [];
-  const unknown = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const asset = String(entry.asset || entry.assetType || '').trim();
-    if (!asset) continue;
-    if (!known.has(normalize(asset))) {
-      unknown.push(asset);
-      continue;
-    }
-    const count = Math.max(1, Math.min(MAX_INSTANCES_PER_ASSET, parseInt(entry.count, 10) || 1));
-    const labels = (Array.isArray(entry.labels) ? entry.labels : [])
-      .slice(0, count)
-      .map((l) => (typeof l === 'string' && l.trim() ? l.trim().slice(0, 80) : null));
-    plan.push(labels.some(Boolean) ? { asset, count, labels } : { asset, count });
-  }
-  if (unknown.length > 0) {
-    return { error: `These assets are not in your library: ${unknown.join(', ')}` };
-  }
-  const total = plan.reduce((n, e) => n + e.count, 0);
-  if (total > MAX_TOTAL_INSTANCES) {
-    return { error: `That plan asks for ${total} assets, above the limit of ${MAX_TOTAL_INSTANCES}.` };
-  }
-  return { plan };
-}
+// Same single-instance caveat as JOBS above: a restart loses pending briefs, and
+// the confirm route answers 404 for a lost id (see below).
 
 // Shared poll handler for a job's status route. Mounted behind requireAuth, so
 // req.user is always populated (in demo mode with the demo tenant) — the tenant
@@ -370,15 +299,15 @@ router.post('/api/brief/confirm', briefLimiter, requireAuth, async (req, res) =>
   const pendingId = String(body.pendingId || '');
 
   // Unknown / expired / another tenant's → the same 404, never a 403 (see getPending).
-  const entry = getPending(pendingId, sessionTenant);
-  if (!entry) {
+  const parsed = getPending(pendingId, sessionTenant);
+  if (!parsed) {
     return res.status(404).json({ success: false, error: 'Unknown or expired brief — please run it again.' });
   }
 
   // The plan is CLIENT-supplied and edited by hand, so it is validated against the
   // tenant's real library before anything runs. Falls back to the parse's own plan
   // when the client sends none.
-  let plan = entry.parsed.plan;
+  let plan = parsed.plan;
   if (body.plan !== undefined) {
     let libraryNames = [];
     try {
@@ -406,7 +335,7 @@ router.post('/api/brief/confirm', briefLimiter, requireAuth, async (req, res) =>
 
   const jobId = startJob(`brief-confirm tenant=${sessionTenant}`, sessionTenant, async () => {
     const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
-    return runWebBriefGenerate(entry.parsed, plan, tenantContext);
+    return runWebBriefGenerate(parsed, plan, tenantContext);
   });
   console.log(
     `[web] /api/brief/confirm start → job=${jobId} pending=${pendingId} tenant=${sessionTenant} ` +

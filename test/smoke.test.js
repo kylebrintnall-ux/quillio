@@ -4479,9 +4479,14 @@ test('asset plan: counts are bounded at every layer', () => {
   // 2. The expansion clamps again, per surface, and is the authority.
   assert.ok(/Math\.min\(maxPerAsset, requested \|\| 1\)/.test(core), 'expansion clamps per surface');
   assert.ok(/requestedTotal > maxTotal/.test(core), 'expansion refuses an over-total ask');
-  // 3. The confirm route clamps the USER's edited number.
-  assert.ok(/Math\.min\(MAX_INSTANCES_PER_ASSET, parseInt\(entry\.count, 10\) \|\| 1\)/.test(route),
-    'route clamps a client count');
+  // 3. The shared plan validator clamps a USER-supplied number — a browser POST
+  //    body or a Slack modal submission. (This assertion used to point at
+  //    routes/app.js; the validator moved to src/pendingBriefs.js when the Slack
+  //    confirmation flow needed the same one. Same code, same clamp, one copy.)
+  const pending = rd('src/pendingBriefs.js');
+  assert.ok(/Math\.min\(MAX_INSTANCES_PER_ASSET, parseInt\(entry\.count, 10\) \|\| 1\)/.test(pending),
+    'the shared validator clamps a user count');
+  assert.ok(/require\('\.\.\/pendingBriefs'\)/.test(route), 'the web route uses the shared validator');
   // No layer hard-codes a count above 1 of its own accord. Comments are stripped
   // first — the docs and clamp explanations legitimately quote counts like
   // "count: 5" and "count: 400" as examples.
@@ -4772,9 +4777,9 @@ test('instance labels: threaded through the plan, populated by nothing', () => {
 });
 
 // --- Parse-then-confirm on the web brief flow --------------------------------
-// /api/brief pauses ONLY when the parsed plan has something to correct. Today it
-// never does (parseBrief returns a deduped string[]), so the dormant path — one
-// POST, one poll, straight to a doc — is the only reachable one.
+// /api/brief pauses ONLY when the parsed plan has something to correct: a count
+// above 1, or a label. A one-of-each brief — every brief run before instances
+// existed — takes the straight path: one POST, one poll, a doc.
 
 // Drive the real router over a loopback listener with the DB + web adapter
 // stubbed. `webStub` overrides the adapter halves so a test can force a
@@ -4979,14 +4984,27 @@ test('confirm: a pending parse is tenant-scoped — cross-tenant and unknown bot
 });
 
 test('confirm: planNeedsConfirmation only fires on a repeat or a label', () => {
-  // Pure predicate, re-derived here from the route source so the rule is pinned.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
-  assert.ok(/function planNeedsConfirmation/.test(src), 'the predicate exists');
-  assert.ok(/Number\(e\.count\) \|\| 1\) > 1/.test(src), 'a repeat triggers it');
-  assert.ok(/e\.labels\.some\(Boolean\)/.test(src), 'a label triggers it');
-  // The empty plan a vague brief produces must NOT trigger it — that path renders
-  // the whole library today and must keep doing so with no extra click.
-  assert.ok(/Array\.isArray\(plan\) \? plan : \[\]\)\.some\(/.test(src), 'empty plan → false');
+  // The predicate is now EXECUTED, not grepped. It moved from routes/app.js to
+  // src/pendingBriefs.js when Slack needed the same pause rule, and being exported
+  // means it can be called directly — a better test than the source match this
+  // replaced, and the same rule for both surfaces by construction.
+  const { planNeedsConfirmation } = require('../src/pendingBriefs');
+
+  // The one-of-each case — every brief run before instances existed — must NOT pause.
+  assert.strictEqual(planNeedsConfirmation([{ asset: 'A', count: 1 }, { asset: 'B', count: 1 }]), false);
+  assert.strictEqual(planNeedsConfirmation([{ asset: 'A' }]), false, 'a missing count means 1');
+  assert.strictEqual(planNeedsConfirmation([{ asset: 'A', count: 1, labels: [] }]), false);
+  assert.strictEqual(planNeedsConfirmation([{ asset: 'A', count: 1, labels: [null, ''] }]), false, 'blank labels are no labels');
+  // The empty plan a vague brief produces renders the whole library — no pause.
+  assert.strictEqual(planNeedsConfirmation([]), false);
+  for (const junk of [undefined, null, 'x', 7, {}]) {
+    assert.strictEqual(planNeedsConfirmation(junk), false, `${String(junk)} → false`);
+  }
+  // A repeat pauses.
+  assert.strictEqual(planNeedsConfirmation([{ asset: 'A', count: 2 }]), true);
+  assert.strictEqual(planNeedsConfirmation([{ asset: 'A', count: 1 }, { asset: 'B', count: 3 }]), true);
+  // A label pauses even at count 1 — the user named a group and should see it.
+  assert.strictEqual(planNeedsConfirmation([{ asset: 'A', count: 1, labels: ['Austin'] }]), true);
 });
 
 test('confirm: the client only branches when the server says to', () => {
@@ -5005,9 +5023,9 @@ test('confirm: the client only branches when the server says to', () => {
 });
 
 // --- Per-surface instance ceilings -------------------------------------------
-// The web pauses to confirm a big plan, so it can afford 10-per-asset / 40-total.
-// Slack acks and builds fire-and-forget, so a misread is only found once the doc
-// exists — it builds under 3 / 6.
+// Both surfaces now pause to confirm a multi-instance plan, and both build under
+// 10-per-asset / 40-total. The per-surface mechanism stays so one CAN be made
+// stricter; nothing uses it today.
 
 test('surface ceilings: Slack builds under the DEFAULTS, and the mechanism remains', () => {
   const { SLACK_ASSET_LIMITS } = require('../src/adapters/slackWorkflow');
@@ -5431,4 +5449,384 @@ test('Slack card: repeated instances collapse to "Name xN"', () => {
     '*Assets:*\n• Demand Gen Nurture Email ×3\n• Battle Card'
   );
   assert.match(blocks.find((b) => b.type === 'context').elements[0].text, /Built 10 of 12/);
+});
+
+// --- Slack parse-then-confirm -------------------------------------------------
+// Slack used to ack, parse, and build in one shot: a brief asking for 10 emails got
+// a 10-section doc with no chance to correct it. It now pauses on the same rule the
+// web uses (pendingBriefs.planNeedsConfirmation) and posts a Block Kit CARD.
+//
+// It has to be a card, not a modal: a modal needs a trigger_id valid ~3s and parse
+// is a multi-second Gemini round-trip, so by the time there is a plan to show there
+// is no usable trigger_id left. chat.update/postMessage need none.
+
+// Drive the REAL adapter with transport, DB, Google and the two heavy pipeline steps
+// stubbed. Every Slack write lands in `sent` in order, and each build records the
+// plan it was handed. buildPlanCardBlocks / buildPlanEditModalView / buildResultBlocks
+// are the REAL ones, so what these tests read is what a user would see.
+function withSlackBrief(overrides, fn) {
+  const saved = new Map();
+  const remember = (p) => { if (!saved.has(p)) saved.set(p, require.cache[p]); };
+  const resolvePath = (rel) => require.resolve(path.join(__dirname, '..', rel));
+  const stub = (rel, exports) => {
+    const p = resolvePath(rel);
+    remember(p);
+    require.cache[p] = { id: p, filename: p, path: path.dirname(p), loaded: true, exports, children: [], paths: [] };
+  };
+  const reload = (rel) => { const p = resolvePath(rel); remember(p); delete require.cache[p]; return require(p); };
+
+  const sent = [];
+  const builds = [];
+  const realSlack = require('../src/services/slack');
+  stub('src/services/slack', Object.assign({}, realSlack, {
+    updateMessage: async (text, url, opts = {}) => { sent.push({ via: 'response_url', text, blocks: (opts && opts.blocks) || null }); },
+    updateLive: async (channel, ts, text, blocks) => { sent.push({ via: 'chat.update', channel, ts, text, blocks: blocks || null }); },
+    postLive: async (channel, text, blocks) => { sent.push({ via: 'chat.postMessage', channel, text, blocks: blocks || null }); return { channel, ts: 'TS1' }; },
+    postResult: async (result) => { sent.push({ via: 'postResult', text: result.title, result }); },
+    postChatMessage: async () => {},
+    postFolderAccessHelp: async () => {},
+    refuseUnlinkedSlack: async (o) => { sent.push({ via: 'refuseUnlinked', slackUserId: o.slackUserId }); },
+  }));
+  stub('src/db', {
+    resolveTenant: overrides.resolveTenant || (async () => ({
+      tenant: { id: 'T1' }, tokens: { slack_bot: 'xoxb-test' }, source: 'db', user: { id: 'U-DB' },
+    })),
+  });
+  stub('src/google', { getClientsForTenant: async () => ({}) });
+  stub('src/db/assets', { getTenantAssets: overrides.getTenantAssets || (async () => PLAN_ROWS()) });
+
+  // The adapter uses core/pipeline as a NAMESPACE, so patch only the steps that
+  // would touch the network. tenantAssetsToSpecs stays real — the expansion these
+  // tests read headings out of is the shipping one.
+  const pipeline = require('../src/core/pipeline');
+  const savedPipeline = {};
+  const patch = (k, v) => { savedPipeline[k] = pipeline[k]; pipeline[k] = v; };
+  patch('parseBrief', overrides.parseBrief || (async () => ({
+    campaignTitle: 'C', summary: 'S', writerPrompt: 'W', assets: [], unmatchedAssets: [], referenceLinks: [],
+  })));
+  patch('fetchAllReferences', async () => ({ refs: [], counts: { drive: 0, external: 0, pdf: 0, canvas: 0, upload: 0 } }));
+  patch('generateDoc', async (spec, folderId, clients, tenantId, meta, limits) => {
+    const specs = pipeline.tenantAssetsToSpecs(PLAN_ROWS(), spec.assets, limits);
+    builds.push({ plan: spec.assets, limits, specs, createdBy: meta && meta.createdBy, folderId });
+    return {
+      doc: { id: 'DOC1', url: 'https://docs.google.com/document/d/DOC1/edit', title: `${spec.campaignTitle} — Copy` },
+      assetSpecs: specs,
+      projectFolderUrl: null,
+    };
+  });
+
+  // Fresh store per test, shared with the adapter (reloaded after it).
+  const pendingBriefs = reload('src/pendingBriefs');
+  const adapter = reload('src/adapters/slackWorkflow');
+  const slack = require('../src/services/slack');
+
+  const headings = (specs) => {
+    const { assetHeadingText } = require('../src/destinations/googleDocs');
+    const totals = new Map();
+    for (const s of specs) totals.set(s.assetType, (totals.get(s.assetType) || 0) + 1);
+    return specs.map((s) => assetHeadingText(s.assetType, s.instance, s.instanceLabel, totals.get(s.assetType)));
+  };
+
+  return Promise.resolve(
+    fn({ adapter, sent, builds, pendingBriefs, slack, headings, last: () => sent[sent.length - 1] })
+  ).finally(() => {
+    for (const [k, v] of Object.entries(savedPipeline)) pipeline[k] = v;
+    for (const [p, mod] of saved) {
+      if (mod === undefined) delete require.cache[p];
+      else require.cache[p] = mod;
+    }
+  });
+}
+
+// The plan every "pause" test below starts from: 2 invitation emails labelled by
+// city plus one landing page. Repeats AND labels, so it trips both halves of the
+// confirmation rule.
+const SLACK_PAUSE_PLAN = [
+  { asset: 'Demand Gen Nurture Email', count: 3, labels: ['Austin', 'Denver', 'Chicago'] },
+  { asset: 'Campaign Landing Page', count: 1, labels: [] },
+];
+const pauseParse = async () => ({
+  campaignTitle: 'City Dinners', summary: 'Three city dinners', writerPrompt: 'Direct',
+  assets: SLACK_PAUSE_PLAN, unmatchedAssets: [], referenceLinks: [],
+});
+const SLACK_OPTS = { workspaceId: 'TEAM1', slackUserId: 'USER1', channelId: 'C1' };
+
+test('slack confirm: a ONE-OF-EACH brief does not pause — unchanged from today', async () => {
+  await withSlackBrief(
+    {
+      parseBrief: async () => ({
+        campaignTitle: 'Spring Sale', summary: 'S', writerPrompt: 'W',
+        assets: [{ asset: 'Battle Card', count: 1, labels: [] }, { asset: 'Campaign Landing Page', count: 1, labels: [] }],
+        unmatchedAssets: [], referenceLinks: [],
+      }),
+    },
+    async ({ adapter, sent, builds, pendingBriefs, headings }) => {
+      await adapter.runBriefWorkflow('spring sale brief', 'https://hooks.slack.test/r', SLACK_OPTS);
+
+      // It BUILT, and no confirmation card was ever written.
+      assert.strictEqual(builds.length, 1, 'the doc was built in one shot');
+      assert.deepStrictEqual(builds[0].plan, [
+        { asset: 'Battle Card', count: 1, labels: [] },
+        { asset: 'Campaign Landing Page', count: 1, labels: [] },
+      ]);
+      assert.ok(!sent.some((s) => (s.blocks || []).some((b) => b.type === 'actions'
+        && b.elements.some((e) => e.action_id === 'plan_build'))), 'no plan card');
+      // Nothing was parked in the store, so nothing can leak or expire.
+      assert.strictEqual(pendingBriefs.planNeedsConfirmation(builds[0].plan), false);
+
+      // Exactly today's message shape: a building message, then the doc-ready card.
+      assert.deepStrictEqual(sent.map((s) => s.via), ['chat.postMessage', 'chat.update']);
+      assert.match(sent[0].text, /Building your document/);
+      assert.match(sent[1].text, /Your doc is ready — Spring Sale — Copy/);
+      assert.ok(sent[1].blocks.some((b) => b.type === 'actions'
+        && b.elements.some((e) => e.action_id === 'generate_first_draft')), 'the draft button');
+      // One section per asset, with no ordinal suffix — nothing repeats.
+      assert.deepStrictEqual(headings(builds[0].specs), ['Battle Card', 'Campaign Landing Page']);
+    }
+  );
+});
+
+test('slack confirm: a MULTI-INSTANCE brief pauses on a card and builds nothing', async () => {
+  await withSlackBrief({ parseBrief: pauseParse }, async ({ adapter, sent, builds, pendingBriefs }) => {
+    await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+
+    assert.strictEqual(builds.length, 0, 'NOTHING was created');
+    assert.deepStrictEqual(sent.map((s) => s.via), ['chat.postMessage', 'chat.update']);
+    const card = sent[1];
+    assert.match(card.text, /Here's how I read that brief — City Dinners/);
+
+    // The rendered card, block by block.
+    assert.deepStrictEqual(card.blocks.map((b) => b.type), ['header', 'section', 'section', 'context', 'actions']);
+    assert.strictEqual(card.blocks[0].text.text, "Here's how I read that brief");
+    assert.strictEqual(card.blocks[1].text.text, '*City Dinners*');
+    assert.strictEqual(
+      card.blocks[2].text.text,
+      '*4 versions to write:*\n• *3 ×* Demand Gen Nurture Email — Austin, Denver, Chicago\n• *1 ×* Campaign Landing Page'
+    );
+    assert.match(card.blocks[3].elements[0].text, /Nothing has been created yet/);
+
+    // Three buttons, and each carries ONLY the pendingId — Slack caps an action
+    // value near 2000 chars and a labelled plan blows through that easily.
+    const buttons = card.blocks[4].elements;
+    assert.deepStrictEqual(buttons.map((b) => b.action_id), ['plan_build', 'plan_edit', 'plan_cancel']);
+    const pendingId = buttons[0].value;
+    assert.ok(buttons.every((b) => b.value === pendingId), 'one id across all three');
+    assert.ok(pendingId.length < 100, `the value is just an id (${pendingId.length} chars)`);
+    assert.strictEqual(JSON.stringify(SLACK_PAUSE_PLAN).length > pendingId.length, true);
+
+    // And the plan really is in the shared store, scoped to the workspace.
+    const stored = pendingBriefs.getPending(pendingId, pendingBriefs.slackOwner('TEAM1'));
+    assert.deepStrictEqual(stored.plan, SLACK_PAUSE_PLAN);
+    assert.strictEqual(stored.surface, 'slack');
+  });
+});
+
+test('slack confirm: Build generates the STORED plan, from the store not the button', async () => {
+  await withSlackBrief({ parseBrief: pauseParse }, async ({ adapter, sent, builds, headings }) => {
+    await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+    const pendingId = sent[1].blocks[4].elements[0].value;
+
+    // What server.js does on a plan_build click: pass the id, and nothing else.
+    await adapter.resumeBriefWorkflow(pendingId, null, {
+      workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1',
+      responseUrl: 'https://hooks.slack.test/r',
+    });
+
+    assert.strictEqual(builds.length, 1);
+    assert.deepStrictEqual(builds[0].plan, SLACK_PAUSE_PLAN, 'the parsed plan, unchanged');
+    assert.strictEqual(builds[0].createdBy, 'U-DB', 'written as the acting user');
+    // Four sections, ordinal-disambiguated only where something repeats.
+    assert.deepStrictEqual(headings(builds[0].specs), [
+      'Demand Gen Nurture Email 1 — Austin',
+      'Demand Gen Nurture Email 2 — Denver',
+      'Demand Gen Nurture Email 3 — Chicago',
+      'Campaign Landing Page',
+    ]);
+    // The card it clicked from became "Building…", then the doc-ready card.
+    assert.deepStrictEqual(sent.slice(2).map((s) => s.via), ['chat.update', 'chat.update']);
+    assert.match(sent[2].text, /Building your document/);
+    assert.match(sent[3].text, /Your doc is ready/);
+  });
+});
+
+test('slack confirm: Edit opens a modal whose submission changes only counts', async () => {
+  await withSlackBrief({ parseBrief: pauseParse }, async ({ adapter, sent, builds, slack, headings }) => {
+    await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+    const pendingId = sent[1].blocks[4].elements[0].value;
+
+    // 1. The plan_edit click: peek synchronously (a click has ~3s to open a modal,
+    //    so this cannot afford a resolveTenant round-trip) and build the view.
+    const plan = adapter.peekPendingPlan(pendingId, 'TEAM1');
+    assert.deepStrictEqual(plan, SLACK_PAUSE_PLAN);
+    const meta = JSON.stringify({ pendingId, channel: 'C1', messageTs: 'TS1' });
+    const view = slack.buildPlanEditModalView(meta, plan);
+
+    assert.strictEqual(view.type, 'modal');
+    assert.strictEqual(view.callback_id, 'plan_modal');
+    assert.strictEqual(view.private_metadata, meta);
+    assert.strictEqual(view.submit.text, 'Build the doc');
+    const inputs = view.blocks.filter((b) => b.type === 'input');
+    assert.deepStrictEqual(inputs.map((b) => b.block_id), ['count_0', 'count_1'], 'POSITIONAL block ids');
+    assert.deepStrictEqual(inputs.map((b) => b.label.text), ['Demand Gen Nurture Email', 'Campaign Landing Page']);
+    assert.deepStrictEqual(inputs.map((b) => b.element.initial_value), ['3', '1'], 'pre-filled with the parse');
+    assert.ok(inputs.every((b) => b.element.action_id === 'count_input'));
+    assert.strictEqual(inputs[0].hint.text, 'Austin, Denver, Chicago');
+    // The asset NAME is nowhere in the submission surface — only counts can change.
+    assert.ok(!JSON.stringify(inputs.map((b) => b.element)).includes('Demand Gen'), 'names are labels, not values');
+
+    // 2. The submission: 3 → 2, mapped positionally the way server.js maps it.
+    const values = { count_0: { count_input: { value: '2' } }, count_1: { count_input: { value: '1' } } };
+    const edited = plan.map((entry, i) => {
+      const raw = values[`count_${i}`].count_input.value;
+      const n = parseInt(raw, 10);
+      return { asset: entry.asset, count: Number.isFinite(n) ? n : entry.count, labels: entry.labels || [] };
+    });
+    await adapter.resumeBriefWorkflow(pendingId, edited, {
+      workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1',
+    });
+
+    assert.strictEqual(builds.length, 1);
+    assert.deepStrictEqual(builds[0].plan, [
+      { asset: 'Demand Gen Nurture Email', count: 2, labels: ['Austin', 'Denver'] },
+      { asset: 'Campaign Landing Page', count: 1 },
+    ], 'the EDITED plan — labels trimmed to the new count');
+    assert.deepStrictEqual(headings(builds[0].specs), [
+      'Demand Gen Nurture Email 1 — Austin',
+      'Demand Gen Nurture Email 2 — Denver',
+      'Campaign Landing Page',
+    ]);
+  });
+});
+
+test('slack confirm: a submitted plan is validated and clamped server-side', async () => {
+  await withSlackBrief({ parseBrief: pauseParse }, async ({ adapter, sent, builds, last }) => {
+    await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+    const pendingId = sent[1].blocks[4].elements[0].value;
+    const resume = (raw) => adapter.resumeBriefWorkflow(pendingId, raw, {
+      workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1',
+    });
+
+    // An asset outside the library is REFUSED BY NAME, not silently dropped —
+    // dropping is exactly the silent narrowing the expansion was changed to stop.
+    await resume([{ asset: 'Demand Gen Nurture Email', count: 1 }, { asset: 'Skywriting', count: 1 }]);
+    assert.strictEqual(builds.length, 0, 'nothing built on a bad plan');
+    assert.match(last().text, /not in your library: Skywriting/);
+
+    // Over-total is refused with the number asked for.
+    await resume([
+      { asset: 'Demand Gen Nurture Email', count: 10 }, { asset: 'Campaign Landing Page', count: 10 },
+      { asset: 'Battle Card', count: 10 }, { asset: 'Demand Gen Nurture Email', count: 10 },
+      { asset: 'Battle Card', count: 10 },
+    ]);
+    assert.strictEqual(builds.length, 0);
+    assert.match(last().text, /asks for 50 assets, above the limit of 40/);
+
+    // A junk count clamps rather than failing: 99 → 10, 'abc'/0/-1 → 1.
+    await resume([{ asset: 'Demand Gen Nurture Email', count: 99 }, { asset: 'Battle Card', count: 'abc' },
+      { asset: 'Campaign Landing Page', count: -1 }]);
+    assert.strictEqual(builds.length, 1, 'clamping builds, it does not refuse');
+    assert.deepStrictEqual(builds[0].plan.map((e) => [e.asset, e.count]), [
+      ['Demand Gen Nurture Email', 10], ['Battle Card', 1], ['Campaign Landing Page', 1],
+    ]);
+    // The record survives a REFUSAL so Build can be retried without re-parsing,
+    // and is dropped once a build succeeds.
+    assert.strictEqual(adapter.peekPendingPlan(pendingId, 'TEAM1'), null, 'dropped after a successful build');
+  });
+});
+
+test('slack confirm: an expired or foreign pendingId builds nothing and says so', async () => {
+  await withSlackBrief({ parseBrief: pauseParse }, async ({ adapter, sent, builds, last }) => {
+    await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+    const pendingId = sent[1].blocks[4].elements[0].value;
+
+    // 1. An id that never existed (or was lost to a Railway restart — the store is
+    //    in-memory, so that is a REAL path, and the user must see it).
+    await adapter.resumeBriefWorkflow('no-such-id', null, {
+      workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1',
+    });
+    assert.strictEqual(builds.length, 0);
+    assert.match(last().text, /no longer available — Quillio restarted or it sat for more than 30 minutes/);
+    assert.match(last().text, /Nothing was created/);
+    assert.match(last().text, /Run `\/quillio` again/);
+
+    // 2. ANOTHER workspace presenting a real id gets the identical message — the
+    //    same-for-everything answer that keeps the store from being an id oracle.
+    await adapter.resumeBriefWorkflow(pendingId, null, {
+      workspaceId: 'TEAM2', slackUserId: 'USER9', channel: 'C9', messageTs: 'TS9',
+    });
+    assert.strictEqual(builds.length, 0, 'a foreign workspace cannot build it');
+    assert.match(last().text, /no longer available/);
+    assert.strictEqual(adapter.peekPendingPlan(pendingId, 'TEAM2'), null, 'and cannot read it either');
+    // The owner's plan is untouched by the attempt.
+    assert.deepStrictEqual(adapter.peekPendingPlan(pendingId, 'TEAM1'), SLACK_PAUSE_PLAN);
+  });
+});
+
+test('slack confirm: Cancel discards the plan without building', async () => {
+  await withSlackBrief({ parseBrief: pauseParse }, async ({ adapter, sent, builds, last }) => {
+    await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+    const pendingId = sent[1].blocks[4].elements[0].value;
+
+    await adapter.cancelBriefWorkflow(pendingId, { workspaceId: 'TEAM1', channel: 'C1', messageTs: 'TS1' });
+    assert.strictEqual(builds.length, 0);
+    assert.match(last().text, /Cancelled — nothing was created/);
+    assert.strictEqual(adapter.peekPendingPlan(pendingId, 'TEAM1'), null, 'the plan is gone');
+
+    // Clicking Build afterwards is the expired path, not a second doc.
+    await adapter.resumeBriefWorkflow(pendingId, null, { workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1' });
+    assert.strictEqual(builds.length, 0);
+    assert.match(last().text, /no longer available/);
+  });
+});
+
+test('slack confirm: an unlinked user is refused at Build, not just at parse', async () => {
+  await withSlackBrief(
+    { parseBrief: pauseParse, resolveTenant: async () => ({ unlinked: true, tokens: {}, tenant: null }) },
+    async ({ adapter, sent, builds }) => {
+      await adapter.runBriefWorkflow('three city dinners', 'https://hooks.slack.test/r', SLACK_OPTS);
+      assert.deepStrictEqual(sent.map((s) => s.via), ['refuseUnlinked'], 'refused before parsing');
+      // And a pendingId minted before a token was revoked cannot be built either:
+      // resume re-resolves the tenant rather than trusting the stored record.
+      await adapter.resumeBriefWorkflow('anything', null, { workspaceId: 'TEAM1', slackUserId: 'USER1' });
+      assert.strictEqual(builds.length, 0);
+    }
+  );
+});
+
+test('slack confirm: server.js wires all four interaction ids', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  // The three buttons and the modal, each reachable.
+  for (const id of ['plan_build', 'plan_edit', 'plan_cancel']) {
+    assert.ok(new RegExp(`action\\.action_id === '${id}'`).test(src), `${id} handled`);
+  }
+  assert.ok(/view\.callback_id === 'plan_modal'/.test(src), 'plan_modal handled');
+  // plan_modal must be checked BEFORE the regenerate_modal early return, or a plan
+  // submission would fall through it and silently do nothing.
+  assert.ok(src.indexOf("view.callback_id === 'plan_modal'") < src.indexOf("view.callback_id !== 'regenerate_modal'"),
+    'plan_modal precedes the regenerate_modal guard');
+  // The three action ids must precede generate_first_draft's branch in the same chain.
+  assert.ok(src.indexOf("action.action_id === 'plan_build'") < src.indexOf("action.action_id === 'generate_first_draft'"));
+  // Everything the new branches call is actually imported.
+  for (const name of ['resumeBriefWorkflow', 'cancelBriefWorkflow', 'peekPendingPlan']) {
+    assert.ok(new RegExp(`^\\s*${name},$`, 'm').test(src), `${name} imported`);
+  }
+  assert.ok(/buildPlanEditModalView,/.test(src), 'buildPlanEditModalView imported');
+  assert.ok(/const \{ emoji \} = require\('\.\/emoji'\);/.test(src), 'emoji imported');
+  // The block_actions ack still comes first — a button click has its own 3s window.
+  assert.ok(src.indexOf("res.status(200).send('')") < src.indexOf("action.action_id === 'plan_build'"));
+});
+
+test('slack confirm: the store is ONE store, shared with the web', () => {
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  const slackAdapter = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  assert.ok(/require\('\.\.\/pendingBriefs'\)/.test(web), 'web reads the shared store');
+  assert.ok(/require\('\.\.\/pendingBriefs'\)/.test(slackAdapter), 'Slack reads the shared store');
+  // Neither surface keeps its own Map, TTL or validator — that is the drift this
+  // extraction exists to prevent.
+  assert.ok(!/const PENDING = new Map/.test(web), 'no second store in the web router');
+  assert.ok(!/const PENDING = new Map/.test(slackAdapter), 'no second store in the Slack adapter');
+  assert.ok(!/function sanitizeAssetPlan/.test(web) && !/function sanitizeAssetPlan/.test(slackAdapter),
+    'one validator, in pendingBriefs');
+  // And the Slack adapter still owns no express dependency by reaching for it.
+  assert.ok(!/require\('\.\.\/routes\//.test(slackAdapter), 'the adapter does not depend on the web router');
 });

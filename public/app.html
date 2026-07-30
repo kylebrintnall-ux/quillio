@@ -1995,9 +1995,107 @@
     }
     var NET_MSG = 'Couldn’t reach the server — it may be momentarily unavailable. Check your connection and try again.';
 
+    // --- Stale-shell self-check ------------------------------------------------
+    // The server stamps this shell's build (the deploy commit) into __BUILD__. If
+    // the live deploy (/health) reports a DIFFERENT commit, this HTML is a stale
+    // copy an edge cache is still serving — surface a reload banner so the user is
+    // never silently stuck on old UI.
+    //
+    // WHERE THIS IS CALLED FROM, and why it lives here rather than at the bottom of
+    // the file: it is hooked into fetchWithTimeout, immediately below, which every
+    // screen's server read already goes through. That makes coverage automatic — a
+    // screen added later inherits the check instead of having to remember it. It was
+    // previously called from exactly two hand-picked places (page load, and the top
+    // of runBrief), so every OTHER screen rendered server data with no warning at
+    // all. That produced three separate bug reports against code that was correct:
+    // a brief that should have paused rendering an empty output screen, and a
+    // multi-instance project view showing cards with no instance ordinal.
+    //
+    // Placed immediately above fetchWithTimeout, and the load-time probe stays at
+    // the very end of the script, so APP_BUILD is always ASSIGNED before any call
+    // reaches the comparison below. That ordering matters: `var APP_BUILD` hoists as
+    // undefined, and undefined !== the live commit, so a call that ran before this
+    // line would raise a FALSE stale banner. Nothing fetches during script
+    // evaluation today (the only load-time IIFE draws clouds); if that changes, this
+    // assignment has to stay ahead of it.
+    var APP_BUILD = '__BUILD__';
+
+    // Cached verdict, so hooking this into every fetch does not mean a /health per
+    // render. Three states, and the asymmetry is deliberate:
+    //   null  — not determined yet.
+    //   true  — stale, and TERMINAL. A loaded shell cannot update itself, so once
+    //           the answer is yes it can never become no: we stop asking, forever.
+    //   false — fresh AS OF shellCheckedAt, and re-checked after the TTL, because a
+    //           deploy can land at any moment while this tab sits open. A verdict
+    //           that never expired would be the original bug again.
+    var shellStale = null;
+    var shellCheckedAt = 0;
+    var shellInFlight = null;
+    // 30s. Long enough that a burst of renders — or runJob's 3s status poll, which
+    // is the heaviest caller by far — costs at most one /health; short enough that
+    // opening a project a minute after a deploy still warns. /health touches no
+    // database, so the cost is a round trip rather than server work.
+    var SHELL_TTL_MS = 30000;
+
+    // Resolves true when this shell is DEFINITELY behind the live deploy, false in
+    // every other case — INCLUDING when the check itself fails. Uncertainty always
+    // resolves to "not stale": a network blip must never block a brief or raise a
+    // banner the user cannot act on.
+    function checkShellFresh() {
+      if (shellStale === true) return Promise.resolve(true); // terminal — never re-ask
+      if (shellInFlight) return shellInFlight; // one in-flight probe, shared by all callers
+      // A recent check counts whether it concluded or FAILED. Not caching failures
+      // would turn a flaky /health into one extra request per render (per 3s during
+      // a job poll); the cost is that a banner can be up to one TTL late.
+      //
+      // The `shellCheckedAt &&` is load-bearing, not defensive noise: without it the
+      // sentinel 0 reads as "checked at the epoch", and `now - 0 < TTL` is a CACHE
+      // HIT for any clock under 30s — so the very first call would return "fresh"
+      // without probing at all. Real browsers report ~1.7e12 here so it would never
+      // show in production, which is exactly what makes it worth pinning.
+      if (shellCheckedAt && Date.now() - shellCheckedAt < SHELL_TTL_MS) {
+        return Promise.resolve(shellStale === true);
+      }
+      // Plain fetch, NOT fetchWithTimeout — that function calls this one, and
+      // routing /health through it would recurse.
+      shellInFlight = fetch('/health', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (h) {
+          var live = h && h.commit;
+          window.LIVE_COMMIT = live || '?';
+          console.log('[app] shell build=' + APP_BUILD + ' live deploy=' + live);
+          var stale = !!(live && live !== 'unknown' && APP_BUILD !== '__BUILD' + '__' && live !== APP_BUILD);
+          shellStale = stale;
+          shellCheckedAt = Date.now();
+          if (stale) {
+            var b = document.getElementById('stale-shell-banner');
+            if (b) b.style.display = 'block';
+          }
+          return stale;
+        })
+        .catch(function () {
+          // Inconclusive. Record the ATTEMPT so the TTL throttles retries, but
+          // leave shellStale alone — a failed probe is not evidence of freshness
+          // and must never be remembered as a verdict.
+          shellCheckedAt = Date.now();
+          return false;
+        })
+        .finally(function () { shellInFlight = null; });
+      return shellInFlight;
+    }
+
     // fetch with an abort timeout so a hung request fails fast (and surfaces a
     // clear message) instead of spinning forever on a flaky mobile connection.
     function fetchWithTimeout(url, opts, timeoutMs) {
+      // THE funnel for every server read in the app — runJob's start + status poll,
+      // the doc-content reads, the projects list, and the project view. Checking
+      // here is what makes stale-shell coverage automatic rather than a list
+      // someone has to maintain.
+      //
+      // Deliberately NOT awaited: the verdict only drives a banner, so it must add
+      // ZERO latency to the data fetch, and an inconclusive result must not delay a
+      // render. Cached above, so this is a no-op for most calls.
+      checkShellFresh();
       var ctrl = new AbortController();
       var id = setTimeout(function () { ctrl.abort(); }, timeoutMs || 15000);
       var merged = opts || {};
@@ -3080,38 +3178,8 @@
       document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
     })();
 
-    // --- Stale-shell self-check ------------------------------------------------
-    // The server stamps this shell's build (the deploy commit) into __BUILD__. If
-    // the live deploy (/health) reports a DIFFERENT commit, this HTML is a stale
-    // copy an edge cache is still serving — surface a reload banner so the user is
-    // never silently stuck on old UI (e.g. a missing Review Copy button).
-    //
-    // This used to run ONCE, on load. A tab opened BEFORE a deploy and used after
-    // it therefore never re-checked: the banner never appeared, and the shell went
-    // on talking to a newer server. That is how a brief that should have paused for
-    // confirmation rendered an empty output screen instead. It is now a reusable
-    // function, called on load AND again before every brief run (see runBrief).
-    var APP_BUILD = '__BUILD__';
-
-    // Resolves true when this shell is DEFINITELY behind the live deploy, false in
-    // every other case — including when the check itself fails. A network blip must
-    // never block a brief, so uncertainty always resolves to "not stale".
-    function checkShellFresh() {
-      return fetch('/health', { cache: 'no-store' })
-        .then(function (r) { return r.json(); })
-        .then(function (h) {
-          var live = h && h.commit;
-          window.LIVE_COMMIT = live || '?';
-          console.log('[app] shell build=' + APP_BUILD + ' live deploy=' + live);
-          var stale = !!(live && live !== 'unknown' && APP_BUILD !== '__BUILD' + '__' && live !== APP_BUILD);
-          if (stale) {
-            var b = document.getElementById('stale-shell-banner');
-            if (b) b.style.display = 'block';
-          }
-          return stale;
-        })
-        .catch(function () { return false; });
-    }
+    // Load-time probe, so a tab opened onto an already-stale shell is warned before
+    // the user touches anything (every other call is driven by a fetch).
     checkShellFresh();
   </script>
 </body>

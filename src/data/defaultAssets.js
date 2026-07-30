@@ -14,6 +14,19 @@
 //   • Landing pages: SEO fields (Meta Title / Meta Description / OG Title).
 //   • spec_note added to the multi-size display assets.
 //
+// July 2026 spec-integrity audit (scripts/migrateSpecIntegrityFixes.js applies the
+// same changes to already-seeded tenants):
+//   • Meta's numbers retiered enforced → recommended (they are Meta's published
+//     advice, not caps), which is what first put a row in the 'recommended' tier.
+//   • Meta Carousel card headline 45 → 40 (45 was LinkedIn's number) and card
+//     description 18 → 20.
+//   • LinkedIn Carousel now cites the carousel spec page, not the single-image one.
+//   • 'Google DV360 / Responsive Display' renamed to 'Google Responsive Display Ad'
+//     to match its source and its numbers.
+//   • Organic Social — Twitter/X Post Copy promoted to enforced with X's spec page.
+//   • Preheaders 85–120 → 85–100; subject lines split by email type (cold 40,
+//     opt-in 130) and their char_min floor dropped.
+//
 // Authored compactly as [name, group, [[fieldName, charMin, charMax, groupLabel?], …]]
 // and normalized below into the seed shape (adds sort_order, is_active, field_type,
 // spec metadata, asset_direction and spec_note). field_type is 'text' for every
@@ -86,12 +99,12 @@ const RAW = [
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 40, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
-    ['Card 1 Headline', 0, 45],
-    ['Card 2 Headline', 0, 45],
-    ['Card 3 Headline', 0, 45],
-    ['Card 4 Headline', 0, 45],
-    ['Card 5 Headline', 0, 45],
-    ['Card Description', 0, 18],
+    ['Card 1 Headline', 0, 40],
+    ['Card 2 Headline', 0, 40],
+    ['Card 3 Headline', 0, 40],
+    ['Card 4 Headline', 0, 40],
+    ['Card 5 Headline', 0, 40],
+    ['Card Description', 0, 20],
   ]],
   ['Twitter/X Ad', 'Paid Social', [
     ['Ad Copy', 0, 280],
@@ -106,7 +119,7 @@ const RAW = [
     ['Body Copy', 0, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
-  ['Google DV360 / Responsive Display', 'Display', [
+  ['Google Responsive Display Ad', 'Display', [
     ['Short Headline', 0, 30],
     ['Long Headline', 0, 90],
     ['Description', 0, 90],
@@ -116,9 +129,9 @@ const RAW = [
     ['CTA Button', 0, 30, 'Graphic Copy'],
   ]],
   ['Demand Gen Nurture Email', 'Email', [
-    ['Subject Line 1', 50, 75],
-    ['Subject Line 2', 50, 75],
-    ['Preheader', 85, 120],
+    ['Subject Line 1', 0, 130],
+    ['Subject Line 2', 0, 130],
+    ['Preheader', 85, 100],
     ['Headline (Offer 1)', 0, 60],
     ['Offer Body 1', 0, 500],
     ['CTA Text (Offer 1)', 0, 25],
@@ -127,34 +140,34 @@ const RAW = [
     ['CTA Text (Offer 2)', 0, 20],
   ]],
   ['Event Invitation Email', 'Email', [
-    ['Subject Line 1', 50, 75],
-    ['Subject Line 2', 50, 75],
-    ['Preheader', 85, 120],
+    ['Subject Line 1', 0, 130],
+    ['Subject Line 2', 0, 130],
+    ['Preheader', 85, 100],
     ['Hero Headline', 0, 60],
     ['Event Description', 0, 300],
     ['Date / Location Line', 0, 80],
     ['CTA Text', 0, 25],
   ]],
   ['Event Reminder Email', 'Email', [
-    ['Subject Line 1', 50, 75],
-    ['Subject Line 2', 50, 75],
-    ['Preheader', 85, 120],
+    ['Subject Line 1', 0, 130],
+    ['Subject Line 2', 0, 130],
+    ['Preheader', 85, 100],
     ['Headline', 0, 60],
     ['Body Copy', 0, 200],
     ['CTA Text', 0, 25],
   ]],
   ['Event Follow-Up / Recap Email', 'Email', [
-    ['Subject Line 1', 50, 75],
-    ['Subject Line 2', 50, 75],
-    ['Preheader', 85, 120],
+    ['Subject Line 1', 0, 130],
+    ['Subject Line 2', 0, 130],
+    ['Preheader', 85, 100],
     ['Headline', 0, 60],
     ['Body Copy', 0, 350],
     ['CTA Text', 0, 25],
   ]],
   ['Sales Basho Email', 'Email', [
-    ['Subject Line 1', 50, 75],
-    ['Subject Line 2', 50, 75],
-    ['Preheader', 85, 120],
+    ['Subject Line 1', 0, 40],
+    ['Subject Line 2', 0, 40],
+    ['Preheader', 85, 100],
     ['Opening Line', 0, 100],
     ['Body Copy', 0, 275],
     ['CTA / Ask', 0, 100],
@@ -301,7 +314,7 @@ const DIRECTIONS = {
   'Meta Carousel Ad': 'Each card standalone. Swipe tells a story. Last card closes.',
   'Twitter/X Ad': 'Punchy. Opinionated. One idea, no hedging.',
   'Display Banner — Standard': 'Fewest possible words. Headline does all the work. CTA is a verb.',
-  'Google DV360 / Responsive Display':
+  'Google Responsive Display Ad':
     'System assembles combinations. Every element must work alone and together.',
   'Demand Gen Nurture Email': 'Curiosity or tension in the subject. No clickbait. Earn the click.',
   'Event Invitation Email': 'Make the value of attending undeniable. Date and CTA above the fold.',
@@ -330,7 +343,7 @@ const DIRECTIONS = {
 const SPEC_NOTES = {
   'Display Banner — Standard':
     'One copy set serves all standard banner sizes (300×250, 728×90, 160×600, 320×50, 300×600). Keep the headline short enough to read in the smallest format.',
-  'Google DV360 / Responsive Display':
+  'Google Responsive Display Ad':
     'Responsive — the platform assembles combinations across sizes from one copy set. Every element must read on its own and in combination.',
 };
 
@@ -348,11 +361,15 @@ const HOOK_SPEC_NOTE =
 // BYTE-IDENTICAL to NOTE in scripts/migrateFixLinkedInIntroText.js.
 const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150; 600 is the technical max.';
 
-// Email mobile-truncation notes. Subject Lines carry a 50–75 working range and
-// Preheaders 85–120, but mobile inboxes clip far earlier (Litmus) — these tell
-// the writer to front-load. Applied to Subject Line 1, Subject Line 2 and
-// Preheader on every email asset. BYTE-IDENTICAL to SUBJECT_NOTE / PREHEADER_NOTE
-// in scripts/migrateAddEmailSubjectPreheaderNotes.js.
+// Email mobile-truncation notes. Subject Lines cap at 40 (cold outreach) or 130
+// (opt-in) with NO minimum, and Preheaders run 85–100, but mobile inboxes clip far
+// earlier (Litmus) — these tell the writer to front-load. Applied to Subject Line
+// 1, Subject Line 2 and Preheader on every email asset. BYTE-IDENTICAL to
+// SUBJECT_NOTE / PREHEADER_NOTE in scripts/migrateAddEmailSubjectPreheaderNotes.js.
+//
+// The note text is deliberately UNCHANGED by the July 2026 band rework: ~40
+// characters of subject and ~35–40 of preheader is what the inbox shows, whatever
+// the band allows.
 const EMAIL_SUBJECT_NOTE = 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)';
 const EMAIL_PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — keep the key part first. (Litmus)';
 
@@ -379,16 +396,28 @@ function fieldSpecNote(assetName, fieldName) {
   return /^Hook\b/i.test(String(fieldName || '')) ? HOOK_SPEC_NOTE : null;
 }
 
-// Per-field spec_type tier: 'enforced' (platform hard cap), 'recommended'
-// (advisory), or 'house_default' (Quillio convention). Enforcement is PER ASSET
-// — the same field name can be a hard cap in one asset and only a house default
-// in another — so this is keyed on (assetName, fieldName). This set is kept
-// BYTE-IDENTICAL to the union of the enforced pairs in the migrations
-// (scripts/migrateAddCopyFieldSpecType.js ENFORCED, 23, plus
-// scripts/migrateAddCopyFieldSpecTypeFixes.js PROMOTE, 2 → 25 total) so
-// newly-seeded tenants get the exact same tiers as the backfilled ones.
-// Everything not listed here is 'house_default'. (No 'recommended' rows today.)
-const ENFORCED_SPEC_FIELDS = new Set([
+// Per-field spec tier: 'enforced' (the platform's own published hard cap),
+// 'recommended' (the platform's own published ADVICE — a real number from a real
+// source, but not a cap), or 'house_default' (a Quillio convention with no
+// external source). Enforcement is PER ASSET — the same field name can be a hard
+// cap in one asset and a house default in another — so both sets are keyed on
+// (assetName, fieldName). Anything in neither set is 'house_default'.
+//
+// The tier is USER-VISIBLE: it becomes the italic sentence under the field label
+// (specTypeLine in destinations/googleDocs.js). Calling a recommendation a
+// "Platform limit … stay within this count" tells a writer they must not exceed a
+// number the platform will happily accept, so the distinction is the point.
+//
+// Kept BYTE-IDENTICAL to scripts/migrateSpecIntegrityFixes.js, which applies the
+// same tiering to already-seeded tenants; a smoke test asserts the two agree in
+// both directions.
+//
+// Meta's numbers are RECOMMENDATIONS, not caps. Meta publishes 125 / 40 / 30 as
+// what renders without truncation across placements; the technical ceilings are
+// 255 for headlines and far larger for primary text. Every Meta field here is
+// therefore 'recommended' — including the carousel's card fields, which are the
+// carousel's equivalents of the same three numbers.
+const RECOMMENDED_SPEC_FIELDS = new Set([
   'Meta Single Image Ad||Primary Text',
   'Meta Single Image Ad||Headline',
   'Meta Single Image Ad||Description',
@@ -399,6 +428,10 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'Meta Carousel Ad||Card 4 Headline',
   'Meta Carousel Ad||Card 5 Headline',
   'Meta Carousel Ad||Card Description',
+]);
+
+// Genuine hard caps, each stated as a limit on the platform's own spec page.
+const ENFORCED_SPEC_FIELDS = new Set([
   'LinkedIn Single Image Ad||Intro Text',
   'LinkedIn Single Image Ad||Headline',
   'LinkedIn Single Image Ad||LAN Description',
@@ -410,43 +443,55 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'LinkedIn Carousel Ad||Card 5 Headline',
   'Twitter/X Ad||Ad Copy',
   'Twitter/X Ad||Headline',
-  'Google DV360 / Responsive Display||Short Headline',
-  'Google DV360 / Responsive Display||Long Headline',
-  'Google DV360 / Responsive Display||Description',
-  'Google DV360 / Responsive Display||Business Name',
+  'Google Responsive Display Ad||Short Headline',
+  'Google Responsive Display Ad||Long Headline',
+  'Google Responsive Display Ad||Description',
+  'Google Responsive Display Ad||Business Name',
+  // X's 280 is a hard cap on an organic post exactly as it is on a paid one — the
+  // same platform limit, and it was previously an uncited house default here.
+  'Organic Social — Twitter/X||Post Copy',
 ]);
 
 function fieldSpecType(assetName, fieldName) {
-  return ENFORCED_SPEC_FIELDS.has(`${assetName}||${fieldName}`) ? 'enforced' : 'house_default';
+  const key = `${assetName}||${fieldName}`;
+  if (ENFORCED_SPEC_FIELDS.has(key)) return 'enforced';
+  if (RECOMMENDED_SPEC_FIELDS.has(key)) return 'recommended';
+  return 'house_default';
 }
 
-// Per-field spec_source. Enforced fields carry the real platform spec-page URL
-// (so the doc tier line renders "Platform limit (LinkedIn)." etc. — the renderer
-// substring-matches the URL to a display name); everything else keeps the
-// 'quillio_default' sentinel. URLs are kept BYTE-IDENTICAL to
-// PLATFORM_URLS in scripts/migrateSetEnforcedSpecSource.js so newly-seeded
-// tenants match the backfill (the smoke test asserts this).
-const ENFORCED_SOURCE_URLS = {
-  Meta: 'https://www.facebook.com/business/ads-guide/update',
-  LinkedIn: 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
-  X: 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
-  Google: 'https://support.google.com/google-ads/answer/17090561',
+// Per-ASSET spec-source URL. Every tiered field on an asset cites that asset's own
+// spec page; untiered fields keep the 'quillio_default' sentinel. The renderer
+// substring-matches the URL to a display name (specSourceName) and hyperlinks that
+// name in the tier line, so the URL is what the reader actually lands on.
+//
+// Keyed per ASSET rather than per PLATFORM, which is what the previous shape got
+// wrong: one URL per platform meant LinkedIn Carousel cited the SINGLE IMAGE ad
+// specs page, which does not contain the carousel's numbers. A reader who followed
+// the citation to check the 45-character card headline would not have found it.
+//
+// URLs are kept BYTE-IDENTICAL to SOURCE_URLS in
+// scripts/migrateSpecIntegrityFixes.js (asserted by a smoke test).
+const SPEC_SOURCE_URLS = {
+  'Meta Single Image Ad': 'https://www.facebook.com/business/ads-guide/update',
+  'Meta Carousel Ad': 'https://www.facebook.com/business/ads-guide/update',
+  'LinkedIn Single Image Ad':
+    'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
+  'LinkedIn Carousel Ad':
+    'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads-specs',
+  'Twitter/X Ad': 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
+  // The organic X post cites the same X page as the paid asset — one platform, one
+  // 280-character cap.
+  'Organic Social — Twitter/X': 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
+  // Google Ads, not Display & Video 360. The asset was named for DV360 while citing
+  // (and carrying the numbers of) a Google Ads Responsive Display Ad — 30 / 90 / 90
+  // / 25. The NAME was corrected to match the source and the numbers, rather than
+  // the numbers changed to match the name.
+  'Google Responsive Display Ad': 'https://support.google.com/google-ads/answer/17090561',
 };
 
-function platformForAsset(assetName) {
-  if (assetName.startsWith('Meta ')) return 'Meta';
-  if (assetName.startsWith('LinkedIn ')) return 'LinkedIn';
-  if (assetName === 'Twitter/X Ad') return 'X';
-  if (assetName.startsWith('Google DV360')) return 'Google';
-  return null;
-}
-
 function fieldSpecSource(assetName, fieldName) {
-  if (ENFORCED_SPEC_FIELDS.has(`${assetName}||${fieldName}`)) {
-    const p = platformForAsset(assetName);
-    return (p && ENFORCED_SOURCE_URLS[p]) || SPEC_SOURCE;
-  }
-  return SPEC_SOURCE; // house_default → 'quillio_default'
+  if (fieldSpecType(assetName, fieldName) === 'house_default') return SPEC_SOURCE;
+  return SPEC_SOURCE_URLS[assetName] || SPEC_SOURCE;
 }
 
 const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({

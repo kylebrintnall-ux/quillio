@@ -154,8 +154,9 @@ const GROUP_INDENT_PT = 18;
 // shred real names. What makes the format parseable is that the ORDINAL sits
 // between the name and the label, so the anchor is ' <digits>' followed by either
 // end-of-string or ' — '. No bundled name ends in ' <digits>' or contains
-// ' <digits> — ' (checked: the only name with a digit at all is 'Google DV360 /
-// Responsive Display').
+// ' <digits> — '; since the Google asset was renamed off 'DV360', no bundled name
+// contains a digit at all. A smoke test re-checks that against the live library
+// rather than trusting this comment.
 //
 // On top of that, acceptance requires a SIBLING: a suffix is only ever written
 // when an asset appears 2+ times, so a decomposition is trusted only when another

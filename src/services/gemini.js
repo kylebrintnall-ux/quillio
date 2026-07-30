@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
+const { reviewUnitKey } = require('../utils/instanceKey');
 
 // The two repo-root markdown guides, loaded once at startup:
 //   craft.md — HOW GOOD COPY WORKS. Universal craft (headline/body/CTA
@@ -1299,6 +1300,51 @@ const CROSS_FIELD_FLAG_RULE = [
   'as option 2."',
 ];
 
+// Bind the model's review results back onto the inputs that produced them.
+// Returns one entry per input, in input order: { assetType, instance, fieldName,
+// comment } with comment null when there is no material note.
+//
+// Matching is by (assetType, fieldName) using the SHARED reviewUnitKey
+// (utils/instanceKey) — previously a third inline copy of copyReview.fieldKey's
+// template, free to drift from it. The instance ordinal is deliberately NOT in the
+// key: the response schema has no `instance` field and the model is never told
+// about instances, so a model-side key could never carry one.
+//
+// Duplicates are resolved BY OCCURRENCE on both sides instead. Two inputs share
+// one (assetType, fieldName) when a doc carries the same asset twice, and the old
+// `byKey.set(key, r)` made the LAST parsed entry win for that key — which, because
+// the name lookup is consulted BEFORE the positional fallback, handed input #0 the
+// wrong comment rather than falling through to position. Keeping a LIST per key and
+// taking the nth match for the nth input with that key restores input↔result
+// alignment. With unique keys this is exactly the previous behavior (one-element
+// list, n = 0); the model is instructed to answer in input order, so occurrence
+// order is the same order on both sides.
+//
+// Pure + exported so the duplicate-key path is testable without a Gemini call.
+function matchReviewResults(list, parsed) {
+  const results = Array.isArray(parsed) ? parsed : [];
+  const byKey = new Map();
+  for (const r of results) {
+    if (!r) continue;
+    const key = reviewUnitKey(r.assetType, r.fieldName);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(r);
+  }
+  const seen = new Map(); // key -> how many inputs with this key are already bound
+  return (list || []).map((f, i) => {
+    const key = reviewUnitKey(f.assetType, f.fieldName);
+    const n = seen.get(key) || 0;
+    seen.set(key, n + 1);
+    const matches = byKey.get(key);
+    // nth same-key result, else this input's positional result, else no comment.
+    const r = (matches && matches[n]) || results[i] || {};
+    const comment = typeof r.comment === 'string' && r.comment.trim() ? r.comment.trim() : null;
+    // `instance` is echoed from the INPUT (like assetType/fieldName) — the model
+    // never sees it, so it can only come from here.
+    return { assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, comment };
+  });
+}
+
 async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = false } = {}) {
   const list = Array.isArray(fields) ? fields : [];
   if (list.length === 0) return [];
@@ -1457,20 +1503,7 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = fal
     throw new Error('Could not parse Gemini review JSON: ' + String(lastText).slice(0, 300));
   }
 
-  // Map results back to inputs by (assetType, fieldName); fall back to position.
-  const byKey = new Map();
-  parsed.forEach((r, i) => {
-    if (!r) return;
-    const key = `${String(r.assetType || '').trim().toLowerCase()}||${String(r.fieldName || '').trim().toLowerCase()}`;
-    byKey.set(key, r);
-    byKey.set(`__idx_${i}`, r);
-  });
-  return list.map((f, i) => {
-    const key = `${String(f.assetType || '').trim().toLowerCase()}||${String(f.fieldName || '').trim().toLowerCase()}`;
-    const r = byKey.get(key) || byKey.get(`__idx_${i}`) || {};
-    const comment = typeof r.comment === 'string' && r.comment.trim() ? r.comment.trim() : null;
-    return { assetType: f.assetType, fieldName: f.fieldName, comment };
-  });
+  return matchReviewResults(list, parsed);
 }
 
 // The doorway-fit guidance block (angle ↔ context) — shared by the prompt and
@@ -1752,6 +1785,7 @@ module.exports = {
   describeImage,
   extractHeaderSchema,
   reviewCopyFields,
+  matchReviewResults, // pure result↔input binder; exported for unit tests
   reviewVariationStack,
   // Shared with destinations/googleDocs.js (cleanCampaignTitle) so the two
   // wrapper-stripping paths can't drift apart.

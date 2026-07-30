@@ -517,6 +517,7 @@ function parseDoc(doc) {
   let currentField = null; // last field whose copy region we're scanning
   let notesSeen = false; // whether the current field's italic notes line was seen
   let expecting = null; // 'summary' | 'writerPrompt'
+  const assetOrdinal = instanceCounter(); // per-heading-text instance ordinals
 
   for (const item of doc.body.content || []) {
     if (!item.paragraph) continue;
@@ -549,7 +550,12 @@ function parseDoc(doc) {
     }
 
     if (named === 'HEADING_3') {
-      current = { assetType: text, channel: '', toneNotes: '', fields: [], gotMeta: false };
+      // `instance` is the 0-based ordinal of this heading among headings with the
+      // same text, in document order: first 'Email' is 0, a second is 1, and so
+      // on. Entries have always been pushed positionally with no dedupe, so a doc
+      // carrying one asset twice already round-tripped — the ordinal is what lets
+      // downstream keys tell the two apart instead of collapsing them.
+      current = { assetType: text, instance: assetOrdinal(text), channel: '', toneNotes: '', fields: [], gotMeta: false };
       assets.push(current);
       currentField = null; // a new asset ends the previous field's copy region
       notesSeen = false;
@@ -765,16 +771,15 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   // feed the prompt; asset-level direction (from Postgres) carries the creative
   // guidance, and the doc carries field labels + char limits + positions.
   //
-  // Instance ordinals are assigned over the FULL parsed list in document order —
-  // BEFORE the zero-field filter — so they agree with the ordinals the
-  // post-delete re-parse assigns further down (which also counts every heading).
-  const draftOrdinal = instanceCounter();
+  // The instance ordinal is taken from parseDoc, which stamps it per HEADING_3 in
+  // document order. Reading it (rather than re-counting here) is what makes it
+  // agree with the post-delete re-parse below — no loop has to be careful to
+  // count the same headings, because there is one ordinal per parsed entry.
   const assetTargets = assets
-    .map((asset) => ({ asset, instance: draftOrdinal(asset.assetType) }))
-    .filter(({ asset }) => asset.fields.length > 0)
-    .map(({ asset, instance }) => ({
+    .filter((asset) => asset.fields.length > 0)
+    .map((asset) => ({
       assetType: asset.assetType,
-      instance,
+      instance: asset.instance,
       assetDirection: lookupDirection ? lookupDirection(asset.assetType) : null,
       fields: asset.fields.map((field) => ({
         fieldName: field.fieldName,
@@ -796,12 +801,10 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
     try {
       const content = await getDocContent(id, clients);
       copyByKey = new Map();
-      // Same positional heading order as parseDoc above, so these ordinals line
-      // up with assetTargets' — getDocContent pushes one entry per HEADING_3 too.
-      const contentOrdinal = instanceCounter();
+      // getDocContent stamps the same per-HEADING_3 ordinal parseDoc does, so
+      // these keys line up with assetTargets' without a second count.
       for (const a of content.assets || []) {
-        const instance = contentOrdinal(a.name);
-        for (const f of a.fields || []) copyByKey.set(ctxKey(a.name, f.fieldName, instance), String(f.copy || ''));
+        for (const f of a.fields || []) copyByKey.set(ctxKey(a.name, f.fieldName, a.instance), String(f.copy || ''));
       }
     } catch (err) {
       console.warn('[googleDocs] scoped sibling-copy read failed (continuing without):', err.message);
@@ -983,25 +986,23 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
 
     // Re-parse the cleaned doc to recover fresh, correct insertion indices.
     //
-    // Keyed WITH the instance ordinal. parseDoc pushes one entry per HEADING_3
-    // without deduping, so a doc carrying the same asset heading twice (today only
-    // reachable by hand-editing — pasting an asset section) used to collapse here:
-    // the second occurrence's indices overwrote the first's, and every drafted
-    // field for BOTH headings then resolved to the second one's positions, so
-    // instance 1's copy landed inside instance 2. Counting occurrences the same
-    // way assetTargets did keeps the two headings apart. Ordinals agree because
-    // the delete pass removed copy paragraphs only — never a heading — so this
-    // re-parse sees the same headings in the same order as the original parse.
+    // Keyed WITH parseDoc's stamped instance ordinal. Entries have always been
+    // pushed one per HEADING_3 with no dedupe, so a doc carrying the same asset
+    // heading twice (today only reachable by hand-editing — pasting an asset
+    // section) used to collapse here: the second occurrence's indices overwrote
+    // the first's, and every drafted field for BOTH headings then resolved to the
+    // second one's positions, so instance 1's copy landed inside instance 2.
+    // The ordinals match the original parse's because the delete pass removed copy
+    // paragraphs only — never a heading — so this re-parse sees the same headings
+    // in the same order.
     const freshDoc = (await docs.documents.get({ documentId: id })).data;
     const fresh = parseDoc(freshDoc);
-    const freshOrdinal = instanceCounter();
     insertIndexByField = new Map();
     for (const asset of fresh.assets) {
-      const instance = freshOrdinal(asset.assetType);
       for (const f of asset.fields) {
         // Two fields sharing a name WITHIN one instance still last-wins, matching
         // metaByName above; only the cross-instance collapse is fixed here.
-        insertIndexByField.set(ctxKey(asset.assetType, f.fieldName, instance), f.insertIndex);
+        insertIndexByField.set(ctxKey(asset.assetType, f.fieldName, asset.instance), f.insertIndex);
       }
     }
   }
@@ -1101,7 +1102,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
 // also captures the per-field italic notes + drafted copy under each label: the
 // plain paragraphs that follow a bold field label, up to the next label /
 // heading. Returns
-//   { summary, writerDirection, assets: [{ name, fields: [{ fieldName,
+//   { summary, writerDirection, assets: [{ name, instance, fields: [{ fieldName,
 //     charMin, charMax, notes, copy }] }] }
 // Throws if the doc can't be read so the caller can surface the fallback.
 async function getDocContent(id, clients) {
@@ -1112,6 +1113,7 @@ async function getDocContent(id, clients) {
   let current = null; // current asset block
   let field = null; // current field collecting copy
   let expecting = null; // 'summary' | 'writerDirection'
+  const assetOrdinal = instanceCounter(); // per-heading-text instance ordinals
 
   for (const item of doc.body.content || []) {
     if (!item.paragraph) continue;
@@ -1146,7 +1148,8 @@ async function getDocContent(id, clients) {
     }
 
     if (named === 'HEADING_3') {
-      current = { name: text, asset_direction: '', fields: [] };
+      // Same 0-based per-heading-text ordinal parseDoc stamps (see there).
+      current = { name: text, instance: assetOrdinal(text), asset_direction: '', fields: [] };
       result.assets.push(current);
       field = null;
       continue;

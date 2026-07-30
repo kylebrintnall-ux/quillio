@@ -3958,7 +3958,268 @@ test('structural guard: generateDraft threads the instance ordinal through ctxKe
       assert.strictEqual(args.length, 3, `googleDocs.js:${n} — ctxKey call needs an instance arg: ${call.trim()}`);
     }
   }
-  // The re-parse loop assigns ordinals rather than keying on the bare name.
-  assert.ok(/const freshOrdinal = instanceCounter\(\)/.test(gd), 're-parse loop counts instances');
-  assert.ok(/const draftOrdinal = instanceCounter\(\)/.test(gd), 'assetTargets counts instances');
+  // Ordinals are assigned by the two READERS (one counter each) and read from the
+  // stamped entry everywhere else — so no two loops can disagree about them.
+  // (This replaced an earlier pair of assertions that pinned generateDraft's own
+  // freshOrdinal/draftOrdinal counters, which the reader-stamped ordinal removed.)
+  assert.strictEqual(
+    (gd.match(/const assetOrdinal = instanceCounter\(\)/g) || []).length,
+    2,
+    'exactly two counters: one in parseDoc, one in getDocContent'
+  );
+  assert.ok(/instance: assetOrdinal\(text\)/.test(gd), 'readers stamp the ordinal onto each asset entry');
+  // Those two declarations are the ONLY places a counter is created in this file,
+  // so nothing (generateDraft included) re-derives an ordinal for itself.
+  assert.strictEqual((gd.match(/instanceCounter\(\)/g) || []).length, 2, 'no third counter anywhere in the file');
+  assert.ok(/instance: asset\.instance/.test(gd), 'assetTargets reads the stamped ordinal');
+  assert.ok(/ctxKey\(asset\.assetType, f\.fieldName, asset\.instance\)/.test(gd), 're-parse keys off the stamped ordinal');
+});
+
+// --- Instance ordinals, step 2: the READ path -------------------------------
+// parseDoc and getDocContent now stamp a 0-based per-heading-text ordinal on each
+// asset entry, so a doc carrying one asset twice reads back distinguishably.
+// Still nothing can PRODUCE a second instance — appendBody is untouched.
+
+// Builds a Google Docs `documents.get` payload from a flat paragraph list.
+function instDoc(paras) {
+  let startIndex = 1;
+  const content = paras.map((para) => {
+    const raw = (para.text || '') + '\n';
+    const endIndex = startIndex + raw.length;
+    const item = {
+      startIndex,
+      endIndex,
+      paragraph: {
+        paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+        elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+      },
+    };
+    startIndex = endIndex;
+    return item;
+  });
+  return { title: 'T', body: { content } };
+}
+
+// One asset heading, twice, each with identically-named fields and its own copy.
+const TWO_INSTANCE_PARAS = [
+  { text: 'Campaign Summary', style: 'HEADING_2' },
+  { text: 'sum', italic: true },
+  { text: 'Writer Direction', style: 'HEADING_2' },
+  { text: 'dir', italic: true },
+  { text: 'Demand Gen Nurture Email', style: 'HEADING_3' },
+  { text: 'Subject Line 1 [50-75]', bold: true },
+  { text: 'A-subject' },
+  { text: 'Preheader [85-120]', bold: true },
+  { text: 'A-preheader' },
+  { text: 'Demand Gen Nurture Email', style: 'HEADING_3' },
+  { text: 'Subject Line 1 [50-75]', bold: true },
+  { text: 'B-subject' },
+  { text: 'Preheader [85-120]', bold: true },
+  { text: 'B-preheader' },
+];
+
+test('read path: parseDoc stamps 0/1 ordinals on a repeated asset heading', () => {
+  const { parseDoc, ctxKey } = require('../src/destinations/googleDocs');
+  const { assets } = parseDoc(instDoc(TWO_INSTANCE_PARAS));
+
+  assert.strictEqual(assets.length, 2, 'both headings kept (positional, no dedupe)');
+  assert.deepStrictEqual(
+    assets.map((a) => [a.assetType, a.instance]),
+    [['Demand Gen Nurture Email', 0], ['Demand Gen Nurture Email', 1]]
+  );
+
+  // Identically-named fields across the two instances get DISTINCT keys.
+  const keys = [];
+  for (const a of assets) for (const f of a.fields) keys.push(ctxKey(a.assetType, f.fieldName, a.instance));
+  assert.deepStrictEqual(keys, [
+    'demand gen nurture email|subject line 1',
+    'demand gen nurture email|preheader',
+    'demand gen nurture email#i1|subject line 1',
+    'demand gen nurture email#i1|preheader',
+  ]);
+  assert.strictEqual(new Set(keys).size, 4, 'four fields, four keys — no collapse');
+});
+
+test('read path: getDocContent stamps the same ordinals and keeps copy per instance', async () => {
+  const { getDocContent } = require('../src/destinations/googleDocs');
+  const { fieldKey } = require('../src/services/copyReview');
+  const doc = instDoc(TWO_INSTANCE_PARAS);
+  const clients = { docs: { documents: { get: async () => ({ data: doc }) } } };
+
+  const content = await getDocContent('doc-1', clients);
+  assert.deepStrictEqual(
+    content.assets.map((a) => [a.name, a.instance]),
+    [['Demand Gen Nurture Email', 0], ['Demand Gen Nurture Email', 1]]
+  );
+  // Each instance keeps its OWN copy — the read-back never merges them.
+  assert.deepStrictEqual(
+    content.assets.map((a) => a.fields.map((f) => f.copy.trim())),
+    [['A-subject', 'A-preheader'], ['B-subject', 'B-preheader']]
+  );
+
+  const keys = [];
+  for (const a of content.assets) for (const f of a.fields) keys.push(fieldKey(a.name, f.fieldName, a.instance));
+  assert.deepStrictEqual(keys, [
+    'demand gen nurture email||subject line 1',
+    'demand gen nurture email||preheader',
+    'demand gen nurture email#i1||subject line 1',
+    'demand gen nurture email#i1||preheader',
+  ]);
+  assert.strictEqual(new Set(keys).size, 4);
+
+  // parseDoc and getDocContent agree on the ordinals for the same doc.
+  const { parseDoc } = require('../src/destinations/googleDocs');
+  assert.deepStrictEqual(
+    parseDoc(doc).assets.map((a) => a.instance),
+    content.assets.map((a) => a.instance)
+  );
+});
+
+test('read path: a SINGLE-instance doc stamps 0 everywhere and keys unchanged', async () => {
+  const { parseDoc, getDocContent, ctxKey } = require('../src/destinations/googleDocs');
+  const { fieldKey } = require('../src/services/copyReview');
+  const doc = instDoc([
+    { text: 'Campaign Summary', style: 'HEADING_2' },
+    { text: 'sum', italic: true },
+    { text: 'Writer Direction', style: 'HEADING_2' },
+    { text: 'dir', italic: true },
+    { text: 'Demand Gen Nurture Email', style: 'HEADING_3' },
+    { text: 'Subject Line 1 [50-75]', bold: true },
+    { text: 'the subject' },
+    { text: 'Sales Basho Email', style: 'HEADING_3' },
+    { text: 'Opening Line [100]', bold: true },
+    { text: 'the opening' },
+  ]);
+
+  // Distinct names → every ordinal is 0 → every key is the pre-instance string.
+  const parsed = parseDoc(doc);
+  assert.deepStrictEqual(parsed.assets.map((a) => a.instance), [0, 0]);
+  assert.deepStrictEqual(
+    parsed.assets.flatMap((a) => a.fields.map((f) => ctxKey(a.assetType, f.fieldName, a.instance))),
+    ['demand gen nurture email|subject line 1', 'sales basho email|opening line']
+  );
+
+  const content = await getDocContent('d', { docs: { documents: { get: async () => ({ data: doc }) } } });
+  assert.deepStrictEqual(content.assets.map((a) => a.instance), [0, 0]);
+  assert.deepStrictEqual(
+    content.assets.flatMap((a) => a.fields.map((f) => fieldKey(a.name, f.fieldName, a.instance))),
+    ['demand gen nurture email||subject line 1', 'sales basho email||opening line']
+  );
+  // And the stamped ordinal is indistinguishable from passing nothing at all.
+  for (const a of content.assets) {
+    for (const f of a.fields) {
+      assert.strictEqual(fieldKey(a.name, f.fieldName, a.instance), fieldKey(a.name, f.fieldName));
+      assert.strictEqual(ctxKey(a.name, f.fieldName, a.instance), ctxKey(a.name, f.fieldName));
+    }
+  }
+});
+
+test('read path: review collectors thread the READER ordinal end to end', async () => {
+  const { getDocContent } = require('../src/destinations/googleDocs');
+  const { collectCopyFields, selectReviewTargets, fieldKey } = require('../src/services/copyReview');
+  const doc = instDoc(TWO_INSTANCE_PARAS);
+  const content = await getDocContent('d', { docs: { documents: { get: async () => ({ data: doc }) } } });
+
+  // Ordinals come off the stamped entry, not a recount inside the collector.
+  assert.deepStrictEqual(
+    collectCopyFields(content).map((f) => [f.instance, f.fieldName, f.copy]),
+    [[0, 'Subject Line 1', 'A-subject'], [0, 'Preheader', 'A-preheader'],
+     [1, 'Subject Line 1', 'B-subject'], [1, 'Preheader', 'B-preheader']]
+  );
+
+  // Scoping instance 1 selects only it, with instance 1's siblings.
+  const s = selectReviewTargets(content, new Set([fieldKey('Demand Gen Nurture Email', 'Subject Line 1', 1)]));
+  assert.strictEqual(s.singles.length, 1);
+  assert.strictEqual(s.singles[0].copy, 'B-subject');
+  assert.deepStrictEqual(s.singles[0].siblings, [{ fieldName: 'Preheader', copy: 'B-preheader' }]);
+});
+
+test('read path: collectors still count when content carries no stamped ordinal', () => {
+  // A hand-built content object (a fixture, or any non-getDocContent producer) has
+  // no `instance`. Repeated names must still be distinguished, not collapsed to 0.
+  const { collectCopyFields } = require('../src/services/copyReview');
+  const out = collectCopyFields({
+    assets: [
+      { name: 'Email', fields: [{ fieldName: 'H', copy: 'a' }] },
+      { name: 'Email', fields: [{ fieldName: 'H', copy: 'b' }] },
+    ],
+  });
+  assert.deepStrictEqual(out.map((f) => [f.instance, f.copy]), [[0, 'a'], [1, 'b']]);
+});
+
+test('reviewCopyFields result matching: duplicate (asset, field) binds by OCCURRENCE', () => {
+  // The bug: byKey was last-wins per (assetType, fieldName) AND was consulted
+  // BEFORE the positional fallback, so with two instances of one asset input #0
+  // received input #1's comment instead of falling through to position.
+  const { matchReviewResults } = require('../src/services/gemini');
+
+  const list = [
+    { assetType: 'Email', instance: 0, fieldName: 'Subject Line 1' },
+    { assetType: 'Email', instance: 1, fieldName: 'Subject Line 1' },
+  ];
+  // What the model returns: same names twice (it is never told about instances),
+  // in input order, as the prompt requires.
+  const parsed = [
+    { assetType: 'Email', fieldName: 'Subject Line 1', comment: 'note for A' },
+    { assetType: 'Email', fieldName: 'Subject Line 1', comment: 'note for B' },
+  ];
+
+  const out = matchReviewResults(list, parsed);
+  assert.deepStrictEqual(out, [
+    { assetType: 'Email', instance: 0, fieldName: 'Subject Line 1', comment: 'note for A' },
+    { assetType: 'Email', instance: 1, fieldName: 'Subject Line 1', comment: 'note for B' },
+  ]);
+  // The old last-wins map would have given BOTH inputs 'note for B'.
+  assert.notStrictEqual(out[0].comment, out[1].comment, 'the two instances got different comments');
+});
+
+test('reviewCopyFields result matching: unique keys, reordering, and gaps unchanged', () => {
+  const { matchReviewResults } = require('../src/services/gemini');
+
+  // Distinct fields returned OUT OF ORDER — name matching still repairs it.
+  const list = [
+    { assetType: 'Email', fieldName: 'Subject Line 1' },
+    { assetType: 'Email', fieldName: 'Preheader' },
+  ];
+  assert.deepStrictEqual(
+    matchReviewResults(list, [
+      { assetType: 'Email', fieldName: 'Preheader', comment: 'pre note' },
+      { assetType: 'Email', fieldName: 'Subject Line 1', comment: 'subj note' },
+    ]).map((r) => r.comment),
+    ['subj note', 'pre note']
+  );
+
+  // Case/whitespace drift in the model's echo still matches.
+  assert.deepStrictEqual(
+    matchReviewResults(list, [
+      { assetType: '  EMAIL ', fieldName: 'subject line 1', comment: 'subj note' },
+      { assetType: 'Email', fieldName: 'PREHEADER', comment: 'pre note' },
+    ]).map((r) => r.comment),
+    ['subj note', 'pre note']
+  );
+
+  // Unmatchable name → positional fallback; null/blank comment → null.
+  assert.deepStrictEqual(
+    matchReviewResults(list, [
+      { assetType: 'Wrong', fieldName: 'Nope', comment: 'by position' },
+      { assetType: 'Email', fieldName: 'Preheader', comment: '   ' },
+    ]).map((r) => r.comment),
+    ['by position', null]
+  );
+
+  // Short/empty parsed array → no comment rather than a throw.
+  assert.deepStrictEqual(matchReviewResults(list, []).map((r) => r.comment), [null, null]);
+  assert.deepStrictEqual(matchReviewResults(list, [null, null]).map((r) => r.comment), [null, null]);
+});
+
+test('reviewUnitKey is the single definition of the review key template', () => {
+  const { reviewUnitKey } = require('../src/utils/instanceKey');
+  const { fieldKey } = require('../src/services/copyReview');
+  // copyReview.fieldKey IS the shared helper — not a same-looking reimplementation.
+  assert.strictEqual(fieldKey, reviewUnitKey);
+  // And no file carries its own inline copy of the `asset||field` template.
+  for (const rel of ['src/services/gemini.js', 'src/services/copyReview.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+    assert.ok(!/trim\(\)\.toLowerCase\(\)\}\|\|/.test(src), `${rel} must use reviewUnitKey, not an inline template`);
+  }
 });

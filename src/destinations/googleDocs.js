@@ -235,6 +235,9 @@ function specSourceName(specSource) {
   if (s.includes('google') || s.includes('dv360') || s.includes('doubleclick')) return 'Google';
   if (s.includes('instagram')) return 'Instagram';
   if (s.includes('constantcontact')) return 'Constant Contact';
+  // 'gong.io', not 'gong' — a bare substring would match any URL that happens to
+  // contain those three letters.
+  if (s.includes('gong.io')) return 'Gong';
   return null; // unrecognized → no source name (never print the raw value)
 }
 
@@ -257,6 +260,20 @@ const SPEC_SOURCE_DETAIL = {
     // per-customer figure says nothing about how many campaigns are behind it.
     scope: '2.1M customers, small-business campaigns',
     finding: 'Longer bodies click less.',
+  },
+  'https://www.gong.io/blog/do-execs-really-reply-to-cold-email-here-s-what-the-data-says': {
+    // NO sample size, deliberately. The page states the finding without one, and
+    // the figures in circulation (25M / 28M / 85M) attach to different Gong
+    // studies — quoting any of them here would be citing a number this page does
+    // not contain.
+    //
+    // The scope says REPLY rate and says it is not a click rate, because the other
+    // research citation in this library IS a click rate. A writer who carries
+    // Constant Contact's reasoning across to a cold email, or Gong's across to a
+    // nurture email, has applied the right number to the wrong job — which is
+    // exactly what naming the measured outcome prevents.
+    scope: 'cold outreach reply rates, not marketing clicks',
+    finding: 'Drops sharply past 100 words.',
   },
 };
 

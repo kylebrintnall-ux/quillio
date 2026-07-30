@@ -604,9 +604,15 @@ test('spec tiers: the seed equals what the migration chain produces, in both dir
   for (const [asset, field, , , tier] of require('../scripts/migrateEmailClassesAndCitedBands').CITED_BANDS) {
     if (tier === 'recommended') recommended.add(`${asset}||${field}`);
   }
+  // migrateCiteColdEmailBand: the second research citation. The band was already
+  // right; only the claim about where it comes from is new.
+  {
+    const cold = require('../scripts/migrateCiteColdEmailBand');
+    recommended.add(`${cold.ASSET}||${cold.FIELD}`);
+  }
 
   assert.strictEqual(enforced.size, 16, '16 enforced pairs after the integrity migration');
-  assert.strictEqual(recommended.size, 11, '10 platform recommendations + 1 research citation');
+  assert.strictEqual(recommended.size, 12, '10 platform recommendations + 2 research citations');
 
   // FORWARD: everything the migrations produce is in the seed at that tier.
   const seedTier = new Map();
@@ -635,9 +641,11 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
   const { fieldHint } = require('../src/destinations/googleDocs');
   const { SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
   const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
-  const FIELD_SOURCES = Object.fromEntries(
-    CITED_BANDS.map(([asset, field, , , , url]) => [`${asset}||${field}`, url])
-  );
+  const cold = require('../scripts/migrateCiteColdEmailBand');
+  const FIELD_SOURCES = Object.fromEntries([
+    ...CITED_BANDS.map(([asset, field, , , , url]) => [`${asset}||${field}`, url]),
+    [`${cold.ASSET}||${cold.FIELD}`, cold.SOURCE_URL],
+  ]);
 
   // The tier sentence each tier is supposed to produce. house_default produces
   // NOTHING — that is what makes an uncited number read as a house convention
@@ -694,7 +702,7 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     }
   }
   assert.strictEqual(enforcedSeen, 16, 'exactly 16 enforced fields carry a real spec_source');
-  assert.strictEqual(recommendedSeen, 11, '10 platform recommendations + 1 research citation');
+  assert.strictEqual(recommendedSeen, 12, '10 platform recommendations + 2 research citations');
 
   // The two citations this migration corrected, pinned by value.
   const urlOf = (asset, field) => {
@@ -6946,7 +6954,11 @@ test('spec integrity: the seed and the migration agree on every band, both direc
   // Plus the assets whose citation is per-FIELD rather than per-asset (a research
   // source measured one field, not a platform's whole surface).
   const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
-  const expectCiting = new Set([...Object.keys(SOURCE_URLS), ...CITED_BANDS.map(([asset]) => asset)]);
+  const expectCiting = new Set([
+    ...Object.keys(SOURCE_URLS),
+    ...CITED_BANDS.map(([asset]) => asset),
+    require('../scripts/migrateCiteColdEmailBand').ASSET,
+  ]);
   assert.deepStrictEqual([...seedCiting].sort(), [...expectCiting].sort(),
     'the seed cites exactly the assets some migration repoints');
 });
@@ -7475,7 +7487,6 @@ test('cited bands: the research tier line says what was measured, and what staye
   // house default renders NO tier line at all, which is the honest output.
   for (const [a, n] of [
     ['Demand Gen Nurture Email', 'Offer Body 2'],   // no source measured a secondary offer
-    ['Sales Basho Email', 'Body Copy'],             // Gong unverifiable — see the migration
     ['Event Invitation Email', 'Event Description'],
     ['Event Reminder Email', 'Body Copy'],
     ['Event Follow-Up / Recap Email', 'Body Copy'],
@@ -7486,10 +7497,44 @@ test('cited bands: the research tier line says what was measured, and what staye
     const h = fieldHint({ specType: u.spec_type, specSource: u.spec_source, specNote: u.spec_note });
     if (h) assert.ok(!/Recommended by|Platform limit/.test(h.text), `${a}/${n} claims no authority`);
   }
-  // Sales Basho's number is unchanged by being uncited — only the claim is withheld.
-  assert.deepStrictEqual(
-    [f('Sales Basho Email', 'Body Copy').char_min, f('Sales Basho Email', 'Body Copy').char_max], [50, 100]
+  // Sales Basho is now CITED, and its number is unchanged by the citation — the
+  // band was always 50-100; only the claim about where it comes from is new.
+  const cold = require('../scripts/migrateCiteColdEmailBand');
+  const basho = f(cold.ASSET, cold.FIELD);
+  assert.deepStrictEqual([basho.char_min, basho.char_max], [50, 100], 'the band did not move');
+  assert.deepStrictEqual(cold.BAND, [50, 100], 'and the migration restates it unchanged');
+  assert.strictEqual(basho.spec_type, 'recommended');
+  assert.strictEqual(basho.spec_source, cold.SOURCE_URL);
+  assert.strictEqual(basho.spec_note, cold.BASHO_BODY_NOTE, 'seed and migration agree on the note');
+
+  const bh = fieldHint({ specType: basho.spec_type, specSource: basho.spec_source, specNote: basho.spec_note });
+  assert.strictEqual(
+    bh.text,
+    "Applies to the FIRST touch; Gong's guidance for follow-ups in the same sequence runs longer. " +
+      'Recommended by Gong (cold outreach reply rates, not marketing clicks). Drops sharply past 100 words.'
   );
+  assert.strictEqual(bh.links.length, 1);
+  assert.strictEqual(bh.text.substring(bh.links[0].start, bh.links[0].end), 'Gong');
+  assert.strictEqual(bh.links[0].url, cold.SOURCE_URL);
+
+  // NO SAMPLE SIZE. The cited page does not state one, and the figures in
+  // circulation attach to different Gong studies — quoting any would attribute a
+  // number to a page that does not contain it.
+  assert.ok(!/\d+\s*M\b|million|\d{2,}(,\d{3})+/.test(bh.text), `no sample size in: ${bh.text}`);
+
+  // THE TWO RESEARCH CITATIONS MEASURE DIFFERENT OUTCOMES, and each says which.
+  // A writer who carries one across to the other's asset has applied a real number
+  // to the wrong job; naming the outcome is what makes that visible.
+  const cc = fieldHint({ specType: fl.spec_type, specSource: fl.spec_source, specNote: fl.spec_note });
+  assert.match(bh.text, /reply rates, not marketing clicks/, 'cold: a REPLY rate');
+  assert.match(cc.text, /Longer bodies click less/, 'marketing: a CLICK rate');
+  assert.ok(!/click/i.test(bh.text.replace('not marketing clicks', '')), 'the cold line claims nothing about clicks');
+
+  // The note scopes it to the FIRST touch — Gong's follow-up guidance runs longer,
+  // so the band is not a rule for every email in the sequence.
+  assert.match(bh.text, /Applies to the FIRST touch/);
+  assert.match(bh.text, /follow-ups in the same sequence runs longer/);
+  assert.ok(!bh.text.includes('\n'), 'ONE paragraph');
 });
 
 test('watch list: the rule against watching research citations is written down', () => {

@@ -18,6 +18,9 @@ const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
 const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, cleanDraft, DOORWAYS, INTENSITIES } = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
+// Same asset-name folding the pipeline uses to match a name to a library row, so
+// instance-heading sibling detection groups names the same way.
+const { normalize } = require('../utils/normalize');
 
 // Allowed matrix names (Variations Matrix, Step 3), sourced from gemini so there's
 // one taxonomy. Used to validate a scoped field's `variations` rows.
@@ -131,6 +134,90 @@ function makeTitle(brief, campaignTitle, namingPattern, namingCtx) {
 
 // Left indent (points) applied to fields nested under a group sub-heading.
 const GROUP_INDENT_PT = 18;
+
+// === Instance headings: one format, written and read in one place ===
+//
+// A doc can carry the same asset more than once. A lone instance renders its bare
+// library name (byte-identical to every doc written before instances existed); a
+// repeated one gets a 1-BASED ordinal, and its instance label when it has one:
+//
+//   1 instance   → 'Demand Gen Nurture Email'
+//   3 instances  → 'Demand Gen Nurture Email 1'
+//                  'Demand Gen Nurture Email 2 — Downtown residents'
+//
+// Writers count from 1; the key ordinal stays 0-based (utils/instanceKey), so the
+// heading shows `instance + 1`.
+//
+// PARSING THIS BACK IS THE DELICATE PART. The label separator ' — ' is NOT a safe
+// anchor on its own: 14 of the 30 bundled asset names already contain it ('Direct
+// Mail — Box / Mailer', 'Organic Social — LinkedIn', …), so splitting on it would
+// shred real names. What makes the format parseable is that the ORDINAL sits
+// between the name and the label, so the anchor is ' <digits>' followed by either
+// end-of-string or ' — '. No bundled name ends in ' <digits>' or contains
+// ' <digits> — ' (checked: the only name with a digit at all is 'Google DV360 /
+// Responsive Display').
+//
+// On top of that, acceptance requires a SIBLING: a suffix is only ever written
+// when an asset appears 2+ times, so a decomposition is trusted only when another
+// heading in the same doc decomposes to the same library name. A tenant asset
+// legitimately named 'Concept 2' therefore still reads back as itself.
+const INSTANCE_HEADING_RE = /^(.+?) (\d+)(?: — (.+))?$/;
+
+// Spec group → the heading text to render. `total` is how many groups in this doc
+// share this asset name; 1 (or less) means no suffix at all.
+function assetHeadingText(assetType, instance, instanceLabel, total) {
+  const name = String(assetType == null ? '' : assetType);
+  if (!(Number(total) > 1)) return name;
+  const ordinal = (Number(instance) || 0) + 1;
+  const label = String(instanceLabel == null ? '' : instanceLabel).trim();
+  return label ? `${name} ${ordinal} — ${label}` : `${name} ${ordinal}`;
+}
+
+// Heading text → { assetType, instance, instanceLabel } candidate, or null when the
+// text carries no instance suffix. `instance` is 0-based (the heading's ordinal
+// minus 1). A 0 or negative ordinal is not a suffix this writer produces, so it is
+// rejected rather than folded to instance 0.
+function decomposeAssetHeading(text) {
+  const m = INSTANCE_HEADING_RE.exec(String(text == null ? '' : text));
+  if (!m) return null;
+  const ordinal = parseInt(m[2], 10);
+  if (!Number.isFinite(ordinal) || ordinal < 1) return null;
+  const label = m[3] ? m[3].trim() : null;
+  return { assetType: m[1], instance: ordinal - 1, instanceLabel: label || null };
+}
+
+// Decide, for a whole document, which HEADING_3 texts are instance-suffixed.
+// Takes every heading in document order and returns Map<headingText, decomposition>
+// containing only headings whose decomposed library name is shared by 2+ headings —
+// the sibling rule above. Headings absent from the map are literal asset names.
+function instanceHeadingMap(headingTexts) {
+  const byName = new Map(); // decomposed library name -> [{ text, parts }]
+  for (const text of headingTexts) {
+    const parts = decomposeAssetHeading(text);
+    if (!parts) continue;
+    const key = normalize(parts.assetType);
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push({ text, parts });
+  }
+  const accepted = new Map();
+  for (const entries of byName.values()) {
+    if (entries.length < 2) continue; // a lone suffix is never something we wrote
+    for (const { text, parts } of entries) accepted.set(text, parts);
+  }
+  return accepted;
+}
+
+// Every HEADING_3 text in a doc, in document order. Shared by the two readers so
+// they classify headings identically.
+function assetHeadingTexts(doc) {
+  const out = [];
+  for (const item of (doc && doc.body && doc.body.content) || []) {
+    if (!item.paragraph) continue;
+    if (item.paragraph.paragraphStyle?.namedStyleType !== 'HEADING_3') continue;
+    out.push(paragraphText(item.paragraph).trim());
+  }
+  return out;
+}
 
 // Map a field's spec_source to a human-readable platform name for the tier line,
 // or null when there's no real source yet. Phase A: production spec_source is
@@ -357,8 +444,23 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
 
   b.horizontalRule();
 
+  // How many groups share each asset name — a name appearing once renders bare, so
+  // every doc written before instances existed is byte-identical.
+  const instanceTotals = new Map();
   for (const asset of assetSpecs) {
-    b.assetHeading(asset.assetType);
+    const key = normalize(asset.assetType);
+    instanceTotals.set(key, (instanceTotals.get(key) || 0) + 1);
+  }
+
+  for (const asset of assetSpecs) {
+    b.assetHeading(
+      assetHeadingText(
+        asset.assetType,
+        asset.instance,
+        asset.instanceLabel,
+        instanceTotals.get(normalize(asset.assetType))
+      )
+    );
     // Asset-level creative direction (from Postgres) — one italic line directly
     // under the heading. Falls back to the Sheet's channel · tone meta when no
     // direction is set; omitted entirely when both are empty.
@@ -518,6 +620,8 @@ function parseDoc(doc) {
   let notesSeen = false; // whether the current field's italic notes line was seen
   let expecting = null; // 'summary' | 'writerPrompt'
   const assetOrdinal = instanceCounter(); // per-heading-text instance ordinals
+  // Which HEADING_3s are instance-suffixed (needs every heading, hence a pre-pass).
+  const instanceHeadings = instanceHeadingMap(assetHeadingTexts(doc));
 
   for (const item of doc.body.content || []) {
     if (!item.paragraph) continue;
@@ -550,12 +654,18 @@ function parseDoc(doc) {
     }
 
     if (named === 'HEADING_3') {
-      // `instance` is the 0-based ordinal of this heading among headings with the
-      // same text, in document order: first 'Email' is 0, a second is 1, and so
-      // on. Entries have always been pushed positionally with no dedupe, so a doc
-      // carrying one asset twice already round-tripped — the ordinal is what lets
-      // downstream keys tell the two apart instead of collapsing them.
-      current = { assetType: text, instance: assetOrdinal(text), channel: '', toneNotes: '', fields: [], gotMeta: false };
+      // `assetType` is always the LIBRARY name, never the rendered heading: an
+      // instance-suffixed heading is decomposed back so downstream lookups
+      // (asset_direction, craft slicing, the tenant library) keep matching on the
+      // real name. `instance` is 0-based — from the heading's own ordinal when it
+      // carries one, else counted positionally over repeated heading text (a
+      // hand-pasted duplicate section, which has no suffix to read).
+      const parts = instanceHeadings.get(text);
+      current = parts
+        ? { assetType: parts.assetType, instance: parts.instance, instanceLabel: parts.instanceLabel,
+            channel: '', toneNotes: '', fields: [], gotMeta: false }
+        : { assetType: text, instance: assetOrdinal(text), instanceLabel: null,
+            channel: '', toneNotes: '', fields: [], gotMeta: false };
       assets.push(current);
       currentField = null; // a new asset ends the previous field's copy region
       notesSeen = false;
@@ -1102,8 +1212,11 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
 // also captures the per-field italic notes + drafted copy under each label: the
 // plain paragraphs that follow a bold field label, up to the next label /
 // heading. Returns
-//   { summary, writerDirection, assets: [{ name, instance, fields: [{ fieldName,
-//     charMin, charMax, notes, copy }] }] }
+//   { summary, writerDirection, assets: [{ name, instance, instanceLabel,
+//     fields: [{ fieldName, charMin, charMax, notes, copy }] }] }
+// `name` is the LIBRARY asset name even when the heading carries an instance
+// suffix ('Demand Gen Nurture Email 2 — Downtown residents' → name 'Demand Gen
+// Nurture Email', instance 1, instanceLabel 'Downtown residents').
 // Throws if the doc can't be read so the caller can surface the fallback.
 async function getDocContent(id, clients) {
   const { docs } = clients || (await getClients());
@@ -1114,6 +1227,7 @@ async function getDocContent(id, clients) {
   let field = null; // current field collecting copy
   let expecting = null; // 'summary' | 'writerDirection'
   const assetOrdinal = instanceCounter(); // per-heading-text instance ordinals
+  const instanceHeadings = instanceHeadingMap(assetHeadingTexts(doc)); // same pre-pass as parseDoc
 
   for (const item of doc.body.content || []) {
     if (!item.paragraph) continue;
@@ -1148,8 +1262,13 @@ async function getDocContent(id, clients) {
     }
 
     if (named === 'HEADING_3') {
-      // Same 0-based per-heading-text ordinal parseDoc stamps (see there).
-      current = { name: text, instance: assetOrdinal(text), asset_direction: '', fields: [] };
+      // Same decomposition + 0-based ordinal parseDoc does (see there): `name` is
+      // the LIBRARY name even when the heading carries an instance suffix.
+      const parts = instanceHeadings.get(text);
+      current = parts
+        ? { name: parts.assetType, instance: parts.instance, instanceLabel: parts.instanceLabel,
+            asset_direction: '', fields: [] }
+        : { name: text, instance: assetOrdinal(text), instanceLabel: null, asset_direction: '', fields: [] };
       result.assets.push(current);
       field = null;
       continue;
@@ -1323,4 +1442,9 @@ module.exports = {
   // serialization can be pinned byte-for-byte (it is not persisted like
   // copyReview's fieldKey, but a drift would silently mis-place drafted copy).
   ctxKey,
+  // The instance-heading format, both directions. Exposed so the round trip
+  // (render → read → key) is assertable without a Google client.
+  assetHeadingText,
+  decomposeAssetHeading,
+  instanceHeadingMap,
 };

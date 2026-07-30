@@ -4416,48 +4416,31 @@ test('asset plan: counts are clamped and the total is capped', () => {
 
 test('asset plan: request order becomes DOCUMENT order, so read-back ordinals agree', () => {
   const { tenantAssetsToSpecs } = require('../src/core/pipeline');
-  const { appendBody, parseDoc } = require('../src/destinations/googleDocs');
-  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { parseDoc } = require('../src/destinations/googleDocs');
 
   const specs = tenantAssetsToSpecs(PLAN_ROWS(), [
     { asset: 'Battle Card', count: 1 },
     { asset: 'Demand Gen Nurture Email', count: 2 },
   ]);
 
-  // The UNTOUCHED writer renders groups in assetSpecs order, so the headings come
-  // out in request order — including two identical 'Demand Gen Nurture Email' ones.
-  const b = new DocBuilder();
-  appendBody(b, { summary: 'S', writerPrompt: 'W', resolvedLinks: [], referenceInsights: [], assetSpecs: specs });
-  const headingOrder = b.text
-    .split('\n')
-    .filter((l) => specs.some((s) => s.assetType === l));
-  assert.deepStrictEqual(headingOrder, ['Battle Card', 'Demand Gen Nurture Email', 'Demand Gen Nurture Email']);
+  // The writer renders groups in assetSpecs order, so headings come out in request
+  // order. The repeated asset is disambiguated with a 1-based ordinal; the single
+  // one stays bare. (Before instance headings existed this asserted three bare
+  // headings with a duplicate — same intent, now spelled the way the doc reads.)
+  const doc = renderToDoc(specs);
+  const headingOrder = doc.body.content
+    .filter((i) => i.paragraph.paragraphStyle.namedStyleType === 'HEADING_3')
+    .map((i) => i.paragraph.elements[0].textRun.content.replace(/\n$/, ''));
+  assert.deepStrictEqual(headingOrder, [
+    'Battle Card',
+    'Demand Gen Nurture Email 1',
+    'Demand Gen Nurture Email 2',
+  ]);
 
-  // parseDoc counts ordinals positionally over those headings. Synthesize a doc
-  // with exactly that heading sequence and confirm it recovers the SAME ordinals
-  // the plan assigned — the write and read sides agree without either knowing
-  // about the other.
-  let startIndex = 1;
-  const content = headingOrder.flatMap((name) => [
-    { text: name, style: 'HEADING_3' },
-    { text: 'Field [10]', bold: true },
-    { text: '' },
-  ]).map((para) => {
-    const raw = para.text + '\n';
-    const endIndex = startIndex + raw.length;
-    const item = {
-      startIndex,
-      endIndex,
-      paragraph: {
-        paragraphStyle: para.style ? { namedStyleType: para.style } : {},
-        elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold } } }],
-      },
-    };
-    startIndex = endIndex;
-    return item;
-  });
+  // Reading that doc back recovers the SAME (library name, ordinal) pairs the plan
+  // assigned — the write and read sides agree without either knowing the other.
   assert.deepStrictEqual(
-    parseDoc({ body: { content } }).assets.map((a) => [a.assetType, a.instance]),
+    parseDoc(doc).assets.map((a) => [a.assetType, a.instance]),
     specs.map((s) => [s.assetType, s.instance])
   );
 });
@@ -4477,4 +4460,249 @@ test('asset plan: nothing user-facing can request count > 1', () => {
   assert.ok(/"assets": string\[\]/.test(rd('src/services/gemini.js')), 'parseBrief schema is still string[]');
   assert.ok(/if \(!assets\.includes\(canonical\)\) assets\.push\(canonical\)/.test(rd('src/services/gemini.js')),
     'parseBrief still dedupes to one entry per asset name');
+});
+
+// --- Instance headings: the writer renders them, the readers decompose them ----
+// A lone instance renders its bare library name (unchanged for every doc written
+// before instances); a repeat gets a 1-based ordinal and its label. The readers
+// report the LIBRARY name so downstream library lookups keep matching.
+
+function headingDoc(paras) {
+  let startIndex = 1;
+  return { title: 'T', body: { content: paras.map((p) => {
+    const raw = (p.text || '') + '\n';
+    const endIndex = startIndex + raw.length;
+    const item = { startIndex, endIndex, paragraph: {
+      paragraphStyle: p.style ? { namedStyleType: p.style } : {},
+      elements: [{ textRun: { content: raw, textStyle: { bold: !!p.bold, italic: !!p.italic } } }] } };
+    startIndex = endIndex;
+    return item;
+  }) } };
+}
+// Render assetSpecs through the real writer and return the doc it would produce,
+// re-tagged so the readers can parse it (DocBuilder emits text + style ranges;
+// this rebuilds the equivalent documents.get payload).
+function renderToDoc(assetSpecs) {
+  const { appendBody } = require('../src/destinations/googleDocs');
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const b = new DocBuilder();
+  appendBody(b, { summary: 'S', writerPrompt: 'W', resolvedLinks: [], referenceInsights: [], assetSpecs });
+  const reqs = b.buildRequests();
+  // Map each paragraph's style from the recorded updateParagraphStyle ranges.
+  const styleAt = [];
+  for (const r of reqs) {
+    if (!r.updateParagraphStyle) continue;
+    styleAt.push({ start: r.updateParagraphStyle.range.startIndex, style: r.updateParagraphStyle.paragraphStyle.namedStyleType });
+  }
+  const boldAt = new Set();
+  for (const r of reqs) {
+    if (r.updateTextStyle && r.updateTextStyle.textStyle.bold) boldAt.add(r.updateTextStyle.range.startIndex);
+  }
+  let idx = 1;
+  const paras = b.text.split('\n').slice(0, -1).map((line) => {
+    const start = idx;
+    idx += line.length + 1;
+    const st = styleAt.find((s) => s.start === start);
+    return { text: line, style: st ? st.style : undefined, bold: boldAt.has(start) };
+  });
+  return headingDoc(paras);
+}
+function specGroup(assetType, instance, instanceLabel, fields) {
+  return {
+    assetType, instance, instanceLabel, channel: '', toneNotes: '', asset_direction: '',
+    fields: (fields || ['Subject Line 1']).map((fieldName) => ({
+      fieldName, charMin: 0, charMax: 50, groupLabel: null, specNote: null, specType: null, specSource: null,
+    })),
+  };
+}
+
+test('instance headings: format is bare for one, 1-based ordinal for many', () => {
+  const { assetHeadingText } = require('../src/destinations/googleDocs');
+  // total <= 1 → no suffix at all, whatever the ordinal says.
+  assert.strictEqual(assetHeadingText('Demand Gen Nurture Email', 0, null, 1), 'Demand Gen Nurture Email');
+  assert.strictEqual(assetHeadingText('Demand Gen Nurture Email', 0, 'ignored', 1), 'Demand Gen Nurture Email');
+  assert.strictEqual(assetHeadingText('Demand Gen Nurture Email', 3, 'ignored', 1), 'Demand Gen Nurture Email');
+  assert.strictEqual(assetHeadingText('Demand Gen Nurture Email', 0, null, undefined), 'Demand Gen Nurture Email');
+  // total > 1 → ordinal is instance + 1 (writers count from 1), label when present.
+  assert.strictEqual(assetHeadingText('Demand Gen Nurture Email', 0, null, 3), 'Demand Gen Nurture Email 1');
+  assert.strictEqual(assetHeadingText('Demand Gen Nurture Email', 2, null, 3), 'Demand Gen Nurture Email 3');
+  assert.strictEqual(
+    assetHeadingText('Demand Gen Nurture Email', 1, 'Downtown residents', 3),
+    'Demand Gen Nurture Email 2 — Downtown residents'
+  );
+  // A blank label is the same as none.
+  assert.strictEqual(assetHeadingText('Email', 0, '   ', 2), 'Email 1');
+});
+
+test('instance headings: decomposition never shreds a real asset name', () => {
+  const { decomposeAssetHeading } = require('../src/destinations/googleDocs');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  // THE HAZARD: 14 of 30 bundled names contain ' — '. None may decompose.
+  const dashNames = DEFAULT_ASSETS.map((a) => a.name).filter((n) => n.includes('—'));
+  assert.ok(dashNames.length >= 14, `expected the em-dash names, got ${dashNames.length}`);
+  for (const name of DEFAULT_ASSETS.map((a) => a.name)) {
+    assert.strictEqual(decomposeAssetHeading(name), null, `bare library name must not decompose: ${name}`);
+  }
+
+  // Those same names DO decompose once suffixed — the ordinal is the anchor.
+  assert.deepStrictEqual(decomposeAssetHeading('Direct Mail — Box / Mailer 2'), {
+    assetType: 'Direct Mail — Box / Mailer', instance: 1, instanceLabel: null,
+  });
+  assert.deepStrictEqual(decomposeAssetHeading('Direct Mail — Box / Mailer 2 — Q3 drop'), {
+    assetType: 'Direct Mail — Box / Mailer', instance: 1, instanceLabel: 'Q3 drop',
+  });
+  assert.deepStrictEqual(decomposeAssetHeading('Organic Social — LinkedIn 1'), {
+    assetType: 'Organic Social — LinkedIn', instance: 0, instanceLabel: null,
+  });
+  // An ordinal this writer never emits is not a suffix.
+  assert.strictEqual(decomposeAssetHeading('Email 0'), null);
+  assert.strictEqual(decomposeAssetHeading('Email'), null);
+  assert.strictEqual(decomposeAssetHeading(''), null);
+  assert.strictEqual(decomposeAssetHeading(undefined), null);
+});
+
+test('instance headings: a LONE suffix is not treated as an instance (sibling rule)', () => {
+  const { instanceHeadingMap } = require('../src/destinations/googleDocs');
+  // A tenant asset legitimately called 'Concept 2', alone → literal name.
+  assert.strictEqual(instanceHeadingMap(['Concept 2', 'Battle Card']).size, 0);
+  // Two siblings → both accepted.
+  const m = instanceHeadingMap(['Concept 1', 'Concept 2', 'Battle Card']);
+  assert.strictEqual(m.size, 2);
+  assert.strictEqual(m.get('Concept 1').instance, 0);
+  assert.strictEqual(m.get('Concept 2').instance, 1);
+  assert.ok(!m.has('Battle Card'));
+  // Siblings are grouped with the same name folding the library lookup uses.
+  assert.strictEqual(instanceHeadingMap(['Organic Social — LinkedIn 1', 'Organic Social - LinkedIn 2']).size, 2);
+});
+
+test('instance headings: a SINGLE-instance doc renders the bare name', () => {
+  const specs = [specGroup('Demand Gen Nurture Email', 0, null), specGroup('Battle Card', 0, null)];
+  const doc = renderToDoc(specs);
+  const { parseDoc } = require('../src/destinations/googleDocs');
+  const headings = doc.body.content
+    .filter((i) => i.paragraph.paragraphStyle.namedStyleType === 'HEADING_3')
+    .map((i) => i.paragraph.elements[0].textRun.content.replace(/\n$/, ''));
+  assert.deepStrictEqual(headings, ['Demand Gen Nurture Email', 'Battle Card'], 'no suffix anywhere');
+  // A label on a lone instance is ignored, so it cannot change an existing doc.
+  const labeled = renderToDoc([specGroup('Demand Gen Nurture Email', 0, 'ignored me')]);
+  assert.ok(labeled.body.content.some((i) => /Demand Gen Nurture Email\n/.test(i.paragraph.elements[0].textRun.content)));
+  assert.deepStrictEqual(parseDoc(doc).assets.map((a) => [a.assetType, a.instance, a.instanceLabel]), [
+    ['Demand Gen Nurture Email', 0, null], ['Battle Card', 0, null],
+  ]);
+});
+
+test('instance headings: THREE instances render ordinals, with and without labels', () => {
+  const specs = [
+    specGroup('Demand Gen Nurture Email', 0, null),
+    specGroup('Demand Gen Nurture Email', 1, 'Downtown residents'),
+    specGroup('Demand Gen Nurture Email', 2, 'Suburban families'),
+    specGroup('Battle Card', 0, null), // single → stays bare in the same doc
+  ];
+  const doc = renderToDoc(specs);
+  const headings = doc.body.content
+    .filter((i) => i.paragraph.paragraphStyle.namedStyleType === 'HEADING_3')
+    .map((i) => i.paragraph.elements[0].textRun.content.replace(/\n$/, ''));
+  assert.deepStrictEqual(headings, [
+    'Demand Gen Nurture Email 1',
+    'Demand Gen Nurture Email 2 — Downtown residents',
+    'Demand Gen Nurture Email 3 — Suburban families',
+    'Battle Card',
+  ]);
+});
+
+test('instance headings: full ROUND TRIP — render, read, key', () => {
+  const { parseDoc, ctxKey } = require('../src/destinations/googleDocs');
+  const specs = [
+    specGroup('Demand Gen Nurture Email', 0, null, ['Subject Line 1', 'Preheader']),
+    specGroup('Demand Gen Nurture Email', 1, 'Downtown residents', ['Subject Line 1', 'Preheader']),
+    specGroup('Demand Gen Nurture Email', 2, null, ['Subject Line 1', 'Preheader']),
+  ];
+  const readBack = parseDoc(renderToDoc(specs)).assets;
+
+  // Read-back names are LIBRARY names, not the suffixed heading text.
+  assert.deepStrictEqual(readBack.map((a) => [a.assetType, a.instance, a.instanceLabel]), [
+    ['Demand Gen Nurture Email', 0, null],
+    ['Demand Gen Nurture Email', 1, 'Downtown residents'],
+    ['Demand Gen Nurture Email', 2, null],
+  ]);
+  // The keys the READER derives equal the keys the WRITER's specs would derive.
+  const writerKeys = specs.flatMap((s) => s.fields.map((f) => ctxKey(s.assetType, f.fieldName, s.instance)));
+  const readerKeys = readBack.flatMap((a) => a.fields.map((f) => ctxKey(a.assetType, f.fieldName, a.instance)));
+  assert.deepStrictEqual(readerKeys, writerKeys);
+  assert.strictEqual(new Set(readerKeys).size, 6, 'six fields, six distinct keys');
+});
+
+test('instance headings: round trip survives a library name containing an em dash', () => {
+  const { parseDoc, ctxKey } = require('../src/destinations/googleDocs');
+  // The dangerous case: the asset name itself has ' — ' AND it is instanced AND
+  // labeled, so the heading contains TWO em dashes.
+  const specs = [
+    specGroup('Direct Mail — Box / Mailer', 0, 'Wave A', ['Flap Copy']),
+    specGroup('Direct Mail — Box / Mailer', 1, 'Wave B', ['Flap Copy']),
+  ];
+  const doc = renderToDoc(specs);
+  const headings = doc.body.content
+    .filter((i) => i.paragraph.paragraphStyle.namedStyleType === 'HEADING_3')
+    .map((i) => i.paragraph.elements[0].textRun.content.replace(/\n$/, ''));
+  assert.deepStrictEqual(headings, [
+    'Direct Mail — Box / Mailer 1 — Wave A',
+    'Direct Mail — Box / Mailer 2 — Wave B',
+  ]);
+  assert.deepStrictEqual(parseDoc(doc).assets.map((a) => [a.assetType, a.instance, a.instanceLabel]), [
+    ['Direct Mail — Box / Mailer', 0, 'Wave A'],
+    ['Direct Mail — Box / Mailer', 1, 'Wave B'],
+  ]);
+  assert.deepStrictEqual(
+    parseDoc(doc).assets.map((a) => ctxKey(a.assetType, 'Flap Copy', a.instance)),
+    specs.map((s) => ctxKey(s.assetType, 'Flap Copy', s.instance))
+  );
+});
+
+test('instance headings: getDocContent decomposes them too', async () => {
+  const { getDocContent } = require('../src/destinations/googleDocs');
+  const { fieldKey } = require('../src/services/copyReview');
+  const doc = renderToDoc([
+    specGroup('Demand Gen Nurture Email', 0, 'A', ['Subject Line 1']),
+    specGroup('Demand Gen Nurture Email', 1, 'B', ['Subject Line 1']),
+  ]);
+  const content = await getDocContent('d', { docs: { documents: { get: async () => ({ data: doc }) } } });
+  assert.deepStrictEqual(content.assets.map((a) => [a.name, a.instance, a.instanceLabel]), [
+    ['Demand Gen Nurture Email', 0, 'A'],
+    ['Demand Gen Nurture Email', 1, 'B'],
+  ]);
+  assert.deepStrictEqual(
+    content.assets.map((a) => fieldKey(a.name, 'Subject Line 1', a.instance)),
+    ['demand gen nurture email||subject line 1', 'demand gen nurture email#i1||subject line 1']
+  );
+});
+
+test('instance labels: threaded through the plan, populated by nothing', () => {
+  const { tenantAssetsToSpecs, normalizeAssetPlan } = require('../src/core/pipeline');
+  const rows = PLAN_ROWS();
+
+  // Absent by default.
+  assert.ok(tenantAssetsToSpecs(rows, ['Battle Card']).every((s) => s.instanceLabel === null));
+  assert.ok(tenantAssetsToSpecs(rows, []).every((s) => s.instanceLabel === null));
+  assert.deepStrictEqual(normalizeAssetPlan([{ asset: 'A', count: 2 }]), [{ asset: 'A', count: 2 }]);
+
+  // Supplied positionally by a direct caller; blanks and overflow are dropped.
+  const specs = tenantAssetsToSpecs(rows, [
+    { asset: 'Demand Gen Nurture Email', count: 3, labels: ['Downtown residents', '  ', 'Suburban families', 'extra'] },
+  ]);
+  assert.deepStrictEqual(specs.map((s) => s.instanceLabel), ['Downtown residents', null, 'Suburban families']);
+  // Labels are positional WITHIN an entry, so a second entry uses its own list.
+  const two = tenantAssetsToSpecs(rows, [
+    { asset: 'Battle Card', count: 1, labels: ['first'] },
+    { asset: 'Battle Card', count: 1, labels: ['second'] },
+  ]);
+  assert.deepStrictEqual(two.map((s) => [s.instance, s.instanceLabel]), [[0, 'first'], [1, 'second']]);
+
+  // NOTHING user-facing supplies a label.
+  const rd = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  // Match the plan-entry PROPERTY, not the English word — gemini.js prompts
+  // legitimately say "no labels, quotes, options" and "Reproduce labels ... VERBATIM".
+  for (const p of ['src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/routes/app.js', 'src/services/gemini.js']) {
+    assert.ok(!/\blabels\s*:/.test(rd(p)), `${p} must not supply instance labels`);
+  }
 });

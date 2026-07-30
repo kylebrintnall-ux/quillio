@@ -7058,7 +7058,7 @@ test('word units: the seed and the migration agree, both directions', () => {
   }
   // The one superseded band, pinned by value so the indirection above cannot hide a
   // change: the cited Constant Contact ceiling replaced the uncited 125.
-  assert.deepStrictEqual(superseded.get('Demand Gen Nurture Email||Offer Body 1'), [50, 200]);
+  assert.deepStrictEqual(superseded.get('Demand Gen Nurture Email||Offer Body 1'), [50, 140]);
   // BACKWARD: the seed has no word field the migration does not convert. Without
   // this, a field could go to words in the seed and stay in characters for every
   // existing tenant — rendering two different specs for the same field.
@@ -7072,7 +7072,7 @@ test('word units: the seed and the migration agree, both directions', () => {
   // The bands really do differ by email type — one band for all five was the bug
   // the subject-line pass fixed, and repeating it here would be the same mistake.
   assert.deepStrictEqual([f('Demand Gen Nurture Email', 'Offer Body 1').char_min,
-    f('Demand Gen Nurture Email', 'Offer Body 1').char_max], [50, 200], 'marketing/nurture, cited');
+    f('Demand Gen Nurture Email', 'Offer Body 1').char_max], [50, 140], 'marketing/nurture, cited');
   assert.deepStrictEqual([f('Sales Basho Email', 'Body Copy').char_min,
     f('Sales Basho Email', 'Body Copy').char_max], [50, 100], 'cold outreach');
   assert.deepStrictEqual([f('Event Follow-Up / Recap Email', 'Body Copy').char_min,
@@ -7087,20 +7087,19 @@ test('word units: the seed and the migration agree, both directions', () => {
   // defensible, and the research these bands come from puts response below 40% past
   // 200 words. Asserted per asset rather than for this one pair, so a body field
   // added to any email later cannot quietly push it over.
-  // WHOLE-EMAIL WORD BUDGET, and a live conflict this pins rather than hides.
+  // WHOLE-EMAIL WORD BUDGET. This is the constraint the citation actually states.
   //
-  // The two offer bodies STACK — craft.md § Email: "Secondary offers come after and
-  // read as lighter" — so a Demand Gen email's body budget is their SUM, exactly as
-  // established when Offer Body 2 got its own band. That rule has not changed.
+  // Constant Contact measured whole EMAILS — ~20 lines, about 200 words, as the
+  // highest-click-through length for a newsletter. Demand Gen has TWO body fields
+  // and they STACK (craft.md § Email: "Secondary offers come after and read as
+  // lighter"), so the cited 200 is the budget for the PAIR, not for either one.
+  // 140 + 60 = 200.
   //
-  // What changed is that Offer Body 1 now carries a CITED 200-word ceiling, and the
-  // page it cites reports ~200 words as the best length for an email NEWSLETTER —
-  // a whole-email figure, not a per-field one. Applied to one field of an email
-  // that has two body fields, the citation's own number is exceeded: 200 + 60 =
-  // 260. Flagged to the user; the number stands as specified until they rule.
-  //
-  // Pinned at the real value so this is a recorded conflict rather than a silently
-  // relaxed guard. If either band moves, this fails and someone re-reads the above.
+  // The number nearly went in as 200 on Offer Body 1 alone, which would have put
+  // the email at 260 — over the figure its own citation reports. That is the same
+  // error this library has been correcting throughout: a number measured for one
+  // unit applied to another. Asserting the SUM rather than each field is what makes
+  // the unit explicit, so a future band change fails here instead of shipping.
   const WORD_CLIFF = 200;
   const bodyTotals = new Map();
   for (const a2 of DEFAULT_ASSETS) {
@@ -7108,15 +7107,14 @@ test('word units: the seed and the migration agree, both directions', () => {
     if (bodies.length < 2) continue;
     bodyTotals.set(a2.name, bodies.reduce((n, x) => n + x.char_max, 0));
   }
-  assert.deepStrictEqual([...bodyTotals], [['Demand Gen Nurture Email', 260]],
-    'Demand Gen is the only multi-body email, and its budget is 260 — OVER the ' +
-    `${WORD_CLIFF}-word figure its own citation reports. Known conflict, see the comment above.`);
-  // No OTHER multi-body email may exceed the cliff — the guard still bites for
-  // anything added later.
   for (const [name, total] of bodyTotals) {
-    if (name === 'Demand Gen Nurture Email') continue;
-    assert.ok(total <= WORD_CLIFF, `${name}: word bodies total ${total}, over the ${WORD_CLIFF}-word cliff`);
+    assert.ok(total <= WORD_CLIFF,
+      `${name}: its word bodies total ${total}, over the ${WORD_CLIFF}-word whole-email figure`);
   }
+  // Pinned exactly, so a change that stays under the cliff by shrinking a band is
+  // still noticed — and so the arithmetic behind 140 is recorded, not inferred.
+  assert.deepStrictEqual([...bodyTotals], [['Demand Gen Nurture Email', 200]],
+    'Demand Gen is the only multi-body email, and 140 + 60 lands exactly on the cited figure');
 
   // ONLY email body converts. Subject lines, preheaders, headlines, CTAs and every
   // ad field keep characters, because their limits ARE truncation points.
@@ -7362,11 +7360,11 @@ test('email classes: BODY length is deliberately NOT derived from the class', ()
   // bodies differ — and that inconsistency is the correct answer, not an oversight.
   // A reminder to someone who already registered has a different job than a nurture
   // email trying to earn a click.
-  assert.deepStrictEqual(body('Demand Gen Nurture Email', 'Offer Body 1'), [50, 200]);
+  assert.deepStrictEqual(body('Demand Gen Nurture Email', 'Offer Body 1'), [50, 140]);
   assert.deepStrictEqual(body('Event Invitation Email', 'Event Description'), [50, 125]);
   assert.deepStrictEqual(body('Event Reminder Email', 'Body Copy'), [25, 75]);
   assert.deepStrictEqual(body('Event Follow-Up / Recap Email', 'Body Copy'), [25, 75]);
-  const marketingBodies = [[50, 200], [50, 125], [25, 75], [25, 75]];
+  const marketingBodies = [[50, 140], [50, 125], [25, 75], [25, 75]];
   assert.ok(new Set(marketingBodies.map(String)).size > 1,
     'one class, several body bands — unifying them would make three of four wrong');
 
@@ -7420,24 +7418,51 @@ test('cited bands: the research tier line says what was measured, and what staye
 
   // Seed and migration agree on the citation, both directions.
   assert.strictEqual(CITED_BANDS.length, 1, 'exactly one cited body band');
-  const [asset, field, min, max, tier, url] = CITED_BANDS[0];
+  const [asset, field, min, max, tier, url, note] = CITED_BANDS[0];
   const fl = f(asset, field);
-  assert.deepStrictEqual([fl.char_min, fl.char_max, fl.spec_type, fl.spec_source], [min, max, tier, url]);
+  assert.deepStrictEqual(
+    [fl.char_min, fl.char_max, fl.spec_type, fl.spec_source, fl.spec_note],
+    [min, max, tier, url, note],
+    'seed and migration agree on band, tier, source AND note'
+  );
   assert.strictEqual(url, 'https://www.constantcontact.com/blog/best-length-email-newsletter/');
+  assert.deepStrictEqual([min, max], [50, 140], 'the FIELD band, not the cited whole-email figure');
 
-  // THE TIER LINE. It names the population, states the finding, and hyperlinks the
-  // source — because "Recommended by Constant Contact" with no scope would be an
-  // appeal to authority, and small-business campaign data is not B2B nurture data.
+  // THE HINT, as one paragraph: the note first, then the tier line.
+  //
+  // The note exists because the two numbers DIFFER — the label says [50-140 words]
+  // and the citation says ~200 — and without it a writer has no way to reconcile
+  // them. The cited figure is for a whole email; this is one of its two body blocks.
   const hint = fieldHint({ specType: fl.spec_type, specSource: fl.spec_source, specNote: fl.spec_note });
   assert.strictEqual(
     hint.text,
-    'Recommended by Constant Contact (2.1M customers, small-business campaigns). Longer bodies click less.'
+    'The cited ~200 words is a WHOLE-EMAIL figure; this is one of two body blocks, so 140 here leaves 60 for Offer Body 2. ' +
+      'Recommended by Constant Contact (2.1M customers, small-business campaigns). Longer bodies click less.'
   );
+  assert.match(hint.text, /WHOLE-EMAIL figure/, 'the unit of the cited number is stated');
+  assert.match(hint.text, /140 here leaves 60 for Offer Body 2/, 'and the arithmetic is shown');
+  assert.ok(!hint.text.includes('\n'), 'ONE paragraph — a second would be read as drafted copy');
+
+  // The TIER LINE still names the population and states the finding, because
+  // "Recommended by Constant Contact" with no scope would be an appeal to
+  // authority, and small-business campaign data is not B2B nurture data.
+  assert.match(hint.text, /Recommended by Constant Contact \(2\.1M customers, small-business campaigns\)\./);
   assert.match(hint.text, /2\.1M customers/, 'CUSTOMERS, not emails — the distinction is load-bearing');
   assert.ok(!/2\.1M emails/.test(hint.text));
+
+  // The link still lands on the source name, at an offset the note shifted by.
   assert.strictEqual(hint.links.length, 1);
   assert.strictEqual(hint.text.substring(hint.links[0].start, hint.links[0].end), 'Constant Contact');
   assert.strictEqual(hint.links[0].url, url);
+  assert.strictEqual(hint.links[0].start, note.length + 1 + 'Recommended by '.length,
+    'offset = note + joining space + the tier prefix');
+
+  // And the label a writer reads carries the FIELD's number, in words.
+  const { fieldLabel } = require('../src/destinations/googleDocs');
+  assert.strictEqual(
+    fieldLabel({ fieldName: fl.field_name, charMin: fl.char_min, charMax: fl.char_max, fieldType: fl.field_type }),
+    'Offer Body 1 [50-140 words]'
+  );
 
   // A PLATFORM recommendation is untouched by adding the research branch.
   const meta = f('Meta Single Image Ad', 'Primary Text');

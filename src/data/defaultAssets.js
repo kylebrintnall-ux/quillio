@@ -237,7 +237,7 @@ const RAW = [
     ['Subject Line 2', FROM_CLASS, FROM_CLASS],
     ['Preheader', FROM_CLASS, FROM_CLASS],
     ['Headline (Offer 1)', 0, 60],
-    ['Offer Body 1', 50, 200],
+    ['Offer Body 1', 50, 140],
     ['CTA Text (Offer 1)', 0, 25],
     ['Headline (Offer 2)', 0, 60],
     ['Offer Body 2', 25, 60],
@@ -464,6 +464,23 @@ const HOOK_SPEC_NOTE =
 // BYTE-IDENTICAL to NOTE in scripts/migrateFixLinkedInIntroText.js.
 const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150; 600 is the technical max.';
 
+// Demand Gen Nurture Email → Offer Body 1 note. The cited figure and this field's
+// number are DIFFERENT NUMBERS, and without this note a writer reads "Recommended
+// by Constant Contact" beside [50-140 words] and has no way to reconcile them.
+//
+// Constant Contact measured whole EMAILS — ~20 lines, about 200 words, as the
+// highest-click-through length for a newsletter. This asset has TWO body blocks
+// that stack (craft.md § Email: "Secondary offers come after"), so the cited 200 is
+// the budget for the pair, not for either one. 140 + Offer Body 2's 60 = 200.
+//
+// This is the same shape as the LinkedIn carousel note below: a real published
+// number whose UNIT is not the unit the label can express, so the label carries
+// what this field may use and the note carries what was actually measured.
+// BYTE-IDENTICAL to OFFER_BODY_1_NOTE in
+// scripts/migrateEmailClassesAndCitedBands.js.
+const OFFER_BODY_1_NOTE =
+  'The cited ~200 words is a WHOLE-EMAIL figure; this is one of two body blocks, so 140 here leaves 60 for Offer Body 2.';
+
 // LinkedIn Carousel Ad → Card N Headline note. The 45 in the label is CONDITIONAL:
 // it holds for a carousel driving to a destination URL, but a carousel whose CTA
 // opens a Lead Gen Form caps its cards at 30. One field, two limits, and the label
@@ -511,6 +528,7 @@ const EMAIL_NOTE_ASSETS = new Set([
 // Byte-identical to the corresponding migrations so seed and backfill agree.
 function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'LinkedIn Single Image Ad' && fieldName === 'Intro Text') return LINKEDIN_SIA_INTRO_NOTE;
+  if (assetName === 'Demand Gen Nurture Email' && fieldName === 'Offer Body 1') return OFFER_BODY_1_NOTE;
   if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
     return LINKEDIN_CAROUSEL_CARD_NOTE;
   }

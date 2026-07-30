@@ -13,9 +13,10 @@
 //    The class governs INBOX-FACING fields only: subject line, preheader, CTA
 //    count. Body length is deliberately NOT derived from it — see the constant.
 //
-// 2. CITED BODY BAND. Demand Gen Nurture / Offer Body 1 becomes 50–200 words,
+// 2. CITED BODY BAND. Demand Gen Nurture / Offer Body 1 becomes 50–140 words,
 //    tiered 'recommended', citing Constant Contact. That page reports ~20 lines of
-//    text — about 200 words — as the highest click-through length.
+//    text — about 200 words — as the highest click-through length for a whole
+//    NEWSLETTER, which is why the field's band is 140: see CITED_BANDS.
 //
 //    The tier line names the POPULATION, not just the source: "Recommended by
 //    Constant Contact (2.1M customers, small-business campaigns). Longer bodies
@@ -84,15 +85,28 @@ for (const cls of Object.values(EMAIL_CLASSES)) {
 }
 
 // --- 2. The cited body band ---------------------------------------------------
-// [asset, field, minWords, maxWords, specType, specSource].
+// [asset, field, minWords, maxWords, specType, specSource, specNote].
+//
+// The BAND is 140, not the cited 200, because Constant Contact measured whole
+// EMAILS and this asset has two stacked body blocks (craft.md § Email: "Secondary
+// offers come after"). 140 + Offer Body 2's 60 = the 200 the citation reports. The
+// note says so, because otherwise a writer sees "Recommended by Constant Contact"
+// beside [50-140 words] with no way to reconcile the two numbers.
+//
+// OFFER_BODY_1_NOTE is BYTE-IDENTICAL to the constant of the same name in
+// src/data/defaultAssets.js; a smoke test asserts it.
+const OFFER_BODY_1_NOTE =
+  'The cited ~200 words is a WHOLE-EMAIL figure; this is one of two body blocks, so 140 here leaves 60 for Offer Body 2.';
+
 const CITED_BANDS = [
   [
     'Demand Gen Nurture Email',
     'Offer Body 1',
     50,
-    200,
+    140,
     'recommended',
     'https://www.constantcontact.com/blog/best-length-email-newsletter/',
+    OFFER_BODY_1_NOTE,
   ],
 ];
 
@@ -138,22 +152,24 @@ async function main() {
     }
     console.log(`${TAG} converged ${classRows} inbox-facing field(s) on their class (0 expected on a current tenant)`);
 
-    // --- 2. The cited band, its tier and its source, in ONE statement so a row can
-    //        never end up with the new band and the old tier — which would render a
-    //        200-word ceiling with no indication of where it came from.
+    // --- 2. The cited band, its tier, its source and its note, in ONE statement so
+    //        a row can never end up with the new band and the old tier — which would
+    //        render a ceiling with no indication of where it came from — or with the
+    //        band and no note, which is the number the citation does NOT state.
     let cited = 0;
-    for (const [asset, field, min, max, tier, source] of CITED_BANDS) {
+    for (const [asset, field, min, max, tier, source, note] of CITED_BANDS) {
       const r = await client.query(
         `UPDATE copy_fields cf
-            SET char_min = $3, char_max = $4, spec_type = $5, spec_source = $6
+            SET char_min = $3, char_max = $4, spec_type = $5, spec_source = $6, spec_note = $7
            FROM asset_types at
           WHERE cf.asset_type_id = at.id
             AND at.name = $1 AND cf.field_name = $2
             AND (cf.char_min IS DISTINCT FROM $3
                  OR cf.char_max IS DISTINCT FROM $4
                  OR cf.spec_type IS DISTINCT FROM $5
-                 OR cf.spec_source IS DISTINCT FROM $6)`,
-        [asset, field, min, max, tier, source]
+                 OR cf.spec_source IS DISTINCT FROM $6
+                 OR cf.spec_note IS DISTINCT FROM $7)`,
+        [asset, field, min, max, tier, source, note]
       );
       if (r.rowCount) {
         console.log(`${TAG}   cite ${asset} / ${field} → [${min}-${max} words] ${tier} ${source}: ${r.rowCount} row(s)`);
@@ -193,4 +209,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { EMAIL_CLASSES, CLASS_FIELDS, CITED_BANDS };
+module.exports = { EMAIL_CLASSES, CLASS_FIELDS, CITED_BANDS, OFFER_BODY_1_NOTE };

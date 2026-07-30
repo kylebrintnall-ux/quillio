@@ -481,6 +481,16 @@ const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150; 600 is the 
 const OFFER_BODY_1_NOTE =
   'The cited ~200 words is a WHOLE-EMAIL figure; this is one of two body blocks, so 140 here leaves 60 for Offer Body 2.';
 
+// Sales Basho Email → Body Copy note. Gong's number is about the FIRST touch. A
+// cold opener is earning the right to a reply from someone who did not ask to hear
+// from you, and 50–100 words is what that costs; a follow-up in the same sequence
+// is talking to someone who has already seen you once, and Gong's guidance for
+// those runs longer. Without this note the band reads as a rule for every email in
+// the sequence, which is not what was measured.
+// BYTE-IDENTICAL to BASHO_BODY_NOTE in scripts/migrateCiteColdEmailBand.js.
+const BASHO_BODY_NOTE =
+  'Applies to the FIRST touch; Gong\'s guidance for follow-ups in the same sequence runs longer.';
+
 // LinkedIn Carousel Ad → Card N Headline note. The 45 in the label is CONDITIONAL:
 // it holds for a carousel driving to a destination URL, but a carousel whose CTA
 // opens a Lead Gen Form caps its cards at 30. One field, two limits, and the label
@@ -529,6 +539,7 @@ const EMAIL_NOTE_ASSETS = new Set([
 function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'LinkedIn Single Image Ad' && fieldName === 'Intro Text') return LINKEDIN_SIA_INTRO_NOTE;
   if (assetName === 'Demand Gen Nurture Email' && fieldName === 'Offer Body 1') return OFFER_BODY_1_NOTE;
+  if (assetName === 'Sales Basho Email' && fieldName === 'Body Copy') return BASHO_BODY_NOTE;
   if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
     return LINKEDIN_CAROUSEL_CARD_NOTE;
   }
@@ -561,7 +572,13 @@ function fieldSpecNote(assetName, fieldName) {
 // therefore 'recommended' — including the carousel's card fields, which are the
 // carousel's equivalents of the same three numbers.
 const RECOMMENDED_SPEC_FIELDS = new Set([
-  // The only NON-platform recommendation in the library: a research finding rather
+  // The two NON-platform recommendations in the library: research findings rather
+  // than spec pages. Each cites the one field it measured, and each tier line names
+  // what was measured — a click rate on opt-in marketing is not a reply rate on
+  // cold outreach, and applying one where the other belongs is the mistake the
+  // scope clause exists to prevent.
+  'Sales Basho Email||Body Copy',
+  // The other NON-platform recommendation: a research finding rather
   // than a spec page. Constant Contact reports ~20 lines / ~200 words as the
   // highest click-through length. It is tiered 'recommended' because that is what
   // it is — an advisory number from a real source — and the tier line says exactly
@@ -690,6 +707,8 @@ const SPEC_SOURCE_URLS = {
 const FIELD_SPEC_SOURCE_URLS = {
   'Demand Gen Nurture Email||Offer Body 1':
     'https://www.constantcontact.com/blog/best-length-email-newsletter/',
+  'Sales Basho Email||Body Copy':
+    'https://www.gong.io/blog/do-execs-really-reply-to-cold-email-here-s-what-the-data-says',
 };
 
 function fieldSpecSource(assetName, fieldName) {

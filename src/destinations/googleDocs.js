@@ -336,11 +336,27 @@ function fieldHint(field) {
   return { text, links };
 }
 
+// Is this field's range counted in WORDS rather than characters? Accepts either the
+// pipeline's `fieldType` or the raw `field_type` column, so a spec group and a
+// database row both answer the same way.
+function isWordField(field) {
+  const t = field && (field.fieldType || field.field_type);
+  return String(t || '') === 'words';
+}
+// The unit SUFFIX inside the bracket. This is not decoration — it is the only
+// carrier of the unit through the document. There is no persisted doc state
+// (CLAUDE.md): the draft, regenerate and review paths all reconstruct fields by
+// re-parsing the Doc, so if the label did not say "words" the unit would be lost
+// the moment the doc was written, and every downstream prompt would go back to
+// telling the model to count characters.
+const WORD_UNIT_SUFFIX = ' words';
+
 function fieldLabel(field) {
   const min = Number(field.charMin) || 0;
   const max = Number(field.charMax) || 0;
-  if (min > 0 && max > 0) return `${field.fieldName} [${min}-${max}]`;
-  if (max > 0) return `${field.fieldName} [${max}]`;
+  const unit = isWordField(field) ? WORD_UNIT_SUFFIX : '';
+  if (min > 0 && max > 0) return `${field.fieldName} [${min}-${max}${unit}]`;
+  if (max > 0) return `${field.fieldName} [${max}${unit}]`;
   return field.fieldName; // charMax === 0 → no bracket
 }
 
@@ -713,7 +729,12 @@ function parseDoc(doc) {
     if (current && bold && text) {
       const m = text.match(/^(.*?)\s*\[([^\]]*)\]\s*$/);
       const fieldName = m ? m[1].trim() : text;
-      const nums = (m ? m[2] : '').match(/\d+/g);
+      const bracket = m ? m[2] : '';
+      const nums = bracket.match(/\d+/g);
+      // The unit rides in the bracket ("[50-125 words]") because nothing about a
+      // field is persisted — see WORD_UNIT_SUFFIX. Reading it back here is what
+      // keeps the drafter and the reviewer counting the same thing the writer sees.
+      const fieldType = /\bwords?\b/i.test(bracket) ? 'words' : 'text';
       let charMin = 0;
       let charMax = 0;
       if (nums) {
@@ -725,6 +746,7 @@ function parseDoc(doc) {
         fieldName,
         charMin,
         charMax,
+        fieldType,
         // The blank paragraph immediately after the label starts where this
         // label paragraph ends; that's our draft insertion point (moved past the
         // notes line below when one is present).
@@ -817,7 +839,7 @@ function normalizeVarControls(t) {
 // that base — even a single option gets its number, so an appended batch always
 // reads as a numbered group. Omitted → today's behavior exactly (numbered iff the
 // batch has >1 option, base 1).
-function buildVariantBlock(variations, { distance, charMax, startIndex, labeled } = {}) {
+function buildVariantBlock(variations, { distance, charMax, fieldType, startIndex, labeled } = {}) {
   const list = (variations || []).filter((v) => v && String(v.copy || '').trim());
   if (list.length === 0) return '';
   const numbered = startIndex != null ? true : list.length > 1;
@@ -826,7 +848,11 @@ function buildVariantBlock(variations, { distance, charMax, startIndex, labeled 
   // append/matrix path always labels so every riffed option carries its angle.
   // When omitted, fall back to the legacy rule (label iff a non-'close' distance).
   const labelOn = labeled != null ? labeled : Boolean(distance && distance !== 'close');
-  const longField = !(Number(charMax) > 0 && Number(charMax) <= 120);
+  // Layout heuristic: short fields (headlines, CTAs) stack on one line each; long
+  // ones get their own block. 120 is a CHARACTER threshold — a 125-WORD body field
+  // would sail under it and be laid out as if it were a headline, so a word field is
+  // always long. (No word field is short: the smallest band here is 25 words.)
+  const longField = fieldType === 'words' || !(Number(charMax) > 0 && Number(charMax) <= 120);
   const lines = list.map((v, i) => {
     let prefix = '';
     if (numbered) prefix += `${base + i}. `;
@@ -895,6 +921,10 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
       fields: asset.fields.map((field) => ({
         fieldName: field.fieldName,
         charMax: field.charMax || 0,
+        charMin: field.charMin || 0,
+        // Unit, recovered from the label bracket by parseDoc. Without it the draft
+        // prompt tells the model "Character limit: 125" for a 125-WORD field.
+        fieldType: field.fieldType === 'words' ? 'words' : 'text',
         insertIndex: field.insertIndex,
         deleteEnd: field.deleteEnd,
         // Highest existing "Riff N" batch number under this field (append uses +1).
@@ -970,6 +1000,8 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
                 assetType: a.assetType,
                 fieldName: f.fieldName,
                 charMax: f.charMax,
+                charMin: f.charMin,
+                fieldType: f.fieldType,
                 assetDirection: a.assetDirection,
                 summary,
                 writerPrompt,
@@ -985,6 +1017,8 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
                 assetType: a.assetType,
                 fieldName: f.fieldName,
                 charMax: f.charMax,
+                charMin: f.charMin,
+                fieldType: f.fieldType,
                 assetDirection: a.assetDirection,
                 summary,
                 writerPrompt,
@@ -1003,7 +1037,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
               // this field cannot enter the deletions list — existing copy is
               // never touched. The batch is prefaced by a faint "Riff N" header in
               // Phase 2; N = the field's highest existing Riff batch + 1 (max+1).
-              const block = buildVariantBlock(variations, { charMax: f.charMax, startIndex: 1, labeled: true });
+              const block = buildVariantBlock(variations, { charMax: f.charMax, fieldType: f.fieldType, startIndex: 1, labeled: true });
               const insertAt = f.deleteEnd != null ? f.deleteEnd : f.insertIndex;
               if (block && insertAt != null) {
                 const riffN = (f.maxRiffN || 0) + 1;
@@ -1012,7 +1046,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
             } else {
               // Destructive-replace path (unchanged): buildVariantBlock with no
               // startIndex is byte-identical to before (bare for count-1/close).
-              const copy = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax });
+              const copy = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax, fieldType: f.fieldType });
               if (copy) drafts.push({ fieldName: f.fieldName, copy });
             }
           } catch (err) {
@@ -1315,7 +1349,12 @@ async function getDocContent(id, clients) {
     if (bold && text) {
       const m = text.match(/^(.*?)\s*\[([^\]]*)\]\s*$/);
       const fieldName = m ? m[1].trim() : text;
-      const nums = (m ? m[2] : '').match(/\d+/g);
+      const bracket = m ? m[2] : '';
+      const nums = bracket.match(/\d+/g);
+      // The unit rides in the bracket ("[50-125 words]") because nothing about a
+      // field is persisted — see WORD_UNIT_SUFFIX. Reading it back here is what
+      // keeps the drafter and the reviewer counting the same thing the writer sees.
+      const fieldType = /\bwords?\b/i.test(bracket) ? 'words' : 'text';
       let charMin = 0;
       let charMax = 0;
       if (nums) {
@@ -1323,7 +1362,7 @@ async function getDocContent(id, clients) {
         charMax = Math.max(...vals);
         if (vals.length >= 2) charMin = Math.min(...vals);
       }
-      field = { fieldName, charMin, charMax, notes: '', copy: '', riffMarks: [] };
+      field = { fieldName, charMin, charMax, fieldType, notes: '', copy: '', riffMarks: [] };
       current.fields.push(field);
       continue;
     }

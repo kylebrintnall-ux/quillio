@@ -206,13 +206,53 @@ Pull advertising — the reader is actively looking. Match the search intent. In
 **Body:** one clear message, scannable, building to a single primary CTA. Secondary offers come after and read as lighter.
 **CTA buttons:** match the destination (see Section 4).
 
+**One ask per email.** Multiple asks kill reply rates — the reader has to choose,
+and choosing is work, so they do nothing. If a second thing genuinely needs saying,
+it goes after the ask and reads as lighter, or it goes in a different email.
+
+**Structure beats length.** Context in one or two sentences. The ask in one. The
+next step in one. A well-structured 150-word email outperforms a poorly structured
+60-word one, so length targets are a budget for that structure, not a score to
+minimise. Analysis of 40M emails puts the response sweet spot at 75–100 words;
+past 200, response falls below 40%.
+
+**Proof before pitch.** Earn the right to ask. A result, a name, a number, a
+specific observation — something that shows you did the work — and then the ask.
+Asking first spends credibility you haven't established.
+
+**Specific over general.** One real detail about their business beats every
+adjective available to you. "Your three new AEs in Denver" lands; "your growing
+sales organisation" does not. If a sentence would be equally true of any recipient,
+it is doing no work.
+
+**Failure modes, by name:**
+- *The wall of text* — 300+ words with no paragraph breaks. It reads as effort
+  demanded rather than offered, and it gets scanned for the ask and abandoned.
+- *The over-apologizer* — "sorry to bother you", "I know you're busy", "just
+  circling back". Every hedge is a reason to deprioritise the email; you wrote it
+  because it's worth reading, so write like it.
+- *The multi-ask* — "book a call, or download this, or reply with a time." Three
+  asks is zero asks.
+
 ### Print / Out-of-Home
 
 No click, no link — the copy has to do everything. Fewer words, bigger idea. Memorable over detailed. The reader sees it for seconds — one message, cleanly delivered. Include a clear, simple way to act (URL, QR, search term).
 
 ### Sales / 1:1 Outreach
 
-Peer-to-peer, not corporate. Personalized and role-relevant. No marketing speak. Reads like one human emailing another. Short — under 500 chars for the body; longer kills reply rates. One clear ask.
+Peer-to-peer, not corporate. Personalized and role-relevant. No marketing speak. Reads like one human emailing another. One clear ask. Everything in the Email section above applies here first — one ask, proof before pitch, specific over general, and the three failure modes.
+
+**Cold is a different product from marketing email.** Cold outreach is plain text
+with a 1:1 feel and it is asking for a REPLY. Marketing email is branded HTML and
+it is asking for a CLICK. They are not the same thing written to different lengths:
+branded HTML is currently underperforming in B2B outbound precisely because it
+announces itself as a campaign, and a campaign does not get a reply.
+
+Write cold as though you typed it in your mail client and hit send: no hero image,
+no button, no footer of social icons. A link is a link. The signature is a name.
+
+**Length:** 50–100 words for cold outreach, 25–75 for a follow-up. Those are budgets
+for context / ask / next step, not targets to pad toward.
 
 ### Confirmation / Post-Conversion
 

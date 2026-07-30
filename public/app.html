@@ -115,6 +115,18 @@
       border-radius: 8px;
       font-size: 14px;
     }
+    /* Advisory, NOT an error — deliberately amber rather than red. It says an
+       asset the brief named was left out, on a screen where the rest of the work
+       succeeded, so it must not read as a failed run. */
+    .notice {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid #e3cf94;
+      background: #fdf8ec;
+      color: #6b520f;
+      border-radius: 8px;
+      font-size: 14px;
+    }
     /* Utility: wins over component display rules regardless of source order
        (e.g. .note / .loading set display:flex below this rule). */
     .hidden { display: none !important; }
@@ -838,6 +850,7 @@
 
       <div class="assets-label">Assets</div>
       <div id="confirm-assets"></div>
+      <div id="confirm-unmatched" class="notice hidden"></div>
       <div id="confirm-error" class="error hidden"></div>
 
       <div class="output-ctas">
@@ -862,6 +875,7 @@
       <div class="assets-label">Assets</div>
       <p class="field-select-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
       <div id="out-assets"></div>
+      <div id="out-unmatched" class="notice hidden"></div>
       <div id="output-error" class="error hidden"></div>
 
       <div class="output-ctas">
@@ -1102,6 +1116,15 @@
     }
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
     function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
+    // Advisory notice (amber, not red): render when there's a message, hide when
+    // there isn't. Takes the id so a caller can't accidentally leave a stale
+    // notice showing from a previous run — every call sets the state both ways.
+    function renderNotice(id, msg) {
+      var host = document.getElementById(id);
+      if (!host) return;
+      if (msg) { host.textContent = msg; host.classList.remove('hidden'); }
+      else { host.textContent = ''; host.classList.add('hidden'); }
+    }
     function show(el) { el.classList.remove('hidden'); }
     function hide(el) { el.classList.add('hidden'); }
 
@@ -1867,6 +1890,10 @@
         riff: { docId: state.docId, reload: async function () { await loadCopyDone(); showScreen('copydone'); } },
       });
 
+      // What the brief named that Quillio has no asset type for. The doc above
+      // WAS built — this says what it doesn't contain, which used to be silent.
+      renderNotice('out-unmatched', data.unmatchedNotice);
+
       var draftBtn = document.getElementById('draft-btn');
       draftBtn.disabled = false;
       show(draftBtn);
@@ -1886,6 +1913,9 @@
       document.getElementById('confirm-title').textContent = interp.campaignTitle || 'Campaign';
       document.getElementById('confirm-summary').textContent = interp.summary || '—';
       document.getElementById('confirm-direction').textContent = interp.writerDirection || '—';
+      // Shown before anything is built, so a name that didn't map can still be
+      // fixed by cancelling and rewording rather than found missing in the doc.
+      renderNotice('confirm-unmatched', interp.unmatchedNotice);
       clearError(document.getElementById('confirm-error'));
 
       var host = document.getElementById('confirm-assets');

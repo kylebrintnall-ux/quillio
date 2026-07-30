@@ -86,10 +86,95 @@ async function currentValues(runner, asset, field) {
 // Distinct current value of one attribute across tenant rows, as a string for
 // the diff/log. Usually a single value; if tenants somehow differ, joins them.
 function distinctValue(rows, attr) {
-  const vals = Array.from(
-    new Set(rows.map((r) => (r[attr] === null || r[attr] === undefined ? '' : String(r[attr]))))
-  );
+  const vals = Array.from(new Set(rows.map((r) => rowValue(r, attr))));
   return vals.join(' | ');
+}
+
+// One row's value of an attribute, normalized to the string form used for
+// comparison, grouping and logging. null/undefined collapse to '' so an unset
+// spec_note and an empty one are not reported as two different values.
+function rowValue(row, attr) {
+  const v = row && row[attr];
+  return v === null || v === undefined ? '' : String(v);
+}
+
+// Group the per-tenant rows for one (asset, field, attr) by the value they
+// currently hold.
+//
+// WHY THIS EXISTS. The write below (commitReview) matches copy_fields by asset
+// name and field name with NO tenant predicate, so ONE admin approval rewrites
+// every tenant's row. distinctValue already knew when tenants disagreed — it
+// joins them into "150 | 200" — but a joined string is not a fact an admin can
+// act on: it does not say how many tenants sit on each value, or which ones.
+// This turns that string into the breakdown, so divergence is visible BEFORE the
+// write rather than inferred from a suspicious-looking diff.
+//
+// `expected` is the value the most rows hold — the curated value the library was
+// seeded with, in every normal case. Everything else is divergence: a tenant
+// whose row was changed by an earlier approval they have since moved away from,
+// or (once tenants can edit their own limits) a deliberate local edit this write
+// is about to revert. Ties break on the first value seen, which is the lowest
+// tenant_id because currentValues orders by tenant_id — deterministic, so the
+// same state always previews the same way.
+//
+// Pure: takes rows, returns a plain object. No I/O, no pool.
+function tenantValueBreakdown(rows, attr) {
+  const byValue = new Map(); // value -> { value, tenants: [], row_count }
+  for (const r of rows || []) {
+    const value = rowValue(r, attr);
+    if (!byValue.has(value)) byValue.set(value, { value, tenants: [], row_count: 0 });
+    const entry = byValue.get(value);
+    entry.row_count += 1;
+    const tenantId = r && r.tenant_id != null ? String(r.tenant_id) : '(unknown)';
+    if (!entry.tenants.includes(tenantId)) entry.tenants.push(tenantId);
+  }
+  const groups = Array.from(byValue.values());
+  if (groups.length === 0) {
+    return { expected: '', expected_row_count: 0, divergent_row_count: 0, divergent: [], diverged: false };
+  }
+  // Most rows wins; first-seen (lowest tenant_id) breaks a tie.
+  let expectedGroup = groups[0];
+  for (const g of groups) {
+    if (g.row_count > expectedGroup.row_count) expectedGroup = g;
+  }
+  const divergent = groups
+    .filter((g) => g !== expectedGroup)
+    .sort((a, b) => b.row_count - a.row_count || (a.value < b.value ? -1 : 1));
+  return {
+    expected: expectedGroup.value,
+    expected_row_count: expectedGroup.row_count,
+    divergent_row_count: divergent.reduce((n, g) => n + g.row_count, 0),
+    divergent,
+    diverged: divergent.length > 0,
+  };
+}
+
+// The rows whose value this write actually CHANGES, from the pre-write snapshot.
+// One entry per row, carrying the tenant and the value it held. Rows already on
+// the new value are excluded — they are being re-stamped, not overwritten, and
+// reporting them would hide the ones that matter.
+//
+// `diverged` separates the two kinds of overwrite, which is the distinction the
+// admin actually needs: false is a routine update of a row that held the same
+// value as everyone else, true means this row held something DIFFERENT and that
+// value is now gone. Only the second kind is a tenant's own state being reverted.
+// Pure.
+function changedRows(before, attr, newValue) {
+  const next = newValue === null || newValue === undefined ? '' : String(newValue);
+  const { expected } = tenantValueBreakdown(before, attr);
+  const out = [];
+  for (const r of before || []) {
+    const old = rowValue(r, attr);
+    if (old === next) continue;
+    out.push({
+      tenant_id: r && r.tenant_id != null ? String(r.tenant_id) : '(unknown)',
+      attr,
+      old_value: old,
+      new_value: next,
+      diverged: old !== expected,
+    });
+  }
+  return out;
 }
 
 // Load a flag joined to its watch entry (display_name, source_url, affected
@@ -125,6 +210,10 @@ async function getFlagForReview(flagId) {
       tenant_count: rows.length,
       current_char_max: distinctValue(rows, 'char_max'),
       current_spec_note: distinctValue(rows, 'spec_note'),
+      // Same breakdown the preview carries, on the form that precedes it — so an
+      // admin can see tenants already disagree before deciding what to type.
+      char_max_divergence: tenantValueBreakdown(rows, 'char_max'),
+      spec_note_divergence: tenantValueBreakdown(rows, 'spec_note'),
     });
   }
 
@@ -186,6 +275,10 @@ async function buildPreview(flagId, edits) {
   const changes = [];
   for (const e of guard.edits) {
     const rows = await currentValues(pool, e.asset, e.field);
+    // Each change carries `divergence`: which tenants hold the expected value,
+    // which hold something else, and what those other values are. `old` (the
+    // joined "150 | 200" string) is kept alongside it unchanged — it is what the
+    // audit log records and what an existing caller reads.
     if (e.charMax !== undefined) {
       changes.push({
         asset: e.asset,
@@ -194,6 +287,7 @@ async function buildPreview(flagId, edits) {
         old: distinctValue(rows, 'char_max'),
         new: String(e.charMax),
         tenant_count: rows.length,
+        divergence: tenantValueBreakdown(rows, 'char_max'),
       });
     }
     if (e.specNote !== undefined) {
@@ -204,8 +298,28 @@ async function buildPreview(flagId, edits) {
         old: distinctValue(rows, 'spec_note'),
         new: e.specNote,
         tenant_count: rows.length,
+        divergence: tenantValueBreakdown(rows, 'spec_note'),
       });
     }
+  }
+
+  // A preview-level roll-up so the admin sees "this write touches rows that do
+  // not all agree" without reading every row of the table first.
+  const divergentChanges = changes.filter((c) => c.divergence && c.divergence.diverged);
+  if (divergentChanges.length > 0) {
+    console.warn(
+      `[specReview] preview flag=${guard.flag.id}: ${divergentChanges.length} field(s) diverge across tenants — ` +
+        divergentChanges
+          .map(
+            (c) =>
+              `${c.asset}/${c.field}.${c.attr} expected="${c.divergence.expected}" ` +
+              `(${c.divergence.expected_row_count} row(s)), ` +
+              c.divergence.divergent
+                .map((d) => `"${d.value}" on ${d.tenants.join(',')}`)
+                .join('; ')
+          )
+          .join(' | ')
+    );
   }
 
   return {
@@ -214,6 +328,8 @@ async function buildPreview(flagId, edits) {
     source_url: guard.flag.source_url,
     display_name: guard.flag.display_name,
     changes,
+    diverged: divergentChanges.length > 0,
+    divergent_field_count: divergentChanges.length,
   };
 }
 
@@ -270,6 +386,35 @@ async function commitReview(flagId, edits, changedBy) {
       );
       const tenantCount = upd.rowCount;
 
+      // WHO JUST GOT OVERWRITTEN. The UPDATE above has no tenant predicate, so it
+      // rewrote every tenant's row for this (asset, field) — including any tenant
+      // holding a different value from the rest. `before` was captured inside the
+      // transaction, so this is exactly what each of them held a moment ago.
+      //
+      // Only rows whose VALUE actually changed are reported: the write also
+      // stamps spec_verified_at on every matched row, and calling a re-stamp an
+      // overwrite would bury the real ones in noise.
+      const overwritten = [];
+      if (e.charMax !== undefined) {
+        overwritten.push(...changedRows(before, 'char_max', String(e.charMax)));
+      }
+      if (e.specNote !== undefined) {
+        overwritten.push(...changedRows(before, 'spec_note', e.specNote));
+      }
+      if (overwritten.length > 0) {
+        console.warn(
+          `[specReview] commit flag=${flag.id} "${e.asset} / ${e.field}": overwrote ${overwritten.length} row(s) ` +
+            `(${overwritten.filter((o) => o.diverged).length} of them holding a DIVERGENT value) — ` +
+            overwritten
+              .map(
+                (o) =>
+                  `tenant ${o.tenant_id} ${o.attr} "${o.old_value}" -> "${o.new_value}"` +
+                  (o.diverged ? ' [diverged]' : '')
+              )
+              .join('; ')
+        );
+      }
+
       // Audit log -- one row per changed attribute.
       if (e.charMax !== undefined) {
         await client.query(
@@ -294,6 +439,10 @@ async function commitReview(flagId, edits, changedBy) {
         tenant_count: tenantCount,
         char_max: e.charMax,
         spec_note: e.specNote,
+        // The audit trail for the silent half of this write: every row that held
+        // something other than what we just set, and what it held. Empty on the
+        // normal path where all tenants already agreed.
+        overwritten,
       });
     }
 
@@ -301,7 +450,24 @@ async function commitReview(flagId, edits, changedBy) {
     await client.query("UPDATE spec_review_queue SET status = 'reviewed' WHERE id = $1", [flag.id]);
 
     await client.query('COMMIT');
-    return { ok: true, flagId: flag.id, flagStatus: 'reviewed', written };
+    // Roll-up across every field in this approval, so one line in the log says
+    // whether this write reverted anybody.
+    const overwrittenTotal = written.reduce((n, w) => n + w.overwritten.length, 0);
+    const divergedTotal = written.reduce((n, w) => n + w.overwritten.filter((o) => o.diverged).length, 0);
+    console.log(
+      `[specReview] commit flag=${flag.id} wrote ${written.length} field(s), ` +
+        `${written.reduce((n, w) => n + w.tenant_count, 0)} row(s); ` +
+        `${overwrittenTotal} row(s) held a different value and were overwritten, ` +
+        `${divergedTotal} of which had diverged from the rest`
+    );
+    return {
+      ok: true,
+      flagId: flag.id,
+      flagStatus: 'reviewed',
+      written,
+      overwritten_count: overwrittenTotal,
+      diverged_overwritten_count: divergedTotal,
+    };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[specReview] commit failed, rolled back:', err.message);
@@ -372,4 +538,13 @@ async function dismiss(flagId) {
   return { ok: true, flagId: flagId, status: 'dismissed' };
 }
 
-module.exports = { getFlagForReview, getSuggestions, buildPreview, commitReview, dismiss };
+module.exports = {
+  getFlagForReview,
+  getSuggestions,
+  buildPreview,
+  commitReview,
+  dismiss,
+  // exposed for unit tests — both are pure and carry the divergence reporting
+  tenantValueBreakdown,
+  changedRows,
+};

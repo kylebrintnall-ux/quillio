@@ -13,6 +13,7 @@
 
 const pipeline = require('../core/pipeline');
 const { getClientsForTenant } = require('../google');
+const { totalMissMessage, partialMissNotice } = require('../utils/assetMatch');
 
 // The acting user's id from a resolved tenant context, or null.
 function actingUserId(tenantContext) {
@@ -34,15 +35,12 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
   let { summary, writerPrompt } = parsedBrief; // may be enriched below
   let referenceInsights = [];
 
-  // If the brief named assets but none matched the library, surface exactly
-  // what couldn't be matched instead of silently building the full set. (A
-  // vague brief with no assets at all still falls through to "all assets".)
+  // TOTAL miss: the brief named assets and none of them mapped. Refuse rather
+  // than silently building the full set. (A vague brief with no assets at all
+  // still falls through to "all assets".) Unchanged behavior — only the wording
+  // moved to the shared builder.
   if (assets.length === 0 && unmatchedAssets.length > 0) {
-    throw new Error(
-      `Couldn't match these to your asset library: ${unmatchedAssets.join(
-        ', '
-      )}. Add them to your library or try different asset names.`
-    );
+    throw new Error(totalMissMessage(unmatchedAssets));
   }
 
   // 2. Enrich from linked references + attached files (best-effort — any failure
@@ -89,7 +87,23 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
       : { asset: e.asset, count: e.count || 1, labels: Array.isArray(e.labels) ? e.labels : [] }
   );
 
-  return { briefText, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights, plan };
+  // `unmatchedAssets` rides out with the parse. It used to stop here, which is
+  // what made a PARTIAL miss invisible: the confirmation screen and the result
+  // payload are both built from this return value, so neither could show what
+  // was dropped even though the parse knew. `unmatchedNotice` is the rendered
+  // sentence (null when everything matched) so the route and the browser never
+  // rebuild the wording themselves.
+  return {
+    briefText,
+    campaignTitle,
+    summary,
+    writerPrompt,
+    referenceLinks,
+    referenceInsights,
+    plan,
+    unmatchedAssets,
+    unmatchedNotice: partialMissNotice(unmatchedAssets),
+  };
 }
 
 // SECOND HALF: folder routing + doc creation, resuming from a parse result and an
@@ -108,6 +122,10 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
 
   const { briefText, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights } = parsed;
   const assets = Array.isArray(plan) ? plan : parsed.plan;
+  // Carried from the parse so the result screen can say what was left out —
+  // including on the confirm-then-build path, where the notice was already shown
+  // once on the confirmation screen and would otherwise vanish from the result.
+  const unmatchedAssets = Array.isArray(parsed.unmatchedAssets) ? parsed.unmatchedAssets : [];
 
   // 3. Folder routing (priority): a Drive folder URL embedded in the brief, else
   //    the tenant's saved default folder (Settings → default_folder_id), else
@@ -180,6 +198,10 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
     summary,
     writerDirection: writerPrompt,
     referenceInsights,
+    // Advisory, not an error: the doc above WAS built. Null/[] when everything
+    // the brief named matched, which is every run that reached here before.
+    unmatchedAssets,
+    unmatchedNotice: partialMissNotice(unmatchedAssets),
   };
 }
 

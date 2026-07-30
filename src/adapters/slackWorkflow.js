@@ -31,6 +31,7 @@ const {
   sanitizeAssetPlan,
   slackOwner,
 } = require('../pendingBriefs');
+const { totalMissMessage, partialMissNotice } = require('../utils/assetMatch');
 
 const BUILDING_TEXT = `${emoji('quillio-scroll')} Building your document…`;
 
@@ -164,18 +165,28 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     console.log('[workflow] unmatchedAssets:', JSON.stringify(unmatchedAssets));
     console.log('[workflow] referenceLinks:', JSON.stringify(referenceLinks));
 
-    // Issue 2: all requested assets are unknown — don't substitute a nearest
-    // guess; tell the user exactly what couldn't be matched. (A vague brief with
-    // no assets at all still falls through to "all assets".)
+    // TOTAL miss: every requested asset is unknown — don't substitute a nearest
+    // guess; tell the user exactly what couldn't be matched and build nothing.
+    // (A vague brief with no assets at all still falls through to "all assets".)
+    // Unchanged behavior — only the wording moved to the shared builder.
     if (assets.length === 0 && unmatchedAssets.length > 0) {
-      console.log('[workflow] no assets matched the library — surfacing unmatched list');
-      const unmatchedText = `Couldn't match these to your asset library: ${unmatchedAssets.join(
-        ', '
-      )}. Add them to your library or try different asset names.`;
+      console.log('[workflow] no assets matched — surfacing unmatched list, building nothing');
+      const unmatchedText = totalMissMessage(unmatchedAssets);
       await emit(unmatchedText, undefined, () =>
         updateMessage(unmatchedText, responseUrl, { label: 'unmatched-assets' })
       );
       return;
+    }
+
+    // PARTIAL miss: some names mapped and some did not. This does NOT stop the
+    // build — the doc gets what matched — but it has to reach the user, which it
+    // previously did not: the guard above only fires on a total miss, so a brief
+    // naming three assets where one missed built a doc quietly short one asset.
+    // The notice rides the confirmation card (when one appears) and the
+    // doc-ready card, so it is visible on whichever card the user actually sees.
+    const unmatchedNotice = partialMissNotice(unmatchedAssets);
+    if (unmatchedNotice) {
+      console.log(`[workflow] PARTIAL asset match — building without: ${unmatchedAssets.join(', ')}`);
     }
 
     // Extract a Drive folder URL straight from the brief text (deterministic
@@ -247,6 +258,10 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         referenceLinks,
         referenceInsights,
         plan: assets,
+        // Parked so the doc-ready card can still say what was left out after the
+        // user clicks Build — resumeBriefWorkflow re-resolves the tenant but never
+        // re-parses the brief, so this is the only way the notice survives.
+        unmatchedAssets,
         effectiveFolderId,
         folderFromBrief,
         workspaceId: opts.workspaceId,
@@ -258,7 +273,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         `[workflow] plan needs confirmation → pending=${pendingId} ` +
           `plan=${JSON.stringify(assets.map((e) => `${e.asset}x${e.count}`))}`
       );
-      const card = buildPlanCardBlocks({ pendingId, campaignTitle, plan: assets });
+      const card = buildPlanCardBlocks({ pendingId, campaignTitle, plan: assets, unmatchedNotice });
       await emit(card.text, card.blocks, () =>
         updateMessage(card.text, responseUrl, { blocks: card.blocks, label: 'plan-confirm' })
       );
@@ -267,7 +282,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 
     await buildAndPost({
       brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
-      plan: assets, effectiveFolderId, folderFromBrief,
+      plan: assets, effectiveFolderId, folderFromBrief, unmatchedAssets,
       tenantId, actingUserId, live, responseUrl, emit,
     });
 
@@ -285,7 +300,8 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 async function buildAndPost(ctx) {
   const {
     brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
-    plan, effectiveFolderId, folderFromBrief, tenantId, actingUserId, live, responseUrl, emit,
+    plan, effectiveFolderId, folderFromBrief, unmatchedAssets, tenantId, actingUserId,
+    live, responseUrl, emit,
   } = ctx;
   {
     // 2-3. Read specs, create the project folder, and build the document. If a
@@ -354,6 +370,10 @@ async function buildAndPost(ctx) {
       // "Built 3 of 5 …" when a per-asset count hit the Slack ceiling; null when
       // nothing was clamped (every brief reachable before instances existed).
       notice: clampNotice(plan, SLACK_ASSET_LIMITS),
+      // "Couldn't match these …" when the brief named an asset that didn't map.
+      // Separate from `notice` because the two are independent: a brief can hit
+      // the ceiling, miss an asset name, both, or neither.
+      unmatchedNotice: partialMissNotice(unmatchedAssets),
     };
     const resultBlocks = buildResultBlocks(result).blocks;
     await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
@@ -570,6 +590,9 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
       referenceLinks: pending.referenceLinks,
       referenceInsights: pending.referenceInsights,
       plan,
+      // Parked at parse time — the brief is never re-parsed here, so without this
+      // the doc-ready card would drop a notice the plan card had already shown.
+      unmatchedAssets: pending.unmatchedAssets,
       effectiveFolderId: pending.effectiveFolderId,
       folderFromBrief: pending.folderFromBrief,
       tenantId,

@@ -47,6 +47,13 @@
     .msg { padding:10px 12px; border-radius:8px; margin:10px 0; font-size:13.5px; }
     .msg.err { background:rgba(232,106,106,.15); border:1px solid var(--danger); }
     .msg.ok { background:rgba(95,185,142,.15); border:1px solid var(--ok); }
+    /* Tenant divergence: this write has no tenant predicate, so a row holding a
+       different value is about to be overwritten. Amber — it is a fact the admin
+       must weigh, not an error that blocks the write. */
+    .msg.warn { background:rgba(224,168,74,.15); border:1px solid var(--warn); }
+    .diverge { font-size:12.5px; color:var(--warn); margin-top:4px; }
+    .diverge ul { margin:3px 0 0; padding-left:16px; }
+    .diverge li { margin:1px 0; }
     .summary { font-size:13.5px; margin:0 0 12px; }
     .summary > div { margin:3px 0; }
     tr.err-row td { background:rgba(232,106,106,.12); }
@@ -206,9 +213,16 @@ async function openApprove(flagId) {
     cmax.disabled = true; note.disabled = true;
     cb.addEventListener('change',()=>{ cmax.disabled=!cb.checked; note.disabled=!cb.checked; });
     inputs.push({fld, cb, cmax, note, hint});
+    // Divergence shown on the FORM as well as the preview: an admin choosing what
+    // to type should know up front that tenants don't currently agree.
+    const cell = el('td',{},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'}), hint]);
+    const dMax = divergenceNode(fld.char_max_divergence, 'char_max');
+    if (dMax) cell.appendChild(dMax);
+    const dNote = divergenceNode(fld.spec_note_divergence, 'spec_note');
+    if (dNote) cell.appendChild(dNote);
     table.appendChild(el('tr',{},[
       el('td',{},[cb]),
-      el('td',{},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'}), hint]),
+      cell,
       el('td',{text:String(fld.current_char_max||'—')}),
       el('td',{},[cmax]), el('td',{},[note]),
     ]));
@@ -264,6 +278,27 @@ function collectEdits(inputs, msg) {
   }
   return edits;
 }
+// Render a tenantValueBreakdown as "N row(s) hold X; M hold something else",
+// naming the divergent values and the tenants on them. Returns null when every
+// row agrees, so the caller renders nothing on the normal path.
+//
+// This is the whole point of the change: the API used to hand back only a joined
+// "150 | 200" string, which showed THAT tenants disagreed but never who, how
+// many, or which value was the odd one out — so the write that reverts them
+// looked identical to a write that changed nothing.
+function divergenceNode(d, label) {
+  if (!d || !d.diverged) return null;
+  const host = el('div',{class:'diverge'});
+  host.appendChild(el('div',{text:
+    label+': '+d.expected_row_count+' row(s) hold "'+(d.expected||'∅')+'" · '+
+    d.divergent_row_count+' row(s) hold something else and will be overwritten:'}));
+  const list = el('ul',{});
+  for (const g of d.divergent) {
+    list.appendChild(el('li',{text:'"'+(g.value||'∅')+'" — '+g.row_count+' row(s): '+g.tenants.join(', ')}));
+  }
+  host.appendChild(list);
+  return host;
+}
 async function preview(flag, inputs, msg) {
   msg.innerHTML='';
   const edits = collectEdits(inputs, msg);
@@ -277,11 +312,23 @@ function renderPreview(flag, edits, pv, msg) {
   panel.innerHTML='';
   panel.appendChild(el('h1',{text:'Confirm write — flag #'+flag.id}));
   panel.appendChild(el('p',{class:'note',text:'Nothing has been written yet. Review the diff, then confirm.'}));
+  // Up front, before the table: this write has no tenant filter, so if any row
+  // disagrees it is about to be reverted. Stated as a count of fields so it is
+  // legible at a glance; the per-row detail sits in the table below.
+  if (pv.diverged) {
+    panel.appendChild(el('div',{class:'msg warn',text:
+      pv.divergent_field_count+' field(s) do not hold the same value across all tenants. '+
+      'This write has no tenant filter, so every row below is set to the new value — '+
+      'the diverging rows listed will lose what they currently hold.'}));
+  }
   const table = el('table');
   table.appendChild(el('tr',{},[el('th',{text:'Asset / Field'}),el('th',{text:'Attr'}),el('th',{text:'Change'}),el('th',{text:'Tenant rows'})]));
   for (const c of pv.changes) {
+    const cell = el('td',{},[el('div',{class:'title',text:c.asset}),el('div',{class:'note',text:c.field})]);
+    const d = divergenceNode(c.divergence, c.attr);
+    if (d) cell.appendChild(d);
     table.appendChild(el('tr',{},[
-      el('td',{},[el('div',{class:'title',text:c.asset}),el('div',{class:'note',text:c.field})]),
+      cell,
       el('td',{text:c.attr}),
       el('td',{},[el('span',{class:'diff-old',text:String(c.old||'∅')}),document.createTextNode('  →  '),el('span',{class:'diff-new',text:String(c.new)})]),
       el('td',{text:String(c.tenant_count)}),
@@ -296,7 +343,27 @@ function renderPreview(flag, edits, pv, msg) {
       try {
         const r = await api('/admin/api/approve-commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId:flag.id,edits})});
         out.appendChild(el('div',{class:'msg ok',text:'Written. '+r.written.reduce((a,w)=>a+w.tenant_count,0)+' tenant row(s) updated across '+r.written.length+' field(s); flag marked reviewed; logged.'}));
-        setTimeout(()=>{ closeOverlay(); loadAll(); }, 1400);
+        // What the write actually reverted. Rendered AFTER the success line and
+        // kept on screen longer, because this is the part nobody could see
+        // before: a tenant whose value differed is now gone, and the only record
+        // of it was a server log line that did not exist either.
+        const reverted = [];
+        for (const w of r.written) for (const o of (w.overwritten||[])) reverted.push({w,o});
+        if (reverted.length) {
+          const box = el('div',{class:'msg warn'});
+          box.appendChild(el('div',{text:reverted.length+' row(s) held a different value and were overwritten ('
+            +r.diverged_overwritten_count+' of them had diverged from the rest):'}));
+          const list = el('ul',{});
+          for (const {w,o} of reverted) {
+            list.appendChild(el('li',{text:'tenant '+o.tenant_id+' — '+w.asset+' / '+w.field+' · '+o.attr+': "'+(o.old_value||'∅')+'" → "'+o.new_value+'"'
+              +(o.diverged?'   [diverged — this tenant’s own value is gone]':'')}));
+          }
+          box.appendChild(list);
+          out.appendChild(box);
+          setTimeout(()=>{ closeOverlay(); loadAll(); }, 8000);
+        } else {
+          setTimeout(()=>{ closeOverlay(); loadAll(); }, 1400);
+        }
       } catch (e) { out.appendChild(el('div',{class:'msg err',text:'Write failed: '+e.message})); }
     }},['Confirm write']),
     el('button',{onclick:closeOverlay},['Cancel — write nothing']),

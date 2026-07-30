@@ -299,6 +299,12 @@ router.post('/api/brief', briefLimiter, requireAuth, (req, res) => {
         writerDirection: parsed.writerPrompt,
         referenceInsights: parsed.referenceInsights,
         plan: parsed.plan,
+        // What the brief named that didn't map to a supported asset type. The
+        // confirmation screen is the last point before anything is built, so
+        // this is where a partial miss is cheapest to correct — it reached the
+        // route but stopped here before, leaving the screen unable to show it.
+        unmatchedAssets: parsed.unmatchedAssets || [],
+        unmatchedNotice: parsed.unmatchedNotice || null,
       },
     };
   });

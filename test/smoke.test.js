@@ -7553,3 +7553,314 @@ test('watch list: the rule against watching research citations is written down',
   assert.ok(!/http/.test(email.slice(email.indexOf('Longer bodies click less'), email.indexOf('Proof before pitch'))),
     'stated as craft, with no URL — a spec_source is for a field, not a paragraph');
 });
+
+// --- Silent failure 1: a PARTIAL asset match ---------------------------------
+// parseBrief filters the model's asset names against config.ALLOWED_ASSETS and
+// puts the misses in `unmatchedAssets`. Both adapters refused when EVERY name
+// missed, and said nothing at all when only SOME did — so a brief naming three
+// assets where one missed built a doc quietly short an asset. These tests pin
+// the partial path down on both surfaces and keep the total-miss refusal intact.
+
+test('assetMatch: the wording names what is actually checked, not "your library"', () => {
+  const { totalMissMessage, partialMissNotice, dedupeAssetNames } = require('../src/utils/assetMatch');
+
+  // The filter runs against config.ALLOWED_ASSETS — a GLOBAL list — so the old
+  // sentence ("Couldn't match these to your asset library … Add them to your
+  // library") named the wrong thing AND gave advice that does not work: adding a
+  // row to the tenant's library does not change what the filter accepts.
+  const total = totalMissMessage(['TikTok Ad', 'Billboard']);
+  assert.match(total, /any asset type Quillio supports/);
+  assert.ok(!/your asset library/i.test(total), 'no longer blames the tenant library');
+  assert.ok(!/Add them to your library/i.test(total), 'and drops the advice that would not have worked');
+  assert.match(total, /TikTok Ad, Billboard/);
+  assert.match(total, /Nothing was built/, 'a total miss says nothing was built');
+
+  // The partial notice is ADVISORY: the doc exists, so it must not read as a failure.
+  const partial = partialMissNotice(['TikTok Ad']);
+  assert.match(partial, /any asset type Quillio supports: TikTok Ad\./);
+  assert.match(partial, /It was left out — everything else was built/);
+  assert.ok(!/Nothing was built/.test(partial), 'a partial miss must never claim nothing was built');
+  assert.match(partialMissNotice(['A', 'B']), /They were left out/, 'plural agrees');
+
+  // Nothing unmatched → null, which is how every caller decides to render nothing.
+  assert.strictEqual(partialMissNotice([]), null);
+  assert.strictEqual(partialMissNotice(undefined), null);
+  assert.strictEqual(totalMissMessage([]), null);
+
+  // parseBrief merges the model's own unmatchedAssets with the names its filter
+  // rejected, so one name can arrive twice — repeating it reads like two failures.
+  assert.deepStrictEqual(dedupeAssetNames(['TikTok Ad', 'tiktok ad', ' ', null, 'SMS']), ['TikTok Ad', 'SMS']);
+  assert.strictEqual(partialMissNotice(['TikTok Ad', 'TikTok Ad']).match(/TikTok Ad/g).length, 1);
+});
+
+test('slack partial miss: the doc IS built, and the card says what was left out', async () => {
+  await withSlackBrief(
+    {
+      parseBrief: async () => ({
+        campaignTitle: 'Spring Sale', summary: 'S', writerPrompt: 'W',
+        assets: [{ asset: 'Battle Card', count: 1, labels: [] }, { asset: 'Campaign Landing Page', count: 1, labels: [] }],
+        unmatchedAssets: ['TikTok Ad'],
+        referenceLinks: [],
+      }),
+    },
+    async ({ adapter, sent, builds, last }) => {
+      await adapter.runBriefWorkflow('battle card, landing page, tiktok ad', 'https://hooks.slack.test/r', SLACK_OPTS);
+
+      // It BUILT — a partial miss must never block. Two assets, not three.
+      assert.strictEqual(builds.length, 1, 'the partial miss did not stop the build');
+      assert.deepStrictEqual(builds[0].plan.map((e) => e.asset), ['Battle Card', 'Campaign Landing Page']);
+
+      // And the doc-ready card carries the notice as CONTEXT, not as an error.
+      const card = last();
+      assert.strictEqual(card.api, 'chat.update');
+      assert.match(card.text, /Your doc is ready/, 'still a success card');
+      const contexts = card.blocks.filter((b) => b.type === 'context').map((b) => b.elements[0].text);
+      const unmatched = contexts.find((t) => /TikTok Ad/.test(t));
+      assert.ok(unmatched, 'the card names the asset that did not match');
+      assert.match(unmatched, /any asset type Quillio supports/);
+      assert.match(unmatched, /everything else was built/);
+    }
+  );
+});
+
+test('slack total miss: the refusal is unchanged — nothing is built', async () => {
+  await withSlackBrief(
+    {
+      parseBrief: async () => ({
+        campaignTitle: 'C', summary: 'S', writerPrompt: 'W',
+        assets: [], unmatchedAssets: ['TikTok Ad', 'Podcast Ad'], referenceLinks: [],
+      }),
+    },
+    async ({ adapter, builds, last }) => {
+      await adapter.runBriefWorkflow('tiktok ad and a podcast ad', 'https://hooks.slack.test/r', SLACK_OPTS);
+
+      assert.strictEqual(builds.length, 0, 'a total miss still builds nothing');
+      const msg = last();
+      assert.match(msg.text, /TikTok Ad, Podcast Ad/);
+      assert.match(msg.text, /Nothing was built/);
+      assert.strictEqual(msg.blocks, null, 'still a plain message, not a result card');
+    }
+  );
+});
+
+test('slack partial miss + pause: the notice rides the plan card AND survives Build', async () => {
+  await withSlackBrief(
+    {
+      parseBrief: async () => ({
+        campaignTitle: 'City Dinners', summary: 'S', writerPrompt: 'W',
+        assets: SLACK_PAUSE_PLAN, unmatchedAssets: ['SMS Blast'], referenceLinks: [],
+      }),
+    },
+    async ({ adapter, sent, builds, last }) => {
+      await adapter.runBriefWorkflow('3 emails, a landing page, an sms blast', 'https://hooks.slack.test/r', SLACK_OPTS);
+
+      // 1. It PAUSED, and the plan card names what missed — before anything exists,
+      //    which is the point at which cancelling and rewording is still free.
+      assert.strictEqual(builds.length, 0, 'nothing built yet');
+      const planCard = last();
+      const planCtx = planCard.blocks.filter((b) => b.type === 'context').map((b) => b.elements[0].text);
+      assert.ok(planCtx.some((t) => /SMS Blast/.test(t)), 'the plan card names the unmatched asset');
+      assert.ok(planCtx.some((t) => /Nothing has been created yet/.test(t)), 'and still says nothing exists yet');
+
+      // 2. Click Build. The brief is NOT re-parsed here, so the notice can only
+      //    survive via the pending record — which is exactly what regressed before.
+      const pendingId = planCard.blocks
+        .find((b) => b.type === 'actions')
+        .elements.find((e) => e.action_id === 'plan_build').value;
+      await adapter.resumeBriefWorkflow(pendingId, null, {
+        workspaceId: 'TEAM1', slackUserId: 'USER1', channel: 'C1', messageTs: 'TS1',
+        responseUrl: 'https://hooks.slack.test/r',
+      });
+
+      assert.strictEqual(builds.length, 1, 'the build ran from the confirmed plan');
+      const doneCtx = last().blocks.filter((b) => b.type === 'context').map((b) => b.elements[0].text);
+      assert.ok(doneCtx.some((t) => /SMS Blast/.test(t)), 'the doc-ready card still names it after Build');
+    }
+  );
+});
+
+test('slack: a fully-matched brief produces a card with no unmatched notice at all', async () => {
+  await withSlackBrief(
+    {
+      parseBrief: async () => ({
+        campaignTitle: 'Spring Sale', summary: 'S', writerPrompt: 'W',
+        assets: [{ asset: 'Battle Card', count: 1, labels: [] }],
+        unmatchedAssets: [], referenceLinks: [],
+      }),
+    },
+    async ({ adapter, last }) => {
+      await adapter.runBriefWorkflow('battle card', 'https://hooks.slack.test/r', SLACK_OPTS);
+      const contexts = last().blocks.filter((b) => b.type === 'context');
+      assert.strictEqual(contexts.length, 0, 'no advisory blocks when everything matched');
+    }
+  );
+});
+
+test('web adapter: the parse payload carries unmatchedAssets + the rendered notice', async () => {
+  const pipeline = require('../src/core/pipeline');
+  const saved = { parseBrief: pipeline.parseBrief, fetchAllReferences: pipeline.fetchAllReferences };
+  try {
+    pipeline.fetchAllReferences = async () => ({ refs: [], counts: { drive: 0, external: 0, pdf: 0, canvas: 0 } });
+
+    // PARTIAL miss: it does NOT throw, and the payload the confirmation screen
+    // and the result screen are both built from finally carries the miss. This
+    // return value stopping short of unmatchedAssets is what made the web
+    // surface structurally unable to show a partial miss.
+    pipeline.parseBrief = async () => ({
+      campaignTitle: 'C', summary: 'S', writerPrompt: 'W',
+      assets: [{ asset: 'Battle Card', count: 1, labels: [] }],
+      unmatchedAssets: ['TikTok Ad'], referenceLinks: [],
+    });
+    const { runWebBriefParse } = require('../src/adapters/web');
+    const parsed = await runWebBriefParse('battle card and a tiktok ad');
+    assert.deepStrictEqual(parsed.unmatchedAssets, ['TikTok Ad']);
+    assert.match(parsed.unmatchedNotice, /TikTok Ad/);
+    assert.match(parsed.unmatchedNotice, /everything else was built/);
+    assert.strictEqual(parsed.plan.length, 1, 'and the matched asset still builds');
+
+    // Fully matched → no notice, so the screens render nothing.
+    pipeline.parseBrief = async () => ({
+      campaignTitle: 'C', summary: 'S', writerPrompt: 'W',
+      assets: [{ asset: 'Battle Card', count: 1, labels: [] }],
+      unmatchedAssets: [], referenceLinks: [],
+    });
+    assert.strictEqual((await runWebBriefParse('battle card')).unmatchedNotice, null);
+
+    // TOTAL miss → still throws, with the corrected wording.
+    pipeline.parseBrief = async () => ({
+      campaignTitle: 'C', summary: 'S', writerPrompt: 'W',
+      assets: [], unmatchedAssets: ['TikTok Ad'], referenceLinks: [],
+    });
+    await assert.rejects(() => runWebBriefParse('tiktok ad'), /any asset type Quillio supports: TikTok Ad/);
+    await assert.rejects(() => runWebBriefParse('tiktok ad'), /Nothing was built/);
+  } finally {
+    Object.assign(pipeline, saved);
+  }
+});
+
+test('web route: the confirmation payload carries the unmatched notice', async () => {
+  await withBriefServer(
+    {
+      runWebBriefParse: async () => ({
+        campaignTitle: 'Nurture Wave', summary: 'S', writerPrompt: 'W', referenceInsights: [],
+        plan: [{ asset: 'Demand Gen Nurture Email', count: 5, labels: [] }],
+        unmatchedAssets: ['TikTok Ad'],
+        unmatchedNotice: "Couldn't match these to any asset type Quillio supports: TikTok Ad. It was left out — everything else was built.",
+      }),
+      runWebBriefGenerate: async () => ({ docUrl: 'https://docs.google.com/document/d/DOC/edit' }),
+    },
+    async ({ call, finish }) => {
+      const start = await call('POST', '/api/brief', 'u1', { briefText: '5 nurture emails and a tiktok ad' });
+      const paused = await finish(start.body.jobId, 'u1');
+      assert.strictEqual(paused.result.needsConfirmation, true);
+      // The confirm screen is the last point before anything is built — it must
+      // be able to say what will be missing from the doc it is about to create.
+      assert.deepStrictEqual(paused.result.interpretation.unmatchedAssets, ['TikTok Ad']);
+      assert.match(paused.result.interpretation.unmatchedNotice, /TikTok Ad/);
+    }
+  );
+});
+
+test('app.html renders the unmatched notice on both the confirm and output screens', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(html.includes('id="confirm-unmatched"'), 'the confirm screen has a notice host');
+  assert.ok(html.includes('id="out-unmatched"'), 'the output screen has one too');
+  assert.match(html, /renderNotice\('confirm-unmatched', interp\.unmatchedNotice\)/);
+  assert.match(html, /renderNotice\('out-unmatched', data\.unmatchedNotice\)/);
+  // Amber, not red: the run SUCCEEDED, so it must not be styled as an error.
+  assert.match(html, /\.notice\s*\{[^}]*background:\s*#fdf8ec/);
+  assert.ok(!/id="confirm-unmatched"[^>]*class="error/.test(html), 'not styled as an error');
+});
+
+// --- Silent failure 2: specReview overwrites tenant divergence ----------------
+// commitReview updates copy_fields by asset name + field name with NO tenant
+// predicate, so one approval rewrites every tenant's row. distinctValue already
+// knew when tenants disagreed — it joins them into "150 | 200" — but a joined
+// string says nothing about how many tenants hold each value or which ones, so
+// a write that reverted a tenant looked exactly like one that changed nothing.
+
+test('specReview divergence: the breakdown names the value, the count and the tenants', () => {
+  const { tenantValueBreakdown } = require('../src/services/specReview');
+
+  // Three tenants on the curated 150, one that has moved to 200.
+  const rows = [
+    { tenant_id: 'T1', char_max: 150, spec_note: 'n' },
+    { tenant_id: 'T2', char_max: 150, spec_note: 'n' },
+    { tenant_id: 'T3', char_max: 200, spec_note: 'n' },
+    { tenant_id: 'T4', char_max: 150, spec_note: 'n' },
+  ];
+  const d = tenantValueBreakdown(rows, 'char_max');
+  assert.strictEqual(d.diverged, true);
+  assert.strictEqual(d.expected, '150', 'the value the most rows hold is the expected one');
+  assert.strictEqual(d.expected_row_count, 3);
+  assert.strictEqual(d.divergent_row_count, 1);
+  assert.deepStrictEqual(d.divergent, [{ value: '200', tenants: ['T3'], row_count: 1 }]);
+
+  // All agreeing → not diverged, so the UI renders nothing on the normal path.
+  const same = tenantValueBreakdown(rows, 'spec_note');
+  assert.strictEqual(same.diverged, false);
+  assert.deepStrictEqual(same.divergent, []);
+  assert.strictEqual(same.expected_row_count, 4);
+
+  // null and '' are the SAME value — an unset spec_note and an empty one are not
+  // two different tenant opinions.
+  const nulls = tenantValueBreakdown(
+    [{ tenant_id: 'T1', spec_note: null }, { tenant_id: 'T2', spec_note: '' }],
+    'spec_note'
+  );
+  assert.strictEqual(nulls.diverged, false);
+
+  // No rows at all (a renamed asset nobody matches) → empty, never a crash.
+  assert.deepStrictEqual(tenantValueBreakdown([], 'char_max').divergent, []);
+  assert.strictEqual(tenantValueBreakdown([], 'char_max').diverged, false);
+});
+
+test('specReview overwrite log: only rows whose VALUE changes are reported', () => {
+  const { changedRows } = require('../src/services/specReview');
+
+  const before = [
+    { tenant_id: 'T1', char_max: 150 },
+    { tenant_id: 'T2', char_max: 200 },
+    { tenant_id: 'T3', char_max: 150 },
+  ];
+  // Writing 150: T2 loses its 200, the others are only re-stamped. The write
+  // always sets spec_verified_at on every matched row, so counting a re-stamp as
+  // an overwrite would bury the one row that actually lost data.
+  const changed = changedRows(before, 'char_max', 150);
+  assert.deepStrictEqual(changed, [
+    { tenant_id: 'T2', attr: 'char_max', old_value: '200', new_value: '150', diverged: true },
+  ]);
+
+  // Writing something new overwrites everyone, and each entry carries what that
+  // tenant held — the audit trail the commit log had no way to print before.
+  const all = changedRows(before, 'char_max', 400);
+  assert.strictEqual(all.length, 3);
+  assert.deepStrictEqual(all.map((r) => [r.tenant_id, r.old_value]), [['T1', '150'], ['T2', '200'], ['T3', '150']]);
+
+  // `diverged` separates the two kinds of overwrite. T1 and T3 held what everyone
+  // else held — a routine update. T2 held its OWN value and that value is now
+  // gone, which is the only one of the three that reverts a tenant.
+  assert.deepStrictEqual(all.map((r) => r.diverged), [false, true, false]);
+
+  assert.deepStrictEqual(changedRows([], 'char_max', 1), []);
+});
+
+test('admin.html surfaces divergence in the preview and the overwrite list after commit', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  // The preview roll-up says the write has no tenant filter, in the UI, not just
+  // in a server log the admin will never read.
+  assert.match(html, /pv\.diverged/);
+  assert.match(html, /divergent_field_count/);
+  assert.match(html, /no tenant filter/);
+  // Per-field detail: which value, how many rows, which tenants.
+  assert.match(html, /function divergenceNode/);
+  assert.match(html, /row\(s\) hold something else and will be overwritten/);
+  assert.match(html, /g\.tenants\.join/);
+  // And after the write, what was actually reverted.
+  assert.match(html, /w\.overwritten/);
+  assert.match(html, /held a different value and were overwritten/);
+  assert.match(html, /diverged_overwritten_count/);
+  assert.match(html, /this tenant/, 'and names the rows whose own value is gone');
+  // Amber — a fact to weigh, not an error that blocked the write.
+  assert.match(html, /\.msg\.warn\s*\{[^}]*--warn/);
+});

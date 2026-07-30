@@ -44,7 +44,7 @@ function formatAssetList(assets) {
 // "Saved to <folder>" line, and two buttons (Generate First Draft / Skip for now).
 // folderUrl/folderName are optional — the folder link renders only when a project
 // folder was made. `notice` is optional advisory context (see below).
-function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice }) {
+function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice, unmatchedNotice }) {
   const assetList = assets.length ? formatAssetList(assets) : '_No assets matched — included all specs._';
 
   const blocks = [
@@ -68,6 +68,15 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
   // versions than the brief asked for, without the card reading as a failure.
   if (notice) {
     blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: notice }] });
+  }
+
+  // The other advisory line: an asset the brief named that didn't map to any
+  // supported type. Its own context block, not folded into `notice`, because the
+  // two are independent — a brief can hit the per-asset ceiling, miss a name,
+  // both, or neither, and merging them would make either one imply the other.
+  // Like `notice` this is CONTEXT, not an error: the doc above was built.
+  if (unmatchedNotice) {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: unmatchedNotice }] });
   }
 
   // Folder + doc links as Slack hyperlinks, below the asset list. The doc link
@@ -193,7 +202,7 @@ function planLines(plan) {
 //
 // The card states that nothing exists yet, because the doc-ready card that
 // normally lands here looks similar and the difference matters.
-function buildPlanCardBlocks({ pendingId, campaignTitle, plan }) {
+function buildPlanCardBlocks({ pendingId, campaignTitle, plan, unmatchedNotice }) {
   const total = (plan || []).reduce((n, e) => n + (Number(e && e.count) || 1), 0);
   const title = String(campaignTitle || 'Your campaign');
   const text = `${emoji('quillio-scroll')} Here's how I read that brief — ${title}`;
@@ -209,6 +218,14 @@ function buildPlanCardBlocks({ pendingId, campaignTitle, plan }) {
           text: `*${total} version${total === 1 ? '' : 's'} to write:*\n${planLines(plan)}`,
         },
       },
+      // An asset the brief named that didn't map to any supported type. Shown
+      // HERE, above the buttons, because this card is the last point before
+      // anything is built — seeing it now is what lets the user cancel and
+      // rename rather than discover the gap in a finished doc. Omitted entirely
+      // when everything matched, so the card is unchanged for those briefs.
+      ...(unmatchedNotice
+        ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: unmatchedNotice }] }]
+        : []),
       {
         type: 'context',
         elements: [

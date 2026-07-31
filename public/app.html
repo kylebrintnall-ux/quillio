@@ -3058,7 +3058,7 @@
             '<img class="review-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">' +
             '<div class="review-status"></div><div class="review-digest"></div>' +
             '<div class="review-note" style="margin-top:8px">Notes are inline in the doc → <b>Open in Drive</b>.</div>';
-          body.querySelector('.review-status').textContent = (result && result.status) || 'Review complete';
+          body.querySelector('.review-status').textContent = (result && result.status) || 'Review complete.';
           body.querySelector('.review-digest').textContent = (result && result.digest) || '';
           if (reviewModalDocUrl) show(openBtn); else hide(openBtn);
         }

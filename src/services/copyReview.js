@@ -192,13 +192,18 @@ function orphanSweepIds({ liveComments, claimedIds, toDelete, scopeKeys, priorFi
 }
 
 // A supportive, non-numeric read of overall quality (never a grade/score).
+//
+// These are HEADLINES — Slack renders them as the review message's lead line and
+// the web app as .review-status — so they are punctuated as the sentences a
+// reader takes them for, not as UI labels. (A button label stays bare; a line of
+// copy someone reads does not.) One function, both surfaces, one rule.
 function qualitativeStatus(flagged, total) {
-  if (total === 0) return 'Nothing to review yet';
-  if (flagged === 0) return 'Looking strong ✨';
+  if (total === 0) return 'Nothing to review yet.';
+  if (flagged === 0) return 'Looking strong. ✨';
   const ratio = flagged / total;
-  if (ratio <= 0.25) return 'A few things to tighten';
-  if (ratio <= 0.6) return 'Worth another pass';
-  return 'Some rework to do';
+  if (ratio <= 0.25) return 'A few things to tighten.';
+  if (ratio <= 0.6) return 'Worth another pass.';
+  return 'Some rework to do.';
 }
 
 // The high-level shape of the result (not the individual notes — those live in
@@ -366,7 +371,8 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
     const digest = scoped
       ? 'Nothing to review in the selected field(s) yet.'
       : 'Nothing to review yet — this doc has no drafted copy.';
-    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: false, digest, status: 'Nothing to review yet' };
+    // Same headline as qualitativeStatus(0, 0), and punctuated the same way.
+    return { reviewed: 0, flagged: 0, clean: 0, hadCopy: false, digest, status: qualitativeStatus(0, 0) };
   }
 
   // Voice guide: tenant override, else repo voice.md.

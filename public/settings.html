@@ -398,6 +398,14 @@
     /* Asset on/off toggle — same control as onboarding's asset step. */
     /* Pinned to the right edge with nothing between it and the card, so the
        control does not move horizontally when it is flipped. */
+    /* Edit sits between the name and the toggle, and like the toggle it is
+       flex: none — so it never wraps and the toggle's x is unchanged whether an
+       asset is editable or not. Quiet on purpose: on a library of 30 seeded
+       assets and one custom one, it should not shout. */
+    .lib-editbtn { flex: none; background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.7);
+      border-radius: 999px; cursor: pointer; padding: 5px 12px; min-height: 30px; margin-top: -2px;
+      font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); }
+    .lib-editbtn:hover { color: var(--ink); border-color: rgba(26,26,46,0.3); }
     /* flex: none + a head that cannot wrap = the same x on every card. The small
        top offset centres it against the FIRST line of the name, not the block. */
     .lib-toggle { position: relative; width: 40px; height: 24px; flex: none; cursor: pointer; margin-top: 1px; }
@@ -964,7 +972,30 @@
 
       card.appendChild(head);
       card.appendChild(rowErr);
-      if (a.asset_direction) card.appendChild(el('div', 'lib-dir', a.asset_direction));
+
+      // Everything below the head is the READ-ONLY view. An edit swaps it for the
+      // form in place, so the form opens where the thing it edits is rather than
+      // somewhere else on the page.
+      var body = el('div');
+      var editHost = el('div');
+      card.appendChild(editHost);
+      card.appendChild(body);
+
+      // `editable` is the server's answer (db/assets.isSeededAssetName), not a
+      // guess from the name here — and the update route re-checks it against the
+      // stored row, so hiding this button is a convenience, never the rule.
+      if (a.editable) {
+        var editBtn = el('button', 'lib-editbtn', 'Edit');
+        editBtn.type = 'button';
+        editBtn.setAttribute('aria-label', 'Edit ' + a.name);
+        editBtn.addEventListener('click', function () {
+          hide(editBtn); hide(body);
+          libOpenForm(a, editHost, function () { show(editBtn); show(body); });
+        });
+        head.insertBefore(editBtn, toggle);
+      }
+
+      if (a.asset_direction) body.appendChild(el('div', 'lib-dir', a.asset_direction));
       var ul = el('ul', 'lib-fields');
       var openGroup = null;
       (a.fields || []).forEach(function (f) {
@@ -991,7 +1022,7 @@
         }
         ul.appendChild(li);
       });
-      card.appendChild(ul);
+      body.appendChild(ul);
       return card;
     }
     // --- Create an asset type ------------------------------------------------
@@ -1135,47 +1166,83 @@
       unit.addEventListener('change', touch);
 
       wrap.readRow = function () {
-        return {
+        var row = {
           field_name: name.value,
           char_min: min.value,
           char_max: max.value,
           field_type: unit.value,
           spec_note: note.value
         };
+        // An EXISTING field carries the id the library read gave it, so a rename
+        // lands on that row instead of being read as "delete one, add another".
+        // A row with no id is a field being added.
+        if (f.id) row.id = f.id;
+        return row;
       };
       return wrap;
     }
 
-    function libOpenNew() {
-      var host = $('lib-new-host');
+    // ONE form for both create and edit. `existing` is null for a new asset, or
+    // the asset being edited — in which case the fields arrive prefilled AND
+    // carrying their ids, which is the whole reason the editor read returns them.
+    //
+    // `host` is where the form lives: the panel-level host for a create, the
+    // asset's own card for an edit, so the form opens where the thing it edits is.
+    function libOpenForm(existing, host, onClose) {
       if (host.firstChild) return;               // already open
-      hide($('lib-new-open'));
+      var isEdit = !!existing;
       var box = el('div', 'lib-new');
-      box.appendChild(el('h2', null, 'New asset type'));
-      box.appendChild(el('p', 'lib-hint',
-        'A shape Quillio does not already know — your house landing page, a recurring event page. Seeded asset types can\'t be edited here.'));
+      box.appendChild(el('h2', null, isEdit ? 'Edit asset type' : 'New asset type'));
+      box.appendChild(el('p', 'lib-hint', isEdit
+        ? 'Rename it, change its fields, reorder them, add or remove. Quillio\'s built-in asset types can\'t be edited — only switched off.'
+        : 'A shape Quillio does not already know — your house landing page, a recurring event page. Quillio\'s built-in asset types can\'t be edited here.'));
 
       var nameL = el('label', null, 'Name'); box.appendChild(nameL);
       var nameI = document.createElement('input'); nameI.type = 'text';
-      nameI.placeholder = 'e.g. House Landing Page'; box.appendChild(nameI);
+      nameI.placeholder = 'e.g. House Landing Page';
+      nameI.value = isEdit ? (existing.name || '') : '';
+      box.appendChild(nameI);
+      // Said before the rename, not after it: a doc already built under the old
+      // name stops matching this asset, so re-drafting it loses the creative
+      // direction (getAssetDirections matches by normalized name). Nothing errors
+      // — which is exactly why it needs saying here.
+      var renameWarn = el('p', 'lib-hint');
+      renameWarn.classList.add('hidden');
+      box.appendChild(renameWarn);
+      if (isEdit) {
+        nameI.addEventListener('input', function () {
+          var changed = nameI.value.trim() && nameI.value.trim() !== (existing.name || '').trim();
+          renameWarn.classList.toggle('hidden', !changed);
+          renameWarn.textContent = changed
+            ? 'Renaming affects new docs only. Docs already built as "' + existing.name +
+              '" keep their copy, but re-drafting one won\'t pick up this asset\'s creative direction any more.'
+            : '';
+        });
+      }
 
       var groupL = el('label', null, 'Group (optional)'); box.appendChild(groupL);
       var groupI = document.createElement('input'); groupI.type = 'text';
-      groupI.placeholder = 'e.g. Web'; box.appendChild(groupI);
+      groupI.placeholder = 'e.g. Web';
+      groupI.value = isEdit ? (existing.group || '') : '';
+      box.appendChild(groupI);
 
       var dirL = el('label', null, 'Creative direction (optional)'); box.appendChild(dirL);
       var dirI = document.createElement('textarea');
       dirI.style.minHeight = '60px'; dirI.style.fontFamily = 'inherit'; dirI.style.fontSize = '14px';
       dirI.placeholder = 'One or two lines every field on this asset should follow.';
+      dirI.value = isEdit ? (existing.asset_direction || '') : '';
       box.appendChild(dirI);
 
-      var pasteL = el('label', null, 'Fields'); box.appendChild(pasteL);
+      var pasteL = el('label', null, isEdit ? 'Add more fields' : 'Fields'); box.appendChild(pasteL);
       var paste = document.createElement('textarea');
       paste.className = 'lib-paste';
-      paste.placeholder = 'Paste your field list — one per line:\n\nHero Headline [70]\nHero Subheadline [40-120]\nOffer Body [50-140 words]\nPrimary CTA [20]\nLegal Line';
+      paste.placeholder = isEdit
+        ? 'Paste more fields to append — one per line:\n\nProof Point [90]\nLegal Line'
+        : 'Paste your field list — one per line:\n\nHero Headline [70]\nHero Subheadline [40-120]\nOffer Body [50-140 words]\nPrimary CTA [20]\nLegal Line';
       box.appendChild(paste);
-      box.appendChild(el('p', 'lib-hint',
-        'One field per line, and it becomes an editable row as you type. Add a limit in brackets the same way it appears in your docs — [70], [40-90], [50-140 words]. No brackets means no limit.'));
+      box.appendChild(el('p', 'lib-hint', isEdit
+        ? 'Anything you paste is ADDED below — your existing fields are never replaced by it. One per line, with the limit in brackets: [70], [40-90], [50-140 words].'
+        : 'One field per line, and it becomes an editable row as you type. Add a limit in brackets the same way it appears in your docs — [70], [40-90], [50-140 words]. No brackets means no limit.'));
 
       // A count instead of a column header: a stacked row has no columns to
       // label, and with a dozen-plus fields "14 fields" is the thing you want to
@@ -1264,6 +1331,11 @@
         refreshHead();
       };
 
+      // An EDIT opens with the asset's own fields already in the list, each
+      // carrying its id. They are added as MANUAL rows (srcKey null), so the
+      // paste box — which owns only the rows it made — can never overwrite them.
+      if (isEdit) addRows(existing.fields || []);
+
       var oneMore = el('button', 'btn', '+ Add a field');
       oneMore.type = 'button';
       oneMore.style.marginTop = '10px';
@@ -1276,24 +1348,66 @@
 
       var actions = el('div', 'btnrow');
       actions.style.marginTop = '14px';
-      var save = el('button', 'btn primary', 'Create asset type');
+      var save = el('button', 'btn primary', isEdit ? 'Save changes' : 'Create asset type');
       save.type = 'button';
       var cancel = el('button', 'btn', 'Cancel');
       cancel.type = 'button';
-      cancel.addEventListener('click', function () { host.textContent = ''; show($('lib-new-open')); });
+      var close = function () { host.textContent = ''; if (onClose) onClose(); };
+      cancel.addEventListener('click', close);
       actions.appendChild(save); actions.appendChild(cancel);
       box.appendChild(actions);
+
+      // REMOVING an asset is switching it off. There is no second "deleted"
+      // state and deliberately so: five tables reference asset_types(id) with no
+      // ON DELETE, so the row cannot go anywhere — and is_active ALREADY means
+      // everything "deleted" would mean (a brief can't ask for it, it never
+      // appears in a doc). A second state would be two names for one behaviour,
+      // and the UI would have to explain a difference that isn't there. What was
+      // missing is not a delete, it is saying plainly that off IS removed, and
+      // that it comes back.
+      if (isEdit) {
+        var removeWrap = el('div');
+        removeWrap.style.marginTop = '16px';
+        removeWrap.appendChild(el('p', 'lib-hint',
+          'Removing an asset type switches it off: briefs stop being able to ask for it and it never appears in a doc. Docs you already built keep their copy, and you can switch it back on any time.'));
+        var removeBtn = el('button', 'btn', 'Remove this asset type');
+        removeBtn.type = 'button';
+        removeBtn.style.marginTop = '8px';
+        removeBtn.addEventListener('click', async function () {
+          err.style.display = 'none';
+          removeBtn.disabled = true;
+          try {
+            var r = await fetch('/api/settings/library/active', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: existing.id, active: false })
+            });
+            var d = await r.json().catch(function () { return null; });
+            if (!r.ok || !d || !d.success) throw new Error((d && d.error) || 'Could not remove that asset type.');
+            close();
+            libLoaded = false;
+            await libEnsureLoaded();
+          } catch (e) {
+            err.textContent = e.message || 'Network error.';
+            err.style.display = '';
+          } finally {
+            removeBtn.disabled = false;
+          }
+        });
+        removeWrap.appendChild(removeBtn);
+        box.appendChild(removeWrap);
+      }
 
       save.addEventListener('click', async function () {
         err.style.display = 'none'; err.textContent = '';
         // Flush a sync still sitting in the debounce, so pasting and immediately
-        // pressing Create sends what is on screen rather than what preceded it.
+        // saving sends what is on screen rather than what preceded it.
         if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; syncFromPaste(); }
         var fields = [];
         Array.prototype.forEach.call(rows.children, function (r) { if (r.readRow) fields.push(r.readRow()); });
         save.disabled = true;
         try {
-          var res = await fetch('/api/settings/library/asset', {
+          var res = await fetch(isEdit ? '/api/settings/library/asset/' + existing.id : '/api/settings/library/asset', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1305,14 +1419,18 @@
           });
           var data = await res.json().catch(function () { return null; });
           if (!res.ok || !data || !data.success) {
-            throw new Error((data && data.error) || 'Could not create that asset type.');
+            throw new Error((data && data.error) || (isEdit ? 'Could not save that change.' : 'Could not create that asset type.'));
           }
-          // Reload the library so the new asset appears exactly as the server
-          // stored it — never as the client believes it submitted it.
-          host.textContent = '';
-          show($('lib-new-open'));
+          // Reload the library so the asset appears exactly as the server stored
+          // it — never as the client believes it submitted it.
+          close();
           libLoaded = false;
           await libEnsureLoaded();
+          // data.warning (the rename consequence) is deliberately NOT surfaced
+          // here: the form already said it live, next to the name, BEFORE the
+          // rename — which is the only moment the user can act on it. Repeating
+          // it after the fact would be a notification about a decision already
+          // made. The field stays on the response for API callers.
         } catch (e) {
           err.textContent = e.message || 'Network error.';
           err.style.display = '';
@@ -1323,6 +1441,13 @@
 
       host.appendChild(box);
       nameI.focus();
+    }
+
+    // The panel-level "+ New asset type" button. An EDIT opens the same form
+    // inside its own card — see libRenderAsset.
+    function libOpenNew() {
+      hide($('lib-new-open'));
+      libOpenForm(null, $('lib-new-host'), function () { show($('lib-new-open')); });
     }
     $('lib-new-open').addEventListener('click', libOpenNew);
 

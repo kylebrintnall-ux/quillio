@@ -460,6 +460,7 @@ test('settings router mounts and exposes its routes', () => {
     '/api/settings/library', // asset library (GET)
     '/api/settings/library/active', // asset on/off (POST) — is_active only
     '/api/settings/library/asset', // create a tenant asset type (POST)
+    '/api/settings/library/asset/:id', // edit a tenant asset type (POST)
     '/api/settings/voice',
     '/api/settings/voice',
     '/api/settings/voice/generate',
@@ -8397,24 +8398,27 @@ test('a failed save reverts the toggle, the card and the count', () => {
   assert.match(handler, /input\.disabled = false/);
 });
 
-test('the library screen reaches exactly two writes, and neither claims a spec', () => {
+test('the library screen reaches exactly three writes, and none claims a spec', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
   const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Markdown render'));
 
-  // Two, and only two: flip an asset on/off, and create a new one.
+  // Three, and only three: flip an asset on/off (the card toggle), save the form
+  // (create OR edit — one fetch, one ternary on the URL), and Remove (which is
+  // the same /active write, said in the words the user is thinking in).
   const posts = libJs.match(/method: 'POST'/g) || [];
-  assert.strictEqual(posts.length, 2, 'two POSTs, no more');
-  assert.match(libJs, /'\/api\/settings\/library\/active'/);
-  assert.match(libJs, /'\/api\/settings\/library\/asset'/);
-  // No delete, no clone, no edit-an-existing-asset.
+  assert.strictEqual(posts.length, 3, 'three POSTs, no more');
+  assert.strictEqual((libJs.match(/'\/api\/settings\/library\/active'/g) || []).length, 2, 'toggle and Remove');
+  assert.match(libJs, /'\/api\/settings\/library\/asset\/' \+ existing\.id : '\/api\/settings\/library\/asset'/);
+  // No hard delete from this screen — five tables reference asset_types(id) with
+  // no ON DELETE, so removal is is_active and nothing else.
   assert.ok(!/method: 'DELETE'|method: 'PATCH'|method: 'PUT'/.test(libJs), 'no delete/patch/put from this screen');
 
   // The client cannot even NAME the two authority columns — there is nothing to
   // put them in, which is the point of the allowlist being server-side. (The
   // read-only renderer above DOES read f.spec_type, to draw the tier badge; the
-  // create form is the half that must never mention either.)
+  // form is the half that must never mention either, on create OR on edit.)
   const createJs = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
-  assert.ok(createJs.length > 500, 'found the create form');
+  assert.ok(createJs.length > 500, 'found the form');
   // Comments stripped: the form's own comments explain WHY the two columns are
   // absent, which is the opposite of touching them.
   const code = createJs.replace(/^\s*\/\/.*$/gm, '');
@@ -8595,7 +8599,13 @@ test('no limit is a real state, and survives the doc round trip', () => {
 
 test('the create route takes its tenant from the session and nothing from the body', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  const route = src.slice(src.indexOf("'/api/settings/library/asset'"), src.indexOf('GET /api/settings/workspace'));
+  // Ends at the UPDATE route below it, which is a separate handler with its own
+  // test — measuring the two as one block would let either satisfy the other's
+  // assertions.
+  const route = src.slice(
+    src.indexOf("'/api/settings/library/asset'"),
+    src.indexOf('POST /api/settings/library/asset/:id')
+  );
   assert.match(route, /settingsWriteLimiter, requireAuth/, 'rate-limited and auth-gated');
   assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant comes from the session');
   // req.body appears exactly once, as the argument to the allowlist — never as a
@@ -8638,9 +8648,12 @@ test('the create form survives a dozen-plus fields on a phone', () => {
 
   // Zero rows on open. Either the paste or "+ Add a field" makes the first one —
   // an empty row on open is a chore presented as a starting point.
-  const open = createJs.slice(createJs.indexOf('function libOpenNew'));
-  assert.ok(!/addRows\(\[\{\}\]\)/.test(open.slice(0, open.indexOf('oneMore.addEventListener'))),
-    'nothing seeds a row before the user acts');
+  const open = createJs.slice(createJs.indexOf('function libOpenForm'));
+  // The only addRows before "+ Add a field" is the EDIT prefill, which is gated
+  // on isEdit — a create still opens with nothing.
+  const beforeAdd = open.slice(0, open.indexOf('oneMore.addEventListener'));
+  assert.match(beforeAdd, /if \(isEdit\) addRows\(existing\.fields \|\| \[\]\)/);
+  assert.ok(!/^\s*addRows\(\[\{\}\]\)/m.test(beforeAdd), 'nothing seeds a row on a create before the user acts');
   assert.match(open, /oneMore\.addEventListener\('click', function \(\) \{ addRows\(\[\{\}\]\); \}\)/);
 
   // The row is STACKED: a single grid line put the field name in the narrowest
@@ -9356,4 +9369,248 @@ test('craft.md rules headline terminal punctuation, universally', () => {
   // copy illustrations, not headlines, and are left alone.)
   const byLength = head.slice(head.indexOf('**By length:**'), head.indexOf('**Terminal punctuation'));
   assert.ok(!/"[^"]+\."/.test(byLength), `a headline example still ends in a period: ${byLength}`);
+});
+
+// --- Editing an asset a tenant created ---------------------------------------
+// Create shipped without an update or a delete, so a typo was permanent. Fields
+// are edited BY ID — the ids the editor read has been returning since it shipped.
+
+test('create and edit share ONE field allowlist, so they cannot drift', () => {
+  const { normalizeNewAsset, normalizeAssetEdit } = require('../src/utils/assetInput');
+  const body = {
+    name: 'House Landing Page',
+    group: 'Web',
+    asset_direction: 'Plain.',
+    // Every hostile key, at both levels, on both paths.
+    id: 999, tenant_id: 'other', is_active: false, sort_order: -5,
+    spec_type: 'enforced', spec_source: 'https://www.linkedin.com/help',
+    fields: [{
+      id: '42', field_name: 'Hero Headline', char_max: 70,
+      spec_type: 'enforced', spec_source: 'https://www.linkedin.com/help', spec_version: 3,
+      asset_type_id: 7, group_label: 'Nope',
+    }],
+  };
+  const created = normalizeNewAsset(body).asset;
+  const edited = normalizeAssetEdit(body, { selfName: 'House Landing Page' }).asset;
+
+  // The asset shell is identical on both.
+  assert.deepStrictEqual(Object.keys(created).sort(), ['asset_direction', 'fields', 'group', 'name']);
+  assert.deepStrictEqual(Object.keys(edited).sort(), ['asset_direction', 'fields', 'group', 'name']);
+  // The field differs ONLY by the id an edit needs to address a row.
+  assert.deepStrictEqual(Object.keys(created.fields[0]).sort(),
+    ['char_max', 'char_min', 'field_name', 'field_type', 'sort_order', 'spec_note']);
+  assert.deepStrictEqual(Object.keys(edited.fields[0]).sort(),
+    ['char_max', 'char_min', 'field_name', 'field_type', 'id', 'sort_order', 'spec_note']);
+  assert.strictEqual(edited.fields[0].id, '42');
+  // Neither can name the two authority columns, anywhere in the result.
+  for (const a of [created, edited]) {
+    assert.ok(!/spec_type|spec_source|spec_version|tenant_id|is_active|group_label/.test(JSON.stringify(a)));
+  }
+  // sort_order is the SUBMITTED ORDER on both, never a client-supplied number —
+  // which is what makes reordering "move the row" rather than "trust the index".
+  assert.strictEqual(created.fields[0].sort_order, 1);
+  assert.strictEqual(edited.fields[0].sort_order, 1);
+
+  // And it is literally one function: the source has a single field allowlist.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'utils', 'assetInput.js'), 'utf8');
+  assert.strictEqual((src.match(/field_name: fieldName,/g) || []).length, 1, 'one allowlist, not two');
+  assert.strictEqual((src.match(/function normalizeFields/g) || []).length, 1);
+});
+
+test('an edit may keep its own name, and only its own', () => {
+  const { normalizeAssetEdit } = require('../src/utils/assetInput');
+  const ok = { fields: [{ field_name: 'H', char_max: 50 }] };
+  const names = ['House Landing Page', 'Battle Card'];
+
+  // Saving without renaming must not read as a duplicate of yourself.
+  assert.deepStrictEqual(
+    normalizeAssetEdit({ ...ok, name: 'House Landing Page' }, { existingNames: names, selfName: 'House Landing Page' }).errors,
+    []
+  );
+  // Folded, so a dash/case variant of your own name is still yours.
+  assert.deepStrictEqual(
+    normalizeAssetEdit({ ...ok, name: 'house  landing page' }, { existingNames: names, selfName: 'House Landing Page' }).errors,
+    []
+  );
+  // Somebody else's name is still a duplicate.
+  assert.match(
+    normalizeAssetEdit({ ...ok, name: 'Battle Card' }, { existingNames: names, selfName: 'House Landing Page' }).errors[0],
+    /already have an asset type called "Battle Card"/
+  );
+  // A rename still meets every create rule — the instance-suffix one especially,
+  // because googleDocs INSTANCE_HEADING_RE would read it as instance N of another
+  // asset when the doc is re-parsed.
+  assert.match(
+    normalizeAssetEdit({ ...ok, name: 'Landing Page 2' }, { selfName: 'House Landing Page' }).errors[0],
+    /ends in a number/
+  );
+  const { INSTANCE_SUFFIX_RE } = require('../src/utils/assetInput');
+  const { parseAssetHeading } = require('../src/destinations/googleDocs');
+  void parseAssetHeading;
+  assert.ok(INSTANCE_SUFFIX_RE.test('Landing Page 2'), 'the two regexes agree on the shape');
+
+  // A field id we never issued is not trusted — it becomes a NEW field rather
+  // than a claim on a row.
+  const { FIELD_ID_RE } = require('../src/utils/assetInput');
+  for (const bad of ['1; DROP TABLE', '1 OR 1=1', '-1', '1.5', 'abc', '']) {
+    assert.ok(!FIELD_ID_RE.test(bad), `not an id we issued: ${JSON.stringify(bad)}`);
+  }
+  const smuggled = normalizeAssetEdit(
+    { name: 'X', fields: [{ id: '1; DROP TABLE copy_fields', field_name: 'H' }] },
+    { selfName: 'X' }
+  ).asset;
+  assert.ok(!('id' in smuggled.fields[0]), 'a non-id is dropped, not passed through');
+});
+
+test('a seeded asset is read-only apart from is_active, decided by NAME', () => {
+  const { isSeededAssetName } = require('../src/db/assets');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  // Every bundled name is seeded, folded the way everything else folds.
+  for (const a of DEFAULT_ASSETS) {
+    assert.ok(isSeededAssetName(a.name), `${a.name} is seeded`);
+    assert.ok(isSeededAssetName(a.name.toUpperCase()), 'case-folded');
+  }
+  assert.ok(isSeededAssetName('linkedin  single image ad'), 'whitespace-folded');
+  assert.ok(!isSeededAssetName('House Landing Page'), 'a tenant creation is not');
+  assert.ok(!isSeededAssetName(''), 'and neither is nothing');
+
+  // WHY the name and not a stored column: services/specReview updates copy_fields
+  // by asset NAME with no tenant filter, so the name is exactly what decides
+  // whether a row is reachable by that cross-tenant write. A renamed seeded asset
+  // would silently stop receiving platform-limit updates while its doc kept
+  // rendering "Platform limit (LinkedIn)" beside a stale number.
+  const spec = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+  const sql = spec.slice(spec.indexOf("'UPDATE copy_fields cf'"), spec.indexOf('RETURNING at.tenant_id'));
+  assert.match(sql, /AND at\.name = \$/, 'specReview still matches on NAME');
+  // No tenant PREDICATE — the statement deliberately rewrites every tenant's row
+  // for this (asset, field), which is how a platform's changed limit reaches all
+  // of them at once. (It RETURNS at.tenant_id, to report who was overwritten;
+  // that is the opposite of filtering by it.)
+  assert.ok(!/WHERE[\s\S]*tenant_id|AND\s+\S*tenant_id/.test(sql),
+    'and still has no tenant filter — which is the whole reason for this rule');
+
+  // Enforced in the DB layer against the STORED row, not just the request: a
+  // rename in the same call cannot walk past the check.
+  const db = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const fn = db.slice(db.indexOf('async function updateAssetType'), db.indexOf('// Asset toggles, BY ID'));
+  assert.match(fn, /SELECT id, name FROM asset_types WHERE id = \$1 AND tenant_id = \$2 FOR UPDATE/);
+  assert.match(fn, /if \(isSeededAssetName\(cur\.rows\[0\]\.name\)\)/, 'checked against the stored name');
+  assert.ok(fn.indexOf('isSeededAssetName(cur.rows[0].name)') < fn.indexOf('UPDATE asset_types SET'),
+    'refused BEFORE anything is written');
+  // And the route reports it too, so the UI can say why — but the route is not
+  // the guarantee.
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  assert.match(route, /if \(isSeededAssetName\(current\.name\)\)/);
+  assert.match(route, /result\.reason === 'seeded'/, 'and honours the db layer even so');
+});
+
+test('the update writes six columns, by id, in one transaction', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function updateAssetType'), src.indexOf('// Asset toggles, BY ID'));
+
+  // The field UPDATE names the same six columns the create INSERT does — and
+  // neither authority column, so an edit can neither SET nor CLEAR them.
+  const upd = fn.match(/UPDATE copy_fields[\s\S]*?WHERE id = \$7 AND asset_type_id = \$8/)[0];
+  assert.ok(!/spec_type|spec_source|spec_version/.test(upd), 'no spec claim in the field UPDATE');
+  assert.match(upd, /field_name = \$1, char_min = \$2, char_max = \$3, field_type = \$4,\s*\n?\s*sort_order = \$5, spec_note = \$6/);
+  // Scoped to the asset as well as the id, so an id from another asset cannot be
+  // steered into this one.
+  assert.match(upd, /WHERE id = \$7 AND asset_type_id = \$8/);
+
+  // Reconcile by id: update what is owned, insert what has none, delete the rest.
+  assert.match(fn, /SELECT id FROM copy_fields WHERE asset_type_id = \$1/);
+  assert.match(fn, /const id = field\.id && owned\.has\(String\(field\.id\)\) \? String\(field\.id\) : null/);
+  assert.match(fn, /DELETE FROM copy_fields WHERE asset_type_id = \$1 AND id = ANY\(\$2::bigint\[\]\)/);
+
+  // One transaction — a half-applied edit is a library shape nobody asked for.
+  assert.match(fn, /await client\.query\('BEGIN'\)/);
+  assert.match(fn, /await client\.query\('COMMIT'\)/);
+  assert.match(fn, /ROLLBACK/);
+  assert.match(fn, /client\.release\(\)/);
+
+  // Cross-tenant answers not_found, never forbidden — a 403 would confirm the id.
+  assert.match(fn, /return \{ ok: false, reason: 'not_found' \}/);
+});
+
+test('the update route is session-scoped and answers 404 across tenants', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const route = src.slice(
+    src.indexOf("'/api/settings/library/asset/:id'"),
+    src.indexOf('GET /api/settings/workspace')
+  );
+  assert.match(route, /settingsWriteLimiter, requireAuth/, 'rate-limited and auth-gated');
+  assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant from the session');
+  // The only thing taken from the URL is the id, and it is digit-checked.
+  assert.match(route, /req\.params\.id/);
+  assert.match(route, /\/\^\\d\+\$\/\.test\(assetId\)/);
+  // req.body appears exactly once, as the argument to the allowlist.
+  assert.strictEqual((route.match(/req\.body/g) || []).length, 1);
+  assert.match(route, /normalizeAssetEdit\(req\.body/);
+  // Someone else's id is a 404, the same shape a missing one gets.
+  assert.match(route, /status\(404\)/);
+  assert.match(route, /status\(403\)/, 'seeded is 403 — the asset exists, it is just not yours to change');
+  assert.match(route, /err\.code === '23505'/);
+  assert.match(route, /status\(409\)/);
+  // Nothing else in the router updates an asset type.
+  assert.strictEqual((src.match(/updateAssetType\(/g) || []).length, 1);
+});
+
+test('removing an asset is is_active, and the UI says what that means', () => {
+  // Five tables reference asset_types(id) with no ON DELETE, so the row cannot
+  // go anywhere. is_active ALREADY means everything "deleted" would mean — a
+  // brief cannot ask for it and it never reaches a doc — so there is one state,
+  // not two, and the UI's job is to say so rather than to invent a difference.
+  const db = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  assert.ok(!/DELETE FROM asset_types/.test(db), 'no hard delete of an asset type anywhere');
+
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const form = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
+  assert.match(form, /Remove this asset type/);
+  // It is the SAME write the toggle makes.
+  assert.match(form, /'\/api\/settings\/library\/active'[\s\S]{0,300}active: false/);
+  // And it explains the state rather than implying a second one.
+  assert.match(form, /Removing an asset type switches it off/);
+  assert.match(form, /Docs you already built keep their copy/);
+  assert.match(form, /switch it back on any time/);
+});
+
+test('the edit form warns before a rename, not after', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const form = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
+
+  // Confirmed against a real Postgres: after a rename, getAssetDirections no
+  // longer matches the OLD heading, so re-drafting a doc built under it silently
+  // loses the asset's creative direction. Nothing errors — which is exactly why
+  // the warning has to appear at the moment the name is being changed.
+  assert.match(form, /nameI\.addEventListener\('input'/);
+  assert.match(form, /Renaming affects new docs only/);
+  // Escaped in the source, since the string is single-quoted.
+  assert.match(form, /won\\'t pick up this asset\\'s creative direction any more/);
+  // Not repeated as a toast afterwards — that would be a notification about a
+  // decision already made.
+  assert.ok(!/showToast/.test(form), 'no post-hoc toast');
+
+  // The server says it too, for API callers.
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  assert.match(route, /renamed = normalize\(current\.name\) !== normalize\(asset\.name\)/);
+  assert.match(route, /won't pick up this asset's creative direction if you re-draft them/);
+
+  // ONE form serves both create and edit, so an edit cannot drift into a
+  // different set of controls from the one a create was tested against.
+  assert.match(form, /function libOpenForm\(existing, host, onClose\)/);
+  assert.match(form, /isEdit \? 'Save changes' : 'Create asset type'/);
+  assert.match(form, /isEdit \? '\/api\/settings\/library\/asset\/' \+ existing\.id : '\/api\/settings\/library\/asset'/);
+  // Prefilled rows are MANUAL rows, so the paste box — which owns only what it
+  // made — can never overwrite the tenant's existing fields.
+  assert.match(form, /if \(isEdit\) addRows\(existing\.fields \|\| \[\]\)/);
+  assert.match(form, /Anything you paste is ADDED below/);
+
+  // The Edit button renders only where the SERVER said editable, and the server
+  // re-checks — the button is a convenience, never the rule.
+  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('--- Create an asset type'));
+  assert.match(card, /if \(a\.editable\) \{/);
+  assert.match(card, /libOpenForm\(a, editHost/);
+  const route2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  assert.match(route2, /editable: !isSeededAssetName\(a\.name\)/);
 });

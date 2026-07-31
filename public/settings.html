@@ -404,37 +404,69 @@
     .lib-new h2 { font-size: 15px; margin: 0 0 4px; }
     .lib-new label { display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
     .lib-new input[type="text"], .lib-new textarea { width: 100%; font-size: 14px; }
-    .lib-new textarea { min-height: 108px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.5; }
+    .lib-new textarea { font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.5; }
+    /* The paste box is the primary input for a feature whose whole point is a
+       dozen-plus fields, so it opens at eight lines and grows with what is in it
+       (libAutoGrow) rather than becoming a four-line scroll port. */
+    .lib-paste { min-height: 172px; resize: none; overflow: hidden; }
     .lib-hint { font-size: 11.5px; color: rgba(26,26,46,0.55); margin: 4px 0 0; line-height: 1.5; }
     /* One field row, stacked on purpose. A single grid line put the field NAME —
        the only value you cannot infer from the others — in the narrowest column:
        at 390px it showed nine characters, so "Section 1 Headline" and
-       "Section 1 Body" were the same string on screen. The name now gets a full
-       line and the three small values share the one below it. */
-    .lib-frow { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.55); }
+       "Section 1 Body" were the same string on screen. The name owns the first
+       line (with the remove button), the numbers the second, the writing note
+       the third. */
+    .lib-frow { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.55); }
     .lib-frow:first-child { border-top: none; }
-    .lib-fctl { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
-    .lib-frow input[type="text"], .lib-frow input[type="number"], .lib-frow select {
+    /* A row the user has edited is protected from the paste box overwriting it,
+       so it says so rather than being silently special. */
+    .lib-frow.dirty { border-left: 2px solid rgba(26,26,46,0.3); background: rgba(255,255,255,0.22);
+      padding-left: 8px; margin-left: -10px; border-radius: 0 9px 9px 0; }
+    .lib-fhead { display: flex; align-items: center; gap: 6px; }
+    .lib-fctl { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+    .lib-frow input[type="text"], .lib-frow input[type="number"], .lib-frow select, .lib-frow textarea {
       padding: 8px 9px; font-size: 13px; border-radius: 9px;
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); color: var(--ink);
     }
-    .lib-fname { width: 100%; font-weight: 600; }
+    .lib-fname { flex: 1; min-width: 0; font-weight: 600; }
     .lib-fctl input[type="number"] { width: 62px; }
-    .lib-fctl select { width: 74px; -webkit-appearance: none; appearance: none; }
     .lib-fctl .lib-sep { font-size: 12px; color: rgba(26,26,46,0.45); }
-    /* Pushed to the far edge, away from the number inputs it sits beside, and
-       sized as a real thumb target rather than a 17px glyph. */
-    .lib-fdel { margin-left: auto; background: none; border: none; cursor: pointer; font-size: 20px;
+    /* The unit was a bare "chars" with appearance:none and no affordance — it
+       read as a label sitting beside two numbers, not as the control that
+       switches the whole row between characters and words. It now carries a
+       chevron, a solid border and a pressable fill. */
+    .lib-funit { position: relative; display: inline-flex; }
+    .lib-funit::after { content: '▾'; position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+      font-size: 11px; color: rgba(26,26,46,0.55); pointer-events: none; }
+    .lib-funit select { width: 86px; min-height: 36px; padding-right: 22px; cursor: pointer;
+      -webkit-appearance: none; appearance: none; font-weight: 600;
+      background: rgba(255,255,255,0.78); border-color: rgba(26,26,46,0.18); }
+    /* Pushed to the far edge, away from the name it sits beside, and sized as a
+       real thumb target rather than a 17px glyph. */
+    .lib-fdel { flex: none; background: none; border: none; cursor: pointer; font-size: 20px;
       line-height: 1; color: rgba(26,26,46,0.4); padding: 6px 10px; min-height: 36px; min-width: 36px; }
     .lib-fdel:hover { color: #8a1f1f; }
-    /* The note is optional and usually empty, so it costs a line only when it is
-       wanted — fourteen fields would otherwise be twenty-eight lines of scrolling.
-       A row that ALREADY has a note opens showing it. */
-    .lib-fnotebtn { background: none; border: none; cursor: pointer; padding: 6px 8px; min-height: 36px;
-      font-size: 11.5px; font-weight: 600; color: rgba(26,26,46,0.5); text-decoration: underline; }
-    .lib-fnotebtn.on { color: var(--ink); }
-    .lib-fnote { width: 100%; margin-top: 5px; padding: 7px 9px; font-size: 12px; border-radius: 9px;
-      background: rgba(255,255,255,0.4); border: 1.5px solid rgba(255,255,255,0.5); color: var(--ink); }
+    /* The writing note is the ONLY guidance the drafter gets for a custom field —
+       gemini.js reads `notes || builtInFieldGuidance(fieldName)`, and a custom
+       field has no built-in and no tier line — so it is a full-width invitation
+       rather than a word beside an X. */
+    .lib-fnotebtn { display: block; width: 100%; margin-top: 6px; padding: 9px 10px; min-height: 38px;
+      text-align: left; cursor: pointer; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.62);
+      background: rgba(255,255,255,0.28); border: 1.5px dashed rgba(26,26,46,0.22); border-radius: 9px; }
+    .lib-fnotebtn:hover { color: var(--ink); border-color: rgba(26,26,46,0.4); }
+    .lib-fnotewrap { margin-top: 6px; }
+    .lib-fnotelab { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; color: rgba(26,26,46,0.5); margin-bottom: 4px; }
+    .lib-fnote { width: 100%; min-height: 54px; resize: none; overflow: hidden; font-family: inherit;
+      font-size: 12.5px !important; line-height: 1.5; }
+    /* Said once, above the rows, so every note button below reads as the thing
+       that fills a real gap rather than an optional extra. */
+    .lib-notewhy { font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.6);
+      background: rgba(255,255,255,0.3); border-radius: 9px; padding: 8px 10px; margin: 10px 0 0; }
+    /* What the reconciler did, in words, whenever it protected an edit. */
+    .lib-kept { font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.72);
+      background: rgba(255,255,255,0.42); border-left: 2px solid rgba(26,26,46,0.28);
+      border-radius: 0 9px 9px 0; padding: 7px 10px; margin: 8px 0 0; }
     .lib-newerr { font-size: 12.5px; color: #8a1f1f; margin-top: 10px; }
     .lib-newerr ul { margin: 4px 0 0; padding-left: 18px; }
 
@@ -957,8 +989,20 @@
     //   Offer Body [50-140 words]
     //   Legal Line
     //
-    // Everything it parses lands in editable rows, so the paste is a starting
-    // point and never a commitment. Nothing is sent until Create is pressed.
+    // Everything it parses lands in editable rows AS YOU TYPE — there is no
+    // "add these" step, because a paste that produces nothing until you find and
+    // press a button is a paste that looks broken. Nothing is sent until Create.
+    //
+    // WHO OWNS A ROW. The paste box owns every row it made, until you edit that
+    // row; from then on the row owns itself and re-parsing will not overwrite it.
+    // Rows are matched to lines by the name they were CREATED from (libRowKey),
+    // not by their current name or their position, so renaming a row, reordering
+    // the paste box or inserting a line above still lands your edit on the right
+    // field. An edited row whose line you later delete is kept and moved to the
+    // bottom rather than discarded — deleting a line means "not from the paste
+    // any more", and it is not a licence to throw away typed work. Whenever
+    // either of those protections fires, libSetKept says so on screen; a rule
+    // the user cannot see is indistinguishable from a bug.
     var LIB_LINE_RE = /^\s*(.*?)\s*(?:\[\s*(?:(\d+)\s*[-–—]\s*)?(\d+)?\s*(words?|chars?|characters?)?\s*\])?\s*$/i;
     function libParseLine(line) {
       var m = LIB_LINE_RE.exec(line);
@@ -972,14 +1016,48 @@
       };
     }
 
-    function libFieldRow(f, onRemove) {
+    // A textarea that is the size of what is in it. Used by the paste box and by
+    // each row's writing note, so neither becomes a two-line scroll port.
+    function libAutoGrow(ta) {
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    }
+
+    // How a row remembers which pasted line made it. Folded the same way the
+    // server folds names (utils/normalize), so "Hero  Headline" and
+    // "hero headline" are the same line to the reconciler as they are to Postgres.
+    function libRowKey(s) {
+      return String(s || '').toLowerCase()
+        .replace(/[‐-―−]/g, '-').replace(/\s*-\s*/g, '-')
+        .replace(/\s+/g, ' ').trim();
+    }
+
+    // `srcKey` is the pasted line this row came from, or null for a row added by
+    // hand. `onDirty` fires the first time the user changes anything in the row —
+    // that is the moment the row stops belonging to the paste box.
+    function libFieldRow(f, onRemove, onDirty, srcKey) {
       var wrap = el('div', 'lib-frow');
+      wrap.srcKey = srcKey || null;
+      wrap.dirty = false;
+      var touch = function () {
+        if (wrap.dirty) return;
+        wrap.dirty = true;
+        wrap.classList.add('dirty');
+        if (onDirty) onDirty();
+      };
+
       // The name is the only value you cannot infer from the others, so it gets
-      // the full width and the row's emphasis.
+      // the first line, with only the remove button beside it.
+      var head = el('div', 'lib-fhead');
       var name = document.createElement('input');
       name.type = 'text'; name.className = 'lib-fname';
       name.value = f.field_name || ''; name.placeholder = 'Field name';
-      wrap.appendChild(name);
+      var del = el('button', 'lib-fdel', '×');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Remove field');
+      del.addEventListener('click', function () { wrap.remove(); if (onRemove) onRemove(); });
+      head.appendChild(name); head.appendChild(del);
+      wrap.appendChild(head);
 
       var ctl = el('div', 'lib-fctl');
       var min = document.createElement('input');
@@ -988,6 +1066,10 @@
       var max = document.createElement('input');
       max.type = 'number'; max.min = '0'; max.value = f.char_max || ''; max.placeholder = 'max';
       max.setAttribute('aria-label', 'Limit');
+      // Wrapped so the chevron has something to hang off: with appearance:none
+      // and no arrow, "chars" read as a label rather than the control that
+      // switches this row between characters and words.
+      var unitWrap = el('span', 'lib-funit');
       var unit = document.createElement('select');
       unit.setAttribute('aria-label', 'Counted in');
       ['text', 'words'].forEach(function (u) {
@@ -996,38 +1078,42 @@
         if ((f.field_type || 'text') === u) o.selected = true;
         unit.appendChild(o);
       });
+      unitWrap.appendChild(unit);
       ctl.appendChild(min);
       ctl.appendChild(el('span', 'lib-sep', 'to'));
       ctl.appendChild(max);
-      ctl.appendChild(unit);
+      ctl.appendChild(unitWrap);
+      wrap.appendChild(ctl);
 
-      // The note is the tenant's only channel to the drafter for a custom field
-      // (gemini.js reads it ahead of its built-in guidance), so it is one tap
-      // away rather than hidden — but it does not spend a line until it is
-      // wanted. A pasted note (or one typed and collapsed) keeps the row open.
-      var note = document.createElement('input');
-      note.type = 'text'; note.className = 'lib-fnote';
+      // The writing note. For a CUSTOM field this is not a nicety: gemini.js
+      // drafts from `notes || builtInFieldGuidance(fieldName)`, there is no
+      // built-in guidance for a name Quillio has never seen, and with spec_type
+      // null there is no tier line either — so an empty note means the drafter
+      // gets the field name and nothing else. Hence a full-width invitation that
+      // says what it is for, rather than the word "Note" beside an X.
+      var noteWrap = el('div', 'lib-fnotewrap');
+      noteWrap.appendChild(el('span', 'lib-fnotelab', 'Writing note — the drafter follows this'));
+      var note = document.createElement('textarea');
+      note.className = 'lib-fnote';
       note.value = f.spec_note || '';
-      note.placeholder = 'How should this field be written? (optional)';
-      var noteBtn = el('button', 'lib-fnotebtn', 'Note');
+      note.placeholder = 'e.g. Lead with the outcome. Name the audience. No product names.';
+      noteWrap.appendChild(note);
+      var noteBtn = el('button', 'lib-fnotebtn', '+ Add a writing note');
       noteBtn.type = 'button';
       var setNoteOpen = function (open) {
-        note.classList.toggle('hidden', !open);
-        noteBtn.classList.toggle('on', open);
+        noteWrap.classList.toggle('hidden', !open);
+        noteBtn.classList.toggle('hidden', open);
         noteBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) libAutoGrow(note);
       };
-      noteBtn.addEventListener('click', function () { setNoteOpen(note.classList.contains('hidden')); note.focus(); });
-      ctl.appendChild(noteBtn);
-
-      var del = el('button', 'lib-fdel', '×');
-      del.type = 'button';
-      del.setAttribute('aria-label', 'Remove field');
-      del.addEventListener('click', function () { wrap.remove(); if (onRemove) onRemove(); });
-      ctl.appendChild(del);
-
-      wrap.appendChild(ctl);
-      wrap.appendChild(note);
+      noteBtn.addEventListener('click', function () { setNoteOpen(true); note.focus(); });
+      wrap.appendChild(noteBtn);
+      wrap.appendChild(noteWrap);
       setNoteOpen(!!f.spec_note);
+
+      note.addEventListener('input', function () { libAutoGrow(note); });
+      [name, min, max, note].forEach(function (e) { e.addEventListener('input', touch); });
+      unit.addEventListener('change', touch);
 
       wrap.readRow = function () {
         return {
@@ -1066,14 +1152,11 @@
 
       var pasteL = el('label', null, 'Fields'); box.appendChild(pasteL);
       var paste = document.createElement('textarea');
-      paste.placeholder = 'Hero Headline [70]\nHero Subheadline [120]\nOffer Body [50-140 words]\nLegal Line';
+      paste.className = 'lib-paste';
+      paste.placeholder = 'Paste your field list — one per line:\n\nHero Headline [70]\nHero Subheadline [40-120]\nOffer Body [50-140 words]\nPrimary CTA [20]\nLegal Line';
       box.appendChild(paste);
       box.appendChild(el('p', 'lib-hint',
-        'One field per line. Add a limit in brackets the same way it appears in your docs — [70], [40-90], [50-140 words]. No brackets means no limit. You can adjust everything below before saving.'));
-      var addBtn = el('button', 'btn', 'Add these fields →');
-      addBtn.type = 'button';
-      addBtn.style.marginTop = '8px';
-      box.appendChild(addBtn);
+        'One field per line, and it becomes an editable row as you type. Add a limit in brackets the same way it appears in your docs — [70], [40-90], [50-140 words]. No brackets means no limit.'));
 
       // A count instead of a column header: a stacked row has no columns to
       // label, and with a dozen-plus fields "14 fields" is the thing you want to
@@ -1082,24 +1165,85 @@
       head.classList.add('hidden');
       head.style.margin = '14px 0 0';
       box.appendChild(head);
+      // Why every note button below is worth pressing. Said once, here, rather
+      // than fourteen times.
+      var why = el('p', 'lib-notewhy',
+        'Quillio has no built-in guidance for a field it has never seen, and a field you define carries no platform limit to quote — so a field\'s writing note is the only thing the drafter is told about how to write it. Worth a sentence on the ones that matter.');
+      why.classList.add('hidden');
+      box.appendChild(why);
+      var kept = el('p', 'lib-kept');
+      kept.classList.add('hidden');
+      box.appendChild(kept);
       var rows = el('div');
       box.appendChild(rows);
 
       var refreshHead = function () {
         var n = rows.children.length;
         head.classList.toggle('hidden', n === 0);
+        why.classList.toggle('hidden', n === 0);
         head.textContent = n === 1 ? '1 field' : n + ' fields';
       };
+      var libSetKept = function (protectedCount, movedCount) {
+        var parts = [];
+        if (protectedCount) {
+          parts.push(protectedCount === 1
+            ? 'One field you edited is kept as you left it — the paste box no longer overwrites it.'
+            : protectedCount + ' fields you edited are kept as you left them — the paste box no longer overwrites them.');
+        }
+        if (movedCount) {
+          parts.push(movedCount === 1
+            ? 'One edited field is no longer in your list above; it has been moved to the bottom rather than removed.'
+            : movedCount + ' edited fields are no longer in your list above; they have been moved to the bottom rather than removed.');
+        }
+        kept.textContent = parts.join(' ');
+        kept.classList.toggle('hidden', parts.length === 0);
+      };
+
+      // A row that has been edited stops belonging to the paste box. Nothing to
+      // redraw at that moment — the flag is read by the next sync.
+      var onRowDirty = function () {};
+
+      // Re-render the rows from the paste box, keeping every row the user has
+      // touched. See the ownership note above libParseLine for the rules.
+      var syncFromPaste = function () {
+        var parsed = paste.value.split('\n').map(libParseLine).filter(Boolean);
+        // Rows the paste box may not touch: edited ones (indexed by the line they
+        // came from) and hand-added ones, which never had a line to begin with.
+        var claimed = {};
+        var manual = [];
+        Array.prototype.forEach.call(rows.children, function (r) {
+          if (!r.srcKey) { manual.push(r); return; }
+          if (r.dirty && !claimed[r.srcKey]) claimed[r.srcKey] = r;
+        });
+        var next = [];
+        var protectedCount = 0;
+        parsed.forEach(function (f) {
+          var key = libRowKey(f.field_name);
+          if (claimed[key]) { next.push(claimed[key]); delete claimed[key]; protectedCount++; return; }
+          next.push(libFieldRow(f, refreshHead, onRowDirty, key));
+        });
+        // Edited rows whose line has gone: kept, at the bottom.
+        var moved = [];
+        Object.keys(claimed).forEach(function (k) { moved.push(claimed[k]); });
+        rows.textContent = '';
+        next.concat(moved, manual).forEach(function (r) { rows.appendChild(r); });
+        refreshHead();
+        libSetKept(protectedCount, moved.length);
+      };
+
+      // Debounced so a fourteen-line paste rebuilds once, not once per keystroke
+      // of a fast typist — and short enough that it still feels immediate.
+      var syncTimer = null;
+      paste.addEventListener('input', function () {
+        libAutoGrow(paste);
+        if (syncTimer) clearTimeout(syncTimer);
+        syncTimer = setTimeout(syncFromPaste, 200);
+      });
+
       var addRows = function (list) {
-        list.forEach(function (f) { rows.appendChild(libFieldRow(f, refreshHead)); });
+        list.forEach(function (f) { rows.appendChild(libFieldRow(f, refreshHead, onRowDirty, null)); });
         refreshHead();
       };
-      addBtn.addEventListener('click', function () {
-        var parsed = paste.value.split('\n').map(libParseLine).filter(Boolean);
-        if (!parsed.length) return;
-        addRows(parsed);
-        paste.value = '';
-      });
 
       var oneMore = el('button', 'btn', '+ Add a field');
       oneMore.type = 'button';
@@ -1123,10 +1267,9 @@
 
       save.addEventListener('click', async function () {
         err.style.display = 'none'; err.textContent = '';
-        // Anything still sitting in the paste box counts — otherwise a user who
-        // pastes and presses Create loses the lot without being told why.
-        var pending = paste.value.split('\n').map(libParseLine).filter(Boolean);
-        if (pending.length) { addRows(pending); paste.value = ''; }
+        // Flush a sync still sitting in the debounce, so pasting and immediately
+        // pressing Create sends what is on screen rather than what preceded it.
+        if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; syncFromPaste(); }
         var fields = [];
         Array.prototype.forEach.call(rows.children, function (r) { if (r.readRow) fields.push(r.readRow()); });
         save.disabled = true;

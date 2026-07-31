@@ -323,14 +323,150 @@ function toReadableText(v) {
 const PARSE_MAX_COUNT_PER_ASSET = 10;
 const PARSE_MAX_TOTAL = 40;
 
+// --- The parse prompt's phrase → asset mappings ------------------------------
+//
+// These teach the model what a writer MEANS ("basho" → Sales Basho Email). They
+// are hand-written intent, so unlike the asset list itself they cannot be
+// derived from a tenant's library — but they must still be FILTERED to it.
+//
+// A stale mapping line is worse than no mapping line. It instructs the model to
+// emit a name the defensive filter below will then reject, which produces
+// exactly the silent drop the partial-miss notice was added to make loud. So a
+// line is emitted only when its target is actually in the tenant's list.
+//
+// `line` carries the fully rendered text rather than phrase parts, because the
+// separators are not uniform ("a", "b" or "c" vs "a" or "b") and rebuilding them
+// would have changed the prompt for no gain. Against the full bundled list the
+// rendered block differs from the hand-written one it replaced by exactly one
+// moved line: the "Testing language means MORE VERSIONS OF ONE ASSET" sentence
+// now sits with the general A/B rule (which always ships) instead of with the
+// LinkedIn example (which does not).
+//
+// `target` drives the filtering, so it must not drift from the text. A smoke
+// test asserts every targeted line NAMES its own target — not that it ends with
+// it, since the A/B entry is prose ("… one entry: X, count 3").
+const ASSET_PHRASE_HINTS = [
+  { target: 'LinkedIn Single Image Ad', line: '- "linkedin ad" or "linkedin" → LinkedIn Single Image Ad' },
+  { target: 'LinkedIn Carousel Ad', line: '- "linkedin carousel" → LinkedIn Carousel Ad' },
+  // A/B-test phrasing means MORE VERSIONS OF ONE ASSET, which is `count`. The
+  // rule and its rationale are universal — they describe the `count` mechanism,
+  // not any particular asset — so they are always emitted. Only the concrete
+  // LinkedIn example and the Variant-type caveat below depend on the library.
+  {
+    always: true,
+    line: [
+      '- "ab test" or "a/b test" or "two versions" or "variants" → the BASE asset, count 2 (or the number given)',
+      '  Testing language means MORE VERSIONS OF ONE ASSET — express it with count.',
+    ].join('\n'),
+  },
+  {
+    target: 'LinkedIn Single Image Ad',
+    line: '- "3 linkedin ads to a/b test" → one entry: LinkedIn Single Image Ad, count 3',
+  },
+  // Only worth saying to a tenant who actually has "… — Variant A"-style types.
+  {
+    anyMatching: /—\s*variant\s/i,
+    line: [
+      '  Only return a "… — Variant A"/"Variant B" asset type when the brief names one',
+      '  of those types outright; never as a way of expressing "two versions".',
+    ].join('\n'),
+  },
+  { target: 'Meta Single Image Ad', line: '- "meta ad" or "facebook ad" → Meta Single Image Ad' },
+  { target: 'Meta Carousel Ad', line: '- "meta carousel" → Meta Carousel Ad' },
+  { target: 'Twitter/X Ad', line: '- "twitter" or "x ad" → Twitter/X Ad' },
+  { target: 'Display Banner — Standard', line: '- "display" or "banner" → Display Banner — Standard' },
+  {
+    target: 'Google Responsive Display Ad',
+    line: '- "responsive display", "dv360" or "programmatic" → Google Responsive Display Ad',
+  },
+  { target: 'Demand Gen Nurture Email', line: '- "email" or "nurture" → Demand Gen Nurture Email' },
+  { target: 'Event Invitation Email', line: '- "event email" or "invite" → Event Invitation Email' },
+  { target: 'Event Reminder Email', line: '- "reminder email" → Event Reminder Email' },
+  { target: 'Event Follow-Up / Recap Email', line: '- "follow up" or "recap email" → Event Follow-Up / Recap Email' },
+  { target: 'Sales Basho Email', line: '- "basho" or "sales email" → Sales Basho Email' },
+  { target: 'Event Landing Page', line: '- "landing page" or "event page" → Event Landing Page' },
+  { target: 'On-Site Signage — General', line: '- "signage" or "on-site" → On-Site Signage — General' },
+  { target: 'Campaign Landing Page', line: '- "campaign page" → Campaign Landing Page' },
+  { target: 'Form Confirm Page', line: '- "confirm page" or "form confirm" → Form Confirm Page' },
+  { target: 'Organic Social — LinkedIn', line: '- "organic social" or "organic" → Organic Social — LinkedIn' },
+  { target: 'Organic Social — Instagram', line: '- "instagram" → Organic Social — Instagram' },
+  { target: 'Direct Mail — Box / Mailer', line: '- "direct mail" or "mailer" → Direct Mail — Box / Mailer' },
+  {
+    target: 'Direct Mail — Note Card / Rep Letter',
+    line: '- "rep letter" or "note card" → Direct Mail — Note Card / Rep Letter',
+  },
+  { target: 'One-Pager', line: '- "one pager" or "one-pager" → One-Pager' },
+  { target: 'Battle Card', line: '- "battle card" → Battle Card' },
+];
+
+// Things a brief might ask for that Quillio has no asset type for. Used only as
+// EXAMPLES in the refusal rule — so any of them a tenant actually has must be
+// dropped, or the prompt would be telling the model to refuse an asset that
+// tenant owns.
+const REFUSAL_EXAMPLES = ['TikTok', 'podcast ad', 'billboard', 'SMS'];
+
+// The phrase-mapping lines that apply to THIS list of asset names.
+function assetPhraseHintLines(allowed) {
+  const have = new Set(allowed.map(normalize));
+  return ASSET_PHRASE_HINTS.filter((h) => {
+    if (h.always) return true;
+    if (h.anyMatching) return allowed.some((n) => h.anyMatching.test(n));
+    return have.has(normalize(h.target));
+  }).map((h) => h.line);
+}
+
+// Word tokens of a name, normalized. Used to decide whether a refusal example
+// describes something the tenant actually owns.
+function nameTokens(s) {
+  return normalize(s)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+// The "don't guess" rule, with only the examples this tenant does NOT have.
+// If a tenant somehow has all four, the rule still stands — it just stops
+// offering examples rather than naming assets they own as things to refuse.
+//
+// Matching is TOKEN containment, not substring. A tenant asset called
+// "Podcast Read Ad" does not contain the substring "podcast ad" — the word
+// "Read" sits between them — so a substring test left the prompt telling the
+// model to refuse podcast asks from a tenant whose library has a podcast asset.
+// Every token of the example must appear as a token of the asset name.
+function refusalRuleLine(allowed) {
+  const have = allowed.map(nameTokens);
+  const usable = REFUSAL_EXAMPLES.filter((ex) => {
+    const want = nameTokens(ex);
+    return !have.some((tokens) => want.every((w) => tokens.includes(w)));
+  });
+  const eg = usable.length > 0 ? ` (e.g. ${usable.join(', ')})` : '';
+  return (
+    `- If the brief requests an asset type that does NOT confidently map to the allowed list${eg}, ` +
+    'do NOT substitute a nearest guess. Put the original phrase in unmatchedAssets and leave it out of assets.'
+  );
+}
+
 // Parse a free-form campaign brief into { summary, writerPrompt, assets, … }.
 // `assets` is an ordered PLAN — [{ asset, count, labels? }] — constrained to the
 // allowed list regardless of how the brief was written (bullets, numbers, prose).
 // Repeats are preserved: two entries naming one asset are two separate asks.
-async function parseBrief(brief) {
-  // Valid asset types (exact Sheet names) — single source of truth lives in
-  // config.ALLOWED_ASSETS. Used both in the prompt and the defensive filter.
-  const allowed = config.ALLOWED_ASSETS;
+async function parseBrief(brief, allowedAssets) {
+  // The asset VOCABULARY for this parse — used both as prompt data and as the
+  // defensive filter below, which is why it has to be one value.
+  //
+  // It is now the TENANT'S OWN asset names, passed in by core/pipeline. It used
+  // to be config.ALLOWED_ASSETS unconditionally, and that was the blocker: an
+  // asset sitting in a tenant's asset_types but missing from the global 30 was
+  // filtered straight out of the plan, so a brief could not ask for an asset the
+  // tenant already owned. Three of the four gates downstream were already
+  // per-tenant (tenantAssetsToSpecs throws on an unknown name; both plan
+  // validators check getTenantAssets) — this was the one global one, sitting
+  // upstream of all of them.
+  //
+  // config.ALLOWED_ASSETS remains the fallback for no-DB / demo / unseeded
+  // tenants, where getTenantAssets returns null and there is no library to read.
+  const allowed = Array.isArray(allowedAssets) && allowedAssets.length > 0
+    ? allowedAssets
+    : config.ALLOWED_ASSETS;
 
   const prompt = [
     'You are a marketing operations assistant. Read the campaign brief below and extract structured data.',
@@ -397,41 +533,12 @@ async function parseBrief(brief) {
     'numbers, or inline prose — extract them regardless of format. The lists below',
     'are illustrative, not exhaustive; treat obvious variants, plurals, and',
     'casing the same way:',
-    '- "linkedin ad" or "linkedin" → LinkedIn Single Image Ad',
-    '- "linkedin carousel" → LinkedIn Carousel Ad',
-    // A/B-test phrasing means MORE VERSIONS OF ONE ASSET, which is `count`. It used
-    // to route to the standalone "— Variant A/B/C/D" asset types; those still exist
-    // in the library and a brief naming one explicitly still gets it, but ordinary
-    // test phrasing no longer produces them.
-    '- "ab test" or "a/b test" or "two versions" or "variants" → the BASE asset, count 2 (or the number given)',
-    '- "3 linkedin ads to a/b test" → one entry: LinkedIn Single Image Ad, count 3',
-    '  Testing language means MORE VERSIONS OF ONE ASSET — express it with count.',
-    '  Only return a "… — Variant A"/"Variant B" asset type when the brief names one',
-    '  of those types outright; never as a way of expressing "two versions".',
-    '- "meta ad" or "facebook ad" → Meta Single Image Ad',
-    '- "meta carousel" → Meta Carousel Ad',
-    '- "twitter" or "x ad" → Twitter/X Ad',
-    '- "display" or "banner" → Display Banner — Standard',
-    '- "responsive display", "dv360" or "programmatic" → Google Responsive Display Ad',
-    '- "email" or "nurture" → Demand Gen Nurture Email',
-    '- "event email" or "invite" → Event Invitation Email',
-    '- "reminder email" → Event Reminder Email',
-    '- "follow up" or "recap email" → Event Follow-Up / Recap Email',
-    '- "basho" or "sales email" → Sales Basho Email',
-    '- "landing page" or "event page" → Event Landing Page',
-    '- "signage" or "on-site" → On-Site Signage — General',
-    '- "campaign page" → Campaign Landing Page',
-    '- "confirm page" or "form confirm" → Form Confirm Page',
-    '- "organic social" or "organic" → Organic Social — LinkedIn',
-    '- "instagram" → Organic Social — Instagram',
-    '- "direct mail" or "mailer" → Direct Mail — Box / Mailer',
-    '- "rep letter" or "note card" → Direct Mail — Note Card / Rep Letter',
-    '- "one pager" or "one-pager" → One-Pager',
-    '- "battle card" → Battle Card',
+    // Filtered to mappings whose TARGET is in `allowed` — see ASSET_PHRASE_HINTS.
+    ...assetPhraseHintLines(allowed),
     '',
     'Rules:',
     '- Only include an asset when the intent is reasonably clear; do not invent assets that are not implied. Never return all asset types for a vague brief.',
-    '- If the brief requests an asset type that does NOT confidently map to the allowed list (e.g. TikTok, podcast ad, billboard, SMS), do NOT substitute a nearest guess. Put the original phrase in unmatchedAssets and leave it out of assets.',
+    refusalRuleLine(allowed),
     '',
     '- folderId: if the brief contains a Google Drive folder URL of the form',
     '  https://drive.google.com/drive/folders/FOLDER_ID , extract just the',
@@ -1946,6 +2053,10 @@ module.exports = {
   // wrapper-stripping paths can't drift apart.
   cleanDraft,
   // Exposed for unit tests only.
+  ASSET_PHRASE_HINTS,
+  REFUSAL_EXAMPLES,
+  assetPhraseHintLines,
+  refusalRuleLine,
   brandVoiceLines,
   buildCraftContext,
   buildBrandContext,

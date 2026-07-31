@@ -30,8 +30,15 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
   const tokens = tenantContext.tokens || {};
 
   // 1. Parse the brief into title / summary / writerPrompt / assets (+ links).
-  const parsedBrief = await pipeline.parseBrief(briefText);
+  //    The tenant id constrains the model to THIS tenant's asset names, so an
+  //    asset they own but the bundled 30 lack is requestable. Falls back to
+  //    config.ALLOWED_ASSETS when there's no library (demo / unseeded).
+  const tenantIdForParse = (tenantContext.tenant && tenantContext.tenant.id) || null;
+  const parsedBrief = await pipeline.parseBrief(briefText, tenantIdForParse);
   const { campaignTitle, assets, unmatchedAssets, referenceLinks } = parsedBrief;
+  // Which vocabulary actually gated this parse — decides whether the unmatched
+  // message can honestly say "your asset library".
+  const vocabularySource = (parsedBrief.assetVocabulary && parsedBrief.assetVocabulary.source) || 'default';
   let { summary, writerPrompt } = parsedBrief; // may be enriched below
   let referenceInsights = [];
 
@@ -40,7 +47,7 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
   // still falls through to "all assets".) Unchanged behavior — only the wording
   // moved to the shared builder.
   if (assets.length === 0 && unmatchedAssets.length > 0) {
-    throw new Error(totalMissMessage(unmatchedAssets));
+    throw new Error(totalMissMessage(unmatchedAssets, vocabularySource));
   }
 
   // 2. Enrich from linked references + attached files (best-effort — any failure
@@ -102,7 +109,10 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
     referenceInsights,
     plan,
     unmatchedAssets,
-    unmatchedNotice: partialMissNotice(unmatchedAssets),
+    // Carried so runWebBriefGenerate can re-render the notice after the
+    // confirmation pause without re-parsing (and without guessing the wording).
+    assetVocabulary: parsedBrief.assetVocabulary || { source: vocabularySource },
+    unmatchedNotice: partialMissNotice(unmatchedAssets, vocabularySource),
   };
 }
 
@@ -126,6 +136,7 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
   // including on the confirm-then-build path, where the notice was already shown
   // once on the confirmation screen and would otherwise vanish from the result.
   const unmatchedAssets = Array.isArray(parsed.unmatchedAssets) ? parsed.unmatchedAssets : [];
+  const vocabularySource = (parsed.assetVocabulary && parsed.assetVocabulary.source) || 'default';
 
   // 3. Folder routing (priority): a Drive folder URL embedded in the brief, else
   //    the tenant's saved default folder (Settings → default_folder_id), else
@@ -201,7 +212,7 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
     // Advisory, not an error: the doc above WAS built. Null/[] when everything
     // the brief named matched, which is every run that reached here before.
     unmatchedAssets,
-    unmatchedNotice: partialMissNotice(unmatchedAssets),
+    unmatchedNotice: partialMissNotice(unmatchedAssets, vocabularySource),
   };
 }
 

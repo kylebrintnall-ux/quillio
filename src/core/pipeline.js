@@ -414,10 +414,52 @@ function isFolderAccessError(err, folderId) {
 
 // === Public pipeline API ===
 
+// The asset names a brief may name, for THIS tenant, plus where they came from.
+//
+// The tenant's own active asset_types names when they have a library, else
+// config.ALLOWED_ASSETS. The fallback is the no-DB / demo / unseeded case
+// (db/assets.js getTenantAssets returns null), where there is no library to read
+// and the bundled 30 are the only sensible vocabulary.
+//
+// Active rows only, because that is what getTenantAssets returns and what
+// tenantAssetsToSpecs will expand against later — an asset the tenant switched
+// off in onboarding should not be offered to the model as something to request.
+//
+// `source` is carried to the caller so the unmatched message can name the right
+// thing: with a real library "your asset library" is true and "add it" is
+// actionable; on the fallback neither is, and the message says so instead.
+async function resolveAssetVocabulary(tenantId) {
+  let rows = null;
+  try {
+    rows = await getTenantAssets(tenantId);
+  } catch (err) {
+    // A read failure must not take the whole brief down — the bundled list still
+    // parses a sensible plan, and generateDoc will surface the DB problem itself.
+    console.warn('[pipeline] asset vocabulary lookup failed — using the bundled list:', err.message);
+  }
+  const names = (rows || []).map((r) => r && r.name).filter(Boolean);
+  if (names.length === 0) return { names: config.ALLOWED_ASSETS, source: 'default' };
+  return { names, source: 'tenant' };
+}
+
 // Parse a free-form brief into structured data (campaignTitle, summary,
-// writerPrompt, assets, unmatchedAssets, folderId, referenceLinks).
-async function parseBrief(briefText) {
-  const parsed = await geminiParseBrief(briefText);
+// writerPrompt, assets, unmatchedAssets, folderId, referenceLinks,
+// assetVocabulary).
+//
+// `tenantId` selects the asset vocabulary the model is constrained to. Omitting
+// it (tests, a direct call) falls back to config.ALLOWED_ASSETS, which is the
+// pre-tenant behavior exactly.
+async function parseBrief(briefText, tenantId) {
+  const vocabulary = await resolveAssetVocabulary(tenantId);
+  console.log(
+    `[pipeline] parse vocabulary: ${vocabulary.names.length} asset name(s) from ${
+      vocabulary.source === 'tenant' ? "the tenant's library" : 'the bundled default list'
+    }`
+  );
+  const parsed = await geminiParseBrief(briefText, vocabulary.names);
+  // Carried out so the adapters can word the unmatched message correctly, and so
+  // the pending record can carry it across the web's confirmation pause.
+  parsed.assetVocabulary = { source: vocabulary.source, count: vocabulary.names.length };
 
   // Folder routing NEVER trusts Gemini's folderId. Gemini frequently truncates
   // a long Drive folder id in its JSON output (observed: the 33-char id
@@ -1135,6 +1177,7 @@ async function getServiceAccountEmail() {
 
 module.exports = {
   parseBrief,
+  resolveAssetVocabulary,
   fetchAllReferences,
   fetchAttachedFiles,
   processAttachedFiles,

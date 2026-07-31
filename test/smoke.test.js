@@ -5292,7 +5292,7 @@ test('surface ceilings: the per-asset clamp cannot launder an over-total ask', (
 
 // Run parseBrief against a canned model response. Returns { result, prompt } so
 // the prompt the model would have seen is assertable too.
-async function parseBriefWith(modelJson, briefText) {
+async function parseBriefWith(modelJson, briefText, allowedAssets) {
   const configPath = require.resolve('../src/config');
   const cfg = require('../src/config');
   const hadKey = cfg.GEMINI_API_KEY;
@@ -5311,7 +5311,7 @@ async function parseBriefWith(modelJson, briefText) {
   };
   try {
     const { parseBrief } = require('../src/services/gemini');
-    const result = await parseBrief(briefText || 'a brief');
+    const result = await parseBrief(briefText || 'a brief', allowedAssets);
     return { result, prompt: sentPrompt };
   } finally {
     global.fetch = realFetch;
@@ -8012,4 +8012,155 @@ test('migration is dry-run by default, refuses on conflict, and never auto-resol
   // distinct, so two orphan rows sharing a name would otherwise slip through.
   assert.match(INDEXES[0].sql, /coalesce\(tenant_id, ''\)/);
   assert.match(INDEXES[1].sql, /coalesce\(asset_type_id, -1\)/);
+});
+
+// --- The parse allow-list is the TENANT's library, not a global constant ------
+// config.ALLOWED_ASSETS gated gemini.parseBrief unconditionally, which meant an
+// asset sitting in a tenant's asset_types but missing from the bundled 30 was
+// filtered out of the plan — a tenant could not ask for an asset they owned.
+// Three of the four gates downstream were already per-tenant; this was the one
+// global one, upstream of all of them.
+
+test('parseBrief is gated on the vocabulary it is GIVEN, not on ALLOWED_ASSETS', async () => {
+  const { ALLOWED_ASSETS } = require('../src/config');
+  const custom = 'Podcast Read Ad';
+  assert.ok(!ALLOWED_ASSETS.includes(custom), 'the fixture name is genuinely not in the bundled list');
+
+  const model = { ...MODEL_BASE, assets: [{ asset: custom, count: 2 }, { asset: 'Battle Card', count: 1 }] };
+
+  // Given a tenant vocabulary that HAS it, it survives the filter.
+  const withTenant = await parseBriefWith(model, 'brief', [custom, 'Battle Card']);
+  assert.deepStrictEqual(withTenant.result.assets, [
+    { asset: custom, count: 2 },
+    { asset: 'Battle Card', count: 1 },
+  ]);
+  assert.deepStrictEqual(withTenant.result.unmatchedAssets, []);
+  assert.ok(withTenant.prompt.includes(custom), 'and the model was actually offered it');
+
+  // Given the bundled list (the old behavior), it is filtered out and surfaced.
+  const withDefault = await parseBriefWith(model, 'brief');
+  assert.deepStrictEqual(withDefault.result.assets, [{ asset: 'Battle Card', count: 1 }]);
+  assert.deepStrictEqual(withDefault.result.unmatchedAssets, [custom]);
+});
+
+test('a name the TENANT lacks is caught at parse, not thrown downstream', async () => {
+  // Before, a name in ALLOWED_ASSETS but absent from the tenant's library parsed
+  // clean and then threw inside tenantAssetsToSpecs. Now the parse gate is the
+  // same list the expansion checks, so it is reported instead of exploding.
+  const narrow = require('../src/config').ALLOWED_ASSETS.filter((n) => n !== 'Battle Card');
+  const { result } = await parseBriefWith(
+    { ...MODEL_BASE, assets: [{ asset: 'Battle Card', count: 1 }, { asset: 'One-Pager', count: 1 }] },
+    'brief',
+    narrow
+  );
+  assert.deepStrictEqual(result.assets, [{ asset: 'One-Pager', count: 1 }]);
+  assert.deepStrictEqual(result.unmatchedAssets, ['Battle Card']);
+
+  // And what survived really does clear the downstream gate.
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const rows = narrow.map((name, i) => ({
+    id: i + 1, name, group: 'g', sort_order: i,
+    fields: [{ field_name: 'H', char_min: 0, char_max: 10, field_type: 'text', sort_order: 0 }],
+  }));
+  assert.strictEqual(tenantAssetsToSpecs(rows, result.assets).length, 1);
+});
+
+test('no-DB / demo falls back to the 30-name constant, unchanged', async () => {
+  const { resolveAssetVocabulary } = require('../src/core/pipeline');
+  const { ALLOWED_ASSETS } = require('../src/config');
+  // No DATABASE_URL in the test env, so getTenantAssets returns null for any id.
+  for (const tenantId of [null, undefined, 'T0B8LPRDKHR']) {
+    const v = await resolveAssetVocabulary(tenantId);
+    assert.strictEqual(v.source, 'default', `tenant ${tenantId} falls back`);
+    assert.deepStrictEqual(v.names, ALLOWED_ASSETS);
+  }
+  // An empty list passed to gemini.parseBrief is treated as "no vocabulary",
+  // never as "nothing is allowed" — which would reject every brief.
+  const { prompt } = await parseBriefWith({ ...MODEL_BASE, assets: [] }, 'brief', []);
+  assert.ok(prompt.includes('Battle Card'), 'an empty list still offers the bundled 30');
+});
+
+test('the mapping block is filtered to targets the tenant actually has', async () => {
+  const { assetPhraseHintLines, ASSET_PHRASE_HINTS } = require('../src/services/gemini');
+  const { ALLOWED_ASSETS } = require('../src/config');
+
+  // Every targeted hint must name a real asset AND mention it in its own rendered
+  // line. That is the drift guard: `target` drives the filtering, so if someone
+  // rewrites a line's text without updating `target` (or vice versa), the wrong
+  // line gets dropped for the wrong tenant. Not `endsWith` — most lines are
+  // "phrase → Target", but the A/B one is prose ("… one entry: X, count 3").
+  for (const h of ASSET_PHRASE_HINTS) {
+    if (h.always || h.anyMatching) continue;
+    assert.ok(ALLOWED_ASSETS.includes(h.target), `${h.target} is a real asset name`);
+    assert.ok(h.line.includes(h.target), `hint line for ${h.target} names its own target`);
+  }
+
+  // Full list → every mapping present.
+  const full = assetPhraseHintLines(ALLOWED_ASSETS).join('\n');
+  assert.ok(full.includes('→ Battle Card'));
+  assert.ok(full.includes('→ Sales Basho Email'));
+
+  // Narrow list → the lines whose targets are gone go with them. A stale mapping
+  // line is worse than none: it tells the model to emit a name the filter will
+  // then reject, which is exactly the silent drop this work made loud.
+  const narrow = assetPhraseHintLines(['One-Pager', 'Campaign Landing Page']).join('\n');
+  assert.ok(!narrow.includes('Battle Card'), 'no mapping to an asset this tenant lacks');
+  assert.ok(!narrow.includes('Sales Basho Email'));
+  assert.ok(narrow.includes('→ One-Pager'), 'kept the one it does have');
+
+  // The count/A-B rule is about the `count` mechanism, not any asset, so it
+  // survives a library with no LinkedIn in it at all.
+  assert.ok(narrow.includes('the BASE asset, count 2'), 'universal count guidance always ships');
+  assert.ok(narrow.includes('MORE VERSIONS OF ONE ASSET'));
+  // …but the LinkedIn example and the Variant caveat do not.
+  assert.ok(!narrow.includes('3 linkedin ads'), 'the LinkedIn example needs LinkedIn');
+  assert.ok(!narrow.includes('Variant A'), 'the Variant caveat needs Variant types');
+  assert.ok(
+    assetPhraseHintLines(['LinkedIn Single Image Ad — Variant A']).join('\n').includes('Variant A'),
+    'and it comes back for a library that has them'
+  );
+});
+
+test('refusal examples never name an asset the tenant owns', async () => {
+  const { refusalRuleLine, REFUSAL_EXAMPLES } = require('../src/services/gemini');
+  const { ALLOWED_ASSETS } = require('../src/config');
+
+  // Default library: none of the four are in it, so all four still illustrate.
+  const base = refusalRuleLine(ALLOWED_ASSETS);
+  for (const ex of REFUSAL_EXAMPLES) assert.ok(base.includes(ex), `${ex} still an example`);
+
+  // A tenant with a podcast asset must NOT be told to refuse podcast asks. The
+  // match is token-based on purpose: "Podcast Read Ad" does not CONTAIN the
+  // substring "podcast ad" — "Read" sits between the words — so a substring
+  // test left this exact line in the prompt.
+  const podcast = refusalRuleLine([...ALLOWED_ASSETS, 'Podcast Read Ad']);
+  assert.ok(!podcast.includes('podcast ad'), 'dropped the example this tenant owns');
+  assert.ok(podcast.includes('TikTok') && podcast.includes('billboard'), 'kept the others');
+
+  // A tenant owning all four gets the rule with no examples rather than a rule
+  // naming their own assets as things to refuse.
+  const all = refusalRuleLine(['TikTok Ad', 'Podcast Ad', 'Billboard', 'SMS Blast']);
+  assert.ok(!/e\.g\./.test(all), 'no examples left');
+  assert.ok(all.includes('do NOT substitute a nearest guess'), 'but the rule still stands');
+});
+
+test('the unmatched message names the gate that actually ran', () => {
+  const { totalMissMessage, partialMissNotice } = require('../src/utils/assetMatch');
+
+  // Tenant library gate → "your asset library", and adding it is REAL advice.
+  const t = totalMissMessage(['TikTok Ad'], 'tenant');
+  assert.match(t, /your asset library: TikTok Ad\./);
+  assert.match(t, /add them to your asset library/i);
+  const tp = partialMissNotice(['TikTok Ad'], 'tenant');
+  assert.match(tp, /your asset library/);
+  assert.match(tp, /Add it to your asset library to include it next time\./);
+
+  // Bundled-list gate (no DB / demo) → the old wording. There is no library to
+  // add to, so promising that adding one would help would be a lie.
+  const d = totalMissMessage(['TikTok Ad'], 'default');
+  assert.match(d, /any asset type Quillio supports/);
+  assert.ok(!/add them to your asset library/i.test(d), 'never promises a fix that cannot work');
+  // An absent/unknown source degrades to the weaker but never-false claim.
+  assert.strictEqual(totalMissMessage(['X']), totalMissMessage(['X'], 'default'));
+  assert.strictEqual(partialMissNotice(['X'], 'nonsense'), partialMissNotice(['X'], 'default'));
 });

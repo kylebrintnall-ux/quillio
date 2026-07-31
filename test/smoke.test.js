@@ -8407,7 +8407,10 @@ test('the library screen reaches exactly two writes, and neither claims a spec',
   // create form is the half that must never mention either.)
   const createJs = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
   assert.ok(createJs.length > 500, 'found the create form');
-  assert.ok(!/spec_type|spec_source/.test(createJs),
+  // Comments stripped: the form's own comments explain WHY the two columns are
+  // absent, which is the opposite of touching them.
+  const code = createJs.replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/spec_type|spec_source/.test(code),
     'the create form never sends spec_type or spec_source');
   // What it does send is the allowlisted six.
   assert.match(libJs, /field_name: name\.value/);
@@ -8604,29 +8607,52 @@ test('the create form survives a dozen-plus fields on a phone', () => {
   // times, on a phone is the thing that makes a form like this unusable.
   const createJs = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
   assert.match(createJs, /LIB_LINE_RE/, 'a bracket-syntax paste box exists');
-  assert.match(createJs, /paste\.value\.split\('\\n'\)\.map\(libParseLine\)\.filter\(Boolean\)/);
-  // …and pressing Create does not silently drop whatever is still in it.
-  const save = createJs.slice(createJs.indexOf("save.addEventListener"));
-  assert.match(save, /var pending = paste\.value\.split/, 'unparsed paste is folded in on save');
+  // Rows appear AS THE BOX CHANGES. There is no "add these fields" step: a paste
+  // that produces nothing until you find and press a button looks broken.
+  assert.match(createJs, /paste\.addEventListener\('input'/);
+  assert.match(createJs, /setTimeout\(syncFromPaste, 200\)/, 'debounced, so one paste rebuilds once');
+  assert.ok(!/Add these fields/.test(html), 'the parse button is gone');
+  // …and pressing Create flushes a sync still sitting in the debounce, so a
+  // paste followed immediately by Create sends what is on screen.
+  const save = createJs.slice(createJs.indexOf('save.addEventListener'));
+  assert.match(save, /if \(syncTimer\) \{ clearTimeout\(syncTimer\); syncTimer = null; syncFromPaste\(\); \}/);
+
+  // The paste box opens at eight lines and grows with its content, rather than
+  // offering four lines for a feature whose point is a dozen-plus fields.
+  assert.match(html, /\.lib-paste \{ min-height: 172px/);
+  assert.match(createJs, /libAutoGrow\(paste\)/);
+  assert.match(createJs, /ta\.style\.height = ta\.scrollHeight \+ 'px'/);
+
+  // Zero rows on open. Either the paste or "+ Add a field" makes the first one —
+  // an empty row on open is a chore presented as a starting point.
+  const open = createJs.slice(createJs.indexOf('function libOpenNew'));
+  assert.ok(!/addRows\(\[\{\}\]\)/.test(open.slice(0, open.indexOf('oneMore.addEventListener'))),
+    'nothing seeds a row before the user acts');
+  assert.match(open, /oneMore\.addEventListener\('click', function \(\) \{ addRows\(\[\{\}\]\); \}\)/);
 
   // The row is STACKED: a single grid line put the field name in the narrowest
   // column, where at 390px it showed nine characters — "Section 1 Headline" and
-  // "Section 1 Body" rendered identically. The name now owns a full line.
-  assert.match(html, /\.lib-fname \{ width: 100%/);
+  // "Section 1 Body" rendered identically. The name now owns the first line.
+  assert.match(html, /\.lib-fname \{ flex: 1; min-width: 0/);
   assert.ok(!/\.lib-frow \{ display: grid/.test(html), 'the row is no longer a five-column grid');
   assert.match(createJs, /name\.className = 'lib-fname'/);
   assert.match(createJs, /var ctl = el\('div', 'lib-fctl'\)/, 'the small values share the line below');
 
-  // Thumb targets. The delete was a 17px glyph sitting beside the number inputs;
-  // it is now 36px square and pushed to the far edge.
-  assert.match(html, /\.lib-fdel \{ margin-left: auto;[^}]*min-height: 36px; min-width: 36px/);
-  assert.match(html, /\.lib-fnotebtn \{[^}]*min-height: 36px/);
+  // Thumb targets, and a unit control that reads as a control. "chars" with
+  // appearance:none and no arrow was a label sitting beside two numbers.
+  assert.match(html, /\.lib-fdel \{ flex: none;[^}]*min-height: 36px; min-width: 36px/);
+  assert.match(html, /\.lib-funit::after \{ content: '▾'/);
+  assert.match(html, /\.lib-funit select \{ width: 86px; min-height: 36px/);
+  assert.match(createJs, /var unitWrap = el\('span', 'lib-funit'\)/);
 
-  // The optional note costs a line only when wanted — fourteen fields would
-  // otherwise be twenty-eight lines of scrolling — but a row that already has
-  // one opens showing it, so a pasted note is never hidden from its author.
-  assert.match(createJs, /setNoteOpen\(!!f\.spec_note\)/);
-  assert.match(createJs, /note\.classList\.toggle\('hidden', !open\)/);
+  // The writing note is the only guidance a custom field gets, so it is a
+  // full-width invitation with a stated reason above the rows — not a small
+  // underlined word beside an X.
+  assert.match(html, /\.lib-fnotebtn \{ display: block; width: 100%;[^}]*min-height: 38px/);
+  assert.match(createJs, /'\+ Add a writing note'/);
+  assert.match(createJs, /'Writing note — the drafter follows this'/);
+  assert.match(createJs, /lib-notewhy/, 'the reason is stated once, above the rows');
+  assert.match(createJs, /setNoteOpen\(!!f\.spec_note\)/, 'a note that exists opens showing');
   assert.match(createJs, /aria-expanded/);
   assert.match(html, /\.hidden \{ display: none !important; \}/, 'the class it toggles is real');
 
@@ -8638,5 +8664,52 @@ test('the create form survives a dozen-plus fields on a phone', () => {
   // The header is replaced by a live count — with a dozen-plus rows that is the
   // thing worth showing, and it confirms the paste parsed what was expected.
   assert.match(createJs, /n === 1 \? '1 field' : n \+ ' fields'/);
-  assert.match(createJs, /libFieldRow\(f, refreshHead\)/, 'removing a row updates the count');
+});
+
+test('re-parsing never silently discards a row the user edited', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const createJs = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
+  const sync = createJs.slice(createJs.indexOf('var syncFromPaste'), createJs.indexOf('var syncTimer'));
+
+  // A row records which pasted LINE made it, and whether the user has touched
+  // it. Those two facts are the whole ownership rule.
+  assert.match(createJs, /wrap\.srcKey = srcKey \|\| null/);
+  assert.match(createJs, /wrap\.dirty = false/);
+  assert.match(createJs, /if \(wrap\.dirty\) return;\s*wrap\.dirty = true/, 'first edit flips it, once');
+  // Every control in the row arms it — including the note and the unit select,
+  // which do not fire 'input' the way the text fields do.
+  assert.match(createJs, /\[name, min, max, note\]\.forEach\(function \(e\) \{ e\.addEventListener\('input', touch\); \}\)/);
+  assert.match(createJs, /unit\.addEventListener\('change', touch\)/);
+
+  // Matching is by the line a row CAME FROM, not by its current name or its
+  // position — so renaming a row, reordering the paste box, or inserting a line
+  // above it all still land the edit on the right field.
+  assert.match(sync, /if \(!r\.srcKey\) \{ manual\.push\(r\); return; \}/, 'hand-added rows are never the paste box\'s');
+  assert.match(sync, /if \(r\.dirty && !claimed\[r\.srcKey\]\) claimed\[r\.srcKey\] = r/);
+  assert.match(sync, /if \(claimed\[key\]\) \{ next\.push\(claimed\[key\]\); delete claimed\[key\]; protectedCount\+\+; return; \}/);
+  // An edited row whose line is deleted is MOVED, not dropped.
+  assert.match(sync, /Object\.keys\(claimed\)\.forEach\(function \(k\) \{ moved\.push\(claimed\[k\]\); \}\)/);
+  assert.match(sync, /next\.concat\(moved, manual\)/);
+  assert.ok(!/\.remove\(\)/.test(sync), 'the reconciler removes no row');
+
+  // And it says what it did. A protection the user cannot see is a bug to them.
+  assert.match(sync, /libSetKept\(protectedCount, moved\.length\)/);
+  assert.match(createJs, /the paste box no longer overwrites (it|them)/);
+  assert.match(createJs, /moved to the bottom rather than removed/);
+  assert.match(html, /\.lib-frow\.dirty \{ border-left/, 'and marks the rows it is protecting');
+
+  // The row key folds the same way the server folds names. Not asserted as a
+  // string — the browser's function is lifted out and run against the real
+  // utils/normalize, so the two cannot drift into disagreeing about what "the
+  // same field" is. (A laxer key would merge two distinct rows; a stricter one
+  // would lose an edit on a name Postgres considers unchanged.)
+  const src = createJs.slice(createJs.indexOf('function libRowKey'));
+  const libRowKey = new Function(src.slice(0, src.indexOf('\n    }') + 6) + '\n    return libRowKey;')();
+  const { normalize } = require('../src/utils/normalize');
+  for (const s of [
+    'Hero Headline', 'HERO  headline', 'Co-Branded — Ad', 'Co-Branded - Ad', 'Co – Branded',
+    '  Legal Line  ', 'Offer\tBody', 'A−B', 'Section 1 Body', 'section 1  body',
+  ]) {
+    assert.strictEqual(libRowKey(s), normalize(s), `libRowKey matches normalize for ${JSON.stringify(s)}`);
+  }
 });

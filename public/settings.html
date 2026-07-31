@@ -347,8 +347,19 @@
     .lib-asset { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 12px 16px; margin: 10px 0; }
     .lib-asset.off { opacity: 0.6; border-style: dashed; }
-    .lib-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-    .lib-name { font-weight: 600; font-size: 14px; color: var(--ink); }
+    /* Two columns, and the toggle is never one of the things that wraps. The head
+       used to be a single wrapping flex row holding name + group + toggle, so a
+       long name ("LinkedIn Single Image Ad — Variant A", "Direct Mail — Note Card
+       / Rep Letter") pushed the toggle onto a second line and every card put its
+       switch somewhere different. The NAME wraps now; the toggle is pinned to the
+       top-right corner on every card regardless of how many lines the name takes. */
+    .lib-head { display: flex; align-items: flex-start; gap: 10px; }
+    .lib-headtext { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    /* An asset name is a heading, so it is set in the display face like every
+       other heading in the app (.hub-name, .settings-title, h2). Body copy — the
+       group, the field rows, the spec notes — stays in Encode Sans. */
+    .lib-name { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px;
+      letter-spacing: 0.02em; color: var(--ink); }
     .lib-group { font-size: 11px; color: rgba(26,26,46,0.45); }
     .lib-dir { font-size: 12px; font-style: italic; color: rgba(26,26,46,0.55); margin-top: 4px; }
     .lib-fields { list-style: none; margin: 8px 0 0; padding: 0; }
@@ -387,7 +398,9 @@
     /* Asset on/off toggle — same control as onboarding's asset step. */
     /* Pinned to the right edge with nothing between it and the card, so the
        control does not move horizontally when it is flipped. */
-    .lib-toggle { position: relative; width: 40px; height: 24px; flex: none; cursor: pointer; margin-left: auto; }
+    /* flex: none + a head that cannot wrap = the same x on every card. The small
+       top offset centres it against the FIRST line of the name, not the block. */
+    .lib-toggle { position: relative; width: 40px; height: 24px; flex: none; cursor: pointer; margin-top: 1px; }
     .lib-toggle input { opacity: 0; width: 0; height: 0; }
     .lib-track { position: absolute; inset: 0; background: rgba(26,26,46,0.2); border-radius: 999px; transition: background .15s; }
     .lib-track::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .15s; }
@@ -428,7 +441,9 @@
       padding: 8px 9px; font-size: 13px; border-radius: 9px;
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); color: var(--ink);
     }
-    .lib-fname { flex: 1; min-width: 0; font-weight: 600; }
+    /* Scoped to a create-form row: unscoped, this rule also caught the read-only
+       card's field-name span 70 lines above and bolded every field in the library. */
+    .lib-frow .lib-fname { flex: 1; min-width: 0; font-weight: 600; }
     .lib-fctl input[type="number"] { width: 62px; }
     .lib-fctl .lib-sep { font-size: 12px; color: rgba(26,26,46,0.45); }
     /* The unit was a bare "chars" with appearance:none and no affordance — it
@@ -886,8 +901,12 @@
     function libRenderAsset(a) {
       var card = el('div', 'lib-asset' + (a.is_active ? '' : ' off'));
       var head = el('div', 'lib-head');
-      head.appendChild(el('span', 'lib-name', a.name));
-      if (a.group) head.appendChild(el('span', 'lib-group', a.group));
+      // Name + group share a column that is free to wrap; the toggle is the
+      // head's other child and never wraps with them.
+      var headText = el('div', 'lib-headtext');
+      headText.appendChild(el('span', 'lib-name', a.name));
+      if (a.group) headText.appendChild(el('span', 'lib-group', a.group));
+      head.appendChild(headText);
 
       // The ONLY writable thing on this screen: is_active.
       var toggle = el('label', 'lib-toggle');

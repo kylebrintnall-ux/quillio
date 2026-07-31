@@ -8446,8 +8446,13 @@ test('the off state is the toggle and the card, with no pill to shift it', () =>
   const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Markdown render'));
   assert.ok(!/'pill', 'Off'/.test(libJs), 'no Off pill is rendered');
   assert.ok(!/querySelector\('\.pill'\)/.test(libJs), 'and none is added or removed on toggle');
-  // The toggle is the last thing in the row and is pinned to the edge.
-  assert.match(html, /\.lib-toggle \{[^}]*margin-left: auto/);
+  // The toggle is pinned to the card's top-right corner. It used to be pushed
+  // there by margin-left:auto inside a WRAPPING flex row, so a long asset name
+  // ("Direct Mail — Note Card / Rep Letter") wrapped it onto a second line and
+  // moved it. The head no longer wraps; the name does.
+  assert.match(html, /\.lib-toggle \{[^}]*flex: none/);
+  assert.ok(!/\.lib-head \{[^}]*flex-wrap: wrap/.test(html), 'the head itself never wraps');
+  assert.match(html, /\.lib-headtext \{ flex: 1; min-width: 0;[^}]*flex-wrap: wrap/, 'the name column wraps instead');
   // The remaining off cues are the dimmed, dashed card — unchanged.
   assert.match(html, /\.lib-asset\.off \{ opacity: 0\.6; border-style: dashed; \}/);
   assert.match(html, /function libPaintActive\(card, active\) \{\s*card\.classList\.toggle\('off', !active\);\s*\}/);
@@ -8712,4 +8717,211 @@ test('re-parsing never silently discards a row the user edited', () => {
   ]) {
     assert.strictEqual(libRowKey(s), normalize(s), `libRowKey matches normalize for ${JSON.stringify(s)}`);
   }
+});
+
+// --- The review never tells a writer to pad ----------------------------------
+// A real run produced: "The current copy is 142 characters, falling short of the
+// 150-character minimum. Expand slightly…". char_min is a guardrail against a
+// structurally empty field, not a quota, and telling a copywriter to add words to
+// fill space is the fastest way to lose them.
+
+test('neither review prompt is given a length floor', async () => {
+  const gemini = require('../src/services/gemini');
+  const config = require('../src/config');
+  const seen = [];
+  const realFetch = global.fetch;
+  const realKey = config.GEMINI_API_KEY;
+  config.GEMINI_API_KEY = 'test-key'; // the suite runs without credentials
+  global.fetch = async (_url, opts) => {
+    seen.push(JSON.parse(opts.body).contents[0].parts[0].text);
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: '[]' }] }, finishReason: 'STOP' }] }) };
+  };
+  try {
+    await gemini.reviewCopyFields({
+      fields: [{ assetType: 'Event Invitation Email', fieldName: 'Preview Text', charMax: 160, charMin: 150, fieldType: 'text', copy: 'Two days of workshops and the people shipping this.' }],
+    });
+  } finally {
+    global.fetch = realFetch;
+    config.GEMINI_API_KEY = realKey;
+  }
+  const payload = seen[0].slice(seen[0].indexOf('FIELDS:'));
+  // The number the model reported back is not in the prompt at all. A rule alone
+  // would be a request; withholding the number is what makes it unfalsifiable.
+  assert.match(payload, /"charMax": 160/);
+  assert.ok(!/charMin/.test(payload), 'no floor key in the field payload');
+  assert.ok(!/\b150\b/.test(payload), 'and no floor value anywhere in it');
+  assert.match(payload, /"lengthUnit": "characters"/, 'the UNIT still travels — a word field must not be judged in characters');
+});
+
+test('the length rule forbids padding in both review prompts', () => {
+  const { LENGTH_RULE, buildVariantReviewPrompt } = require('../src/services/gemini');
+  const rule = LENGTH_RULE.join('\n');
+  assert.match(rule, /There is NO minimum\. Shorter is not a defect\./);
+  assert.match(rule, /NEVER tell the writer to expand, lengthen,\s*\n?\s*pad/);
+  assert.match(rule, /Never write a sentence of the form "X characters, short of the Y minimum"/);
+  // Over-length is untouched — a hard limit is a real constraint.
+  assert.match(rule, /A maximum is a HARD limit/);
+  assert.match(rule, /suggest what to cut/);
+  // Under-length is raised only as INCOMPLETENESS, described as what's missing.
+  assert.match(rule, /ONLY when it is genuinely INCOMPLETE/);
+  assert.match(rule, /a CTA with no verb/);
+  assert.match(rule, /never that it is under a count/);
+
+  // Both paths get the same rule verbatim — a writer must get one answer whichever
+  // path reviewed their field.
+  const gsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  assert.strictEqual((gsrc.match(/\.\.\.LENGTH_RULE/g) || []).length, 2, 'spread into exactly the two review prompts');
+  const stack = buildVariantReviewPrompt({
+    assetType: 'Demand Gen Nurture Email', fieldName: 'Offer Body 1', charMax: 140, fieldType: 'words',
+    variations: [{ index: 1, doorway: 'Outcome', copy: 'Short.' }],
+  });
+  assert.ok(stack.includes(rule), 'the stack prompt carries it too');
+});
+
+test('the variation stack states a ceiling, in the right unit, and no band', () => {
+  const { buildVariantReviewPrompt } = require('../src/services/gemini');
+  const base = { assetType: 'A', fieldName: 'F', variations: [{ index: 1, doorway: 'Outcome', copy: 'x' }] };
+
+  // Was "Length: 50-140 words per option" — a band, which drew the same padding
+  // note. charMin is no longer even a parameter.
+  const words = buildVariantReviewPrompt({ ...base, charMax: 140, fieldType: 'words' });
+  assert.match(words, /Length: up to 140 words per option — a WORD count, not characters\. There is no floor\./);
+  assert.ok(!/50-140|140 words per option — a WORD count, not characters\.\n/.test(words.split('There is no floor')[0].replace(/Length: up to /, '')), 'no floor in the limit line');
+
+  const chars = buildVariantReviewPrompt({ ...base, charMax: 140, fieldType: 'text' });
+  assert.match(chars, /Character limit: 140 per option \(a hard maximum\)\. There is no minimum\./);
+
+  // fieldType was destructured by reviewVariationStack and never forwarded, so a
+  // WORD field's stack was told "Character limit: 140" — words measured against a
+  // character count.
+  const gsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  const fn = gsrc.slice(gsrc.indexOf('async function reviewVariationStack'));
+  assert.match(fn.slice(0, fn.indexOf('const SCHEMA')), /buildVariantReviewPrompt\(\{ assetType, fieldName, charMax, fieldType, variations: opts/);
+});
+
+test('the floor never leaves the doc — copyReview does not carry it', () => {
+  // gemini.js is where the prompt is written, but the units come from here. If
+  // the number is not put on them, no future prompt edit can reintroduce it by
+  // accident.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'copyReview.js'), 'utf8');
+  // Comments stripped — the one that survives explains WHY the floor is absent.
+  const code = src.replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/charMin/.test(code), 'no charMin anywhere in the review pipeline');
+  assert.match(src, /charMax: f\.charMax \|\| 0, fieldType: f\.fieldType \|\| 'text'/, 'the ceiling and unit still travel');
+  // The draft path is untouched: a band is a legitimate target when WRITING.
+  const pipeline = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.match(pipeline, /charMin: parseInt\(f\.char_min, 10\) \|\| 0/, 'generation still gets the floor');
+});
+
+// --- The review never cites a document the writer cannot open ----------------
+
+test('both review prompts forbid citing an internal document', () => {
+  const { NO_CITATION_RULE, buildVariantReviewPrompt } = require('../src/services/gemini');
+  const rule = NO_CITATION_RULE.join('\n');
+  assert.match(rule, /NEVER CITE AN INTERNAL DOCUMENT/);
+  assert.match(rule, /The writer cannot see the craft playbook, the brand/);
+  // It shows the fix, not just the ban.
+  assert.match(rule, /"cut 'actually' — the line is punchier without it\."/);
+
+  const gsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  assert.strictEqual((gsrc.match(/\.\.\.NO_CITATION_RULE/g) || []).length, 2, 'in both review prompts');
+  assert.ok(buildVariantReviewPrompt({
+    assetType: 'A', fieldName: 'F', charMax: 70, fieldType: 'text',
+    variations: [{ index: 1, doorway: 'Outcome', copy: 'x' }],
+  }).includes(rule));
+});
+
+test('a comment that cites an internal document is trimmed or dropped, never mangled', () => {
+  const { stripInternalCitations: strip } = require('../src/services/gemini');
+
+  // Cites nothing → byte-identical. Most comments take this path, and a rewrite
+  // nobody asked for is its own small bug.
+  for (const clean of [
+    'At 74 characters this overruns the 50-character limit by ~24 and will truncate in most inboxes.',
+    'The CTA has no verb — "Spring" doesn\'t tell the reader what happens if they tap it.',
+    'Cut "actually" — the line is punchier without it.',
+    'This reads as a brand promise; the brief asks for a registration push.',
+  ]) {
+    assert.strictEqual(strip(clean), clean, `untouched: ${clean.slice(0, 40)}`);
+  }
+
+  // The citation is a WHOLE delimited segment → removing it cannot break grammar.
+  assert.strictEqual(strip('Front-load the outcome (per the craft playbook).'), 'Front-load the outcome.');
+  assert.strictEqual(strip('Per the craft playbook, cut "actually" from the opening line.'), 'Cut "actually" from the opening line.');
+  assert.strictEqual(strip('Cut "actually" from the opening line, per the craft playbook.'), 'Cut "actually" from the opening line.');
+  assert.strictEqual(strip('Tighten the opener — see the brand guide.'), 'Tighten the opener.');
+
+  // Load-bearing mid-sentence → DROPPED. The first version of this excised it in
+  // place and produced "Strong specifics, but." and "Cut 'actually' — adverbs
+  // applies and the line is punchier without it" — worse than the citation. You
+  // cannot cut a clause out of arbitrary prose and be sure of the result.
+  for (const embedded of [
+    'Strong specifics, but per the craft playbook the opener could front-load the outcome.',
+    'Cut "actually" — the craft playbook\'s rule on adverbs applies and the line is punchier without it.',
+    'The voice guide requires sentence case here.',
+    'This should align with the craft playbook\'s rule on adverbs.',
+  ]) {
+    assert.strictEqual(strip(embedded), null, `dropped: ${embedded.slice(0, 40)}`);
+  }
+
+  // Whatever the path, nothing citing an internal document ever reaches a doc.
+  const CITES = /craft playbook|brand guide|brand reference|voice guide|craft\.md|voice\.md/i;
+  for (const t of [
+    'Front-load the outcome (per the craft playbook).',
+    'Strong specifics, but per the craft playbook the opener could front-load the outcome.',
+    'See craft.md on adverbs and cut this one.',
+  ]) {
+    const r = strip(t);
+    assert.ok(r === null || !CITES.test(r), `no citation survives: ${JSON.stringify(r)}`);
+  }
+  assert.strictEqual(strip(null), null);
+  assert.strictEqual(strip('   '), null);
+});
+
+test('the sanitizer is applied on BOTH review result paths', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  // Single field: matchReviewResults, the one binder every comment passes through.
+  const match = src.slice(src.indexOf('function matchReviewResults'), src.indexOf('async function reviewCopyFields'));
+  assert.match(match, /stripInternalCitations\(raw\)/);
+  // Variation stack: strategy, craft AND flag are all doc comment text.
+  const stack = src.slice(src.indexOf('async function reviewVariationStack'));
+  assert.match(stack, /const strOrNull = \(v\) => \(typeof v === 'string' && v\.trim\(\) \? stripInternalCitations\(v\.trim\(\)\) : null\)/);
+});
+
+// --- Presentation ------------------------------------------------------------
+
+test('an asset name is a heading, and the toggle never moves', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  // Headings take the display face; body copy stays in Encode Sans.
+  assert.match(html, /\.lib-name \{ font-family: 'StarCrush', serif/);
+  assert.match(html, /\.lib-group \{ font-size: 11px/);
+  assert.ok(!/\.lib-group \{[^}]*StarCrush/.test(html), 'the group is body copy, not a heading');
+
+  // The head is two columns and the toggle is not one of the wrapping things.
+  assert.match(html, /\.lib-head \{ display: flex; align-items: flex-start/);
+  assert.ok(!/\.lib-head \{[^}]*flex-wrap: wrap/.test(html));
+  assert.match(html, /\.lib-headtext \{ flex: 1; min-width: 0;[^}]*flex-wrap: wrap/);
+  assert.match(html, /var headText = el\('div', 'lib-headtext'\)/);
+  assert.match(html, /\.lib-toggle \{[^}]*flex: none/);
+
+  // The create form's row-name rule is scoped, so it stops bolding the read-only
+  // card's field names 70 lines above it.
+  assert.match(html, /\.lib-frow \.lib-fname \{ flex: 1/);
+  assert.match(html, /\.lib-fname \{ color: var\(--ink\); \}/, 'the card\'s own rule is intact');
+});
+
+test('the review modal reads its heading in the display face and cannot be abandoned', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // "Reviewing your copy…" is the heading of that state, so it takes .review-status
+  // (StarCrush) like the result heading — it was .review-note (Encode Sans) while
+  // the Close button below it was StarCrush, i.e. the rule exactly inverted.
+  assert.match(html, /<div class="review-status">Reviewing your copy…<\/div>/);
+  assert.match(html, /\.review-status \{ font-family: 'StarCrush', serif/);
+  assert.match(html, /\.review-note \{ font-family: 'Encode Sans Semi Condensed'/);
+
+  // Close is gone — the run takes seconds and there is nothing to gain by
+  // abandoning it. Its handler and its element go together; no dead listener.
+  assert.ok(!/project-review-modal-close/.test(html), 'no Close button and no handler for one');
+  // The sheet is still dismissable the way it already was.
+  assert.match(html, /if \(e\.target === document\.getElementById\('project-review-modal'\)\) closeProjectReviewModal\(\)/);
 });

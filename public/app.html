@@ -997,7 +997,6 @@
       <div class="modal-handle"></div>
       <div class="review-panel" id="project-review-modal-body" style="margin:0;padding:0;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;border:none;"></div>
       <button class="modal-btn hidden" id="project-review-modal-open" style="margin-top:18px;">Open in Drive</button>
-      <button class="modal-cancel" id="project-review-modal-close">Close</button>
     </div>
   </div>
 
@@ -3042,7 +3041,11 @@
       var openBtn = document.getElementById('project-review-modal-open');
       body.className = 'review-panel';
       body.style.cssText = 'margin:0;padding:0;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;border:none;';
-      body.innerHTML = '<img class="review-gif" src="/assets/gifs/quillio-review.gif" alt=""><div class="review-note">Reviewing your copy…</div>';
+      // "Reviewing your copy…" is this state's HEADING, so it takes the display
+      // face like the result heading below it (.review-status). It was in the body
+      // face while the Close button underneath it was in the display face — the
+      // rule exactly inverted. Close is gone; the backdrop still dismisses.
+      body.innerHTML = '<img class="review-gif" src="/assets/gifs/quillio-review.gif" alt=""><div class="review-status">Reviewing your copy…</div>';
       hide(openBtn);
       openProjectReviewModal();
       try {
@@ -3176,7 +3179,9 @@
       if (e.target === document.getElementById('project-regen-modal')) closeProjectRegenModal();
     });
     document.getElementById('project-review-modal-open').addEventListener('click', openReviewModalDoc);
-    document.getElementById('project-review-modal-close').addEventListener('click', closeProjectReviewModal);
+    // No Close button: the review takes a few seconds and there is nothing to
+    // gain from abandoning it mid-run. Tapping the backdrop still dismisses,
+    // which is how the sheet was already dismissable.
     document.getElementById('project-review-modal').addEventListener('click', function (e) {
       if (e.target === document.getElementById('project-review-modal')) closeProjectReviewModal();
     });

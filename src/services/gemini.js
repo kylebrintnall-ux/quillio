@@ -1556,6 +1556,109 @@ const CROSS_FIELD_FLAG_RULE = [
   'as option 2."',
 ];
 
+// LENGTH RULE — shared verbatim by both review prompts (single field + variation
+// stack), because a writer must get the same answer whichever path reviewed them.
+//
+// A real run produced: "The current copy is 142 characters, falling short of the
+// 150-character minimum. Expand slightly to meet the limit, perhaps by specifying
+// the venue or adding a brief benefit." That is bad craft advice dressed as a
+// spec. char_min exists so a field is not structurally EMPTY — a CTA with no
+// verb, a one-word subject line. It is not a quota, and saying the same thing in
+// fewer words is better writing, not a defect.
+//
+// The floor is ALSO no longer sent to the model at all — see the FIELDS payload
+// in reviewCopyFields and limitLine in buildVariantReviewPrompt. Both halves
+// matter: the rule tells the model what to do, and withholding the number means
+// it has nothing to compute "142 against 150" from even if it ignores the rule.
+// (The DRAFT prompt still receives the floor. That is generation, where a band is
+// a legitimate target — this is review, where it becomes an instruction to pad.)
+const LENGTH_RULE = [
+  'LENGTH — READ CAREFULLY, THIS IS A COMMON ERROR:',
+  '• A maximum is a HARD limit. Copy that exceeds it will be truncated in the wild — flag it,',
+  '  say by roughly how much, and suggest what to cut.',
+  '• There is NO minimum. Shorter is not a defect. NEVER tell the writer to expand, lengthen,',
+  '  pad, "add detail to meet the limit", or fill available space. Saying it in fewer words is',
+  '  GOOD writing, and a note to the contrary destroys the writer\'s trust in this review.',
+  '• Do NOT compute, quote, or reason about a character or word FLOOR. You have not been given',
+  '  one. Never write a sentence of the form "X characters, short of the Y minimum".',
+  '• Short copy is worth raising ONLY when it is genuinely INCOMPLETE — a CTA with no verb, a',
+  '  subject line that is a single word, a body that names no benefit or offer. Then say what',
+  '  is MISSING from the copy ("the CTA has no verb — the reader is not told what to do"),',
+  '  never that it is under a count.',
+];
+
+// Comments are read by a writer inside a Google Doc. They never see craft.md, the
+// brand/voice guide, or any other internal document, so a note like "align with
+// the craft playbook's rule on adverbs" is an appeal to something that does not
+// exist for them — it reads as an unfalsifiable authority claim and carries none
+// of the guidance it is standing in for. State the point instead.
+const NO_CITATION_RULE = [
+  'NEVER CITE AN INTERNAL DOCUMENT. The writer cannot see the craft playbook, the brand',
+  'reference, the voice guide or the brief — naming any of them is meaningless to them.',
+  'Do not write "per the craft playbook", "the brand guide says", "the voice guide requires",',
+  '"as the brief states", "the playbook\'s rule on…", or any equivalent. Make the point directly',
+  'and let it stand on its own: not "cut \'actually\' — the craft playbook bans adverbs" but',
+  '"cut \'actually\' — the line is punchier without it."',
+];
+
+// Belt and braces for NO_CITATION_RULE. The prompt is the fix; this is the
+// guarantee, because a comment goes straight into a Google Doc where nobody
+// reviews it first.
+//
+// It only ever performs removals that provably leave a grammatical sentence, and
+// otherwise DROPS the comment. The first version of this tried to excise the
+// citation from mid-sentence and produced "Strong specifics, but." and
+// "Cut 'actually' — adverbs applies and the line is punchier without it" — worse
+// than the thing it was fixing. You cannot cut a clause out of arbitrary prose
+// and be sure of the result; you can only be sure about a clause that is the
+// WHOLE of a delimited segment. Everything else is dropped, which is cheap here
+// because silence is already this review's most common correct answer.
+//
+// Detection is deliberately wider than removal: anything that mentions an
+// internal document at all is caught, and if the safe removals do not clear it,
+// the note does not ship.
+const CITATION_DOC = String.raw`(?:the\s+)?(?:copy\s+)?(?:craft|brand|voice|style)\s*(?:playbook|guide|guidelines|reference)|craft\.md|voice\.md`;
+const HAS_CITATION_RE = new RegExp(`(?:${CITATION_DOC})|\\bthe brief\\s+(?:says|states|calls for|requires)`, 'i');
+
+// A segment that is NOTHING BUT a citation — an optional connector, the document,
+// and at most a short "…'s rule on adverbs" tail. If a delimited segment matches
+// this end to end, deleting the segment cannot break the sentence around it.
+const CITATION_ONLY = String.raw`(?:and\s+|also\s+)?(?:as\s+)?(?:per|per\s+the|according\s+to|in\s+line\s+with|consistent\s+with|following|aligned\s+with|to\s+align\s+with|in\s+keeping\s+with|see|cf\.?)?\s*(?:${CITATION_DOC})(?:'s|’s)?(?:\s+(?:rule|guidance|principle|convention|standard|note)s?(?:\s+(?:on|about|for|against)\s+[\w\s-]{1,32})?)?`;
+
+// The three shapes that are safe to remove, in the order they are tried.
+const SAFE_REMOVALS = [
+  // 1. A parenthetical that contains only the citation: "front-load it (per the craft playbook)."
+  [new RegExp(String.raw`\s*\(\s*${CITATION_ONLY}\s*\)`, 'gi'), ''],
+  // 2. A leading clause: "Per the craft playbook, cut 'actually'." -> "Cut 'actually'."
+  [new RegExp(String.raw`^\s*${CITATION_ONLY}\s*[,:]\s*`, 'i'), ''],
+  // 3. A trailing clause running to the end: "Cut 'actually', per the craft playbook."
+  [new RegExp(String.raw`\s*[,;—–-]\s*${CITATION_ONLY}\s*([.!?]?)\s*$`, 'i'), '$1'],
+];
+
+// Clean one comment for a human reader. Returns the input unchanged when it cites
+// nothing, a safely-trimmed version when the citation was a whole delimited
+// segment, and null when it was load-bearing mid-sentence.
+function stripInternalCitations(text) {
+  if (typeof text !== 'string') return null;
+  const original = text.trim();
+  if (!original) return null;
+  if (!HAS_CITATION_RE.test(original)) return original === text ? text : original;
+
+  let out = original;
+  for (const [re, sub] of SAFE_REMOVALS) out = out.replace(re, sub);
+  out = out.replace(/\s{2,}/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
+
+  // Still citing something, or reduced to a fragment → say nothing. A note that
+  // points at a document the writer cannot open is worth less than silence, and
+  // a mangled one costs more.
+  if (HAS_CITATION_RE.test(out) || !/[a-z]{3}/i.test(out) || out.split(/\s+/).length < 3) {
+    console.warn('[gemini] dropped a review comment that cited an internal document');
+    return null;
+  }
+  if (out !== original) out = out.charAt(0).toUpperCase() + out.slice(1);
+  return out;
+}
+
 // Bind the model's review results back onto the inputs that produced them.
 // Returns one entry per input, in input order: { assetType, instance, fieldName,
 // comment } with comment null when there is no material note.
@@ -1594,7 +1697,9 @@ function matchReviewResults(list, parsed) {
     const matches = byKey.get(key);
     // nth same-key result, else this input's positional result, else no comment.
     const r = (matches && matches[n]) || results[i] || {};
-    const comment = typeof r.comment === 'string' && r.comment.trim() ? r.comment.trim() : null;
+    const raw = typeof r.comment === 'string' && r.comment.trim() ? r.comment.trim() : null;
+    // The prompt forbids citing an internal document; this is what makes it true.
+    const comment = raw ? stripInternalCitations(raw) : null;
     // `instance` is echoed from the INPUT (like assetType/fieldName) — the model
     // never sees it, so it can only come from here.
     return { assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, comment };
@@ -1660,11 +1765,14 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = fal
     'goal, and (d) universal writing craft: clarity, tightness, natural phrasing, grammar.',
     'Where craft and brand conflict on how something SOUNDS, the brand reference wins; craft still governs structure.',
     '',
+    ...LENGTH_RULE,
+    '',
     'MATERIALITY BAR: only flag an issue a skilled editor would genuinely raise because fixing it MATERIALLY improves',
     'the copy. Ignore minor preferences and marginal nitpicks. At most the 1–2 most important notes per field.',
     'SILENCE IS SUCCESS: if a field is strong and on-brand, return null for it. Do NOT manufacture feedback, and never',
     'write affirmations ("this works well") — comment only on what is worth CHANGING. A clean field gets null.',
     'Feedback must be specific, actionable, one or two sentences, and collegial.',
+    ...NO_CITATION_RULE,
     '',
     'RE-REVIEW (when a field has priorCopy / priorComment from a previous pass), reason per field:',
     '• copy CHANGED and now works → the writer improved it: return null (do not re-flag, do not congratulate).',
@@ -1697,10 +1805,13 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = fal
         const entry = {
           assetType: f.assetType,
           fieldName: f.fieldName,
+          // The MAXIMUM only. The floor is deliberately absent: given a charMin the
+          // model reliably reports "142 characters, short of the 150 minimum —
+          // expand", which is a spec-shaped instruction to pad. A number that is
+          // never sent cannot be quoted back. `lengthUnit` still travels, so a
+          // 300-word email is judged in words rather than against a character
+          // count it was never written to.
           charMax: f.charMax || 0,
-          // Unit + floor, so the reviewer flags a 300-word email for LENGTH rather
-          // than measuring it against a character number it was never written to.
-          charMin: f.charMin || 0,
           lengthUnit: f.fieldType === 'words' ? 'words' : 'characters',
           copy: f.copy || '',
           priorCopy: f.priorCopy || null,
@@ -1789,7 +1900,9 @@ const DOORWAY_FIT_GUIDE = [
 // field's options (each carrying its assigned doorway). `siblings` (scoped review)
 // is the asset context — the stack's non-variation neighbors — read for fit +
 // cross-field interaction, never commented. Exposed for tests.
-function buildVariantReviewPrompt({ assetType, fieldName, charMax, charMin, fieldType, variations, voiceGuide, briefContext, siblings } = {}) {
+// `charMin` is deliberately NOT a parameter — see LENGTH_RULE. The stack review
+// is told the ceiling and the unit, never a floor.
+function buildVariantReviewPrompt({ assetType, fieldName, charMax, fieldType, variations, voiceGuide, briefContext, siblings } = {}) {
   const opts = Array.isArray(variations) ? variations : [];
   const sibs = Array.isArray(siblings) ? siblings.filter((s) => s && s.fieldName && String(s.copy || '').trim()) : [];
   const craft = buildCraftContext(assetType);
@@ -1806,10 +1919,14 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, charMin, fiel
         '',
       ].filter(Boolean)
     : [];
+  // "50-140 words" read as a required band and drew the same padding note the
+  // single-field path produced. A ceiling, or nothing.
   const limitLine = fieldType === 'words'
-    ? `Length: ${Number(charMin) > 0 ? `${charMin}-` : 'up to '}${charMax} words per option — a WORD count, not characters.`
+    ? (Number(charMax) > 0
+      ? `Length: up to ${charMax} words per option — a WORD count, not characters. There is no floor.`
+      : 'Length is counted in WORDS, not characters. Keep each option tight.')
     : (Number(charMax) > 0
-      ? `Character limit: ${charMax} per option (a hard maximum).`
+      ? `Character limit: ${charMax} per option (a hard maximum). There is no minimum.`
       : 'Keep each option concise.');
 
   return [
@@ -1866,6 +1983,10 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, charMin, fiel
     '- An option with no doorway label (a "stay close" stack) → assess CRAFT only; leave strategy',
     '  null.',
     '',
+    ...LENGTH_RULE,
+    '',
+    ...NO_CITATION_RULE,
+    '',
     'RE-REVIEW: if an option is unchanged from a prior pass and was already noted (priorComment),',
     "return null (don't nag); if it changed and now works, null.",
     '',
@@ -1908,11 +2029,14 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, charMin, fiel
 // per-variation, at the materiality bar. `siblings` (scoped review) adds asset
 // context + enables a tight cross-field `flag`. Returns [{ index, doorway,
 // strategy, craft, flag }], each axis null when clean. It does NOT pick a winner.
-async function reviewVariationStack({ assetType, fieldName, charMax, charMin, fieldType, variations, voiceGuide, briefContext, siblings } = {}) {
+async function reviewVariationStack({ assetType, fieldName, charMax, fieldType, variations, voiceGuide, briefContext, siblings } = {}) {
   const opts = Array.isArray(variations) ? variations : [];
   if (opts.length === 0) return [];
 
-  const prompt = buildVariantReviewPrompt({ assetType, fieldName, charMax, variations: opts, voiceGuide, briefContext, siblings });
+  // fieldType was destructured here but never forwarded, so a WORD-count field's
+  // stack was told "Character limit: 140 per option" — measuring words against a
+  // character number, the same confusion the length rule exists to end.
+  const prompt = buildVariantReviewPrompt({ assetType, fieldName, charMax, fieldType, variations: opts, voiceGuide, briefContext, siblings });
 
   const SCHEMA = {
     type: 'ARRAY',
@@ -1950,7 +2074,9 @@ async function reviewVariationStack({ assetType, fieldName, charMax, charMin, fi
     throw new Error('Could not parse Gemini variant-review JSON: ' + String(lastText).slice(0, 300));
   }
 
-  const strOrNull = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  // Same citation strip as the single-field path — strategy, craft and flag all
+  // reach the writer as doc comment text.
+  const strOrNull = (v) => (typeof v === 'string' && v.trim() ? stripInternalCitations(v.trim()) : null);
   const byIndex = new Map();
   parsed.forEach((r, i) => {
     if (!r) return;
@@ -2071,4 +2197,9 @@ module.exports = {
   buildVariantReviewPrompt,
   DOORWAY_FIT_GUIDE,
   CROSS_FIELD_FLAG_RULE,
+  // The two review-comment rules, shared verbatim by both review prompts, plus
+  // the sanitizer that enforces the second one on the way out.
+  LENGTH_RULE,
+  NO_CITATION_RULE,
+  stripInternalCitations,
 };

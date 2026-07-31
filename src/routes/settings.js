@@ -10,7 +10,7 @@
 const path = require('path');
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
-const { voiceLimiter, settingsReadLimiter } = require('../middleware/rateLimit');
+const { voiceLimiter, settingsReadLimiter, settingsWriteLimiter } = require('../middleware/rateLimit');
 const { clientErrorMessage } = require('../utils/errors');
 const {
   resolveTenant,
@@ -19,7 +19,7 @@ const {
   setTenantDefaultFolder,
 } = require('../db');
 const { getSlackLinksForUser } = require('../db/users');
-const { getTenantLibrary } = require('../db/assets');
+const { getTenantLibrary, setActiveAssetIds } = require('../db/assets');
 const { generateVoiceGuide } = require('../services/gemini');
 
 const router = express.Router();
@@ -130,6 +130,67 @@ router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req
     });
   } catch (err) {
     console.error('[settings] GET /library failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/settings/library/active { id, active } — switch ONE asset type on or
+// off. The only writable thing about the library: is_active and nothing else.
+//
+// Onboarding was the only place with these toggles, so once a tenant finished
+// setup their asset list was frozen unless they signed out and re-onboarded.
+//
+// Single-asset, not a whole-list replace. It reads the tenant's own library,
+// derives the new deactivated set from it, and hands that to setActiveAssetIds —
+// the same write onboarding uses. Sending the full list from the browser would
+// have been fewer moving parts, but two open tabs would then silently undo each
+// other: whichever saved last would re-activate everything the other had turned
+// off. This way a stale tab can only ever be wrong about the one asset it
+// touched.
+//
+// The tenant comes from the SESSION. The id in the body is checked against that
+// tenant's own library, so an id belonging to somebody else is a 404 rather than
+// a no-op — setActiveAssetIds is already tenant-scoped and would ignore it
+// silently, and a silent ignore is the failure mode this work exists to remove.
+router.post('/api/settings/library/active', settingsWriteLimiter, requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const id = String(body.id == null ? '' : body.id).trim();
+  const active = body.active;
+  if (!/^\d+$/.test(id)) {
+    return res.status(400).json({ success: false, error: 'A valid asset id is required.' });
+  }
+  if (typeof active !== 'boolean') {
+    return res.status(400).json({ success: false, error: 'active must be true or false.' });
+  }
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const assets = await getTenantLibrary(tenantId);
+    if (!assets) {
+      return res.status(400).json({ success: false, error: 'No asset library is connected to this workspace.' });
+    }
+    // Not this tenant's asset → 404, the same shape a missing one gets, so the
+    // response never confirms that somebody else's id exists.
+    if (!assets.some((a) => a.id === id)) {
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+    // Everything currently off, plus/minus the one being changed.
+    const deactivated = assets.filter((a) => !a.is_active).map((a) => a.id).filter((x) => x !== id);
+    if (!active) deactivated.push(id);
+    await setActiveAssetIds(tenantId, deactivated);
+
+    const after = (await getTenantLibrary(tenantId)) || [];
+    return res.status(200).json({
+      success: true,
+      id,
+      active,
+      counts: {
+        assets: after.length,
+        active: after.filter((a) => a.is_active).length,
+        fields: after.reduce((n, a) => n + a.fields.length, 0),
+      },
+    });
+  } catch (err) {
+    console.error('[settings] POST /library/active failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });

@@ -360,7 +360,33 @@
     .lib-tier { font-size: 11px; font-weight: 600; }
     .lib-tier.enforced { color: #8a4b00; }
     .lib-tier.recommended { color: #1E6F8E; }
-    .lib-grouplabel { font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.45); margin-top: 6px; }
+    /* Sub-group heading ("Graphic Copy"). In the doc this is a HEADING_4 with
+       real separation above it; here it was 11px, 45%-opacity, 6px of margin and
+       no rule of its own — so it read as a caption on the field below rather
+       than as a heading over the group.
+         • its own top rule + 16px above  => the break belongs to the LABEL
+         • 2px below and the next field's rule suppressed => it is not sandwiched
+           between two lines, which is what made it look attached downward
+         • darker, wider-tracked, uppercase => a heading, not a caption */
+    .lib-grouplabel {
+      margin: 16px 0 2px; padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.55);
+      font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+      color: rgba(26,26,46,0.62);
+    }
+    .lib-grouplabel:first-child { margin-top: 2px; padding-top: 0; border-top: none; }
+    /* The field directly under a label keeps the label's rule as its separator. */
+    .lib-grouplabel + .lib-field { border-top: none; }
+
+    /* Asset on/off toggle — same control as onboarding's asset step. */
+    .lib-toggle { position: relative; width: 40px; height: 24px; flex: none; cursor: pointer; margin-left: auto; }
+    .lib-toggle input { opacity: 0; width: 0; height: 0; }
+    .lib-track { position: absolute; inset: 0; background: rgba(26,26,46,0.2); border-radius: 999px; transition: background .15s; }
+    .lib-track::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .15s; }
+    .lib-toggle input:checked + .lib-track { background: var(--sky-btm); }
+    .lib-toggle input:checked + .lib-track::before { transform: translateX(16px); }
+    .lib-toggle input:disabled + .lib-track { opacity: 0.5; cursor: progress; }
+    .lib-rowerr { font-size: 11.5px; color: #8a1f1f; margin-top: 6px; }
 
     /* Notes / banners / states on the sky */
     .note { color: rgba(26,26,46,0.65); }
@@ -555,7 +581,7 @@
         <section class="panel" id="panel-library">
           <div class="eyebrow">ASSET LIBRARY</div>
           <h1>Asset Library</h1>
-          <p class="hdr-lede">Every asset type Quillio can write for you, and the copy fields inside each one. This is what a brief can ask for and what shapes each doc. Read-only for now.</p>
+          <p class="hdr-lede">Every asset type Quillio can write for you, and the copy fields inside each one. This is what a brief can ask for and what shapes each doc. Switch off anything you don't use — a brief can't ask for it, and it won't appear in a doc.</p>
           <div id="lib-error" class="error hidden"></div>
           <div id="lib-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
           <div id="lib-summary" class="note hidden"></div>
@@ -749,13 +775,89 @@
       wrap.textContent = f.spec_type === 'enforced' ? 'Platform limit' : 'Recommended';
       return wrap;
     }
+    // Counts shown in the summary line. Recomputed from libAssets, which is the
+    // client's copy of what the server last confirmed.
+    var libAssets = [];
+    function libRenderSummary() {
+      var on = libAssets.filter(function (a) { return a.is_active; }).length;
+      var fields = libAssets.reduce(function (n, a) { return n + (a.fields || []).length; }, 0);
+      $('lib-summary').textContent = libAssets.length + ' asset types (' + on + ' on) · ' + fields + ' copy fields';
+    }
+
+    // Paint one card's on/off appearance. Split out so the optimistic update and
+    // the revert-on-failure are the SAME code path — a revert that only reset the
+    // checkbox would leave the card still dimmed, showing a state the server
+    // rejected, which is the exact failure this is guarding against.
+    function libPaintActive(card, pillHost, active) {
+      card.classList.toggle('off', !active);
+      var pill = pillHost.querySelector('.pill');
+      if (!active && !pill) pillHost.appendChild(el('span', 'pill', 'Off'));
+      if (active && pill) pill.remove();
+    }
+
     function libRenderAsset(a) {
       var card = el('div', 'lib-asset' + (a.is_active ? '' : ' off'));
       var head = el('div', 'lib-head');
       head.appendChild(el('span', 'lib-name', a.name));
       if (a.group) head.appendChild(el('span', 'lib-group', a.group));
       if (!a.is_active) head.appendChild(el('span', 'pill', 'Off'));
+
+      // The ONLY writable thing on this screen: is_active.
+      var toggle = el('label', 'lib-toggle');
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = a.is_active;
+      input.setAttribute('data-id', a.id);
+      input.setAttribute('aria-label', 'Use ' + a.name);
+      var track = el('span', 'lib-track');
+      toggle.appendChild(input);
+      toggle.appendChild(track);
+      head.appendChild(toggle);
+      var rowErr = el('div', 'lib-rowerr');
+      rowErr.style.display = 'none';
+
+      input.addEventListener('change', async function () {
+        var want = input.checked;
+        var before = a.is_active;
+        rowErr.style.display = 'none';
+        // Optimistic: paint it immediately, disable while in flight so a second
+        // click can't race the first.
+        a.is_active = want;
+        libPaintActive(card, head, want);
+        libRenderSummary();
+        input.disabled = true;
+        try {
+          var res = await fetch('/api/settings/library/active', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: a.id, active: want })
+          });
+          var data = await res.json().catch(function () { return null; });
+          if (!res.ok || !data || !data.success) {
+            throw new Error((data && data.error) || 'Could not save that change.');
+          }
+          // Trust the server's counts over the local arithmetic.
+          if (data.counts) {
+            $('lib-summary').textContent = data.counts.assets + ' asset types ('
+              + data.counts.active + ' on) · ' + data.counts.fields + ' copy fields';
+          }
+        } catch (e) {
+          // REVERT — the toggle, the card, the pill and the count all go back,
+          // and the row says why. Never leave the screen showing a state the
+          // server did not accept.
+          a.is_active = before;
+          input.checked = before;
+          libPaintActive(card, head, before);
+          libRenderSummary();
+          rowErr.textContent = (e.message || 'Network error.') + ' Not saved.';
+          rowErr.style.display = '';
+        } finally {
+          input.disabled = false;
+        }
+      });
+
       card.appendChild(head);
+      card.appendChild(rowErr);
       if (a.asset_direction) card.appendChild(el('div', 'lib-dir', a.asset_direction));
       var ul = el('ul', 'lib-fields');
       var openGroup = null;
@@ -803,11 +905,11 @@
           show(summary);
           return;
         }
-        var c = data.counts || {};
-        summary.textContent = c.assets + ' asset types (' + c.active + ' on) · ' + c.fields + ' copy fields';
+        libAssets = data.assets || [];
+        libRenderSummary();
         show(summary);
         list.innerHTML = '';
-        (data.assets || []).forEach(function (a) { list.appendChild(libRenderAsset(a)); });
+        libAssets.forEach(function (a) { list.appendChild(libRenderAsset(a)); });
       } catch (e) {
         hide(loading);
         showError(err, e.message || 'Network error — please try again.');

@@ -32,6 +32,10 @@ module.exports = {
   // but still capped so an unauthenticated flood is bounded before it reaches
   // the session check.
   settingsReadLimiter: perHour(120),
+  // Settings writes (asset on/off). One per toggle click, and a tenant with 30
+  // assets could reasonably flip a lot of them in one sitting, so this is not
+  // tight — but it is a write, so it is tighter than the read.
+  settingsWriteLimiter: perHour(60),
   // Slack surfaces (/slack/command, /slack/review, /slack/interactions).
   // Deliberately far more generous than the user-facing limiters above: real
   // Slack traffic arrives from a shared pool of Slack egress IPs, so a single

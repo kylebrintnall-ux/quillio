@@ -457,7 +457,8 @@ test('settings router mounts and exposes its routes', () => {
     .sort();
   assert.deepStrictEqual(paths, [
     '/api/auth/signout',
-    '/api/settings/library', // read-only asset library (GET)
+    '/api/settings/library', // asset library (GET)
+    '/api/settings/library/active', // asset on/off (POST) — is_active only
     '/api/settings/voice',
     '/api/settings/voice',
     '/api/settings/voice/generate',
@@ -8194,7 +8195,10 @@ test('getTenantAssets was NOT changed to serve the editor', () => {
 
 test('the library route is session-scoped and cannot be pointed elsewhere', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  const route = src.slice(src.indexOf("'/api/settings/library'"), src.indexOf("GET /api/settings/workspace"));
+  // The GET slice now ends at the POST below it, which legitimately reads
+  // req.body for the asset id — that is checked separately, and against the
+  // tenant's own library, so the two must not be measured as one block.
+  const route = src.slice(src.indexOf("'/api/settings/library'"), src.indexOf("POST /api/settings/library/active"));
   assert.match(route, /settingsReadLimiter, requireAuth/, 'rate-limited and auth-gated');
   assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant comes from the session');
   assert.ok(!/req\.body|req\.query|req\.params/.test(route), 'never takes a tenant from the request');
@@ -8325,4 +8329,87 @@ test('the landing page keeps the two CTAs distinct', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
   assert.match(server, /href="\/onboarding">Create account<\/a>/);
   assert.match(server, /href="\/oauth\/google">Sign in<\/a>/);
+});
+
+// --- Asset on/off from Settings ----------------------------------------------
+// The smallest possible write path: is_active and nothing else. Onboarding was
+// the only place with these toggles, so a tenant that finished setup could not
+// change their asset list without signing out and re-onboarding.
+
+test('the on/off route writes is_active only, scoped to the session tenant', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const route = src.slice(
+    src.indexOf("POST /api/settings/library/active"),
+    src.indexOf('GET /api/settings/workspace')
+  );
+  assert.match(route, /settingsWriteLimiter, requireAuth/, 'rate-limited and auth-gated');
+  assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant from the session');
+  // The id IS taken from the body — but validated against this tenant's own
+  // library, so somebody else's id is a 404 rather than a silent no-op.
+  assert.match(route, /assets\.some\(\(a\) => a\.id === id\)/);
+  assert.match(route, /status\(404\)/);
+  // is_active is the only thing it can change: the write is setActiveAssetIds,
+  // and no other column name appears anywhere in the handler.
+  assert.match(route, /setActiveAssetIds\(tenantId, deactivated\)/);
+  for (const col of ['char_max', 'char_min', 'field_name', 'spec_type', 'spec_source', 'asset_direction', 'name =']) {
+    assert.ok(!route.includes(col), `handler never touches ${col}`);
+  }
+  // Typed input, so a junk id never reaches Postgres.
+  assert.match(route, /\/\^\\d\+\$\//);
+  assert.match(route, /typeof active !== 'boolean'/);
+});
+
+test('a failed save reverts the toggle, the card and the count', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const handler = html.slice(html.indexOf("input.addEventListener('change'"), html.indexOf('card.appendChild(head)'));
+
+  // Optimistic first…
+  assert.match(handler, /a\.is_active = want;[\s\S]*libPaintActive\(card, head, want\)/, 'paints before the request');
+  // …then a full revert on ANY failure — not just the checkbox. A revert that
+  // left the card dimmed would still be showing a state the server rejected.
+  const revert = handler.slice(handler.indexOf('} catch (e) {'));
+  assert.match(revert, /a\.is_active = before/);
+  assert.match(revert, /input\.checked = before/);
+  assert.match(revert, /libPaintActive\(card, head, before\)/);
+  assert.match(revert, /libRenderSummary\(\)/);
+  assert.match(revert, /Not saved\./, 'and it says so');
+  // A non-2xx with a JSON body must throw, not be treated as success.
+  assert.match(handler, /if \(!res\.ok \|\| !data \|\| !data\.success\)/);
+  // In-flight guard so a double click can't race itself.
+  assert.match(handler, /input\.disabled = true/);
+  assert.match(handler, /input\.disabled = false/);
+});
+
+test('the settings library screen still writes nothing but is_active', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const panel = html.slice(html.indexOf('id="panel-library"'), html.indexOf('id="panel-account"'));
+  // The panel markup itself stays declarative — the toggle is built in JS.
+  for (const affordance of ['<input', '<button', '<textarea', 'contenteditable']) {
+    assert.ok(!panel.includes(affordance), `no ${affordance} in the library panel markup`);
+  }
+  // Exactly one write endpoint is reachable from this screen.
+  const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Markdown render'));
+  const posts = libJs.match(/method: 'POST'/g) || [];
+  assert.strictEqual(posts.length, 1, 'one POST, no more');
+  assert.match(libJs, /'\/api\/settings\/library\/active'/);
+});
+
+test('the group label reads as a heading, not a caption on the field below', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const css = html.slice(html.indexOf('.lib-grouplabel {'), html.indexOf('.lib-toggle {'));
+
+  // Separation ABOVE belongs to the label: its own rule plus real margin.
+  assert.match(css, /margin: 16px 0 2px/, 'space above, tight below');
+  assert.match(css, /border-top: 1px solid/, 'carries its own rule');
+  assert.match(css, /padding-top: 10px/, 'and the rule is not glued to the text');
+  // It must NOT be sandwiched between two rules — the next field drops its own.
+  assert.match(html, /\.lib-grouplabel \+ \.lib-field \{ border-top: none; \}/);
+  // Heading treatment, not caption: heavier, tracked, uppercase, darker than the
+  // 45%-opacity it had.
+  assert.match(css, /font-weight: 700/);
+  assert.match(css, /text-transform: uppercase/);
+  assert.match(css, /letter-spacing/);
+  assert.match(css, /rgba\(26,26,46,0\.62\)/);
+  // A label that opens an asset has nothing above it to separate from.
+  assert.match(html, /\.lib-grouplabel:first-child \{ margin-top: 2px; padding-top: 0; border-top: none; \}/);
 });

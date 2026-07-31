@@ -8256,3 +8256,73 @@ test('settings.html renders the library read-only, with no edit affordances', ()
   // And the unit shown matches what the doc's bracket means.
   assert.match(html, /fieldType === 'words' \? 'words' : 'chars'/);
 });
+
+// --- Sign-in routing: a finished user never re-enters onboarding -------------
+// The flag was being set correctly and read correctly — but `redirect=onboarding`
+// returned one line BEFORE the read, and requireAuth pointed every
+// unauthenticated page request at the onboarding screen, whose only control
+// carried that parameter. So the ordinary way a returning user signed in was the
+// one path that never consulted the flag.
+
+test('the callback reads setup state BEFORE branching on redirect=onboarding', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  const cb = src.slice(src.indexOf("router.get('/oauth/google/callback'"));
+
+  // Anchored on the READ specifically (the camelCase assignment), not on the
+  // column name — that also appears in the new-tenant INSERT earlier in this
+  // same handler, which would measure the wrong position.
+  const readAt = cb.indexOf('onboardingComplete = !!(');
+  const onboardingBranchAt = cb.indexOf("'/onboarding?step=2'");
+  assert.ok(readAt > 0 && onboardingBranchAt > 0, 'both still present');
+  assert.ok(readAt < onboardingBranchAt, 'the flag is read before the onboarding branch, not after');
+
+  // Completed → the app, unconditionally, whichever link started the sign-in.
+  assert.match(cb, /if \(onboardingComplete\) return res\.redirect\('\/app\?connected=google'\)/);
+  // Incomplete + came from onboarding → resume at step 2; otherwise start.
+  assert.match(
+    cb,
+    /redirectTo === 'onboarding' \? '\/onboarding\?step=2' : '\/onboarding'/,
+    'the resume branch survives for the users it was for'
+  );
+  // Settings is about the sign-in itself, not setup state — untouched, and still
+  // returning before the DB read so it costs no query.
+  const settingsAt = cb.indexOf("'/settings?connected=google'");
+  assert.ok(settingsAt > 0 && settingsAt < readAt, 'settings still returns early');
+});
+
+test('an unauthenticated page request goes to the landing page, not the signup flow', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'middleware', 'auth.js'), 'utf8');
+  const deny = src.slice(src.indexOf('function denyUnauthenticated'));
+  assert.match(deny, /return res\.redirect\('\/'\)/, 'pages land on /');
+  assert.ok(!/redirect\('\/onboarding'\)/.test(deny), 'no longer dumps returning users into signup');
+  // NOT /oauth/google: that route redirects to /app?error=google_failed when
+  // OAuth is misconfigured, and /app is behind requireAuth — this function would
+  // then redirect back to it forever.
+  assert.ok(!/redirect\('\/oauth\/google/.test(deny), 'and not straight into OAuth (loop risk)');
+  // API callers still get JSON, unchanged.
+  assert.match(deny, /status\(401\)\.json/);
+});
+
+test('onboarding step 1 offers a way out for someone who already has an account', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  const step1 = html.slice(html.indexOf('id="step-1"'), html.indexOf('id="step-2"'));
+
+  // The create-account button still carries redirect=onboarding (it resumes an
+  // incomplete signup at step 2) — that behaviour is unchanged.
+  assert.ok(html.includes("/oauth/google?redirect=onboarding"), 'signup path intact');
+  // And there is now a BARE /oauth/google on the same screen, which routes on
+  // setup state. A plain <a>, so it works even if the page script fails.
+  assert.match(step1, /<a href="\/oauth\/google"/, 'bare sign-in link present on step 1');
+  assert.match(step1, /Already have an account\?/);
+  assert.ok(!/oauth\/google\?redirect/.test(step1.slice(step1.indexOf('Already have an account'))),
+    'the escape-hatch link carries no redirect parameter');
+});
+
+test('the landing page keeps the two CTAs distinct', () => {
+  // Unchanged, and load-bearing: /onboarding is the create-account flow and bare
+  // /oauth/google is the flag-checked sign-in. requireAuth now points at this
+  // page precisely because it offers the choice.
+  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  assert.match(server, /href="\/onboarding">Create account<\/a>/);
+  assert.match(server, /href="\/oauth\/google">Sign in<\/a>/);
+});

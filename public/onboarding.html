@@ -61,6 +61,9 @@
     h2 { font-family: 'StarCrush', serif; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.5); margin: 24px 0 8px; }
     p { margin: 8px 0; color: rgba(26,26,46,0.78); }
     .muted { color: rgba(26,26,46,0.6); }
+    /* Secondary to the create-account button above it, but not hidden — this is
+       the only route off step 1 for someone who already has an account. */
+    .signin-existing { margin-top: 14px; text-align: center; font-size: 14px; }
     code { font-family: 'IBM Plex Mono', monospace; font-size: 0.92em; background: rgba(26,26,46,0.08); border-radius: 5px; padding: 1px 6px; }
 
     /* Progress dots — sky for completed steps */
@@ -212,6 +215,16 @@
       <div class="row">
         <button class="gbtn full" id="signin-btn"><span class="g">G</span> Create account with Google</button>
       </div>
+      <!-- The way OUT of this screen for someone who already has an account.
+           The button above carries redirect=onboarding, which resumes setup;
+           this link is the BARE /oauth/google, which routes on setup state and
+           lands a finished user in the app. Without it, a returning user who
+           arrived here had no control on the page that could take them to the
+           app. A plain <a>, not a JS handler, so it works even if the page's
+           script fails to run. -->
+      <p class="muted signin-existing">Already have an account?
+        <a href="/oauth/google" id="signin-existing-link">Sign in</a>
+      </p>
     </section>
 
     <!-- STEP 2 — DRIVE CONNECTED -->

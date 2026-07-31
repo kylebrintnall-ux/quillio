@@ -341,6 +341,27 @@
     .soon { opacity: 0.55; background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.3); }
     .badge-soon { color: rgba(26,26,46,0.45); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
 
+    /* Asset library (read-only). Two levels — asset, then its fields — so the
+       structure a clone-and-edit feature will attach to is visible as structure,
+       not as a flat list. No edit affordances anywhere in here on purpose. */
+    .lib-asset { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 12px 16px; margin: 10px 0; }
+    .lib-asset.off { opacity: 0.6; border-style: dashed; }
+    .lib-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .lib-name { font-weight: 600; font-size: 14px; color: var(--ink); }
+    .lib-group { font-size: 11px; color: rgba(26,26,46,0.45); }
+    .lib-dir { font-size: 12px; font-style: italic; color: rgba(26,26,46,0.55); margin-top: 4px; }
+    .lib-fields { list-style: none; margin: 8px 0 0; padding: 0; }
+    .lib-field { padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
+    .lib-field:first-child { border-top: none; }
+    .lib-fname { color: var(--ink); }
+    .lib-limit { color: rgba(26,26,46,0.5); font-size: 12px; }
+    .lib-sub { font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
+    .lib-tier { font-size: 11px; font-weight: 600; }
+    .lib-tier.enforced { color: #8a4b00; }
+    .lib-tier.recommended { color: #1E6F8E; }
+    .lib-grouplabel { font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.45); margin-top: 6px; }
+
     /* Notes / banners / states on the sky */
     .note { color: rgba(26,26,46,0.65); }
     .banner { background: #C6F0D8; border: 1.5px solid #2ECC71; color: #0A5C32; border-radius: 12px; }
@@ -387,6 +408,11 @@
         <span class="hub-name">Doc Header</span>
         <span class="hub-desc">Set what appears at the top of every copy doc.</span>
       </button>
+      <button class="hub-card" data-tab="library">
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="3" width="4" height="12" fill="#4DD9D9"/><rect x="7" y="3" width="4" height="12" fill="#C9A84C"/><rect x="12" y="3" width="4" height="12" fill="#1C1F3B"/><rect x="3" y="5" width="2" height="1" fill="#1C1F3B"/><rect x="8" y="5" width="2" height="1" fill="#1C1F3B"/><rect x="13" y="5" width="2" height="1" fill="#F5F0E8"/></svg></span>
+        <span class="hub-name">Asset Library</span>
+        <span class="hub-desc">See every asset type and the copy fields Quillio writes for it.</span>
+      </button>
       <button class="hub-card" data-tab="workspace">
         <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="7" width="4" height="4" fill="#C9A84C"/><rect x="2" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="2" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="5" y="11" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="11" width="2" height="2" fill="#1C1F3B"/></svg></span>
         <span class="hub-name">Workspace</span>
@@ -404,6 +430,7 @@
       <div class="sidebar">
         <button class="tab active" data-tab="voice">Voice Guide</button>
         <button class="tab" data-tab="header">Doc Header</button>
+        <button class="tab" data-tab="library">Asset Library</button>
         <button class="tab" data-tab="workspace">Workspace</button>
         <button class="tab" data-tab="account">Account</button>
       </div>
@@ -522,6 +549,17 @@
               </div>
             </div>
           </div>
+        </section>
+
+        <!-- ASSET LIBRARY (read-only) -->
+        <section class="panel" id="panel-library">
+          <div class="eyebrow">ASSET LIBRARY</div>
+          <h1>Asset Library</h1>
+          <p class="hdr-lede">Every asset type Quillio can write for you, and the copy fields inside each one. This is what a brief can ask for and what shapes each doc. Read-only for now.</p>
+          <div id="lib-error" class="error hidden"></div>
+          <div id="lib-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+          <div id="lib-summary" class="note hidden"></div>
+          <div id="lib-list"></div>
         </section>
 
         <!-- ACCOUNT -->
@@ -656,10 +694,11 @@
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
     function showTab(name) {
       tabs.forEach(function (t) { t.classList.toggle('active', t.getAttribute('data-tab') === name); });
-      ['voice', 'header', 'workspace', 'account'].forEach(function (n) {
+      ['voice', 'header', 'library', 'workspace', 'account'].forEach(function (n) {
         $('panel-' + n).classList.toggle('active', n === name);
       });
       if (name === 'header') hdrEnsureLoaded();
+      if (name === 'library') libEnsureLoaded();
     }
     tabs.forEach(function (t) { t.addEventListener('click', function () { showTab(t.getAttribute('data-tab')); }); });
 
@@ -684,6 +723,96 @@
       c.addEventListener('click', function () { enterSection(c.getAttribute('data-tab')); });
     });
     document.getElementById('settings-back').addEventListener('click', showHub);
+
+    // --- Asset library (READ-ONLY) ------------------------------------------
+    // Renders what /api/settings/library returns: every asset, active or not,
+    // with its fields. No edit affordances — this is the surface a clone-and-edit
+    // feature will attach to, and rendering it first is how we find out whether
+    // the shape is right before writing against it.
+    var libLoaded = false;
+    // Mirrors core/pipeline rowToSpecGroup: anything that is not 'words' is
+    // counted in characters. Kept identical so the unit shown here is the unit
+    // the doc's [50] bracket means.
+    function libUnit(fieldType) { return fieldType === 'words' ? 'words' : 'chars'; }
+    function libLimitText(f) {
+      var unit = libUnit(f.field_type);
+      if (f.char_min > 0 && f.char_max > 0) return f.char_min + '-' + f.char_max + ' ' + unit;
+      if (f.char_max > 0) return f.char_max + ' ' + unit;
+      return 'no limit';
+    }
+    // The tier a field's spec_type carries. Mirrors googleDocs specTypeLine:
+    // house_default and null render NOTHING, so an unsourced field looks
+    // unsourced rather than quietly authoritative.
+    function libTierNode(f) {
+      if (f.spec_type !== 'enforced' && f.spec_type !== 'recommended') return null;
+      var wrap = el('span', 'lib-tier ' + f.spec_type);
+      wrap.textContent = f.spec_type === 'enforced' ? 'Platform limit' : 'Recommended';
+      return wrap;
+    }
+    function libRenderAsset(a) {
+      var card = el('div', 'lib-asset' + (a.is_active ? '' : ' off'));
+      var head = el('div', 'lib-head');
+      head.appendChild(el('span', 'lib-name', a.name));
+      if (a.group) head.appendChild(el('span', 'lib-group', a.group));
+      if (!a.is_active) head.appendChild(el('span', 'pill', 'Off'));
+      card.appendChild(head);
+      if (a.asset_direction) card.appendChild(el('div', 'lib-dir', a.asset_direction));
+      var ul = el('ul', 'lib-fields');
+      var openGroup = null;
+      (a.fields || []).forEach(function (f) {
+        // Consecutive fields sharing a group_label render under it once — the
+        // same nesting the doc uses, so the screen matches the output.
+        if (f.group_label && f.group_label !== openGroup) {
+          ul.appendChild(el('li', 'lib-grouplabel', f.group_label));
+        }
+        openGroup = f.group_label || null;
+        var li = el('li', 'lib-field');
+        var top = el('div');
+        top.appendChild(el('span', 'lib-fname', f.field_name));
+        top.appendChild(document.createTextNode('  '));
+        top.appendChild(el('span', 'lib-limit', '[' + libLimitText(f) + ']'));
+        li.appendChild(top);
+        var tier = libTierNode(f);
+        if (tier || f.spec_note) {
+          var sub = el('div', 'lib-sub');
+          if (tier) { sub.appendChild(tier); if (f.spec_note) sub.appendChild(document.createTextNode(' · ')); }
+          if (f.spec_note) sub.appendChild(document.createTextNode(f.spec_note));
+          li.appendChild(sub);
+        }
+        ul.appendChild(li);
+      });
+      card.appendChild(ul);
+      return card;
+    }
+    async function libEnsureLoaded() {
+      if (libLoaded) return;
+      var list = $('lib-list');
+      var loading = $('lib-loading');
+      var summary = $('lib-summary');
+      var err = $('lib-error');
+      clearError(err);
+      show(loading);
+      try {
+        var res = await fetch('/api/settings/library');
+        var data = await res.json();
+        if (!data || !data.success) throw new Error((data && data.error) || 'Could not load your asset library.');
+        hide(loading);
+        libLoaded = true;
+        if (!data.available) {
+          summary.textContent = 'No asset library is connected to this workspace yet.';
+          show(summary);
+          return;
+        }
+        var c = data.counts || {};
+        summary.textContent = c.assets + ' asset types (' + c.active + ' on) · ' + c.fields + ' copy fields';
+        show(summary);
+        list.innerHTML = '';
+        (data.assets || []).forEach(function (a) { list.appendChild(libRenderAsset(a)); });
+      } catch (e) {
+        hide(loading);
+        showError(err, e.message || 'Network error — please try again.');
+      }
+    }
 
     // --- Markdown render (terminal): ## headings, * bullets, **bold** -------
     function escapeHtml(s) {

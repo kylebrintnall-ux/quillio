@@ -27,6 +27,11 @@ module.exports = {
   uploadLimiter: perHour(20),
   voiceLimiter: perHour(10),
   oauthLimiter: perHour(20),
+  // Settings reads (the asset library). Generous because it is a page load, not
+  // a Gemini call or a disk write — two indexed SELECTs over a ~30-row table —
+  // but still capped so an unauthenticated flood is bounded before it reaches
+  // the session check.
+  settingsReadLimiter: perHour(120),
   // Slack surfaces (/slack/command, /slack/review, /slack/interactions).
   // Deliberately far more generous than the user-facing limiters above: real
   // Slack traffic arrives from a shared pool of Slack egress IPs, so a single

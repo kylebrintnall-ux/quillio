@@ -152,9 +152,122 @@ async function getTenantAssets(tenantId) {
   }));
 }
 
-// Onboarding asset toggles: mark a tenant's asset types active/inactive in one
-// shot. Every type whose name is in `deactivatedNames` becomes inactive; all
-// others become active. Returns true if the write ran, false if there's no DB.
+// THE EDITOR READ. Every asset a tenant has — ACTIVE AND INACTIVE — with stable
+// ids on both the asset and each of its fields.
+//
+// Deliberately NOT getTenantAssets. That one is built for the pipeline: it
+// filters `is_active = true` (an asset switched off in onboarding is invisible,
+// which is correct when deciding what to put in a doc and wrong when showing
+// someone their library), and its field mapper drops copy_fields.id entirely
+// (the pipeline matches fields by name; an editor cannot). Widening it would
+// have quietly changed what every brief builds, so this is a second reader.
+//
+// Field values are returned AS STORED, not as the pipeline coerces them —
+// rowToSpecGroup turns any field_type that isn't 'words' into 'text', which is
+// the right call for rendering a doc and the wrong one for showing a row.
+//
+// Returns null when there is no DB or no tenant (nothing to show), and [] for a
+// tenant that simply has no rows yet — a distinction getTenantAssets collapses
+// but an editor needs, because "no database" and "empty library" are different
+// screens. Shape per asset:
+//   { id, name, group, is_active, sort_order, asset_direction, spec_note,
+//     fields: [{ id, field_name, char_min, char_max, field_type, group_label,
+//                sort_order, spec_type, spec_source, spec_note }, …] }
+async function getTenantLibrary(tenantId) {
+  const pool = getPool();
+  if (!pool || !tenantId) return null;
+
+  const typesRes = await pool.query(
+    `SELECT id, name, "group", is_active, sort_order, asset_direction, spec_note
+       FROM asset_types
+      WHERE tenant_id = $1
+      ORDER BY sort_order, id`,
+    [tenantId]
+  );
+  if (typesRes.rows.length === 0) return [];
+
+  const typeIds = typesRes.rows.map((t) => t.id);
+  const fieldsRes = await pool.query(
+    `SELECT id, asset_type_id, field_name, char_min, char_max, field_type,
+            group_label, sort_order, spec_type, spec_source, spec_note
+       FROM copy_fields
+      WHERE asset_type_id = ANY($1::bigint[])
+      ORDER BY sort_order, id`,
+    [typeIds]
+  );
+
+  const fieldsByType = new Map();
+  for (const row of fieldsRes.rows) {
+    if (!fieldsByType.has(row.asset_type_id)) fieldsByType.set(row.asset_type_id, []);
+    fieldsByType.get(row.asset_type_id).push({
+      id: String(row.id),
+      field_name: row.field_name,
+      char_min: parseInt(row.char_min, 10) || 0,
+      char_max: parseInt(row.char_max, 10) || 0,
+      field_type: row.field_type || null,
+      group_label: row.group_label || null,
+      sort_order: row.sort_order,
+      spec_type: row.spec_type || null,
+      spec_source: row.spec_source || null,
+      spec_note: row.spec_note || null,
+    });
+  }
+
+  // ids are stringified because Postgres BIGSERIAL exceeds a JS safe integer and
+  // node-postgres hands bigints back as strings. Keeping them strings all the way
+  // to the browser and back is the only way an id survives the round trip intact.
+  return typesRes.rows.map((t) => ({
+    id: String(t.id),
+    name: t.name,
+    group: t.group || null,
+    is_active: t.is_active !== false,
+    sort_order: t.sort_order,
+    asset_direction: t.asset_direction || null,
+    spec_note: t.spec_note || null,
+    fields: fieldsByType.get(t.id) || [],
+  }));
+}
+
+// Asset toggles, BY ID. Every type whose id is in `deactivatedIds` becomes
+// inactive; every other one becomes active. Returns true if the write ran.
+//
+// This is the primary path. Matching on id rather than on name is the point of
+// the uniqueness work that preceded it: a name is a value a tenant will soon be
+// able to edit, so a toggle keyed on one is a toggle that breaks the moment
+// somebody renames something between loading the page and saving it.
+async function setActiveAssetIds(tenantId, deactivatedIds = []) {
+  const pool = getPool();
+  if (!pool) {
+    console.warn('[db/assets] DATABASE_URL not set — skipping setActiveAssetIds');
+    return false;
+  }
+  if (!tenantId) return false;
+  // Ids arrive from a browser, so they are neither trusted nor assumed numeric.
+  // Anything that isn't a run of digits is dropped rather than passed to
+  // Postgres, where a bad cast would abort the whole statement.
+  const ids = (Array.isArray(deactivatedIds) ? deactivatedIds : [])
+    .map((v) => String(v == null ? '' : v).trim())
+    .filter((v) => /^\d+$/.test(v));
+  await pool.query(
+    `UPDATE asset_types SET is_active = (id <> ALL($2::bigint[])) WHERE tenant_id = $1`,
+    [tenantId, ids]
+  );
+  return true;
+}
+
+// Asset toggles by NAME — the legacy path, kept for one deploy window.
+//
+// The ONLY caller of the name form was routes/onboarding.js, and the browser
+// posting to it is public/onboarding.html. Both now send ids. This still exists
+// because a browser that loaded the page BEFORE this deploy is still holding the
+// old script and will post names at whatever moment the user finishes onboarding
+// — dropping it immediately would make those saves silently do nothing.
+//
+// It no longer runs a raw-text SQL match. It resolves names to ids through
+// utils/normalize (the same fold the pipeline and the Postgres unique index use)
+// and delegates, so the dash-and-spacing fragility is fixed on this path too:
+// 'Direct Mail — Box' posted against a stored 'Direct Mail - Box' used to match
+// nothing and silently deactivate nothing.
 async function setActiveAssets(tenantId, deactivatedNames = []) {
   const pool = getPool();
   if (!pool) {
@@ -162,12 +275,16 @@ async function setActiveAssets(tenantId, deactivatedNames = []) {
     return false;
   }
   if (!tenantId) return false;
-  const names = Array.isArray(deactivatedNames) ? deactivatedNames : [];
-  await pool.query(
-    `UPDATE asset_types SET is_active = (name <> ALL($2::text[])) WHERE tenant_id = $1`,
-    [tenantId, names]
+  const wanted = new Set(
+    (Array.isArray(deactivatedNames) ? deactivatedNames : []).map((n) => normalize(n)).filter(Boolean)
   );
-  return true;
+  const rows = (await getTenantLibrary(tenantId)) || [];
+  const ids = rows.filter((r) => wanted.has(normalize(r.name))).map((r) => r.id);
+  const unmatched = [...wanted].filter((w) => !rows.some((r) => normalize(r.name) === w));
+  if (unmatched.length > 0) {
+    console.warn(`[db/assets] setActiveAssets: ${unmatched.length} name(s) matched no asset — ignored`);
+  }
+  return setActiveAssetIds(tenantId, ids);
 }
 
 // Best-effort asset-level creative direction lookup for a tenant. Reads the
@@ -198,4 +315,13 @@ async function getAssetDirections(tenantId) {
   return (assetName) => byNorm.get(normName(assetName)) || null;
 }
 
-module.exports = { seedTenantAssets, getTenantAssets, setActiveAssets, getAssetDirections };
+module.exports = {
+  seedTenantAssets,
+  getTenantAssets,
+  // The EDITOR read — every asset, active or not, with stable ids. Separate from
+  // getTenantAssets on purpose (see its comment).
+  getTenantLibrary,
+  setActiveAssetIds,
+  setActiveAssets,
+  getAssetDirections,
+};

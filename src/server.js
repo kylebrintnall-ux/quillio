@@ -14,6 +14,7 @@ const {
   cancelBriefWorkflow,
   peekPendingPlan,
 } = require('./workflow');
+const { claimDelivery, releaseDelivery, deliveryKey } = require('./liveMessage');
 const { emoji } = require('./emoji');
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
@@ -379,6 +380,18 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
     return res.status(400).send('Bad payload.');
   }
 
+  // Slack sets this when it is REDELIVERING something it believes failed — up to
+  // three times. This handler acks in milliseconds and then works for 7+ seconds,
+  // so an ack lost in transit is redelivered while the original run is still going
+  // or has already finished. Either way the work was accepted; running it again
+  // rebuilds the doc and writes progress text over a card that was already
+  // terminal. claimDelivery uses this to tell a redelivery apart from a deliberate
+  // second click, which produces an identical payload WITHOUT the header.
+  const isRetry = !!req.get('X-Slack-Retry-Num');
+  if (isRetry) {
+    console.log(`[interactions] redelivery #${req.get('X-Slack-Retry-Num')} (${req.get('X-Slack-Retry-Reason') || 'no reason given'})`);
+  }
+
   // --- Modal submission (Regenerate Draft) ---
   // view_submission payloads carry no `actions`; handle them before the
   // block_actions chain. Ack with an empty 200 (closes the modal) within Slack's
@@ -419,6 +432,11 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
         );
         return;
       }
+      const planKey = deliveryKey('plan_modal', channel, messageTs, pendingId);
+      if (!claimDelivery(planKey, isRetry)) {
+        console.log('[interactions] plan_modal: duplicate delivery ignored');
+        return;
+      }
       const values = (view.state && view.state.values) || {};
       const edited = stored.map((entry, i) => {
         const block = values[`count_${i}`];
@@ -426,9 +444,9 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
         const n = parseInt(raw, 10);
         return { asset: entry.asset, count: Number.isFinite(n) ? n : entry.count, labels: entry.labels || [] };
       });
-      resumeBriefWorkflow(pendingId, edited, { workspaceId, slackUserId, channel, messageTs }).catch((err) =>
-        console.error('plan_modal resume failed:', err)
-      );
+      resumeBriefWorkflow(pendingId, edited, { workspaceId, slackUserId, channel, messageTs })
+        .catch((err) => console.error('plan_modal resume failed:', err))
+        .finally(() => releaseDelivery(planKey));
       return;
     }
 
@@ -456,16 +474,25 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
     const workspaceId = payload.team && payload.team.id;
     const slackUserId = payload.user && payload.user.id;
 
-    runGenerateDraft(docId, null, channel, messageTs, workspaceId, direction, slackUserId).catch(async (err) => {
-      console.error('runGenerateDraft (regenerate) failed:', err);
-      try {
-        if (channel && messageTs) {
-          await updateLive(channel, messageTs, `⚠️ Regeneration failed: ${err.message}`);
+    // A view_submission is redelivered on a lost ack the same way a block_action
+    // is, and it targets the same message ts.
+    const regenKey = deliveryKey('regenerate_modal', channel, messageTs, docId);
+    if (!claimDelivery(regenKey, isRetry)) {
+      console.log('[interactions] regenerate_modal: duplicate delivery ignored');
+      return;
+    }
+    runGenerateDraft(docId, null, channel, messageTs, workspaceId, direction, slackUserId)
+      .catch(async (err) => {
+        console.error('runGenerateDraft (regenerate) failed:', err);
+        try {
+          if (channel && messageTs) {
+            await updateLive(channel, messageTs, `⚠️ Regeneration failed: ${err.message}`);
+          }
+        } catch (e) {
+          console.error('Failed to report regenerate error to Slack:', e);
         }
-      } catch (e) {
-        console.error('Failed to report regenerate error to Slack:', e);
-      }
-    });
+      })
+      .finally(() => releaseDelivery(regenKey));
     return;
   }
 
@@ -487,20 +514,35 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
     // Build the plan exactly as parsed. Only the pendingId came from the button —
     // the plan is read from the server-side store, so nothing a client could edit
     // reaches generateDoc on this path.
+    //
+    // Claimed first: this handler acks in milliseconds and then works for 7+
+    // seconds, so a lost ack (or a double-tap on a phone) arrives as a second
+    // identical payload. The pending record is dropped only AFTER the build
+    // succeeds, so without this the retry finds it, writes "Building your
+    // document…" over whatever is on the message, and builds a second doc.
+    const key = deliveryKey('plan_build', channelId, messageTs, action.value);
+    if (!claimDelivery(key, isRetry)) {
+      console.log('[interactions] plan_build: duplicate delivery ignored');
+      return;
+    }
     resumeBriefWorkflow(action.value, null, {
       workspaceId,
       slackUserId,
       channel: channelId,
       messageTs,
       responseUrl,
-    }).catch(async (err) => {
-      console.error('plan_build failed:', err);
-      try {
-        await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
-      } catch (e) {
-        console.error('Failed to report plan_build error to Slack:', e);
-      }
-    });
+    })
+      .catch(async (err) => {
+        console.error('plan_build failed:', err);
+        try {
+          await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+        } catch (e) {
+          console.error('Failed to report plan_build error to Slack:', e);
+        }
+      })
+      // Released so a DELIBERATE second Build (after a failure) still works; a
+      // retry lands during the run, when the key is still held.
+      .finally(() => releaseDelivery(key));
   } else if (action.action_id === 'plan_edit') {
     // Open the count-editing modal on this click's FRESH trigger_id (~3s to use it,
     // which is why the plan arrived as a card and not a modal). The ownership check
@@ -529,14 +571,23 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
     }).catch((err) => console.error('plan_cancel failed:', err.message));
   } else if (action.action_id === 'generate_first_draft') {
     const docId = action.value;
-    runGenerateDraft(docId, responseUrl, channelId, messageTs, workspaceId, undefined, slackUserId).catch(async (err) => {
-      console.error('runGenerateDraft failed:', err);
-      try {
-        await updateMessage(`⚠️ Draft generation failed: ${err.message}`, responseUrl);
-      } catch (e) {
-        console.error('Failed to report error to Slack:', e);
-      }
-    });
+    // Same exposure as plan_build: a drafting run is the slowest thing Quillio
+    // does, which is exactly when a redelivery fires.
+    const key = deliveryKey('generate_first_draft', channelId, messageTs, docId);
+    if (!claimDelivery(key, isRetry)) {
+      console.log('[interactions] generate_first_draft: duplicate delivery ignored');
+      return;
+    }
+    runGenerateDraft(docId, responseUrl, channelId, messageTs, workspaceId, undefined, slackUserId)
+      .catch(async (err) => {
+        console.error('runGenerateDraft failed:', err);
+        try {
+          await updateMessage(`⚠️ Draft generation failed: ${err.message}`, responseUrl);
+        } catch (e) {
+          console.error('Failed to report error to Slack:', e);
+        }
+      })
+      .finally(() => releaseDelivery(key));
   } else if (action.action_id === 'regenerate_draft') {
     // Open the Regenerate modal. docId/channel/messageTs ride in private_metadata
     // (never shown to the user) so the view_submission handler can post the

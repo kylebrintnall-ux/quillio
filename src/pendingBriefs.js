@@ -104,7 +104,7 @@ function sanitizeAssetPlan(raw, libraryNames) {
     plan.push(labels.some(Boolean) ? { asset, count, labels } : { asset, count });
   }
   if (unknown.length > 0) {
-    return { error: `These assets are not in your library: ${unknown.join(', ')}` };
+    return { error: `These assets are not in your library: ${unknown.join(', ')}.` };
   }
   const total = plan.reduce((n, e) => n + e.count, 0);
   if (total > MAX_TOTAL_INSTANCES) {

@@ -9,6 +9,7 @@
 const config = require('../config');
 const { resolveTenant } = require('../db');
 const { getClientsForTenant } = require('../google');
+const { beginRun } = require('../liveMessage');
 const { postLive, updateLive, refuseUnlinkedSlack, postEphemeral } = require('../services/slack');
 const { runCopyReview } = require('../services/copyReview');
 const { emoji } = require('../emoji');
@@ -70,7 +71,7 @@ async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
     await postEphemeral({
       channel: channelId,
       user: slackUserId,
-      text: 'Paste a Google Doc link after the command, like: `/quillio-review https://docs.google.com/document/d/...`',
+      text: 'Paste a Google Doc link after the command, like `/quillio-review https://docs.google.com/document/d/…`.',
     });
     return;
   }
@@ -80,11 +81,15 @@ async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
   // rather than bubbling up as an invisible rejection.
   let posted;
   try {
-    posted = await postLive(channelId, 'Reviewing your copy…', emojiBlocks([`${REVIEW_EMOJI} *Reviewing your copy…*`]), token);
+    posted = await postLive(channelId, 'Reviewing your copy…', emojiBlocks([`${REVIEW_EMOJI} Reviewing your copy…`]), token);
   } catch (e) {
     console.error(`[slack] review in-progress post failed (channel=${channelId}):`, e.message);
     return;
   }
+  // This review owns the message it just posted. Nothing else writes to a review
+  // ts today, but the guard costs one call and makes that a property rather than
+  // an observation.
+  const runSeq = beginRun(posted.channel, posted.ts);
 
   try {
     const clients = await getClientsForTenant({ tenantId, userId: actingUserId });
@@ -96,7 +101,8 @@ async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
         posted.ts,
         'Nothing to review yet.',
         emojiBlocks([`${REVIEW_EMOJI} *Nothing to review yet* — this doc has no drafted copy. Generate a first draft, then run \`/quillio-review\`.`]),
-        token
+        token,
+        runSeq
       );
       return;
     }
@@ -106,15 +112,16 @@ async function runSlackReview({ text, channelId, workspaceId, slackUserId }) {
       result.digest,
       docUrl ? `<${docUrl}|Open the doc>` : '',
     ].filter(Boolean);
-    await updateLive(posted.channel, posted.ts, result.status, emojiBlocks(lines), token);
+    await updateLive(posted.channel, posted.ts, result.status, emojiBlocks(lines), token, runSeq);
   } catch (err) {
     console.error('[slack] review failed:', err.message);
     await updateLive(
       posted.channel,
       posted.ts,
       'Review didn’t finish.',
-      emojiBlocks([`⚠️ *Review didn't finish* — ${err.message}. Try again in a moment.`]),
-      token
+      emojiBlocks([`⚠️ *Review didn’t finish* — ${err.message}. Try again in a moment.`]),
+      token,
+      runSeq
     ).catch(() => {});
   }
 }

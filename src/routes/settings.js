@@ -10,7 +10,7 @@
 const path = require('path');
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
-const { voiceLimiter } = require('../middleware/rateLimit');
+const { voiceLimiter, settingsReadLimiter } = require('../middleware/rateLimit');
 const { clientErrorMessage } = require('../utils/errors');
 const {
   resolveTenant,
@@ -19,6 +19,7 @@ const {
   setTenantDefaultFolder,
 } = require('../db');
 const { getSlackLinksForUser } = require('../db/users');
+const { getTenantLibrary } = require('../db/assets');
 const { generateVoiceGuide } = require('../services/gemini');
 
 const router = express.Router();
@@ -92,6 +93,43 @@ router.post('/api/settings/voice/generate', voiceLimiter, requireAuth, async (re
     return res.status(200).json({ success: true, voiceMarkdown: markdown });
   } catch (err) {
     console.error('[settings] /voice/generate failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// GET /api/settings/library — the tenant's asset library, READ-ONLY.
+//
+// Every asset, active and inactive, with stable ids on the assets and their
+// fields. This is the surface a clone-and-edit feature attaches to; nothing here
+// writes, and there is no id in the request — the tenant comes from the SESSION
+// (req.user.tenant_id), never from the body or a query param, so this endpoint
+// cannot be pointed at somebody else's library.
+//
+// Deliberately NOT the same handler as GET /api/onboarding/assets. That one is
+// intentionally un-gated (the onboarding page must render before a session
+// exists) and returns names and active flags only. This one is behind
+// requireAuth and returns ids, limits and spec provenance — a strictly larger
+// payload that must not become reachable without a session by sharing a route.
+router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req, res) => {
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const assets = await getTenantLibrary(tenantId);
+    if (assets === null) {
+      // No DB / no tenant. Distinct from an empty library, and the UI says so.
+      return res.status(200).json({ success: true, available: false, assets: [] });
+    }
+    return res.status(200).json({
+      success: true,
+      available: true,
+      assets,
+      counts: {
+        assets: assets.length,
+        active: assets.filter((a) => a.is_active).length,
+        fields: assets.reduce((n, a) => n + a.fields.length, 0),
+      },
+    });
+  } catch (err) {
+    console.error('[settings] GET /library failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });

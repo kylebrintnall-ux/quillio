@@ -12,7 +12,7 @@ const { requireAuth } = require('../middleware/auth');
 const { voiceLimiter } = require('../middleware/rateLimit');
 const { clientErrorMessage } = require('../utils/errors');
 const { setTenantDefaultFolder, saveVoiceGuide, getVoiceGuide, setTenantOnboardingComplete } = require('../db');
-const { getTenantAssets, setActiveAssets } = require('../db/assets');
+const { getTenantLibrary, setActiveAssets, setActiveAssetIds } = require('../db/assets');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { generateVoiceGuide } = require('../services/gemini');
 
@@ -46,9 +46,20 @@ router.get('/api/onboarding/me', requireAuth, (req, res) => {
 router.get('/api/onboarding/assets', async (req, res) => {
   try {
     const tenantId = req.user && req.user.tenant_id;
-    let rows = tenantId ? await getTenantAssets(tenantId) : null; // null without DB / unseeded
-    if (!rows) {
-      rows = DEFAULT_ASSETS.map((a) => ({ name: a.name, group: a.group, is_active: a.is_active !== false }));
+    // getTenantLibrary, not getTenantAssets: the toggles must show the assets a
+    // returning tenant has already switched OFF, or the page would render them
+    // as on and switch them back on at the next save. It also carries the ids
+    // the save posts back.
+    let rows = tenantId ? await getTenantLibrary(tenantId) : null; // null without DB
+    if (!rows || rows.length === 0) {
+      // No DB / unseeded: the bundled library, with no ids — there are no rows to
+      // have ids yet. The client falls back to posting names for these.
+      rows = DEFAULT_ASSETS.map((a) => ({
+        id: null,
+        name: a.name,
+        group: a.group,
+        is_active: a.is_active !== false,
+      }));
     }
     const groups = [];
     const byGroup = new Map();
@@ -59,7 +70,9 @@ router.get('/api/onboarding/assets', async (req, res) => {
         byGroup.set(g, entry);
         groups.push(entry);
       }
-      byGroup.get(g).assets.push({ name: a.name, active: a.is_active !== false });
+      // `id` is what the save keys on. `name` stays for display (and for the
+      // legacy name-based save a pre-deploy browser will still send).
+      byGroup.get(g).assets.push({ id: a.id || null, name: a.name, active: a.is_active !== false });
     }
     return res.status(200).json({ success: true, groups });
   } catch (err) {
@@ -87,11 +100,28 @@ router.post('/api/onboarding/folder', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/onboarding/assets — deactivate the named asset types (others active).
+// POST /api/onboarding/assets — deactivate the given asset types (others active).
+//
+// Prefers `deactivatedIds`. Ids are stable; names are a value a tenant will soon
+// be able to edit, and a toggle keyed on one silently deactivates nothing (or
+// the wrong row) if a rename lands between the page loading and the user saving.
+//
+// `deactivated` (names) is still accepted for the deploy window in which a
+// browser that loaded the old script is still open. It resolves names to ids
+// through the shared normalizer rather than a raw-text SQL match, so even that
+// path no longer misses on a dash or spacing difference.
 router.post('/api/onboarding/assets', requireAuth, async (req, res) => {
   try {
-    const deactivated = Array.isArray((req.body || {}).deactivated) ? req.body.deactivated : [];
-    await setActiveAssets(req.user && req.user.tenant_id, deactivated);
+    const body = req.body || {};
+    const tenantId = req.user && req.user.tenant_id;
+    const ids = Array.isArray(body.deactivatedIds) ? body.deactivatedIds : null;
+    if (ids) {
+      await setActiveAssetIds(tenantId, ids);
+      return res.status(200).json({ success: true, deactivatedIds: ids });
+    }
+    const deactivated = Array.isArray(body.deactivated) ? body.deactivated : [];
+    console.log('[onboarding] /assets save via legacy name list — pre-deploy client');
+    await setActiveAssets(tenantId, deactivated);
     return res.status(200).json({ success: true, deactivated });
   } catch (err) {
     console.error('[onboarding] /assets save failed:', err && err.stack ? err.stack : err);

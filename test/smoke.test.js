@@ -457,6 +457,7 @@ test('settings router mounts and exposes its routes', () => {
     .sort();
   assert.deepStrictEqual(paths, [
     '/api/auth/signout',
+    '/api/settings/library', // read-only asset library (GET)
     '/api/settings/voice',
     '/api/settings/voice',
     '/api/settings/voice/generate',
@@ -8163,4 +8164,95 @@ test('the unmatched message names the gate that actually ran', () => {
   // An absent/unknown source degrades to the weaker but never-false claim.
   assert.strictEqual(totalMissMessage(['X']), totalMissMessage(['X'], 'default'));
   assert.strictEqual(partialMissNotice(['X'], 'nonsense'), partialMissNotice(['X'], 'default'));
+});
+
+// --- The asset-library EDITOR read (read-only) -------------------------------
+// getTenantAssets is built for the pipeline: it hides inactive rows and drops
+// copy_fields.id. An editor needs both. getTenantLibrary is a second reader
+// rather than a widened one, so what a brief builds cannot change underneath it.
+
+test('db/assets exposes the editor read and the id-based toggle', () => {
+  const a = require('../src/db/assets');
+  assert.strictEqual(typeof a.getTenantLibrary, 'function');
+  assert.strictEqual(typeof a.setActiveAssetIds, 'function');
+  // The pipeline's reader and the legacy name toggle both still exist.
+  assert.strictEqual(typeof a.getTenantAssets, 'function');
+  assert.strictEqual(typeof a.setActiveAssets, 'function');
+});
+
+test('getTenantAssets was NOT changed to serve the editor', () => {
+  // Widening the pipeline's read would silently change what every brief builds.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function getTenantAssets'), src.indexOf('// THE EDITOR READ'));
+  assert.match(fn, /WHERE tenant_id = \$1 AND is_active = true/, 'still active-only');
+  assert.ok(!/\bid: row\.id\b/.test(fn), 'still does not carry copy_fields.id');
+  // And the editor read is the one that does both.
+  const lib = src.slice(src.indexOf('async function getTenantLibrary'));
+  assert.ok(!/is_active = true/.test(lib.slice(0, lib.indexOf('ORDER BY'))), 'editor read is not active-filtered');
+  assert.match(lib, /SELECT id, asset_type_id, field_name/, 'and it selects field ids');
+});
+
+test('the library route is session-scoped and cannot be pointed elsewhere', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const route = src.slice(src.indexOf("'/api/settings/library'"), src.indexOf("GET /api/settings/workspace"));
+  assert.match(route, /settingsReadLimiter, requireAuth/, 'rate-limited and auth-gated');
+  assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant comes from the session');
+  assert.ok(!/req\.body|req\.query|req\.params/.test(route), 'never takes a tenant from the request');
+  // It must NOT share the deliberately un-gated onboarding handler.
+  const onboarding = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'onboarding.js'), 'utf8');
+  assert.ok(!/api\/settings\/library/.test(onboarding), 'the un-gated router does not serve it');
+});
+
+test('onboarding toggles are keyed on ids, with names kept for one deploy window', () => {
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'onboarding.js'), 'utf8');
+  assert.match(route, /body\.deactivatedIds/, 'ids are the primary input');
+  assert.match(route, /setActiveAssetIds/);
+  // The name path still exists — a browser that loaded the old script before
+  // this deploy is still open and will post names when the user finishes.
+  assert.match(route, /body\.deactivated\b/);
+  assert.match(route, /setActiveAssets\(/);
+  // The GET now carries ids for the POST to send back.
+  assert.match(route, /id: a\.id \|\| null/);
+  assert.match(route, /getTenantLibrary/, 'and reads inactive rows so returning users see their own toggles');
+
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  assert.match(html, /data-id/, 'the client stores the id on each checkbox');
+  assert.match(html, /deactivatedIds: deactivatedIds/, 'and posts ids when it has them');
+});
+
+test('the legacy name toggle folds names the way everything else does', () => {
+  // The old SQL matched `name <> ALL($2::text[])` — raw text. A name differing
+  // only in dash style matched nothing and silently deactivated nothing. The
+  // name path now resolves through utils/normalize before touching ids.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function setActiveAssets(tenantId'));
+  assert.ok(!/name <> ALL/.test(fn), 'no raw-text name matching left');
+  assert.match(fn, /normalize\(/, 'folds through the shared normalizer');
+  assert.match(fn, /setActiveAssetIds\(tenantId, ids\)/, 'and delegates to the id path');
+
+  // The id write is the only place that flips is_active, and it validates ids
+  // before they reach Postgres (a bad cast would abort the whole statement).
+  const byId = src.slice(src.indexOf('async function setActiveAssetIds'));
+  assert.match(byId, /\/\^\\d\+\$\//, 'ids are digit-checked');
+  assert.match(byId, /id <> ALL\(\$2::bigint\[\]\)/);
+});
+
+test('settings.html renders the library read-only, with no edit affordances', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  assert.ok(html.includes('id="panel-library"'), 'the panel exists');
+  assert.ok(html.includes('data-tab="library"'), 'reachable from the hub and the sidebar');
+  assert.match(html, /fetch\('\/api\/settings\/library'\)/, 'and reads the gated route');
+
+  // The panel must contain no inputs, no buttons, no contenteditable — the whole
+  // point is that this is the shape review BEFORE a write path exists.
+  const panel = html.slice(html.indexOf('id="panel-library"'), html.indexOf('id="panel-account"'));
+  for (const affordance of ['<input', '<button', '<textarea', 'contenteditable']) {
+    assert.ok(!panel.includes(affordance), `no ${affordance} inside the library panel`);
+  }
+
+  // house_default / null must render NO tier — same rule googleDocs specTypeLine
+  // applies, so an unsourced field never looks authoritative.
+  assert.match(html, /if \(f\.spec_type !== 'enforced' && f\.spec_type !== 'recommended'\) return null;/);
+  // And the unit shown matches what the doc's bracket means.
+  assert.match(html, /fieldType === 'words' \? 'words' : 'chars'/);
 });

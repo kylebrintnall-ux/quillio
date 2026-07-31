@@ -466,6 +466,9 @@
             var input = document.createElement('input');
             input.type = 'checkbox';
             input.checked = a.active !== false;
+            // The id is what the save posts. `data-name` stays as the fallback
+            // for a tenant with no rows yet (the bundled list has no ids).
+            if (a.id) input.setAttribute('data-id', a.id);
             input.setAttribute('data-name', a.name);
             var track = document.createElement('span');
             track.className = 'track';
@@ -486,16 +489,25 @@
       var btn = $('assets-next');
       var err = $('step3-error');
       clearError(err);
+      // Post ids when we have them — a name is something the tenant will be able
+      // to edit, so a toggle keyed on one breaks on a rename between load and
+      // save. Names are only sent for a library that has no rows yet (no ids to
+      // send), which the server resolves through the shared normalizer.
+      var deactivatedIds = [];
       var deactivated = [];
+      var haveIds = true;
       Array.prototype.forEach.call(document.querySelectorAll('#assets-list input[type="checkbox"]'), function (cb) {
-        if (!cb.checked) deactivated.push(cb.getAttribute('data-name'));
+        if (!cb.getAttribute('data-id')) haveIds = false;
+        if (cb.checked) return;
+        deactivated.push(cb.getAttribute('data-name'));
+        if (cb.getAttribute('data-id')) deactivatedIds.push(cb.getAttribute('data-id'));
       });
       btn.disabled = true;
       try {
         var res = await fetch('/api/onboarding/assets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deactivated: deactivated })
+          body: JSON.stringify(haveIds ? { deactivatedIds: deactivatedIds } : { deactivated: deactivated })
         });
         var data = await res.json();
         if (!data || !data.success) throw new Error((data && data.error) || 'Could not save.');

@@ -228,6 +228,84 @@ async function getTenantLibrary(tenantId) {
   }));
 }
 
+// CREATE one tenant-authored asset type and its fields, in ONE transaction.
+//
+// The asset row and its copy_fields rows go in together or not at all. A
+// half-built asset — a type with no fields — is not merely untidy: getTenantAssets
+// drops zero-field assets (tenantAssetsToSpecs filters `g.fields.length > 0`), so
+// it would be a row the library shows and the pipeline silently ignores. Same
+// transaction shape as seedTenantAssets above.
+//
+// `asset` MUST have come through utils/assetInput normalizeNewAsset. This
+// function inserts exactly the columns named below and reads nothing else off
+// the object, so spec_type and spec_source are never supplied and Postgres
+// leaves them NULL — which is what makes a tenant field render with no tier line
+// and no citation (googleDocs.js specTypeLine returns null for null).
+//
+// sort_order appends after the tenant's current maximum so a new asset lands at
+// the end of their library rather than colliding with a seeded position.
+//
+// Returns the new asset's id as a string. Throws on conflict so the caller can
+// map 23505 (the normalized-name unique index) to a readable message — the JS
+// duplicate check in normalizeNewAsset is the message, this is the guarantee.
+async function createAssetType(tenantId, asset) {
+  const pool = getPool();
+  if (!pool) {
+    console.warn('[db/assets] DATABASE_URL not set — skipping createAssetType');
+    return null;
+  }
+  if (!tenantId || !asset || !Array.isArray(asset.fields) || asset.fields.length === 0) return null;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const posRes = await client.query(
+      'SELECT COALESCE(MAX(sort_order), 0) AS max FROM asset_types WHERE tenant_id = $1',
+      [tenantId]
+    );
+    const sortOrder = (parseInt(posRes.rows[0].max, 10) || 0) + 1;
+
+    const typeRes = await client.query(
+      `INSERT INTO asset_types (tenant_id, name, "group", is_active, sort_order, asset_direction)
+         VALUES ($1, $2, $3, true, $4, $5)
+       RETURNING id`,
+      [tenantId, asset.name, asset.group || null, sortOrder, asset.asset_direction || null]
+    );
+    const assetTypeId = typeRes.rows[0].id;
+
+    for (const field of asset.fields) {
+      // Six columns, all from the allowlisted shape. spec_type, spec_source and
+      // spec_version are deliberately not in this statement at all.
+      await client.query(
+        `INSERT INTO copy_fields
+           (asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          assetTypeId,
+          field.field_name,
+          field.char_min,
+          field.char_max,
+          field.field_type,
+          field.sort_order,
+          field.spec_note || null,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    console.log(
+      `[db/assets] tenant ${tenantId} created asset type "${asset.name}" (${asset.fields.length} field(s))`
+    );
+    return String(assetTypeId);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Asset toggles, BY ID. Every type whose id is in `deactivatedIds` becomes
 // inactive; every other one becomes active. Returns true if the write ran.
 //
@@ -321,6 +399,9 @@ module.exports = {
   // The EDITOR read — every asset, active or not, with stable ids. Separate from
   // getTenantAssets on purpose (see its comment).
   getTenantLibrary,
+  // The only tenant-facing CREATE. Asset + fields in one transaction; the
+  // columns it writes are a fixed list (spec_type / spec_source are not on it).
+  createAssetType,
   setActiveAssetIds,
   setActiveAssets,
   getAssetDirections,

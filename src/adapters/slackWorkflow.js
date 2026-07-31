@@ -154,10 +154,16 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 
   try {
     // 1. Parse the brief into title / summary / writerPrompt / assets (+ folder & links).
-    const parsedBrief = await pipeline.parseBrief(brief);
+    // `tenantId` constrains the model to THIS tenant's asset names, so an asset
+    // they own but the bundled 30 lack is requestable. Falls back to
+    // config.ALLOWED_ASSETS when there's no library (demo / unseeded tenant).
+    const parsedBrief = await pipeline.parseBrief(brief, tenantId);
     // NB: parsedBrief.folderId (Gemini's guess) is intentionally NOT used — it
     // can truncate a long id. Folder routing uses extractBriefFolderId below.
     const { campaignTitle, assets, unmatchedAssets, referenceLinks } = parsedBrief;
+    // Which vocabulary gated this parse — decides whether the unmatched message
+    // can honestly say "your asset library" and offer adding to it as the fix.
+    const vocabularySource = (parsedBrief.assetVocabulary && parsedBrief.assetVocabulary.source) || 'default';
     let { summary, writerPrompt } = parsedBrief; // may be enriched below
     let referenceInsights = []; // populated by enrichment, rendered in the doc
     console.log('[workflow] Gemini parse OK — assets:', JSON.stringify(assets));
@@ -171,7 +177,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // Unchanged behavior — only the wording moved to the shared builder.
     if (assets.length === 0 && unmatchedAssets.length > 0) {
       console.log('[workflow] no assets matched — surfacing unmatched list, building nothing');
-      const unmatchedText = totalMissMessage(unmatchedAssets);
+      const unmatchedText = totalMissMessage(unmatchedAssets, vocabularySource);
       await emit(unmatchedText, undefined, () =>
         updateMessage(unmatchedText, responseUrl, { label: 'unmatched-assets' })
       );
@@ -184,7 +190,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // naming three assets where one missed built a doc quietly short one asset.
     // The notice rides the confirmation card (when one appears) and the
     // doc-ready card, so it is visible on whichever card the user actually sees.
-    const unmatchedNotice = partialMissNotice(unmatchedAssets);
+    const unmatchedNotice = partialMissNotice(unmatchedAssets, vocabularySource);
     if (unmatchedNotice) {
       console.log(`[workflow] PARTIAL asset match — building without: ${unmatchedAssets.join(', ')}`);
     }
@@ -262,6 +268,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         // user clicks Build — resumeBriefWorkflow re-resolves the tenant but never
         // re-parses the brief, so this is the only way the notice survives.
         unmatchedAssets,
+        vocabularySource,
         effectiveFolderId,
         folderFromBrief,
         workspaceId: opts.workspaceId,
@@ -282,7 +289,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 
     await buildAndPost({
       brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
-      plan: assets, effectiveFolderId, folderFromBrief, unmatchedAssets,
+      plan: assets, effectiveFolderId, folderFromBrief, unmatchedAssets, vocabularySource,
       tenantId, actingUserId, live, responseUrl, emit,
     });
 
@@ -300,7 +307,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 async function buildAndPost(ctx) {
   const {
     brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
-    plan, effectiveFolderId, folderFromBrief, unmatchedAssets, tenantId, actingUserId,
+    plan, effectiveFolderId, folderFromBrief, unmatchedAssets, vocabularySource, tenantId, actingUserId,
     live, responseUrl, emit,
   } = ctx;
   {
@@ -373,7 +380,7 @@ async function buildAndPost(ctx) {
       // "Couldn't match these …" when the brief named an asset that didn't map.
       // Separate from `notice` because the two are independent: a brief can hit
       // the ceiling, miss an asset name, both, or neither.
-      unmatchedNotice: partialMissNotice(unmatchedAssets),
+      unmatchedNotice: partialMissNotice(unmatchedAssets, vocabularySource),
     };
     const resultBlocks = buildResultBlocks(result).blocks;
     await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
@@ -593,6 +600,7 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
       // Parked at parse time — the brief is never re-parsed here, so without this
       // the doc-ready card would drop a notice the plan card had already shown.
       unmatchedAssets: pending.unmatchedAssets,
+      vocabularySource: pending.vocabularySource,
       effectiveFolderId: pending.effectiveFolderId,
       folderFromBrief: pending.folderFromBrief,
       tenantId,

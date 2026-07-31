@@ -457,15 +457,23 @@ router.get('/oauth/google/callback', async (req, res) => {
 
     console.log(`[oauth] google sign-in OK — tenant ${userTenantId} new=${isNew}`);
 
-    // Settings returns to /settings; onboarding continues at step 2; otherwise
-    // route on SETUP STATE, not just record existence: a tenant with
-    // onboarding_complete=true → the app; anyone still incomplete (brand-new OR
-    // a returning user who abandoned setup) → /onboarding to finish. Best-effort:
-    // a lookup miss/error defaults to incomplete → onboarding (never strand a
-    // user in the app half-set-up). isNew stays for the log line only.
+    // Where to land. Settings is the one destination that is about the SIGN-IN
+    // ITSELF (reconnecting Google) rather than about setup state, so it returns
+    // early and is unaffected by everything below.
     const redirectTo = entry.data && entry.data.redirectTo;
     if (redirectTo === 'settings') return res.redirect('/settings?connected=google');
-    if (redirectTo === 'onboarding') return res.redirect('/onboarding?step=2');
+
+    // SETUP STATE decides the rest, and it is read BEFORE the onboarding branch.
+    //
+    // It used to be read after. `redirect=onboarding` returned unconditionally
+    // one line earlier, so a completed user who signed in from the onboarding
+    // screen was sent back to step 2 with the flag never consulted — and because
+    // requireAuth sends every unauthenticated page request at the onboarding
+    // screen, that was the ordinary way a returning user signed in. The flag was
+    // set correctly the whole time; nothing ever read it on that path.
+    //
+    // Best-effort: a lookup miss/error defaults to incomplete → onboarding, so a
+    // database hiccup never strands someone in the app half-set-up.
     let onboardingComplete = false;
     try {
       const t = await getTenantByWorkspace(userTenantId);
@@ -473,7 +481,16 @@ router.get('/oauth/google/callback', async (req, res) => {
     } catch (e) {
       console.warn('[oauth] onboarding_complete lookup failed — treating as incomplete:', e.message);
     }
-    return res.redirect(onboardingComplete ? '/app?connected=google' : '/onboarding');
+
+    // Finished setup → the app, whichever link started the sign-in. There is no
+    // longer any entry point that can route a completed user back into setup.
+    if (onboardingComplete) return res.redirect('/app?connected=google');
+
+    // Still incomplete. `redirect=onboarding` means they were mid-flow on the
+    // onboarding screen, so resume at step 2 rather than restarting at step 1 —
+    // that is what the branch was for, and it still does it for the users it was
+    // meant for. isNew stays for the log line only.
+    return res.redirect(redirectTo === 'onboarding' ? '/onboarding?step=2' : '/onboarding');
   } catch (err) {
     // Never leak a stack trace to the browser — log it, redirect generically.
     console.error('[oauth] google callback error:', err && err.stack ? err.stack : err);

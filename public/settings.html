@@ -493,6 +493,36 @@
     .lib-newerr { font-size: 12.5px; color: #8a1f1f; margin-top: 10px; }
     .lib-newerr ul { margin: 4px 0 0; padding-left: 18px; }
 
+    /* Template documents (custom document types, step one). Read-only: upload,
+       then read back what was found. Nothing here maps or edits anything. */
+    .tpl-upload { margin: 6px 0 4px; }
+    .tpl-drop { display: block; cursor: pointer; text-align: center; padding: 22px 18px;
+      background: rgba(255,255,255,0.3); border: 1.5px dashed rgba(26,26,46,0.25); border-radius: 14px; }
+    .tpl-drop:hover { border-color: rgba(26,26,46,0.45); background: rgba(255,255,255,0.42); }
+    .tpl-droptitle { display: block; font-family: 'StarCrush', serif; font-size: 15px;
+      letter-spacing: 0.02em; color: var(--ink); }
+    .tpl-dropsub { display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5;
+      color: rgba(26,26,46,0.55); }
+    #tpl-upload-btn { margin-top: 12px; }
+    .tpl-card { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 16px; margin: 14px 0; }
+    .tpl-head { display: flex; align-items: flex-start; gap: 10px; }
+    .tpl-name { flex: 1; min-width: 0; font-family: 'StarCrush', serif; font-weight: normal;
+      font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
+    .tpl-open { flex: none; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); text-decoration: underline; }
+    .tpl-meta { font-size: 11.5px; color: rgba(26,26,46,0.55); margin-top: 4px; }
+    .tpl-marks { list-style: none; margin: 10px 0 0; padding: 0; }
+    .tpl-mark { padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
+    .tpl-mark:first-child { border-top: none; }
+    .tpl-token { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--ink); }
+    .tpl-count { font-size: 11px; color: rgba(26,26,46,0.5); margin-left: 6px; }
+    .tpl-where { display: block; font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
+    /* A malformed marker is shown, never swallowed — a tenant who typo'd a brace
+       has to see it here rather than discover it when nothing fills in. */
+    .tpl-warn { font-size: 12px; color: #8a1f1f; background: rgba(255,255,255,0.42);
+      border-left: 2px solid #8a1f1f; border-radius: 0 9px 9px 0; padding: 7px 10px; margin-top: 10px; }
+    .tpl-empty { font-size: 12.5px; color: rgba(26,26,46,0.6); margin-top: 8px; }
+
     /* Notes / banners / states on the sky */
     .note { color: rgba(26,26,46,0.65); }
     .banner { background: #C6F0D8; border: 1.5px solid #2ECC71; color: #0A5C32; border-radius: 12px; }
@@ -544,6 +574,11 @@
         <span class="hub-name">Asset Library</span>
         <span class="hub-desc">See every asset type and the copy fields Quillio writes for it.</span>
       </button>
+      <button class="hub-card" data-tab="templates">
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="2" width="14" height="14" fill="#4DD9D9"/><rect x="3" y="3" width="12" height="3" fill="#1C1F3B"/><rect x="3" y="7" width="5" height="8" fill="#F5F0E8"/><rect x="9" y="7" width="6" height="8" fill="#F5F0E8"/><rect x="10" y="9" width="4" height="1" fill="#C9A84C"/><rect x="10" y="11" width="4" height="1" fill="#C9A84C"/></svg></span>
+        <span class="hub-name">Template Documents</span>
+        <span class="hub-desc">Upload your own document — a copy matrix, a form spec — and see the markers Quillio finds in it.</span>
+      </button>
       <button class="hub-card" data-tab="workspace">
         <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="7" width="4" height="4" fill="#C9A84C"/><rect x="2" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="2" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="5" y="11" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="11" width="2" height="2" fill="#1C1F3B"/></svg></span>
         <span class="hub-name">Workspace</span>
@@ -562,6 +597,7 @@
         <button class="tab active" data-tab="voice">Voice Guide</button>
         <button class="tab" data-tab="header">Doc Header</button>
         <button class="tab" data-tab="library">Asset Library</button>
+        <button class="tab" data-tab="templates">Template Documents</button>
         <button class="tab" data-tab="workspace">Workspace</button>
         <button class="tab" data-tab="account">Account</button>
       </div>
@@ -697,6 +733,27 @@
           <div id="lib-list"></div>
         </section>
 
+        <!-- TEMPLATE DOCUMENTS (custom document types, step one) -->
+        <section class="panel" id="panel-templates">
+          <div class="eyebrow">TEMPLATE DOCUMENTS</div>
+          <h1>Template Documents</h1>
+          <p class="hdr-lede">Some copy doesn't belong in the campaign doc. Form and confirmation copy usually lives in its own matrix — a wide table carrying technical detail alongside the words. Upload that document and Quillio will find the <code>{{markers}}</code> in it, so you can see whether they are where you think they are.</p>
+          <p class="lib-hint" style="margin-bottom:14px">Quillio can't open a Drive file you made by hand — it only reaches files it created. Uploading is what gets your document in. Your original is untouched; this is a copy Quillio keeps.</p>
+          <div id="tpl-error" class="error hidden"></div>
+          <div id="tpl-unavailable" class="note hidden">Template documents need a database connection. Nothing is saved in demo mode.</div>
+          <div class="tpl-upload">
+            <label class="tpl-drop" for="tpl-file">
+              <span class="tpl-droptitle">Choose a .docx template</span>
+              <span class="tpl-dropsub">Word format only — that's what carries the tables through the import. Up to 10MB.</span>
+              <input type="file" id="tpl-file" accept=".docx" class="hidden">
+            </label>
+            <div id="tpl-chosen" class="note hidden"></div>
+            <button class="btn primary hidden" id="tpl-upload-btn">Upload and find markers</button>
+          </div>
+          <div id="tpl-loading" class="note hidden"><span class="dot"></span><span>Importing and reading it…</span></div>
+          <div id="tpl-list"></div>
+        </section>
+
         <!-- ACCOUNT -->
         <section class="panel" id="panel-account">
           <h1>Account</h1>
@@ -829,11 +886,12 @@
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
     function showTab(name) {
       tabs.forEach(function (t) { t.classList.toggle('active', t.getAttribute('data-tab') === name); });
-      ['voice', 'header', 'library', 'workspace', 'account'].forEach(function (n) {
+      ['voice', 'header', 'library', 'templates', 'workspace', 'account'].forEach(function (n) {
         $('panel-' + n).classList.toggle('active', n === name);
       });
       if (name === 'header') hdrEnsureLoaded();
       if (name === 'library') libEnsureLoaded();
+      if (name === 'templates') tplEnsureLoaded();
     }
     tabs.forEach(function (t) { t.addEventListener('click', function () { showTab(t.getAttribute('data-tab')); }); });
 
@@ -1480,6 +1538,122 @@
         showError(err, e.message || 'Network error — please try again.');
       }
     }
+
+    // --- Template documents (custom document types, step one) ---------------
+    // Upload a .docx, then read back the {{markers}} Quillio found in it. That
+    // is the whole surface: no mapping, no editing, nothing that builds. It
+    // exists so a tenant can see whether their markers are where they think.
+    var tplLoaded = false;
+    var tplFile = null;
+
+    function tplRenderOne(t) {
+      var card = el('div', 'tpl-card');
+      var head = el('div', 'tpl-head');
+      head.appendChild(el('span', 'tpl-name', t.name));
+      if (t.source_doc_url) {
+        var a = document.createElement('a');
+        a.className = 'tpl-open';
+        a.href = t.source_doc_url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = 'Open in Drive';
+        head.appendChild(a);
+      }
+      card.appendChild(head);
+
+      var marks = t.placeholders || [];
+      card.appendChild(el('div', 'tpl-meta',
+        (t.original_filename ? t.original_filename + ' · ' : '') +
+        marks.length + (marks.length === 1 ? ' marker' : ' markers') + ' found'));
+
+      if (!marks.length) {
+        // Not an error, and worth saying WHY rather than showing an empty list —
+        // an imported document with no markers usually means the convention was
+        // never written into it.
+        card.appendChild(el('p', 'tpl-empty',
+          'No {{markers}} in this document. Add them where the copy should go — {{Hero Headline}} — and upload it again.'));
+        return card;
+      }
+
+      var ul = el('ul', 'tpl-marks');
+      marks.forEach(function (m) {
+        var li = el('li', 'tpl-mark');
+        var top = el('div');
+        top.appendChild(el('span', 'tpl-token', '{{' + m.name + '}}'));
+        if (m.count > 1) top.appendChild(el('span', 'tpl-count', '×' + m.count));
+        li.appendChild(top);
+        // The server renders the location strings, so this screen and any other
+        // reader describe the same place the same way.
+        (m.where || []).forEach(function (w) { li.appendChild(el('span', 'tpl-where', w)); });
+        ul.appendChild(li);
+      });
+      card.appendChild(ul);
+      return card;
+    }
+
+    function tplRenderWarnings(host, warnings) {
+      (warnings || []).forEach(function (w) {
+        host.appendChild(el('div', 'tpl-warn',
+          (w.kind === 'unclosed'
+            ? 'Unclosed marker ' + w.text + ' — it is missing its closing braces, so Quillio will not fill it.'
+            : 'Stray }} with no opening braces') + ' (' + w.where + ')'));
+      });
+    }
+
+    async function tplEnsureLoaded() {
+      if (tplLoaded) return;
+      var list = $('tpl-list');
+      try {
+        var res = await fetch('/api/settings/templates');
+        var data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not load templates.');
+        tplLoaded = true;
+        $('tpl-unavailable').classList.toggle('hidden', data.available !== false);
+        list.textContent = '';
+        (data.templates || []).forEach(function (t) { list.appendChild(tplRenderOne(t)); });
+      } catch (e) {
+        showError($('tpl-error'), e.message || 'Could not load templates.');
+      }
+    }
+
+    $('tpl-file').addEventListener('change', function () {
+      tplFile = this.files && this.files[0] ? this.files[0] : null;
+      var chosen = $('tpl-chosen');
+      chosen.textContent = tplFile ? tplFile.name : '';
+      chosen.classList.toggle('hidden', !tplFile);
+      $('tpl-upload-btn').classList.toggle('hidden', !tplFile);
+    });
+
+    $('tpl-upload-btn').addEventListener('click', async function () {
+      if (!tplFile) return;
+      var btn = this;
+      clearError($('tpl-error'));
+      btn.disabled = true;
+      show($('tpl-loading'));
+      try {
+        var fd = new FormData();
+        fd.append('file', tplFile);
+        // multipart, so no Content-Type header — the browser sets the boundary.
+        var res = await fetch('/api/settings/templates', { method: 'POST', body: fd });
+        var data = await res.json().catch(function () { return null; });
+        if (!res.ok || !data || !data.success) {
+          throw new Error((data && data.error) || 'Could not import that template.');
+        }
+        // Reload from the server rather than rendering what we think we sent.
+        tplLoaded = false;
+        await tplEnsureLoaded();
+        tplRenderWarnings($('tpl-list'), data.warnings);
+        tplFile = null;
+        $('tpl-file').value = '';
+        hide($('tpl-chosen'));
+        hide(btn);
+      } catch (e) {
+        showError($('tpl-error'), e.message || 'Network error.');
+      } finally {
+        btn.disabled = false;
+        hide($('tpl-loading'));
+      }
+    });
 
     // --- Markdown render (terminal): ## headings, * bullets, **bold** -------
     function escapeHtml(s) {

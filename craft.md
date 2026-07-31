@@ -57,9 +57,43 @@
 
 **By length:**
 
-- **Ultra-short (≤30 chars, e.g. Google Display, Meta headline):** One idea. One benefit. No setup. "Get the 2026 Benchmark."
+- **Ultra-short (≤30 chars, e.g. Google Display, Meta headline):** One idea. One benefit. No setup. "Get the 2026 Benchmark"
 - **Short (40-70 chars, e.g. LinkedIn headline):** Benefit + light context. Room for a value prop.
 - **Medium (90+ chars, e.g. Google long headline):** Can stand alone as a complete thought; make full use of it.
+
+**Terminal punctuation — apply this consistently, do not decide per field.**
+
+A headline is a display line, not a sentence in a paragraph. The default is **no
+full stop**:
+
+- **No terminal period** on ad headlines, display headlines, social headlines,
+  banner and OOH headlines, subject lines, pre-headers, eyebrows, section
+  headings, or any headline that is a fragment or a single clause. "Get the 2026
+  Benchmark" — not "Get the 2026 Benchmark."
+- **A question mark or exclamation mark still applies** where the headline
+  genuinely is a question or an exclamation. The rule removes the period, not
+  punctuation that carries meaning. Use exclamation marks sparingly.
+- **Punctuate the period when the headline is two or more sentences**, which
+  only the longer formats have room for. Then every sentence takes its stop,
+  including the last: "Your data is scattered. We put it back together."
+- **Never end a headline with an ellipsis** to imply continuation. If the line
+  does not stand on its own, rewrite it.
+- **Within one asset, be consistent.** If two headlines sit together — a
+  headline and a graphic headline, three carousel cards, five display variants —
+  they take the same treatment. A doc where some end in a period and some do not
+  reads as unfinished, whichever convention is right.
+
+Where mediums differ:
+
+- **Email subject lines and pre-headers:** never a period. Punctuation there
+  costs a character and reads as formal.
+- **Print / OOH:** no period. The line is set large; a full stop is visual noise.
+- **Sales / 1:1 outreach:** the subject line follows the headline rule, but the
+  body is correspondence, not display copy — full sentences, fully punctuated.
+- **Body copy, offer bodies, descriptions and legal lines are NOT headlines.**
+  They are prose and take normal sentence punctuation, always.
+- **CTAs are not headlines either** — see Section 4. They take no terminal
+  punctuation at all.
 
 -----
 

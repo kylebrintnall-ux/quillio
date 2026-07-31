@@ -47,13 +47,15 @@ function formatAssetList(assets) {
 // folder was made. `notice` is optional advisory context (see below).
 function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice, unmatchedNotice }) {
   // Punctuation rule for every user-facing string in the Slack surface:
-  // in-progress → ellipsis, terminal sentence → period, header/button → neither.
+  // in-progress → ellipsis, terminal sentence → period, HEADER BLOCK → period
+  // (it is a line of copy the reader reads as a sentence, not a control),
+  // BUTTON LABEL → nothing (it is a control, and a period on a button is wrong).
   const assetList = assets.length ? formatAssetList(assets) : '_No assets matched — included all specs._';
 
   const blocks = [
     {
       type: 'header',
-      text: { type: 'plain_text', text: `${emoji('quillio-doc-done')} Your doc is ready`, emoji: true },
+      text: { type: 'plain_text', text: `${emoji('quillio-doc-done')} Your doc is ready.`, emoji: true },
     },
     {
       type: 'section',
@@ -212,7 +214,7 @@ function buildPlanCardBlocks({ pendingId, campaignTitle, plan, unmatchedNotice }
   return {
     text,
     blocks: [
-      { type: 'header', text: { type: 'plain_text', text: "Here's how I read that brief", emoji: true } },
+      { type: 'header', text: { type: 'plain_text', text: "Here's how I read that brief.", emoji: true } },
       { type: 'section', text: { type: 'mrkdwn', text: `*${title}*` } },
       {
         type: 'section',

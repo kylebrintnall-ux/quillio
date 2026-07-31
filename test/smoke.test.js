@@ -2094,9 +2094,13 @@ test('copyReview: collects only non-empty copy fields', () => {
 
 test('copyReview: qualitative status is supportive, never a grade', () => {
   const { qualitativeStatus } = require('../src/services/copyReview');
-  assert.strictEqual(qualitativeStatus(0, 0), 'Nothing to review yet');
-  assert.strictEqual(qualitativeStatus(0, 6), 'Looking strong ✨'); // all clean = silence
-  assert.strictEqual(qualitativeStatus(1, 8), 'A few things to tighten');
+  // These are HEADLINES a reader reads as sentences — Slack's review lead line,
+  // the web's .review-status — so they carry a period. A button label would not.
+  assert.strictEqual(qualitativeStatus(0, 0), 'Nothing to review yet.');
+  assert.strictEqual(qualitativeStatus(0, 6), 'Looking strong. ✨'); // all clean = silence
+  assert.strictEqual(qualitativeStatus(1, 8), 'A few things to tighten.');
+  assert.strictEqual(qualitativeStatus(3, 5), 'Worth another pass.');
+  assert.strictEqual(qualitativeStatus(5, 5), 'Some rework to do.');
   assert.ok(!/[A-F]\b|\d\/\d|score/i.test(qualitativeStatus(3, 6))); // no letter/number grade
 });
 
@@ -5710,7 +5714,8 @@ test('slack confirm: a MULTI-INSTANCE brief pauses on a card and builds nothing'
 
     // The rendered card, block by block.
     assert.deepStrictEqual(card.blocks.map((b) => b.type), ['header', 'section', 'section', 'context', 'actions']);
-    assert.strictEqual(card.blocks[0].text.text, "Here's how I read that brief");
+    // A header block is a line of copy, not a control — punctuated as a sentence.
+    assert.strictEqual(card.blocks[0].text.text, "Here's how I read that brief.");
     assert.strictEqual(card.blocks[1].text.text, '*City Dinners*');
     assert.strictEqual(
       card.blocks[2].text.text,
@@ -9262,23 +9267,93 @@ test('in-progress states end in an ellipsis, terminal states in a period', () =>
   assert.match(rv, /\*Review didn’t finish\*/, 'the block and its fallback use the same apostrophe');
   assert.match(rv, /d\/…`\.',/, 'the paste-a-link instruction is a punctuated sentence');
 
-  // Headers and button labels take neither — they are labels, not sentences.
-  const labels = [
-    "text: `${emoji('quillio-doc-done')} Your doc is ready`",
-    "text: \"Here's how I read that brief\"",
-    "text: 'Generate First Draft'",
-    "text: 'Skip for now'",
-    "text: 'Open in Drive'",
-    "text: 'Build the doc'",
-    "text: 'Edit counts'",
-    "text: 'Regenerate'",
-  ];
-  for (const l of labels) {
-    assert.ok(sl.includes(l), `unpunctuated label intact: ${l}`);
+  // A HEADER BLOCK is a line of copy the reader takes as a sentence, so it is
+  // punctuated as one. A BUTTON LABEL is a control, and a period on a button is
+  // wrong. The two used to share a rule; they do not.
+  const headerBlocks = [...sl.matchAll(/type: 'header',?\s*\n?\s*text: \{ type: 'plain_text', text: (`[^`]+`|"[^"]+"|'[^']+')/g)]
+    .map((m) => m[1]);
+  assert.strictEqual(headerBlocks.length, 2, 'both header blocks found');
+  for (const h of headerBlocks) {
+    assert.ok(/\.(`|"|')$/.test(h), `a header block is a sentence: ${h}`);
   }
-  // Nothing in the Slack surface ends a header or a button label with a period.
-  const buttonTexts = sl.match(/text: \{ type: 'plain_text', text: '[^']+'/g) || [];
-  for (const b of buttonTexts) {
-    assert.ok(!/\.'$/.test(b), `button label must not end in a period: ${b}`);
+  assert.ok(sl.includes("text: `${emoji('quillio-doc-done')} Your doc is ready.`"));
+  assert.ok(sl.includes("text: \"Here's how I read that brief.\""));
+
+  // Button labels stay bare — asserted by name, and then swept so a new one
+  // cannot arrive punctuated.
+  for (const l of ['Generate First Draft', 'Skip for now', 'Open in Drive', 'Build the doc', 'Edit counts', 'Regenerate']) {
+    assert.ok(sl.includes(`text: '${l}'`), `unpunctuated button label intact: ${l}`);
   }
+  const buttons = sl.split('\n').filter((l) => /type: 'button'/.test(l) || /action_id:/.test(l));
+  void buttons;
+  const plainLabels = sl.match(/text: \{ type: 'plain_text', text: '[^']+'/g) || [];
+  for (const b of plainLabels) {
+    assert.ok(!/[.!?]'$/.test(b), `button label must not end in terminal punctuation: ${b}`);
+  }
+});
+
+test('a review headline is a sentence on both surfaces', () => {
+  const { qualitativeStatus } = require('../src/services/copyReview');
+  // One function feeds Slack's review lead line AND the web's .review-status, so
+  // the rule is applied at the source rather than twice at the edges.
+  for (const [f, t] of [[0, 0], [0, 6], [1, 8], [3, 5], [5, 5]]) {
+    const s = qualitativeStatus(f, t);
+    assert.ok(/\.( ✨)?$/.test(s), `punctuated headline: ${JSON.stringify(s)}`);
+  }
+  const cr = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'copyReview.js'), 'utf8');
+  // The no-copy early return used to carry its own copy of the string, free to
+  // drift from the function that produces every other headline.
+  assert.match(cr, /status: qualitativeStatus\(0, 0\)/);
+  assert.ok(!/status: 'Nothing to review yet'/.test(cr), 'no second literal to drift');
+
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /\|\| 'Review complete\.'/, "the web's fallback headline follows the same rule");
+});
+
+test('craft.md rules headline terminal punctuation, universally', () => {
+  const craft = fs.readFileSync(path.join(__dirname, '..', 'craft.md'), 'utf8');
+
+  // A real doc came back with some generated headlines ending in a period and
+  // some not, WITHIN one asset. That is craft, not a field limit, so the answer
+  // is a rule the model reads rather than a per-field instruction.
+  const head = craft.slice(craft.indexOf('## 2. Headlines'), craft.indexOf('## 3. Body Copy'));
+  assert.match(head, /Terminal punctuation — apply this consistently, do not decide per field/);
+  assert.match(head, /The default is \*\*no\s*\n?full stop\*\*/);
+  assert.match(head, /No terminal period\*\* on ad headlines/);
+  // A question mark still carries meaning; the rule removes the period only.
+  assert.match(head, /question mark or exclamation mark still applies/);
+  // Multi-sentence headlines DO take stops — the rule is not "never punctuate".
+  assert.match(head, /Punctuate the period when the headline is two or more sentences/);
+  // The failure that prompted this: mixed treatment inside one asset.
+  assert.match(head, /Within one asset, be consistent/);
+  // And the boundary — what is NOT a headline.
+  assert.match(head, /Body copy, offer bodies, descriptions and legal lines are NOT headlines/);
+  assert.match(head, /CTAs are not headlines either/);
+
+  // THE CONTRADICTION THAT WAS THERE. The ultra-short example carried a period,
+  // which is exactly the convention the rule rejects. It is now unpunctuated,
+  // and the punctuated form survives only as the counter-example.
+  assert.match(head, /No setup\. "Get the 2026 Benchmark"\n/);
+  assert.strictEqual((head.match(/"Get the 2026 Benchmark\."/g) || []).length, 1, 'punctuated only as the counter-example');
+
+  // It sits OUTSIDE the mediums section, so gemini's per-asset slicing treats it
+  // as universal craft and injects it for every asset — not just the one whose
+  // medium happens to match.
+  // Anchored on the level-2 HEADING, not the phrase: craft.md's own header
+  // comment names the section too, and the parser keys on the heading (which is
+  // why the injection check below is the real proof either way).
+  const mediums = craft.search(/^##\s.*Writing Across Mediums/m);
+  assert.ok(mediums > 0 && craft.indexOf('Terminal punctuation') < mediums, 'universal, not per-medium');
+  const gemini = require('../src/services/gemini');
+  for (const asset of ['LinkedIn Single Image Ad', 'Demand Gen Nurture Email', 'Battle Card', 'Event Landing Page']) {
+    assert.match(gemini.buildCraftContext(asset), /Terminal punctuation/, `injected for ${asset}`);
+  }
+  // Copy review spans several assets and gets the union — still carries it.
+  assert.match(gemini.buildCraftContext(['LinkedIn Single Image Ad', 'Demand Gen Nurture Email']), /Terminal punctuation/);
+
+  // Nothing else in craft.md now shows a bare headline example ending in a
+  // period. (Prose examples inside sentences — "this was built." — are body
+  // copy illustrations, not headlines, and are left alone.)
+  const byLength = head.slice(head.indexOf('**By length:**'), head.indexOf('**Terminal punctuation'));
+  assert.ok(!/"[^"]+\."/.test(byLength), `a headline example still ends in a period: ${byLength}`);
 });

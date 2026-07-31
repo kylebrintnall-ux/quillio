@@ -2,6 +2,7 @@
 
 const config = require('../config');
 const { emoji } = require('../emoji');
+const { mayWrite } = require('../liveMessage');
 
 // Posts a JSON payload to a Slack URL (incoming webhook or response_url).
 async function postToSlack(url, payload) {
@@ -45,6 +46,8 @@ function formatAssetList(assets) {
 // folderUrl/folderName are optional — the folder link renders only when a project
 // folder was made. `notice` is optional advisory context (see below).
 function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice, unmatchedNotice }) {
+  // Punctuation rule for every user-facing string in the Slack surface:
+  // in-progress → ellipsis, terminal sentence → period, header/button → neither.
   const assetList = assets.length ? formatAssetList(assets) : '_No assets matched — included all specs._';
 
   const blocks = [
@@ -91,7 +94,7 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
   if (folderName) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: `${emoji('quillio-folder')} Saved to ${folderName}` },
+      text: { type: 'mrkdwn', text: `${emoji('quillio-folder')} Saved to ${folderName}.` },
     });
   }
 
@@ -532,7 +535,16 @@ async function postLive(channel, text, blocks, token) {
 }
 
 // Edit a live message in place by ts.
-async function updateLive(channel, ts, text, blocks, token) {
+// `runSeq` (optional) is the caller's run sequence from liveMessage.beginRun. A
+// write from a run that has since been superseded is DROPPED rather than sent:
+// with the whole flow collapsed onto one ts, a late write does not add a stray
+// message any more, it destroys the finished card. Omitting runSeq is allowed and
+// unguarded, so a path that has not been taught about it behaves exactly as before.
+async function updateLive(channel, ts, text, blocks, token, runSeq) {
+  if (!mayWrite(channel, ts, runSeq)) {
+    console.warn(`[slack] chat.update SKIPPED — run ${runSeq} superseded on ${channel}/${ts}`);
+    return { ok: true, skipped: true };
+  }
   return slackApi('chat.update', blocks ? { channel, ts, text, blocks } : { channel, ts, text }, token);
 }
 

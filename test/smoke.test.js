@@ -9073,3 +9073,212 @@ test('no ceiling is ever interpolated into a prompt without a > 0 guard', () => 
     assert.match(gem, decl);
   }
 });
+
+// --- A terminal Slack card cannot be reverted by a late write ----------------
+// dbd3306 collapsed the whole flow onto one message ts, which removed the stray
+// orphan messages it was meant to remove and created a worse failure: a late
+// write now OVERWRITES the finished card instead of landing beside it. A real
+// run went draft-complete → Open in Drive → back to "Building your document…",
+// permanently.
+
+test('a Slack redelivery of work already accepted never runs it again', () => {
+  const lm = require('../src/liveMessage');
+  lm._reset();
+  const key = lm.deliveryKey('generate_first_draft', 'C1', 'TS1', 'DOC1');
+
+  // The original delivery owns the work.
+  assert.strictEqual(lm.claimDelivery(key, false), true, 'the first delivery runs');
+  // A redelivery WHILE it runs is refused — this is the double-run that rebuilds
+  // the doc and writes progress text over the card.
+  assert.strictEqual(lm.claimDelivery(key, true), false, 'retry mid-run refused');
+  // …and so is a second tap that is not a retry at all (a phone double-tap).
+  assert.strictEqual(lm.claimDelivery(key, false), false, 'double-tap mid-run refused');
+
+  // The run settles. THE KEY IS REMEMBERED, NOT FORGOTTEN — this is the whole
+  // fix for the reported bug, where the redelivery landed AFTER completion.
+  lm.releaseDelivery(key);
+  assert.strictEqual(lm.claimDelivery(key, true), false, 'retry AFTER completion refused');
+
+  // But a deliberate second click is not a retry, and must still work.
+  assert.strictEqual(lm.claimDelivery(key, false), true, 'a real second click runs');
+});
+
+test('a retry of a delivery that never arrived is still honoured', () => {
+  // The other half of the rule. Refusing every retry would silently drop a click
+  // whose original request genuinely never reached the server — the user would
+  // tap and nothing would happen, with no way to tell.
+  const lm = require('../src/liveMessage');
+  lm._reset();
+  const key = lm.deliveryKey('plan_build', 'C1', 'TS1', 'PEND1');
+  assert.strictEqual(lm.claimDelivery(key, true), true, 'first sighting is a retry → run it');
+  assert.strictEqual(lm.claimDelivery(key, true), false, 'the next one is a duplicate');
+
+  // Different button, message or target = different work, never deduped together.
+  const keys = [
+    lm.deliveryKey('plan_build', 'C1', 'TS1', 'PEND1'),
+    lm.deliveryKey('generate_first_draft', 'C1', 'TS1', 'PEND1'),
+    lm.deliveryKey('plan_build', 'C1', 'TS2', 'PEND1'),
+    lm.deliveryKey('plan_build', 'C2', 'TS1', 'PEND1'),
+    lm.deliveryKey('plan_build', 'C1', 'TS1', 'PEND2'),
+  ];
+  assert.strictEqual(new Set(keys).size, 5, 'every dimension is part of the key');
+  // No key at all → never block the work.
+  assert.strictEqual(lm.claimDelivery(null, true), true);
+});
+
+test('only the newest run may write to a message', () => {
+  const lm = require('../src/liveMessage');
+  lm._reset();
+  // The guard is "newest run wins", NOT "terminal is final". Clicking Generate
+  // First Draft on a doc-ready card legitimately drives a terminal card back to a
+  // progress state, so a terminal flag would block a transition the user asked for.
+  const first = lm.beginRun('C1', 'TS1');
+  assert.strictEqual(lm.mayWrite('C1', 'TS1', first), true);
+  const second = lm.beginRun('C1', 'TS1');
+  assert.ok(second > first, 'sequences are monotonic per message');
+  assert.strictEqual(lm.mayWrite('C1', 'TS1', second), true, 'the newest run writes');
+  assert.strictEqual(lm.mayWrite('C1', 'TS1', first), false, 'the superseded run does not');
+
+  // Runs on a DIFFERENT message are independent.
+  assert.strictEqual(lm.mayWrite('C1', 'TS2', first), true);
+  // An untagged write is never blocked, so adding the guard cannot break a path
+  // that has not been taught about it.
+  assert.strictEqual(lm.mayWrite('C1', 'TS1', undefined), true);
+  assert.strictEqual(lm.mayWrite('C1', 'TS1', null), true);
+  // No coordinates → no guard and no need for one.
+  assert.strictEqual(lm.beginRun(null, 'TS1'), null);
+  assert.strictEqual(lm.beginRun('C1', null), null);
+});
+
+test('updateLive drops a superseded write instead of sending it', async () => {
+  const lm = require('../src/liveMessage');
+  const { updateLive } = require('../src/services/slack');
+  lm._reset();
+  const older = lm.beginRun('C1', 'TS1');
+  lm.beginRun('C1', 'TS1'); // a newer run takes the message
+
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    sent.push(JSON.parse(opts.body).text);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  try {
+    const r = await updateLive('C1', 'TS1', 'Building your document…', undefined, 'xoxb-t', older);
+    assert.deepStrictEqual(sent, [], 'nothing reached chat.update');
+    assert.strictEqual(r.skipped, true, 'and the caller is told, rather than seeing a fake success');
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test('every interactive handler that starts a run claims its delivery first', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  // Slack's own header is what separates a redelivery from a deliberate re-click.
+  assert.match(src, /const isRetry = !!req\.get\('X-Slack-Retry-Num'\)/);
+
+  // Every action that kicks off a long fire-and-forget run is claimed, and every
+  // claim is released in a finally (a run that throws is still a run that happened).
+  for (const kind of ['plan_build', 'generate_first_draft', 'regenerate_modal', 'plan_modal']) {
+    assert.match(src, new RegExp(`deliveryKey\\('${kind}'`), `${kind} is claimed`);
+  }
+  assert.strictEqual((src.match(/claimDelivery\([^)]*isRetry\)/g) || []).length, 4, 'all four pass the retry flag');
+  assert.strictEqual((src.match(/\.finally\(\(\) => releaseDelivery\(/g) || []).length, 4, 'all four release');
+
+  // The ack still goes out before any of this — Slack's 3s window is what forces
+  // the async work that creates the retry in the first place.
+  // `claimDelivery(` with the paren — the prose above the ack explains the rule
+  // and naming it there is not a call.
+  const handler = src.slice(src.indexOf("app.post('/slack/interactions'"));
+  assert.ok(handler.indexOf("res.status(200).send('')") < handler.indexOf('claimDelivery('), 'ack first, then claim');
+});
+
+test('every writer to a live message carries its run sequence', () => {
+  const wf = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  const rv = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackReview.js'), 'utf8');
+  // Every updateLive in the adapters passes a sequence. An unguarded one is the
+  // hole the whole fix exists to close, so the count is asserted rather than
+  // spot-checked.
+  // Balanced-paren extraction: a call's own arguments contain calls
+  // (copyCompleteBlocks(...), emojiBlocks([...])), so a non-greedy regex stops
+  // inside them and reads a correct call as unguarded.
+  const callsIn = (src) => {
+    const out = [];
+    let i = src.indexOf('updateLive(');
+    while (i >= 0) {
+      let depth = 0;
+      let j = i + 'updateLive'.length;
+      for (; j < src.length; j += 1) {
+        if (src[j] === '(') depth += 1;
+        else if (src[j] === ')') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      out.push(src.slice(i, j + 1));
+      i = src.indexOf('updateLive(', j);
+    }
+    return out;
+  };
+  const calls = [...callsIn(wf), ...callsIn(rv)];
+  assert.ok(calls.length >= 6, `found the writers (got ${calls.length})`);
+  for (const c of calls) {
+    assert.ok(/runSeq|beginRun\(/.test(c), `updateLive without a run sequence: ${c.replace(/\s+/g, ' ').slice(0, 90)}`);
+  }
+  assert.match(wf, /const runSeq = beginRun\(channel, messageTs\)/, 'the draft flow claims the clicked message');
+  assert.match(wf, /let runSeq = live \? beginRun\(live\.channel, live\.ts\) : null/, 'and so does the resume flow');
+});
+
+// --- Slack microcopy: one punctuation rule ----------------------------------
+
+test('the three progress lines are the same weight', () => {
+  const wf = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  const rv = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackReview.js'), 'utf8');
+  // "Reviewing your copy…" was the only bolded one. Matched to the other two
+  // rather than bolding those.
+  assert.match(rv, /\$\{REVIEW_EMOJI\} Reviewing your copy…/);
+  assert.ok(!/\*Reviewing your copy…\*/.test(rv), 'no longer bold');
+  assert.match(wf, /const BUILDING_TEXT = `\$\{emoji\('quillio-scroll'\)\} Building your document…`/);
+  assert.match(wf, /const progressText = `\$\{emoji\('quillio'\)\} \$\{progressMsg\}`/);
+  for (const s of [wf, wf, rv]) assert.ok(!/\*Building your document…\*|\*\$\{progressMsg\}\*/.test(s));
+});
+
+test('in-progress states end in an ellipsis, terminal states in a period', () => {
+  const wf = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  const rv = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackReview.js'), 'utf8');
+  const sl = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
+  const pb = fs.readFileSync(path.join(__dirname, '..', 'src', 'pendingBriefs.js'), 'utf8');
+
+  // In progress → ellipsis.
+  assert.match(wf, /Building your document…`/);
+  assert.match(rv, /Reviewing your copy…'/);
+  assert.match(rv, /Reviewing your copy…`/);
+
+  // Terminal → a complete sentence with a period.
+  assert.match(wf, /Your doc is ready — \$\{doc\.title\}\.`/);
+  assert.match(sl, /Saved to \$\{folderName\}\.`/);
+  assert.match(pb, /These assets are not in your library: \$\{unknown\.join\(', '\)\}\.`/);
+  assert.match(rv, /Review didn’t finish\.'/);
+  assert.match(rv, /\*Review didn’t finish\*/, 'the block and its fallback use the same apostrophe');
+  assert.match(rv, /d\/…`\.',/, 'the paste-a-link instruction is a punctuated sentence');
+
+  // Headers and button labels take neither — they are labels, not sentences.
+  const labels = [
+    "text: `${emoji('quillio-doc-done')} Your doc is ready`",
+    "text: \"Here's how I read that brief\"",
+    "text: 'Generate First Draft'",
+    "text: 'Skip for now'",
+    "text: 'Open in Drive'",
+    "text: 'Build the doc'",
+    "text: 'Edit counts'",
+    "text: 'Regenerate'",
+  ];
+  for (const l of labels) {
+    assert.ok(sl.includes(l), `unpunctuated label intact: ${l}`);
+  }
+  // Nothing in the Slack surface ends a header or a button label with a period.
+  const buttonTexts = sl.match(/text: \{ type: 'plain_text', text: '[^']+'/g) || [];
+  for (const b of buttonTexts) {
+    assert.ok(!/\.'$/.test(b), `button label must not end in a period: ${b}`);
+  }
+});

@@ -23,6 +23,7 @@ const {
 } = require('../services/slack');
 const { emoji } = require('../emoji');
 const { getTenantAssets } = require('../db/assets');
+const { beginRun } = require('../liveMessage');
 const {
   putPending,
   getPending,
@@ -127,11 +128,16 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   // directly would say "no live message" while chat.update works fine — which is
   // what stranded a "Building…" card next to its own doc-ready message.
   const canLive = canUseBotToken(tokens.slack_bot);
+  // This run's claim on whichever message it ends up owning. For an existing
+  // message (folder-recovery buttons) that is the clicked ts; for a fresh post it
+  // is claimed below, once postLive has told us the ts.
+  let runSeq = live ? beginRun(live.channel, live.ts) : null;
   try {
     if (live && canLive) {
-      await updateLive(live.channel, live.ts, BUILDING_TEXT, undefined, tokens.slack_bot);
+      await updateLive(live.channel, live.ts, BUILDING_TEXT, undefined, tokens.slack_bot, runSeq);
     } else if (opts.channelId && canLive) {
       live = await postLive(opts.channelId, BUILDING_TEXT, undefined, tokens.slack_bot);
+      runSeq = beginRun(live.channel, live.ts);
     } else if (responseUrl) {
       await updateMessage(BUILDING_TEXT, responseUrl, { newMessage: true, label: 'build-progress' });
       live = null;
@@ -148,7 +154,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   // Emit a final/early message: edit the live message in place when we have one,
   // otherwise fall back to a response_url post.
   const emit = async (text, blocks, fallback) => {
-    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks, tokens.slack_bot);
+    if (live && canLive) return updateLive(live.channel, live.ts, text, blocks, tokens.slack_bot, runSeq);
     return fallback();
   };
 
@@ -383,7 +389,7 @@ async function buildAndPost(ctx) {
       unmatchedNotice: partialMissNotice(unmatchedAssets, vocabularySource),
     };
     const resultBlocks = buildResultBlocks(result).blocks;
-    await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}`, resultBlocks, () =>
+    await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}.`, resultBlocks, () =>
       postResult(result, responseUrl)
     );
 
@@ -415,6 +421,10 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   // response_url path, so the finished draft was announced in a NEW message and the
   // doc-ready card it was launched from was left sitting there unchanged.
   const canLive = canUseBotToken(tokens.slack_bot) && !!channel && !!messageTs;
+  // Claim the clicked message. Clicking Generate First Draft on a doc-ready card
+  // legitimately drives a TERMINAL card back to a progress state, which is why the
+  // guard is "newest run wins" rather than "terminal is final" — see liveMessage.
+  const runSeq = beginRun(channel, messageTs);
   const isRegen = !!(direction && String(direction).trim());
   console.log(
     `[workflow] runGenerateDraft START — canLive: ${canLive} | channel: ${channel || '(none)'} | regen: ${isRegen}`
@@ -438,7 +448,7 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   }
 
   const progressText = `${emoji('quillio')} ${progressMsg}`;
-  if (canLive) await updateLive(channel, messageTs, progressText, undefined, tokens.slack_bot);
+  if (canLive) await updateLive(channel, messageTs, progressText, undefined, tokens.slack_bot, runSeq);
   else await updateMessage(progressText, responseUrl, { label: 'draft-progress' });
 
   // Docs read/write runs as the ACTING USER's own Google identity, falling back
@@ -461,7 +471,7 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   } drafted).`;
 
   if (canLive) {
-    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId), tokens.slack_bot);
+    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId), tokens.slack_bot, runSeq);
   } else {
     try {
       await postChatMessage({ channel, text: completionText, webViewLink: url, token: tokens.slack_bot });
@@ -502,6 +512,9 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
   // "Building…" and then becomes the doc-ready card: one message from the plan
   // through the doc, with nothing orphaned above it.
   let live = channel && messageTs ? { channel, ts: messageTs } : null;
+  // Claimed before any await, so a duplicate delivery that slipped past
+  // claimDelivery still cannot write over the run that beat it here.
+  let runSeq = live ? beginRun(live.channel, live.ts) : null;
   // The per-tenant bot token, once the tenant resolves. Undefined until then, which
   // is harmless — slackApi falls back to the env token when passed none.
   let botToken;
@@ -519,7 +532,7 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
   const emit = async (text, blocks, fallback) => {
     if (live) {
       try {
-        return await updateLive(live.channel, live.ts, text, blocks, botToken);
+        return await updateLive(live.channel, live.ts, text, blocks, botToken, runSeq);
       } catch (err) {
         console.warn('[workflow] resume: chat.update failed, falling back:', err.message);
       }
@@ -552,7 +565,10 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
   botToken = tokens.slack_bot; // from here on `emit` prefers the tenant's own token
   // Only if the click carried no coordinates at all: fall back to the message the
   // parse created. Normally these are the same message.
-  if (!live) live = pending.live || null;
+  if (!live) {
+    live = pending.live || null;
+    if (live) runSeq = beginRun(live.channel, live.ts);
+  }
 
   let plan = pending.plan;
   if (rawPlan) {
@@ -626,7 +642,7 @@ async function cancelBriefWorkflow(pendingId, opts = {}) {
   const text = '✓ Cancelled — nothing was created.';
   if (opts.channel && opts.messageTs) {
     try {
-      return await updateLive(opts.channel, opts.messageTs, text);
+      return await updateLive(opts.channel, opts.messageTs, text, undefined, undefined, beginRun(opts.channel, opts.messageTs));
     } catch (err) {
       console.warn('[workflow] cancel: chat.update failed, falling back:', err.message);
     }

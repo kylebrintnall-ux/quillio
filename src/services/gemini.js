@@ -1006,8 +1006,14 @@ async function generateAssetDrafts({
 
   const fieldLines = fields
     .map((f) => {
+      // char_max 0 = NO limit. The character branch already guarded that; the
+      // word branch did not, and rendered "up to 0 WORDS" — a real constraint
+      // asserted on an unlimited field, in the batch prompt that drafts most copy.
+      const wordCeiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
       const limit = f.fieldType === 'words'
-        ? `${Number(f.charMin) > 0 ? `${f.charMin}-` : 'up to '}${f.charMax} WORDS (a word count, not characters)`
+        ? (wordCeiling
+          ? `${Number(f.charMin) > 0 ? `${f.charMin}-` : 'up to '}${wordCeiling} WORDS (a word count, not characters)`
+          : 'no word limit — length is yours to judge; measured in WORDS, not characters')
         : (Number(f.charMax) > 0 ? `character limit ${f.charMax} — stay within this limit` : 'concise');
       const guidance = f.notes || builtInFieldGuidance(f.fieldName);
       const extra = [
@@ -1213,8 +1219,14 @@ function buildVariationsPrompt({
   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
   const allSame = new Set(doorwayList).size === 1; // Stay close: one door, N executions
   const anyIntensity = spec.some((s) => s.intensity);
+  // Same sentinel, worse symptom: lengthClause returns null for char_max 0, so a
+  // word field with no ceiling interpolated the literal string "null" and the
+  // prompt read "null EACH variation is held to this range."
+  const wordClause = fieldType === 'words' ? lengthClause(charMax, fieldType, charMin) : null;
   const limitLine = fieldType === 'words'
-    ? `${lengthClause(charMax, fieldType, charMin)} EACH variation is held to this range.`
+    ? (wordClause
+      ? `${wordClause} EACH variation is held to this range.`
+      : 'Length is counted in WORDS, not characters, and this field has no word limit — judge length by what the thought needs.')
     : (ceiling
       ? `Character limit: ${ceiling} per variation. Each is a COMPLETE, self-contained thought within this hard maximum — finish the thought, even a few characters short.`
       : 'Keep each variation concise — a complete, self-contained thought appropriate for the field.');
@@ -1576,6 +1588,10 @@ const LENGTH_RULE = [
   'LENGTH — READ CAREFULLY, THIS IS A COMMON ERROR:',
   '• A maximum is a HARD limit. Copy that exceeds it will be truncated in the wild — flag it,',
   '  say by roughly how much, and suggest what to cut.',
+  '• A field with NO stated maximum — no "charMax" key, or a length line that states none — has',
+  '  NO limit. It is unlimited by design (a legal line, a long-form body). Never invent a ceiling',
+  '  for it, never say it is "over the limit", and never write "the 0-character limit" or suggest',
+  '  that the limit "needs to be updated". Judge such a field on craft alone.',
   '• There is NO minimum. Shorter is not a defect. NEVER tell the writer to expand, lengthen,',
   '  pad, "add detail to meet the limit", or fill available space. Saying it in fewer words is',
   '  GOOD writing, and a note to the contrary destroys the writer\'s trust in this review.',
@@ -1805,18 +1821,27 @@ async function reviewCopyFields({ fields, voiceGuide, briefContext, scoped = fal
         const entry = {
           assetType: f.assetType,
           fieldName: f.fieldName,
-          // The MAXIMUM only. The floor is deliberately absent: given a charMin the
-          // model reliably reports "142 characters, short of the 150 minimum —
-          // expand", which is a spec-shaped instruction to pad. A number that is
-          // never sent cannot be quoted back. `lengthUnit` still travels, so a
-          // 300-word email is judged in words rather than against a character
-          // count it was never written to.
-          charMax: f.charMax || 0,
           lengthUnit: f.fieldType === 'words' ? 'words' : 'characters',
           copy: f.copy || '',
           priorCopy: f.priorCopy || null,
           priorComment: f.priorComment || null,
         };
+        // char_max 0 is the NO-LIMIT sentinel, not a limit of zero — the same
+        // rule fieldLabel applies when it renders "Legal Line" with no bracket
+        // (googleDocs.js:408). Sent as `"charMax": 0` it produced "The copy is 40
+        // characters over the 0-character limit… the character limit in the
+        // system needs to be updated." So the key is OMITTED for an unlimited
+        // field, exactly as the floor is: a number that is never sent cannot be
+        // asserted as a constraint. LENGTH_RULE tells the model what an absent
+        // key means.
+        //
+        // The floor is never sent at all — given a charMin the model reports
+        // "142 characters, short of the 150 minimum — expand", a spec-shaped
+        // instruction to pad. `lengthUnit` always travels, so a 300-word email is
+        // judged in words rather than against a character count it was never
+        // written to, whether or not it has a ceiling.
+        const ceiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
+        if (ceiling) entry.charMax = ceiling;
         // Sibling context (scoped review only) — read for fit + interaction, never commented.
         if (scoped && Array.isArray(f.siblings) && f.siblings.length) {
           entry.siblings = f.siblings.map((s) => ({ fieldName: s.fieldName, copy: s.copy }));

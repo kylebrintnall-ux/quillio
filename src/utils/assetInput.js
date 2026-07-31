@@ -81,31 +81,26 @@ function intOrNull(v) {
   return /^\d+$/.test(v.trim()) ? parseInt(v.trim(), 10) : NaN;
 }
 
-// Validate + normalize one submitted asset. Returns { errors: [] , asset } —
-// `asset` is only meaningful when errors is empty.
-//
-// `existingNames` is every asset name already in this tenant's library (active
-// or not), so a duplicate is a readable error instead of a Postgres 23505 from
-// asset_types_tenant_name_norm_uniq. The index is still the authority; this is
-// the message, not the guarantee.
-function normalizeNewAsset(raw, { existingNames = [], existingAssetCount = 0 } = {}) {
-  const errors = [];
-  const input = raw && typeof raw === 'object' ? raw : {};
+// An existing copy_fields id, as it comes back from getTenantLibrary (a bigint
+// serialized to a string). Anything that is not a bare run of digits is not an
+// id we issued, and is treated as a NEW field rather than trusted — a caller
+// cannot smuggle an expression into the WHERE clause, and cannot claim a row by
+// guessing at its shape.
+const FIELD_ID_RE = /^\d+$/;
 
-  if (existingAssetCount >= MAX_ASSETS_PER_TENANT) {
-    errors.push(`This workspace already has ${existingAssetCount} asset types (limit ${MAX_ASSETS_PER_TENANT}).`);
-    return { errors, asset: null };
-  }
-
-  // --- the asset ---
+// THE ASSET SHELL — name, group, direction. Shared by create and edit so the two
+// cannot drift on what a valid name is. `selfName` is the asset's CURRENT name on
+// an edit: keeping your own name must not read as a duplicate of yourself.
+function normalizeShell(input, errors, { existingNames = [], selfName = null } = {}) {
   const name = str(input.name);
+  const self = selfName ? normalize(selfName) : null;
   if (!name) errors.push('Give the asset type a name.');
   else if (name.length > MAX_NAME) errors.push(`Asset name must be ${MAX_NAME} characters or fewer.`);
   else if (INSTANCE_SUFFIX_RE.test(name)) {
     errors.push(
       `"${name}" ends in a number, which is how Quillio labels a repeated asset in a doc. Try a name without a trailing number.`
     );
-  } else if (existingNames.some((n) => normalize(n) === normalize(name))) {
+  } else if (existingNames.some((n) => normalize(n) === normalize(name) && normalize(n) !== self)) {
     errors.push(`You already have an asset type called "${name}".`);
   }
 
@@ -116,9 +111,18 @@ function normalizeNewAsset(raw, { existingNames = [], existingAssetCount = 0 } =
   if (direction.length > MAX_DIRECTION) {
     errors.push(`Creative direction must be ${MAX_DIRECTION} characters or fewer.`);
   }
+  return { name, group: group || null, asset_direction: direction || null };
+}
 
-  // --- the fields ---
-  const rawFields = Array.isArray(input.fields) ? input.fields : [];
+// THE FIELD LIST — and THE ALLOWLIST, which is the point of this whole module.
+// Shared by create and edit, so an update cannot accept a column a create refuses.
+//
+// `withIds` is the only difference between the two: an edit carries an existing
+// copy_fields id per row (or none, for a field being added), and that id is how
+// a rename is applied to the right row. Everything else is identical, byte for
+// byte, because it is the same code.
+function normalizeFields(rawInput, errors, { withIds = false } = {}) {
+  const rawFields = Array.isArray(rawInput) ? rawInput : [];
   if (rawFields.length === 0) errors.push('Add at least one copy field.');
   if (rawFields.length > MAX_FIELDS_PER_ASSET) {
     errors.push(`An asset type can have at most ${MAX_FIELDS_PER_ASSET} fields (this one has ${rawFields.length}).`);
@@ -126,6 +130,7 @@ function normalizeNewAsset(raw, { existingNames = [], existingAssetCount = 0 } =
 
   const fields = [];
   const seen = new Map(); // normalized field name -> original, for the duplicate message
+  const seenIds = new Set();
   rawFields.slice(0, MAX_FIELDS_PER_ASSET).forEach((rf, i) => {
     const f = rf && typeof rf === 'object' ? rf : {};
     const where = `Field ${i + 1}`;
@@ -147,7 +152,7 @@ function normalizeNewAsset(raw, { existingNames = [], existingAssetCount = 0 } =
     // bracket at all when it is 0 (googleDocs.js:408) and parseDoc reads a
     // bracket-less label back correctly (:778-792). specReview's validateEdit
     // requires a positive integer because it is EDITING a platform limit, where
-    // zero would be meaningless; a create can legitimately have none.
+    // zero would be meaningless; a tenant's own field can legitimately have none.
     const charMin = intOrNull(f.char_min);
     const charMax = intOrNull(f.char_max);
     if (Number.isNaN(charMin) || (charMin !== null && charMin > MAX_CHAR_LIMIT)) {
@@ -176,31 +181,85 @@ function normalizeNewAsset(raw, { existingNames = [], existingAssetCount = 0 } =
     }
 
     // THE ALLOWLIST. Built key by key. Nothing from `f` reaches this object
-    // except the six values named here — spec_type and spec_source have no
-    // branch that can set them, so they are NULL by construction downstream.
-    fields.push({
+    // except the values named here — spec_type and spec_source have no branch
+    // that can set them, on create OR on update, so they are NULL by
+    // construction on a created field and UNTOUCHED on an edited one.
+    const out = {
       field_name: fieldName,
       char_min: min,
       char_max: max,
       field_type: rawType === 'words' ? 'words' : 'text',
+      // Position is the ORDER SUBMITTED, never a number the client sends. That is
+      // what makes reordering a matter of moving rows in the list rather than
+      // trusting an index, and it is why a tampered sort_order cannot collide two
+      // fields onto one position.
       sort_order: i + 1,
       spec_note: specNote || null,
-    });
+    };
+    if (withIds) {
+      const id = str(f.id);
+      if (id && FIELD_ID_RE.test(id)) {
+        if (seenIds.has(id)) errors.push(`${where}: the same field appears twice.`);
+        seenIds.add(id);
+        out.id = id;
+      }
+      // No id (or a shape we never issued) → a NEW field. It is inserted, not
+      // matched: the alternative is trusting a client-supplied row identity.
+    }
+    fields.push(out);
   });
+  return fields;
+}
+
+// Validate + normalize one submitted asset for CREATE. Returns { errors: [], asset } —
+// `asset` is only meaningful when errors is empty.
+//
+// `existingNames` is every asset name already in this tenant's library (active
+// or not), so a duplicate is a readable error instead of a Postgres 23505 from
+// asset_types_tenant_name_norm_uniq. The index is still the authority; this is
+// the message, not the guarantee.
+function normalizeNewAsset(raw, { existingNames = [], existingAssetCount = 0 } = {}) {
+  const errors = [];
+  const input = raw && typeof raw === 'object' ? raw : {};
+
+  if (existingAssetCount >= MAX_ASSETS_PER_TENANT) {
+    errors.push(`This workspace already has ${existingAssetCount} asset types (limit ${MAX_ASSETS_PER_TENANT}).`);
+    return { errors, asset: null };
+  }
+
+  const shell = normalizeShell(input, errors, { existingNames });
+  const fields = normalizeFields(input.fields, errors);
 
   if (errors.length > 0) return { errors, asset: null };
-  return {
-    errors: [],
-    asset: { name, group: group || null, asset_direction: direction || null, fields },
-  };
+  return { errors: [], asset: { ...shell, fields } };
+}
+
+// Validate + normalize an EDIT of an asset the tenant already owns.
+//
+// The only differences from a create: fields carry ids (see normalizeFields), the
+// tenant is not blocked by the per-tenant asset ceiling (an edit adds no asset),
+// and `selfName` lets the asset keep its own name without colliding with itself.
+//
+// Whether the asset may be edited AT ALL is not decided here — that is
+// db/assets.updateAssetType's job, because it is a fact about the stored row
+// (whose tenant, seeded or not), not about the submitted shape.
+function normalizeAssetEdit(raw, { existingNames = [], selfName = null } = {}) {
+  const errors = [];
+  const input = raw && typeof raw === 'object' ? raw : {};
+  const shell = normalizeShell(input, errors, { existingNames, selfName });
+  const fields = normalizeFields(input.fields, errors, { withIds: true });
+  if (errors.length > 0) return { errors, asset: null };
+  return { errors: [], asset: { ...shell, fields } };
 }
 
 module.exports = {
   normalizeNewAsset,
+  normalizeAssetEdit,
   MAX_FIELDS_PER_ASSET,
   MAX_ASSETS_PER_TENANT,
   MAX_CHAR_LIMIT,
   MAX_NAME,
   MAX_SPEC_NOTE,
   INSTANCE_SUFFIX_RE,
+  FIELD_ID_RE,
 };

@@ -306,6 +306,163 @@ async function createAssetType(tenantId, asset) {
   }
 }
 
+// WHICH ASSETS A TENANT MAY EDIT — and the single most load-bearing rule in this
+// file, because getting it wrong is silent.
+//
+// An asset is SEEDED if its name is one of the 30 in the bundled default library.
+// Seeded assets are read-only apart from is_active; a tenant's own creations are
+// fully editable.
+//
+// Derived from the name rather than stored in a column, because the NAME is
+// exactly what makes it unsafe to edit. services/specReview.js updates
+// copy_fields by asset NAME with no tenant filter — that is how a platform's
+// changed character limit reaches every tenant at once. A tenant who renamed
+// "LinkedIn Single Image Ad" would silently stop matching that update: their doc
+// would go on rendering "Platform limit (LinkedIn). Stay within this count." with
+// a live citation link, next to a number LinkedIn no longer enforces. Nothing
+// would error. Nobody would find out.
+//
+// So the predicate is not "did we insert this row" (which a column would record)
+// but "is this row reachable by the cross-tenant write" (which the name decides).
+// A tenant with no seed who hand-creates an asset under a bundled name is caught
+// too, and correctly: LiveSpecs would target it.
+//
+// `normalize` directly, not the `normName` alias below it: this Set is built at
+// module load and the alias is a `const` declared further down the file, so the
+// alias would be in its temporal dead zone here. Same function either way.
+const SEEDED_NAME_SET = new Set(DEFAULT_ASSETS.map((a) => normalize(a.name)));
+
+function isSeededAssetName(name) {
+  return SEEDED_NAME_SET.has(normalize(name));
+}
+
+// UPDATE one asset the tenant owns: its name, group and creative direction, and
+// its full field list. ONE transaction — a half-applied edit would leave the
+// library in a shape the tenant never asked for.
+//
+// Returns a discriminated result rather than throwing for the expected refusals,
+// so the route can answer 404 vs 403 vs 409 without parsing an error string:
+//   { ok: true, id }             — applied
+//   { ok: false, reason: 'not_found' }  — no such asset FOR THIS TENANT
+//   { ok: false, reason: 'seeded' }     — a bundled asset; read-only apart from is_active
+//
+// Cross-tenant is handled by 'not_found', not 'forbidden': answering differently
+// would confirm that an id exists in someone else's library.
+//
+// FIELDS ARE RECONCILED BY ID. A submitted field carrying an id that belongs to
+// THIS asset is updated in place; one with no id is inserted; a stored field
+// whose id is absent from the submission is deleted. Matching by id rather than
+// by name is what makes a rename a rename instead of a delete-plus-insert — and
+// nothing references copy_fields(id), so the delete is safe (asset_types(id), by
+// contrast, is referenced by five tables with no ON DELETE, which is why the
+// ASSET-level removal is is_active and not a DELETE).
+async function updateAssetType(tenantId, assetTypeId, asset) {
+  const pool = getPool();
+  if (!pool) {
+    console.warn('[db/assets] DATABASE_URL not set — skipping updateAssetType');
+    return { ok: false, reason: 'not_found' };
+  }
+  if (!tenantId || !assetTypeId || !asset || !Array.isArray(asset.fields) || asset.fields.length === 0) {
+    return { ok: false, reason: 'not_found' };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Row-locked read, scoped to the tenant. The lock matters: two tabs saving
+    // the same asset would otherwise interleave their field reconciles.
+    const cur = await client.query(
+      'SELECT id, name FROM asset_types WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
+      [assetTypeId, tenantId]
+    );
+    if (cur.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+    // Checked against the STORED name, never the submitted one — otherwise
+    // renaming a seeded asset in the same request would walk straight past this.
+    if (isSeededAssetName(cur.rows[0].name)) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'seeded', name: cur.rows[0].name };
+    }
+
+    await client.query(
+      'UPDATE asset_types SET name = $1, "group" = $2, asset_direction = $3 WHERE id = $4 AND tenant_id = $5',
+      [asset.name, asset.group || null, asset.asset_direction || null, assetTypeId, tenantId]
+    );
+
+    // The ids this asset actually owns. A submitted id outside this set is not
+    // an error to argue about — it is simply not matched, so it inserts as a new
+    // field rather than reaching another asset's row.
+    const ownedRes = await client.query('SELECT id FROM copy_fields WHERE asset_type_id = $1', [assetTypeId]);
+    const owned = new Set(ownedRes.rows.map((r) => String(r.id)));
+    const kept = new Set();
+
+    for (const field of asset.fields) {
+      const id = field.id && owned.has(String(field.id)) ? String(field.id) : null;
+      if (id) {
+        kept.add(id);
+        // Six columns, exactly the ones a create writes. spec_type, spec_source
+        // and spec_version are absent from the statement, so an edit cannot set
+        // them and — just as important — cannot CLEAR them either.
+        await client.query(
+          `UPDATE copy_fields
+              SET field_name = $1, char_min = $2, char_max = $3, field_type = $4,
+                  sort_order = $5, spec_note = $6
+            WHERE id = $7 AND asset_type_id = $8`,
+          [
+            field.field_name,
+            field.char_min,
+            field.char_max,
+            field.field_type,
+            field.sort_order,
+            field.spec_note || null,
+            id,
+            assetTypeId,
+          ]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO copy_fields
+             (asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_note)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            assetTypeId,
+            field.field_name,
+            field.char_min,
+            field.char_max,
+            field.field_type,
+            field.sort_order,
+            field.spec_note || null,
+          ]
+        );
+      }
+    }
+
+    // Anything the tenant removed from the list.
+    const dropped = [...owned].filter((id) => !kept.has(id));
+    if (dropped.length > 0) {
+      await client.query('DELETE FROM copy_fields WHERE asset_type_id = $1 AND id = ANY($2::bigint[])', [
+        assetTypeId,
+        dropped,
+      ]);
+    }
+
+    await client.query('COMMIT');
+    console.log(
+      `[db/assets] tenant ${tenantId} updated asset type ${assetTypeId} "${asset.name}" ` +
+        `(${asset.fields.length} field(s), ${dropped.length} removed)`
+    );
+    return { ok: true, id: String(assetTypeId) };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Asset toggles, BY ID. Every type whose id is in `deactivatedIds` becomes
 // inactive; every other one becomes active. Returns true if the write ran.
 //
@@ -402,6 +559,13 @@ module.exports = {
   // The only tenant-facing CREATE. Asset + fields in one transaction; the
   // columns it writes are a fixed list (spec_type / spec_source are not on it).
   createAssetType,
+  // The only tenant-facing UPDATE. Same fixed column list; refuses a seeded
+  // asset and another tenant's asset, both from the STORED row.
+  updateAssetType,
+  // Read-only-ness of a bundled asset, derived from its name — see the comment
+  // above it for why the name and not a column. Exported for the route (which
+  // reports it) and for tests.
+  isSeededAssetName,
   setActiveAssetIds,
   setActiveAssets,
   getAssetDirections,

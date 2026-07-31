@@ -19,8 +19,21 @@ const {
   setTenantDefaultFolder,
 } = require('../db');
 const { getSlackLinksForUser } = require('../db/users');
-const { getTenantLibrary, setActiveAssetIds, createAssetType } = require('../db/assets');
-const { normalizeNewAsset, MAX_FIELDS_PER_ASSET, MAX_ASSETS_PER_TENANT } = require('../utils/assetInput');
+const {
+  getTenantLibrary,
+  setActiveAssetIds,
+  createAssetType,
+  updateAssetType,
+  isSeededAssetName,
+} = require('../db/assets');
+const {
+  normalizeNewAsset,
+  normalizeAssetEdit,
+  MAX_FIELDS_PER_ASSET,
+  MAX_ASSETS_PER_TENANT,
+} = require('../utils/assetInput');
+// Same fold the unique index uses, so "renamed" here means what Postgres means.
+const { normalize } = require('../utils/normalize');
 const { generateVoiceGuide } = require('../services/gemini');
 
 const router = express.Router();
@@ -119,14 +132,19 @@ router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req
       // No DB / no tenant. Distinct from an empty library, and the UI says so.
       return res.status(200).json({ success: true, available: false, assets: [] });
     }
+    // `editable` is derived, not stored — see db/assets.isSeededAssetName. It is
+    // sent so the UI can show the right affordance, and it is ALSO enforced
+    // server-side in updateAssetType against the stored row, because a flag in a
+    // response the client can ignore is a hint, not a rule.
     return res.status(200).json({
       success: true,
       available: true,
-      assets,
+      assets: assets.map((a) => ({ ...a, editable: !isSeededAssetName(a.name) })),
       counts: {
         assets: assets.length,
         active: assets.filter((a) => a.is_active).length,
         fields: assets.reduce((n, a) => n + a.fields.length, 0),
+        editable: assets.filter((a) => !isSeededAssetName(a.name)).length,
       },
     });
   } catch (err) {
@@ -257,6 +275,109 @@ router.post('/api/settings/library/asset', settingsWriteLimiter, requireAuth, as
     });
   } catch (err) {
     console.error('[settings] POST /library/asset failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/settings/library/asset/:id — EDIT one asset the tenant created.
+//
+// Everything about it: name, group, creative direction, and the whole field list
+// (rename, limits, unit, writing note, order, add, remove). Fields are addressed
+// BY ID — the ids getTenantLibrary has been returning since the editor read
+// shipped — so a rename is applied to a row rather than inferred from a name.
+//
+// Three refusals, all decided from the STORED row rather than the request:
+//   • not this tenant's asset → 404 (never 403; a 403 would confirm the id exists)
+//   • a SEEDED asset          → 403, with the reason said out loud
+//   • a name another asset already holds → 409 from the unique index
+//
+// The seeded refusal is the one that matters. services/specReview.js updates
+// copy_fields by asset NAME with no tenant filter, so a renamed seeded asset
+// silently stops receiving platform-limit updates while its doc keeps rendering
+// "Platform limit (LinkedIn)" beside a stale number with a live citation link.
+// Hiding the UI is not enough — this route is what makes it true.
+//
+// The body goes through utils/assetInput normalizeAssetEdit, which shares its
+// field allowlist with the create path (literally the same function), so
+// spec_type and spec_source are absent from an update for the same reason they
+// are absent from a create: there is no branch that can set them.
+router.post('/api/settings/library/asset/:id', settingsWriteLimiter, requireAuth, async (req, res) => {
+  const assetId = String(req.params.id || '').trim();
+  if (!/^\d+$/.test(assetId)) {
+    return res.status(400).json({ success: false, error: 'A valid asset id is required.' });
+  }
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const existing = await getTenantLibrary(tenantId);
+    if (existing === null) {
+      return res.status(400).json({ success: false, error: 'No asset library is connected to this workspace.' });
+    }
+    const current = existing.find((a) => a.id === assetId);
+    if (!current) {
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+    // Reported early so the UI can say why before the user types; the authority
+    // is still updateAssetType, which re-checks against the row it locks.
+    if (isSeededAssetName(current.name)) {
+      return res.status(403).json({
+        success: false,
+        error: `"${current.name}" is one of Quillio's built-in asset types. Its fields track platform limits, so it can only be switched on or off — copy it into an asset type of your own to change it.`,
+      });
+    }
+
+    const { errors, asset } = normalizeAssetEdit(req.body, {
+      existingNames: existing.map((a) => a.name),
+      selfName: current.name,
+    });
+    if (errors.length > 0) {
+      return res.status(400).json({ success: false, error: errors[0], errors });
+    }
+
+    let result;
+    try {
+      result = await updateAssetType(tenantId, assetId, asset);
+    } catch (err) {
+      if (err && err.code === '23505') {
+        return res
+          .status(409)
+          .json({ success: false, error: `You already have an asset type called "${asset.name}".` });
+      }
+      throw err;
+    }
+    if (!result.ok && result.reason === 'seeded') {
+      return res.status(403).json({ success: false, error: 'Built-in asset types are read-only.' });
+    }
+    if (!result.ok) {
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+
+    const after = (await getTenantLibrary(tenantId)) || [];
+    const renamed = normalize(current.name) !== normalize(asset.name);
+    console.log(
+      `[settings] updated asset type ${assetId} for tenant ${tenantId} ` +
+        `(${asset.fields.length} field(s)${renamed ? ', renamed' : ''})`
+    );
+    return res.status(200).json({
+      success: true,
+      id: assetId,
+      renamed,
+      // Said back to the client because it is the one consequence of an edit that
+      // is not visible in the library: a doc built under the OLD name no longer
+      // matches this asset, so a re-draft of that doc loses its creative
+      // direction (core/pipeline getAssetDirections matches by normalized name).
+      // Nothing errors; the doc just drafts without it.
+      ...(renamed && current.asset_direction
+        ? { warning: `Docs already built as "${current.name}" won't pick up this asset's creative direction if you re-draft them.` }
+        : {}),
+      counts: {
+        assets: after.length,
+        active: after.filter((a) => a.is_active).length,
+        fields: after.reduce((n, a) => n + a.fields.length, 0),
+      },
+      limits: { fieldsPerAsset: MAX_FIELDS_PER_ASSET, assetsPerTenant: MAX_ASSETS_PER_TENANT },
+    });
+  } catch (err) {
+    console.error('[settings] POST /library/asset/:id failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });

@@ -7232,9 +7232,12 @@ test('word units: the Gemini prompt states the constraint in words, not characte
   assert.strictEqual(clause(70), clause(70, 'text', 0), 'absent fieldType === characters');
   assert.strictEqual(clause(0, 'words', 50), null, 'no ceiling → no clause, caller falls back');
 
-  // All four prompt sites branch on the unit — none still hard-codes characters.
-  assert.strictEqual((gem.match(/fieldType === 'words'/g) || []).length, 4,
-    'per-field draft line, variations, variant review, and the review payload');
+  // Every prompt site branches on the unit — none still hard-codes characters.
+  // Five, not four: buildVariationsPrompt needs a second branch because its word
+  // clause can now be absent (char_max 0 = no limit), and interpolating the null
+  // it returns put the literal string "null" in the prompt.
+  assert.strictEqual((gem.match(/fieldType === 'words'/g) || []).length, 5,
+    'per-field draft line, variations (x2), variant review, and the review payload');
   assert.ok(/lengthUnit: f\.fieldType === 'words' \? 'words' : 'characters'/.test(gem),
     'the copy-review payload names the unit rather than implying characters');
 });
@@ -8924,4 +8927,149 @@ test('the review modal reads its heading in the display face and cannot be aband
   assert.ok(!/project-review-modal-close/.test(html), 'no Close button and no handler for one');
   // The sheet is still dismissable the way it already was.
   assert.match(html, /if \(e\.target === document\.getElementById\('project-review-modal'\)\) closeProjectReviewModal\(\)/);
+});
+
+// --- char_max 0 is NO LIMIT, not a limit of zero -----------------------------
+// A real review comment: "The copy is 40 characters over the 0-character limit.
+// If this legal footer is required, the character limit in the system needs to
+// be updated." Same class as the char_min bug — a sentinel read as a constraint.
+// fieldLabel has always applied the rule (googleDocs.js:408 renders no bracket);
+// the prompts did not.
+
+test('an unlimited field is sent to the review with no ceiling at all', async () => {
+  const gemini = require('../src/services/gemini');
+  const config = require('../src/config');
+  const seen = [];
+  const realFetch = global.fetch;
+  const realKey = config.GEMINI_API_KEY;
+  config.GEMINI_API_KEY = 'test-key';
+  global.fetch = async (_url, opts) => {
+    seen.push(JSON.parse(opts.body).contents[0].parts[0].text);
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: '[]' }] }, finishReason: 'STOP' }] }) };
+  };
+  try {
+    await gemini.reviewCopyFields({
+      fields: [
+        { assetType: 'Event Landing Page', fieldName: 'Legal Line', charMax: 0, fieldType: 'text',
+          copy: 'Offer valid through 31 March. Terms apply.' },
+        { assetType: 'Event Landing Page', fieldName: 'Hero Headline', charMax: 70, fieldType: 'text',
+          copy: 'Two days with the people shipping this.' },
+      ],
+    });
+  } finally {
+    global.fetch = realFetch;
+    config.GEMINI_API_KEY = realKey;
+  }
+  const payload = seen[0].slice(seen[0].indexOf('FIELDS:'));
+  const fields = JSON.parse(payload.slice(payload.indexOf('[')));
+
+  // The unlimited field carries NO charMax key — not 0, not null. A number that
+  // is never sent cannot be asserted as a constraint.
+  assert.ok(!('charMax' in fields[0]), 'no charMax key on the unlimited field');
+  assert.ok(!/"charMax": 0/.test(payload), 'and no zero ceiling anywhere in the payload');
+  // The unit still travels for it — that is orthogonal to having a ceiling.
+  assert.strictEqual(fields[0].lengthUnit, 'characters');
+  assert.strictEqual(fields[0].copy, 'Offer valid through 31 March. Terms apply.');
+  // A field that DOES have a limit is unaffected.
+  assert.strictEqual(fields[1].charMax, 70);
+
+  // And the model is told what an absent ceiling means, in the words that rule
+  // out the sentence the live run produced.
+  // Joined with single spaces: the rule is stored as wrapped display lines, and
+  // asserting on the wrap points would test the formatting, not the rule.
+  const rule = gemini.LENGTH_RULE.join(' ').replace(/\s+/g, ' ');
+  assert.match(rule, /A field with NO stated maximum/);
+  assert.match(rule, /Never invent a ceiling for it/);
+  assert.match(rule, /never write "the 0-character limit"/);
+  assert.match(rule, /that the limit "needs to be updated"/);
+  assert.ok(seen[0].includes(gemini.LENGTH_RULE.join('\n')), 'the rule ships with the payload');
+});
+
+test('the variation review states no ceiling for an unlimited field, in either unit', () => {
+  const { buildVariantReviewPrompt } = require('../src/services/gemini');
+  const base = { assetType: 'Event Landing Page', fieldName: 'Legal Line', variations: [{ index: 1, doorway: null, copy: 'Terms apply.' }] };
+
+  const chars = buildVariantReviewPrompt({ ...base, charMax: 0, fieldType: 'text' });
+  assert.match(chars, /Keep each option concise\./);
+  assert.ok(!/Character limit: 0|limit: 0|0 per option/.test(chars), 'no zero ceiling asserted');
+
+  const words = buildVariantReviewPrompt({ ...base, charMax: 0, fieldType: 'words' });
+  assert.match(words, /Length is counted in WORDS, not characters\. Keep each option tight\./);
+  assert.ok(!/up to 0 words|0 words per option/.test(words), 'no zero word ceiling either');
+  // "null" appears legitimately further down (the output schema, "strategy = null"),
+  // so check only the length line itself.
+  const limitLine = words.split('\n').find((l) => /Length is counted in WORDS/.test(l));
+  assert.ok(!/null/.test(limitLine), 'no interpolated null in the length line');
+});
+
+test('the DRAFT path treats char_max 0 as no limit — including on word fields', () => {
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  const { buildVariationsPrompt } = require('../src/services/gemini');
+
+  // The character branches were already correct. Both WORD branches were not:
+  // whoever wrote them assumed a word field always carries a ceiling.
+
+  // 1. generateAssetDrafts' per-field line — the batch prompt that drafts most
+  //    copy. Rendered "up to 0 WORDS (a word count, not characters)".
+  const lines = gem.slice(gem.indexOf('const fieldLines = fields'), gem.indexOf('const fieldLines = fields') + 900);
+  assert.match(lines, /const wordCeiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null/);
+  assert.match(lines, /'no word limit — length is yours to judge; measured in WORDS, not characters'/);
+  assert.ok(!/'up to '\}\$\{f\.charMax\}/.test(lines), 'the raw charMax is no longer interpolated');
+
+  // 2. buildVariationsPrompt — worse: lengthClause returns null for a 0 ceiling,
+  //    and the template literal put the string "null" straight in the prompt.
+  const wordsNoLimit = buildVariationsPrompt({
+    assetType: 'Demand Gen Nurture Email', fieldName: 'Offer Body 1', charMax: 0, fieldType: 'words',
+    summary: 's', writerPrompt: 'w', doorways: ['Outcome', 'Contrast'],
+  });
+  assert.ok(!/\bnull\b/.test(wordsNoLimit), 'no interpolated null reaches the prompt');
+  assert.match(wordsNoLimit, /Length is counted in WORDS, not characters, and this field has no word limit/);
+
+  // A word field WITH a ceiling is unchanged.
+  const wordsLimited = buildVariationsPrompt({
+    assetType: 'Demand Gen Nurture Email', fieldName: 'Offer Body 1', charMax: 140, charMin: 50, fieldType: 'words',
+    summary: 's', writerPrompt: 'w', doorways: ['Outcome', 'Contrast'],
+  });
+  assert.match(wordsLimited, /50-140 words.*EACH variation is held to this range\./s);
+
+  // 3. The rest of the draft path was ALREADY correct — assert it stays that way.
+  const clause = new Function(`${gem.match(/^function lengthClause[\s\S]*?\n\}/m)[0]}\nreturn lengthClause;`)();
+  assert.strictEqual(clause(0, 'text', 0), null, 'no clause for an unlimited character field');
+  assert.strictEqual(clause(0, 'words', 50), null, 'nor for an unlimited word field, floor or not');
+  // generateFieldDraft falls back to prose rather than emitting a zero.
+  assert.match(gem, /lengthClause\(charMax, fieldType, charMin\) \|\|\s*\n\s*'Keep it concise/);
+  // The over-limit rewrite and the hard trim are both gated on a real ceiling, so
+  // an unlimited field is never "corrected" for length.
+  assert.match(gem, /const ceiling = Number\(charMax\) > 0 \? Number\(charMax\) : null;/);
+  assert.match(gem, /if \(ceiling && copy\.length > ceiling\)/);
+  assert.match(gem, /if \(copy && ceiling && copy\.length > ceiling\) copy = trimToCeiling/);
+});
+
+test('no ceiling is ever interpolated into a prompt without a > 0 guard', () => {
+  // The whole bug class in one assertion: every site that writes a number into
+  // prompt text must have proved it is non-zero first.
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  const interpolations = gem.split('\n')
+    .map((l, i) => [i + 1, l])
+    .filter(([, l]) => /\$\{(?:f\.)?(?:charMax|ceiling|wordCeiling|max)\}/.test(l));
+  assert.ok(interpolations.length >= 6, 'found the interpolation sites');
+  const src = gem.split('\n');
+  for (const [lineNo, l] of interpolations) {
+    // A ternary's guard often sits a line or two above its branches, so look at a
+    // small window rather than the single line.
+    const window = src.slice(Math.max(0, lineNo - 4), lineNo).join('\n');
+    const guarded =
+      /Number\((?:f\.)?charMax\) > 0/.test(window) ||       // guarded inline or just above
+      /\$\{ceiling\}|\$\{wordCeiling\}|\$\{max\}/.test(l); // a name that is null-or-positive by construction
+    assert.ok(guarded, `gemini.js:${lineNo} interpolates a ceiling with no > 0 guard: ${l.trim()}`);
+  }
+  // The three names above are only ever assigned through that guard.
+  for (const decl of [
+    /const ceiling = Number\(charMax\) > 0 \? Number\(charMax\) : null;/,
+    /const ceiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
+    /const wordCeiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
+    /const max = Number\(charMax\) > 0 \? Number\(charMax\) : null;/,
+  ]) {
+    assert.match(gem, decl);
+  }
 });

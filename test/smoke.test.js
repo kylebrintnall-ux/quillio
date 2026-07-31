@@ -8364,13 +8364,13 @@ test('a failed save reverts the toggle, the card and the count', () => {
   const handler = html.slice(html.indexOf("input.addEventListener('change'"), html.indexOf('card.appendChild(head)'));
 
   // Optimistic first…
-  assert.match(handler, /a\.is_active = want;[\s\S]*libPaintActive\(card, head, want\)/, 'paints before the request');
+  assert.match(handler, /a\.is_active = want;[\s\S]*libPaintActive\(card, want\)/, 'paints before the request');
   // …then a full revert on ANY failure — not just the checkbox. A revert that
   // left the card dimmed would still be showing a state the server rejected.
   const revert = handler.slice(handler.indexOf('} catch (e) {'));
   assert.match(revert, /a\.is_active = before/);
   assert.match(revert, /input\.checked = before/);
-  assert.match(revert, /libPaintActive\(card, head, before\)/);
+  assert.match(revert, /libPaintActive\(card, before\)/);
   assert.match(revert, /libRenderSummary\(\)/);
   assert.match(revert, /Not saved\./, 'and it says so');
   // A non-2xx with a JSON body must throw, not be treated as success.
@@ -8394,22 +8394,38 @@ test('the settings library screen still writes nothing but is_active', () => {
   assert.match(libJs, /'\/api\/settings\/library\/active'/);
 });
 
-test('the group label reads as a heading, not a caption on the field below', () => {
+test('the group label heads its rows the way the doc does — space and indent', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
   const css = html.slice(html.indexOf('.lib-grouplabel {'), html.indexOf('.lib-toggle {'));
 
-  // Separation ABOVE belongs to the label: its own rule plus real margin.
-  assert.match(css, /margin: 16px 0 2px/, 'space above, tight below');
-  assert.match(css, /border-top: 1px solid/, 'carries its own rule');
-  assert.match(css, /padding-top: 10px/, 'and the rule is not glued to the text');
-  // It must NOT be sandwiched between two rules — the next field drops its own.
-  assert.match(html, /\.lib-grouplabel \+ \.lib-field \{ border-top: none; \}/);
-  // Heading treatment, not caption: heavier, tracked, uppercase, darker than the
-  // 45%-opacity it had.
+  // The doc renders this as a HEADING_4 and INDENTS the fields under it
+  // (googleDocs.js GROUP_INDENT_PT). No rule — the nesting carries the grouping.
+  assert.match(css, /border-top: none/, 'no rule: it floated between two separations');
+  assert.match(css, /margin: 11px 0 0/, 'space above, nothing below');
+  // The rows step in, and the divider steps in with them (margin, not padding).
+  assert.match(css, /\.lib-field\.grouped \{ margin-left: 14px; \}/);
+  assert.match(html, /'lib-field' \+ \(f\.group_label \? ' grouped' : ''\)/, 'grouped rows get the class');
+  // The first row under a label needs no rule of its own.
+  assert.match(css, /\.lib-grouplabel \+ \.lib-field \{ border-top: none; padding-top: 3px; \}/);
+  // Still a heading, not a caption.
   assert.match(css, /font-weight: 700/);
   assert.match(css, /text-transform: uppercase/);
   assert.match(css, /letter-spacing/);
   assert.match(css, /rgba\(26,26,46,0\.62\)/);
   // A label that opens an asset has nothing above it to separate from.
-  assert.match(html, /\.lib-grouplabel:first-child \{ margin-top: 2px; padding-top: 0; border-top: none; \}/);
+  assert.match(css, /\.lib-grouplabel:first-child \{ margin-top: 2px; \}/);
+});
+
+test('the off state is the toggle and the card, with no pill to shift it', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  // The pill sat between the toggle and the card edge, so adding/removing it
+  // moved the toggle sideways on every flip.
+  const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Markdown render'));
+  assert.ok(!/'pill', 'Off'/.test(libJs), 'no Off pill is rendered');
+  assert.ok(!/querySelector\('\.pill'\)/.test(libJs), 'and none is added or removed on toggle');
+  // The toggle is the last thing in the row and is pinned to the edge.
+  assert.match(html, /\.lib-toggle \{[^}]*margin-left: auto/);
+  // The remaining off cues are the dimmed, dashed card — unchanged.
+  assert.match(html, /\.lib-asset\.off \{ opacity: 0\.6; border-style: dashed; \}/);
+  assert.match(html, /function libPaintActive\(card, active\) \{\s*card\.classList\.toggle\('off', !active\);\s*\}/);
 });

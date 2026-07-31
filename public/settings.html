@@ -360,25 +360,33 @@
     .lib-tier { font-size: 11px; font-weight: 600; }
     .lib-tier.enforced { color: #8a4b00; }
     .lib-tier.recommended { color: #1E6F8E; }
-    /* Sub-group heading ("Graphic Copy"). In the doc this is a HEADING_4 with
-       real separation above it; here it was 11px, 45%-opacity, 6px of margin and
-       no rule of its own — so it read as a caption on the field below rather
-       than as a heading over the group.
-         • its own top rule + 16px above  => the break belongs to the LABEL
-         • 2px below and the next field's rule suppressed => it is not sandwiched
-           between two lines, which is what made it look attached downward
-         • darker, wider-tracked, uppercase => a heading, not a caption */
+    /* Sub-group heading ("Graphic Copy").
+       The doc renders this as a HEADING_4 and then INDENTS the fields beneath it
+       (googleDocs.js GROUP_INDENT_PT) — space above, no rule, and the nesting
+       carried by the indent. That is the cue this panel was missing: a rule above
+       AND a gap below left the label floating between two separations instead of
+       heading the rows under it.
+       So: no rule, modest space above, nothing below, and the grouped rows step
+       in — the label is the only thing at the outer edge, which is what makes it
+       read as heading them.
+       Removing the rule also fixes the field ABOVE a group: its 16px top margin
+       was bleeding upward and reading as that field's own uneven bottom padding
+       (measured 28.5px to the next row vs 12.5px everywhere else). */
     .lib-grouplabel {
-      margin: 16px 0 2px; padding-top: 10px;
-      border-top: 1px solid rgba(255,255,255,0.55);
-      font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+      margin: 11px 0 0; padding: 0; border-top: none;
+      font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       color: rgba(26,26,46,0.62);
     }
-    .lib-grouplabel:first-child { margin-top: 2px; padding-top: 0; border-top: none; }
-    /* The field directly under a label keeps the label's rule as its separator. */
-    .lib-grouplabel + .lib-field { border-top: none; }
+    .lib-grouplabel:first-child { margin-top: 2px; }
+    /* Rows inside a group step in, and their divider steps in with them (margin,
+       not padding) so the rule reads as belonging to the nested block. */
+    .lib-field.grouped { margin-left: 14px; }
+    /* The first row under a label needs no rule — the label already separates. */
+    .lib-grouplabel + .lib-field { border-top: none; padding-top: 3px; }
 
     /* Asset on/off toggle — same control as onboarding's asset step. */
+    /* Pinned to the right edge with nothing between it and the card, so the
+       control does not move horizontally when it is flipped. */
     .lib-toggle { position: relative; width: 40px; height: 24px; flex: none; cursor: pointer; margin-left: auto; }
     .lib-toggle input { opacity: 0; width: 0; height: 0; }
     .lib-track { position: absolute; inset: 0; background: rgba(26,26,46,0.2); border-radius: 999px; transition: background .15s; }
@@ -788,11 +796,13 @@
     // the revert-on-failure are the SAME code path — a revert that only reset the
     // checkbox would leave the card still dimmed, showing a state the server
     // rejected, which is the exact failure this is guarding against.
-    function libPaintActive(card, pillHost, active) {
+    //
+    // There is no "Off" pill. It sat between the toggle and the card edge, so
+    // adding and removing it shifted the toggle sideways every time it was
+    // flipped. The toggle already says on or off; the dimmed, dashed card is the
+    // second cue. Nothing now sits to the right of the toggle.
+    function libPaintActive(card, active) {
       card.classList.toggle('off', !active);
-      var pill = pillHost.querySelector('.pill');
-      if (!active && !pill) pillHost.appendChild(el('span', 'pill', 'Off'));
-      if (active && pill) pill.remove();
     }
 
     function libRenderAsset(a) {
@@ -800,7 +810,6 @@
       var head = el('div', 'lib-head');
       head.appendChild(el('span', 'lib-name', a.name));
       if (a.group) head.appendChild(el('span', 'lib-group', a.group));
-      if (!a.is_active) head.appendChild(el('span', 'pill', 'Off'));
 
       // The ONLY writable thing on this screen: is_active.
       var toggle = el('label', 'lib-toggle');
@@ -823,7 +832,7 @@
         // Optimistic: paint it immediately, disable while in flight so a second
         // click can't race the first.
         a.is_active = want;
-        libPaintActive(card, head, want);
+        libPaintActive(card, want);
         libRenderSummary();
         input.disabled = true;
         try {
@@ -847,7 +856,7 @@
           // server did not accept.
           a.is_active = before;
           input.checked = before;
-          libPaintActive(card, head, before);
+          libPaintActive(card, before);
           libRenderSummary();
           rowErr.textContent = (e.message || 'Network error.') + ' Not saved.';
           rowErr.style.display = '';
@@ -868,7 +877,9 @@
           ul.appendChild(el('li', 'lib-grouplabel', f.group_label));
         }
         openGroup = f.group_label || null;
-        var li = el('li', 'lib-field');
+        // `grouped` is what steps the row in under its label — the panel's
+        // equivalent of the doc's GROUP_INDENT_PT.
+        var li = el('li', 'lib-field' + (f.group_label ? ' grouped' : ''));
         var top = el('div');
         top.appendChild(el('span', 'lib-fname', f.field_name));
         top.appendChild(document.createTextNode('  '));

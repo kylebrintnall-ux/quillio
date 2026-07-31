@@ -396,6 +396,48 @@
     .lib-toggle input:disabled + .lib-track { opacity: 0.5; cursor: progress; }
     .lib-rowerr { font-size: 11.5px; color: #8a1f1f; margin-top: 6px; }
 
+    /* Create-an-asset form. Collapsed to a single button until opened, so the
+       library stays a library. */
+    .lib-newbtn { margin: 14px 0 4px; }
+    .lib-new { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px; margin: 12px 0; }
+    .lib-new h2 { font-size: 15px; margin: 0 0 4px; }
+    .lib-new label { display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
+    .lib-new input[type="text"], .lib-new textarea { width: 100%; font-size: 14px; }
+    .lib-new textarea { min-height: 108px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.5; }
+    .lib-hint { font-size: 11.5px; color: rgba(26,26,46,0.55); margin: 4px 0 0; line-height: 1.5; }
+    /* One field row, stacked on purpose. A single grid line put the field NAME —
+       the only value you cannot infer from the others — in the narrowest column:
+       at 390px it showed nine characters, so "Section 1 Headline" and
+       "Section 1 Body" were the same string on screen. The name now gets a full
+       line and the three small values share the one below it. */
+    .lib-frow { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.55); }
+    .lib-frow:first-child { border-top: none; }
+    .lib-fctl { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+    .lib-frow input[type="text"], .lib-frow input[type="number"], .lib-frow select {
+      padding: 8px 9px; font-size: 13px; border-radius: 9px;
+      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); color: var(--ink);
+    }
+    .lib-fname { width: 100%; font-weight: 600; }
+    .lib-fctl input[type="number"] { width: 62px; }
+    .lib-fctl select { width: 74px; -webkit-appearance: none; appearance: none; }
+    .lib-fctl .lib-sep { font-size: 12px; color: rgba(26,26,46,0.45); }
+    /* Pushed to the far edge, away from the number inputs it sits beside, and
+       sized as a real thumb target rather than a 17px glyph. */
+    .lib-fdel { margin-left: auto; background: none; border: none; cursor: pointer; font-size: 20px;
+      line-height: 1; color: rgba(26,26,46,0.4); padding: 6px 10px; min-height: 36px; min-width: 36px; }
+    .lib-fdel:hover { color: #8a1f1f; }
+    /* The note is optional and usually empty, so it costs a line only when it is
+       wanted — fourteen fields would otherwise be twenty-eight lines of scrolling.
+       A row that ALREADY has a note opens showing it. */
+    .lib-fnotebtn { background: none; border: none; cursor: pointer; padding: 6px 8px; min-height: 36px;
+      font-size: 11.5px; font-weight: 600; color: rgba(26,26,46,0.5); text-decoration: underline; }
+    .lib-fnotebtn.on { color: var(--ink); }
+    .lib-fnote { width: 100%; margin-top: 5px; padding: 7px 9px; font-size: 12px; border-radius: 9px;
+      background: rgba(255,255,255,0.4); border: 1.5px solid rgba(255,255,255,0.5); color: var(--ink); }
+    .lib-newerr { font-size: 12.5px; color: #8a1f1f; margin-top: 10px; }
+    .lib-newerr ul { margin: 4px 0 0; padding-left: 18px; }
+
     /* Notes / banners / states on the sky */
     .note { color: rgba(26,26,46,0.65); }
     .banner { background: #C6F0D8; border: 1.5px solid #2ECC71; color: #0A5C32; border-radius: 12px; }
@@ -593,6 +635,10 @@
           <div id="lib-error" class="error hidden"></div>
           <div id="lib-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
           <div id="lib-summary" class="note hidden"></div>
+          <div class="lib-newbtn">
+            <button class="btn" id="lib-new-open">+ New asset type</button>
+          </div>
+          <div id="lib-new-host"></div>
           <div id="lib-list"></div>
         </section>
 
@@ -897,6 +943,227 @@
       card.appendChild(ul);
       return card;
     }
+    // --- Create an asset type ------------------------------------------------
+    // The real case is a house landing page template with a dozen-plus fields,
+    // and typing a dozen four-input rows on a phone is the thing that makes a
+    // form like this unusable. So the primary input is a PASTE BOX that speaks
+    // the bracket syntax the user is already reading everywhere else — in the
+    // library above, and in every generated doc, a field is "Hero Headline [70]".
+    // Typing that list is one line per field, which is roughly what someone has
+    // in front of them when they are copying an existing page.
+    //
+    //   Hero Headline [70]
+    //   Hero Subheadline [120]
+    //   Offer Body [50-140 words]
+    //   Legal Line
+    //
+    // Everything it parses lands in editable rows, so the paste is a starting
+    // point and never a commitment. Nothing is sent until Create is pressed.
+    var LIB_LINE_RE = /^\s*(.*?)\s*(?:\[\s*(?:(\d+)\s*[-–—]\s*)?(\d+)?\s*(words?|chars?|characters?)?\s*\])?\s*$/i;
+    function libParseLine(line) {
+      var m = LIB_LINE_RE.exec(line);
+      if (!m || !m[1]) return null;
+      return {
+        field_name: m[1],
+        char_min: m[2] ? Number(m[2]) : 0,
+        char_max: m[3] ? Number(m[3]) : 0,
+        field_type: /^word/i.test(m[4] || '') ? 'words' : 'text',
+        spec_note: ''
+      };
+    }
+
+    function libFieldRow(f, onRemove) {
+      var wrap = el('div', 'lib-frow');
+      // The name is the only value you cannot infer from the others, so it gets
+      // the full width and the row's emphasis.
+      var name = document.createElement('input');
+      name.type = 'text'; name.className = 'lib-fname';
+      name.value = f.field_name || ''; name.placeholder = 'Field name';
+      wrap.appendChild(name);
+
+      var ctl = el('div', 'lib-fctl');
+      var min = document.createElement('input');
+      min.type = 'number'; min.min = '0'; min.value = f.char_min || ''; min.placeholder = 'min';
+      min.setAttribute('aria-label', 'Minimum');
+      var max = document.createElement('input');
+      max.type = 'number'; max.min = '0'; max.value = f.char_max || ''; max.placeholder = 'max';
+      max.setAttribute('aria-label', 'Limit');
+      var unit = document.createElement('select');
+      unit.setAttribute('aria-label', 'Counted in');
+      ['text', 'words'].forEach(function (u) {
+        var o = document.createElement('option'); o.value = u;
+        o.textContent = u === 'words' ? 'words' : 'chars';
+        if ((f.field_type || 'text') === u) o.selected = true;
+        unit.appendChild(o);
+      });
+      ctl.appendChild(min);
+      ctl.appendChild(el('span', 'lib-sep', 'to'));
+      ctl.appendChild(max);
+      ctl.appendChild(unit);
+
+      // The note is the tenant's only channel to the drafter for a custom field
+      // (gemini.js reads it ahead of its built-in guidance), so it is one tap
+      // away rather than hidden — but it does not spend a line until it is
+      // wanted. A pasted note (or one typed and collapsed) keeps the row open.
+      var note = document.createElement('input');
+      note.type = 'text'; note.className = 'lib-fnote';
+      note.value = f.spec_note || '';
+      note.placeholder = 'How should this field be written? (optional)';
+      var noteBtn = el('button', 'lib-fnotebtn', 'Note');
+      noteBtn.type = 'button';
+      var setNoteOpen = function (open) {
+        note.classList.toggle('hidden', !open);
+        noteBtn.classList.toggle('on', open);
+        noteBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      noteBtn.addEventListener('click', function () { setNoteOpen(note.classList.contains('hidden')); note.focus(); });
+      ctl.appendChild(noteBtn);
+
+      var del = el('button', 'lib-fdel', '×');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Remove field');
+      del.addEventListener('click', function () { wrap.remove(); if (onRemove) onRemove(); });
+      ctl.appendChild(del);
+
+      wrap.appendChild(ctl);
+      wrap.appendChild(note);
+      setNoteOpen(!!f.spec_note);
+
+      wrap.readRow = function () {
+        return {
+          field_name: name.value,
+          char_min: min.value,
+          char_max: max.value,
+          field_type: unit.value,
+          spec_note: note.value
+        };
+      };
+      return wrap;
+    }
+
+    function libOpenNew() {
+      var host = $('lib-new-host');
+      if (host.firstChild) return;               // already open
+      hide($('lib-new-open'));
+      var box = el('div', 'lib-new');
+      box.appendChild(el('h2', null, 'New asset type'));
+      box.appendChild(el('p', 'lib-hint',
+        'A shape Quillio does not already know — your house landing page, a recurring event page. Seeded asset types can\'t be edited here.'));
+
+      var nameL = el('label', null, 'Name'); box.appendChild(nameL);
+      var nameI = document.createElement('input'); nameI.type = 'text';
+      nameI.placeholder = 'e.g. House Landing Page'; box.appendChild(nameI);
+
+      var groupL = el('label', null, 'Group (optional)'); box.appendChild(groupL);
+      var groupI = document.createElement('input'); groupI.type = 'text';
+      groupI.placeholder = 'e.g. Web'; box.appendChild(groupI);
+
+      var dirL = el('label', null, 'Creative direction (optional)'); box.appendChild(dirL);
+      var dirI = document.createElement('textarea');
+      dirI.style.minHeight = '60px'; dirI.style.fontFamily = 'inherit'; dirI.style.fontSize = '14px';
+      dirI.placeholder = 'One or two lines every field on this asset should follow.';
+      box.appendChild(dirI);
+
+      var pasteL = el('label', null, 'Fields'); box.appendChild(pasteL);
+      var paste = document.createElement('textarea');
+      paste.placeholder = 'Hero Headline [70]\nHero Subheadline [120]\nOffer Body [50-140 words]\nLegal Line';
+      box.appendChild(paste);
+      box.appendChild(el('p', 'lib-hint',
+        'One field per line. Add a limit in brackets the same way it appears in your docs — [70], [40-90], [50-140 words]. No brackets means no limit. You can adjust everything below before saving.'));
+      var addBtn = el('button', 'btn', 'Add these fields →');
+      addBtn.type = 'button';
+      addBtn.style.marginTop = '8px';
+      box.appendChild(addBtn);
+
+      // A count instead of a column header: a stacked row has no columns to
+      // label, and with a dozen-plus fields "14 fields" is the thing you want to
+      // see. It also confirms the paste parsed what you expected.
+      var head = el('p', 'lib-hint');
+      head.classList.add('hidden');
+      head.style.margin = '14px 0 0';
+      box.appendChild(head);
+      var rows = el('div');
+      box.appendChild(rows);
+
+      var refreshHead = function () {
+        var n = rows.children.length;
+        head.classList.toggle('hidden', n === 0);
+        head.textContent = n === 1 ? '1 field' : n + ' fields';
+      };
+      var addRows = function (list) {
+        list.forEach(function (f) { rows.appendChild(libFieldRow(f, refreshHead)); });
+        refreshHead();
+      };
+      addBtn.addEventListener('click', function () {
+        var parsed = paste.value.split('\n').map(libParseLine).filter(Boolean);
+        if (!parsed.length) return;
+        addRows(parsed);
+        paste.value = '';
+      });
+
+      var oneMore = el('button', 'btn', '+ Add a field');
+      oneMore.type = 'button';
+      oneMore.style.marginTop = '10px';
+      oneMore.addEventListener('click', function () { addRows([{}]); });
+      box.appendChild(oneMore);
+
+      var err = el('div', 'lib-newerr');
+      err.style.display = 'none';
+      box.appendChild(err);
+
+      var actions = el('div', 'btnrow');
+      actions.style.marginTop = '14px';
+      var save = el('button', 'btn primary', 'Create asset type');
+      save.type = 'button';
+      var cancel = el('button', 'btn', 'Cancel');
+      cancel.type = 'button';
+      cancel.addEventListener('click', function () { host.textContent = ''; show($('lib-new-open')); });
+      actions.appendChild(save); actions.appendChild(cancel);
+      box.appendChild(actions);
+
+      save.addEventListener('click', async function () {
+        err.style.display = 'none'; err.textContent = '';
+        // Anything still sitting in the paste box counts — otherwise a user who
+        // pastes and presses Create loses the lot without being told why.
+        var pending = paste.value.split('\n').map(libParseLine).filter(Boolean);
+        if (pending.length) { addRows(pending); paste.value = ''; }
+        var fields = [];
+        Array.prototype.forEach.call(rows.children, function (r) { if (r.readRow) fields.push(r.readRow()); });
+        save.disabled = true;
+        try {
+          var res = await fetch('/api/settings/library/asset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: nameI.value,
+              group: groupI.value,
+              asset_direction: dirI.value,
+              fields: fields
+            })
+          });
+          var data = await res.json().catch(function () { return null; });
+          if (!res.ok || !data || !data.success) {
+            throw new Error((data && data.error) || 'Could not create that asset type.');
+          }
+          // Reload the library so the new asset appears exactly as the server
+          // stored it — never as the client believes it submitted it.
+          host.textContent = '';
+          show($('lib-new-open'));
+          libLoaded = false;
+          await libEnsureLoaded();
+        } catch (e) {
+          err.textContent = e.message || 'Network error.';
+          err.style.display = '';
+        } finally {
+          save.disabled = false;
+        }
+      });
+
+      host.appendChild(box);
+      nameI.focus();
+    }
+    $('lib-new-open').addEventListener('click', libOpenNew);
+
     async function libEnsureLoaded() {
       if (libLoaded) return;
       var list = $('lib-list');

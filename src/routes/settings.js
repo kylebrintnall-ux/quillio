@@ -19,7 +19,8 @@ const {
   setTenantDefaultFolder,
 } = require('../db');
 const { getSlackLinksForUser } = require('../db/users');
-const { getTenantLibrary, setActiveAssetIds } = require('../db/assets');
+const { getTenantLibrary, setActiveAssetIds, createAssetType } = require('../db/assets');
+const { normalizeNewAsset, MAX_FIELDS_PER_ASSET, MAX_ASSETS_PER_TENANT } = require('../utils/assetInput');
 const { generateVoiceGuide } = require('../services/gemini');
 
 const router = express.Router();
@@ -191,6 +192,71 @@ router.post('/api/settings/library/active', settingsWriteLimiter, requireAuth, a
     });
   } catch (err) {
     console.error('[settings] POST /library/active failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/settings/library/asset — create ONE tenant-authored asset type.
+//
+// The first write path into asset_types that is not a seed or a migration. It
+// creates and nothing else: no clone, no delete, no editing of an existing
+// asset. A seeded asset stays read-only apart from is_active.
+//
+// The body is passed through utils/assetInput normalizeNewAsset, which is the
+// column allowlist — it builds the stored shape key by key and has no branch
+// that can set spec_type or spec_source, so a tenant field is NULL on both by
+// construction. Those two render as claims of authority in the generated doc
+// (googleDocs.js specTypeLine / fieldHint), which is why they are absent from
+// the accepted set rather than validated within it.
+//
+// The tenant comes from the SESSION. The body carries no tenant, and the
+// existing-name list the duplicate check runs against is read from that tenant's
+// own library, so a name can only ever collide with the caller's own assets.
+router.post('/api/settings/library/asset', settingsWriteLimiter, requireAuth, async (req, res) => {
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const existing = await getTenantLibrary(tenantId);
+    if (existing === null) {
+      return res.status(400).json({ success: false, error: 'No asset library is connected to this workspace.' });
+    }
+
+    const { errors, asset } = normalizeNewAsset(req.body, {
+      existingNames: existing.map((a) => a.name),
+      existingAssetCount: existing.length,
+    });
+    if (errors.length > 0) {
+      return res.status(400).json({ success: false, error: errors[0], errors });
+    }
+
+    let id;
+    try {
+      id = await createAssetType(tenantId, asset);
+    } catch (err) {
+      // 23505 = the normalized-name unique index. Reachable despite the check
+      // above if two tabs submit the same name at once; the index is the
+      // authority and this turns its error into the same sentence.
+      if (err && err.code === '23505') {
+        return res
+          .status(409)
+          .json({ success: false, error: `You already have an asset type called "${asset.name}".` });
+      }
+      throw err;
+    }
+
+    const after = (await getTenantLibrary(tenantId)) || [];
+    console.log(`[settings] created asset type ${id} for tenant ${tenantId} (${asset.fields.length} field(s))`);
+    return res.status(201).json({
+      success: true,
+      id,
+      counts: {
+        assets: after.length,
+        active: after.filter((a) => a.is_active).length,
+        fields: after.reduce((n, a) => n + a.fields.length, 0),
+      },
+      limits: { fieldsPerAsset: MAX_FIELDS_PER_ASSET, assetsPerTenant: MAX_ASSETS_PER_TENANT },
+    });
+  } catch (err) {
+    console.error('[settings] POST /library/asset failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });

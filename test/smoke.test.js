@@ -459,6 +459,7 @@ test('settings router mounts and exposes its routes', () => {
     '/api/auth/signout',
     '/api/settings/library', // asset library (GET)
     '/api/settings/library/active', // asset on/off (POST) — is_active only
+    '/api/settings/library/asset', // create a tenant asset type (POST)
     '/api/settings/voice',
     '/api/settings/voice',
     '/api/settings/voice/generate',
@@ -8241,17 +8242,22 @@ test('the legacy name toggle folds names the way everything else does', () => {
   assert.match(byId, /id <> ALL\(\$2::bigint\[\]\)/);
 });
 
-test('settings.html renders the library read-only, with no edit affordances', () => {
+test('an EXISTING asset card is still read-only apart from its toggle', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
   assert.ok(html.includes('id="panel-library"'), 'the panel exists');
   assert.ok(html.includes('data-tab="library"'), 'reachable from the hub and the sidebar');
   assert.match(html, /fetch\('\/api\/settings\/library'\)/, 'and reads the gated route');
 
-  // The panel must contain no inputs, no buttons, no contenteditable — the whole
-  // point is that this is the shape review BEFORE a write path exists.
-  const panel = html.slice(html.indexOf('id="panel-library"'), html.indexOf('id="panel-account"'));
-  for (const affordance of ['<input', '<button', '<textarea', 'contenteditable']) {
-    assert.ok(!panel.includes(affordance), `no ${affordance} inside the library panel`);
+  // libRenderAsset draws a card for an asset the tenant ALREADY has. A create
+  // form now exists elsewhere on this panel, but the card itself must stay
+  // read-only: one checkbox (the toggle) and nothing else. Editing an existing
+  // asset — seeded or custom — is a later step.
+  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('--- Create an asset type'));
+  const inputs = card.match(/createElement\('input'\)/g) || [];
+  assert.strictEqual(inputs.length, 1, 'exactly one input on a card: the toggle');
+  assert.match(card, /input\.type = 'checkbox'/);
+  for (const affordance of ["createElement('textarea')", "createElement('select')", 'contenteditable']) {
+    assert.ok(!card.includes(affordance), `no ${affordance} on an existing asset card`);
   }
 
   // house_default / null must render NO tier — same rule googleDocs specTypeLine
@@ -8338,9 +8344,12 @@ test('the landing page keeps the two CTAs distinct', () => {
 
 test('the on/off route writes is_active only, scoped to the session tenant', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  // Ends at the create route below it, which legitimately NAMES spec_type and
+  // spec_source in its comment (explaining why they are absent) — measuring the
+  // two as one block would read that comment as this handler touching them.
   const route = src.slice(
     src.indexOf("POST /api/settings/library/active"),
-    src.indexOf('GET /api/settings/workspace')
+    src.indexOf('POST /api/settings/library/asset')
   );
   assert.match(route, /settingsWriteLimiter, requireAuth/, 'rate-limited and auth-gated');
   assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant from the session');
@@ -8380,18 +8389,29 @@ test('a failed save reverts the toggle, the card and the count', () => {
   assert.match(handler, /input\.disabled = false/);
 });
 
-test('the settings library screen still writes nothing but is_active', () => {
+test('the library screen reaches exactly two writes, and neither claims a spec', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
-  const panel = html.slice(html.indexOf('id="panel-library"'), html.indexOf('id="panel-account"'));
-  // The panel markup itself stays declarative — the toggle is built in JS.
-  for (const affordance of ['<input', '<button', '<textarea', 'contenteditable']) {
-    assert.ok(!panel.includes(affordance), `no ${affordance} in the library panel markup`);
-  }
-  // Exactly one write endpoint is reachable from this screen.
   const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Markdown render'));
+
+  // Two, and only two: flip an asset on/off, and create a new one.
   const posts = libJs.match(/method: 'POST'/g) || [];
-  assert.strictEqual(posts.length, 1, 'one POST, no more');
+  assert.strictEqual(posts.length, 2, 'two POSTs, no more');
   assert.match(libJs, /'\/api\/settings\/library\/active'/);
+  assert.match(libJs, /'\/api\/settings\/library\/asset'/);
+  // No delete, no clone, no edit-an-existing-asset.
+  assert.ok(!/method: 'DELETE'|method: 'PATCH'|method: 'PUT'/.test(libJs), 'no delete/patch/put from this screen');
+
+  // The client cannot even NAME the two authority columns — there is nothing to
+  // put them in, which is the point of the allowlist being server-side. (The
+  // read-only renderer above DOES read f.spec_type, to draw the tier badge; the
+  // create form is the half that must never mention either.)
+  const createJs = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
+  assert.ok(createJs.length > 500, 'found the create form');
+  assert.ok(!/spec_type|spec_source/.test(createJs),
+    'the create form never sends spec_type or spec_source');
+  // What it does send is the allowlisted six.
+  assert.match(libJs, /field_name: name\.value/);
+  assert.match(libJs, /spec_note: note\.value/);
 });
 
 test('the group label heads its rows the way the doc does — space and indent', () => {
@@ -8428,4 +8448,195 @@ test('the off state is the toggle and the card, with no pill to shift it', () =>
   // The remaining off cues are the dimmed, dashed card — unchanged.
   assert.match(html, /\.lib-asset\.off \{ opacity: 0\.6; border-style: dashed; \}/);
   assert.match(html, /function libPaintActive\(card, active\) \{\s*card\.classList\.toggle\('off', !active\);\s*\}/);
+});
+
+// --- Creating a custom asset type -------------------------------------------
+// The first tenant-facing WRITE into asset_types. Everything below is about one
+// question: what shape can a tenant put in the library, and what can it never
+// put there? utils/assetInput is the whole answer, so it is tested directly.
+
+test('the accepted shape is built key by key — spec_type and spec_source have no branch', () => {
+  const { normalizeNewAsset } = require('../src/utils/assetInput');
+
+  // Every hostile shape at once: the two authority columns, the primary key, the
+  // tenant, the sort position, and a nested attempt on the field.
+  const { errors, asset } = normalizeNewAsset({
+    name: 'House Landing Page',
+    group: 'Web',
+    asset_direction: 'Plain. Concrete.',
+    id: 999,
+    tenant_id: 'other-tenant',
+    is_active: false,
+    sort_order: -5,
+    spec_type: 'enforced',
+    spec_source: 'https://www.linkedin.com/help/linkedin/answer/a552861',
+    fields: [
+      {
+        field_name: 'Hero Headline',
+        char_max: 70,
+        spec_type: 'enforced',
+        spec_source: 'https://www.linkedin.com/help/linkedin/answer/a552861',
+        spec_version: 3,
+        id: 42,
+        asset_type_id: 7,
+      },
+    ],
+  });
+  assert.deepStrictEqual(errors, []);
+
+  // The asset carries four keys and the field carries six. Not "the extras were
+  // set to null" — they are ABSENT, so nothing downstream can read them back.
+  assert.deepStrictEqual(Object.keys(asset).sort(), ['asset_direction', 'fields', 'group', 'name']);
+  assert.deepStrictEqual(Object.keys(asset.fields[0]).sort(),
+    ['char_max', 'char_min', 'field_name', 'field_type', 'sort_order', 'spec_note']);
+  assert.ok(!('spec_type' in asset.fields[0]), 'spec_type is not a key');
+  assert.ok(!('spec_source' in asset.fields[0]), 'spec_source is not a key');
+  // The whole object, serialized, mentions neither — no nesting, no aliasing.
+  assert.ok(!/spec_type|spec_source|tenant_id|is_active/.test(JSON.stringify(asset)));
+  // sort_order is the submitted ORDER, never the submitted number.
+  assert.strictEqual(asset.fields[0].sort_order, 1);
+});
+
+test('the INSERT statement itself never names the authority columns', () => {
+  // The allowlist above is the design; this is the backstop. Even if a shape
+  // leaked through, the SQL has no placeholder for either column, so Postgres
+  // leaves them NULL and googleDocs specTypeLine renders no tier for the field.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function createAssetType'), src.indexOf('// Asset toggles, BY ID'));
+  const sql = fn.match(/INSERT INTO copy_fields[\s\S]*?VALUES \([^)]*\)/)[0];
+  assert.ok(!/spec_type|spec_source|spec_version/.test(sql), 'the field INSERT names six columns and no spec claim');
+  assert.match(sql, /field_name, char_min, char_max, field_type, sort_order, spec_note/);
+
+  // Asset + fields land together or not at all. A type with zero fields is
+  // dropped by tenantAssetsToSpecs, so a half-write would be invisible to the
+  // pipeline while still showing in the library.
+  assert.match(fn, /await client\.query\('BEGIN'\)/);
+  assert.match(fn, /await client\.query\('COMMIT'\)/);
+  assert.match(fn, /ROLLBACK/);
+  assert.match(fn, /client\.release\(\)/);
+  // And it appends rather than colliding with a seeded position.
+  assert.match(fn, /COALESCE\(MAX\(sort_order\), 0\)/);
+});
+
+test('every rejected shape is rejected, and says why', () => {
+  const { normalizeNewAsset, MAX_FIELDS_PER_ASSET, MAX_ASSETS_PER_TENANT } = require('../src/utils/assetInput');
+  const ok = { name: 'X', fields: [{ field_name: 'Headline', char_max: 70 }] };
+  const bad = (body, opts) => normalizeNewAsset(body, opts).errors;
+
+  assert.match(bad({ ...ok, name: '  ' })[0], /Give the asset type a name/);
+  assert.match(bad({ ...ok, name: 'A'.repeat(121) })[0], /120 characters or fewer/);
+  assert.match(bad({ ...ok, fields: [] })[0], /at least one copy field/);
+  assert.match(bad({ ...ok, fields: [{ field_name: '' }] })[0], /Field 1: give the field a name/);
+
+  // A name ending in a number is how googleDocs labels a REPEATED asset, so the
+  // doc would read it back as instance N of a different asset.
+  assert.match(bad({ ...ok, name: 'Landing Page 2' })[0], /ends in a number/);
+  // A field name ending in brackets collides with the limit fieldLabel appends.
+  assert.match(bad({ ...ok, fields: [{ field_name: 'Headline [v2]' }] })[0], /can't end in \[brackets\]/);
+
+  // Duplicates — against the tenant's library, and within the submission. Both
+  // fold through utils/normalize, so a dash variant is caught too.
+  assert.match(bad(ok, { existingNames: ['x'] })[0], /already have an asset type called "X"/);
+  assert.match(bad({ ...ok, name: 'Co-Branded — Ad' }, { existingNames: ['Co-Branded - Ad'] })[0], /already have/);
+  assert.match(bad({ ...ok, fields: [{ field_name: 'Headline' }, { field_name: 'headline' }] })[0],
+    /Field 2: "headline" duplicates "Headline"/);
+
+  // Limits: non-integers rejected rather than coerced, min above max caught.
+  assert.match(bad({ ...ok, fields: [{ field_name: 'H', char_max: '70abc' }] })[0], /whole number/);
+  assert.match(bad({ ...ok, fields: [{ field_name: 'H', char_max: 1.5 }] })[0], /whole number/);
+  assert.match(bad({ ...ok, fields: [{ field_name: 'H', char_max: 200001 }] })[0], /whole number/);
+  assert.match(bad({ ...ok, fields: [{ field_name: 'H', char_min: 90, char_max: 40 }] })[0], /is above the limit/);
+  // The unit is the two rowToSpecGroup understands; a third would be silently
+  // rewritten to 'text' by the pipeline.
+  assert.match(bad({ ...ok, fields: [{ field_name: 'H', field_type: 'sentences' }] })[0], /"text" or "words"/);
+
+  // Caps, both directions.
+  const many = Array.from({ length: MAX_FIELDS_PER_ASSET + 1 }, (_, i) => ({ field_name: `F${i}` }));
+  assert.match(bad({ ...ok, fields: many })[0], new RegExp(`at most ${MAX_FIELDS_PER_ASSET} fields`));
+  assert.match(bad(ok, { existingAssetCount: MAX_ASSETS_PER_TENANT })[0],
+    new RegExp(`limit ${MAX_ASSETS_PER_TENANT}`));
+
+  // Garbage in the body positions is an error, never a throw.
+  for (const junk of [null, undefined, 'a string', 42, []]) {
+    assert.ok(normalizeNewAsset(junk).errors.length > 0, `${JSON.stringify(junk)} is rejected, not thrown on`);
+  }
+  assert.ok(bad({ name: 'X', fields: 'not an array' }).length > 0);
+});
+
+test('no limit is a real state, and survives the doc round trip', () => {
+  const { normalizeNewAsset } = require('../src/utils/assetInput');
+  const { asset } = normalizeNewAsset({ name: 'X', fields: [{ field_name: 'Legal Line' }] });
+  assert.strictEqual(asset.fields[0].char_max, 0);
+  assert.strictEqual(asset.fields[0].char_min, 0);
+
+  // 0 is what the rest of the system already means by "no limit": fieldLabel
+  // emits no bracket, and parseDoc reads a bracket-less label straight back.
+  const { fieldLabel } = require('../src/destinations/googleDocs');
+  const label = fieldLabel({ fieldName: 'Legal Line', charMin: 0, charMax: 0 });
+  assert.strictEqual(label, 'Legal Line');
+  assert.ok(!label.includes('['), 'no empty bracket in the doc');
+});
+
+test('the create route takes its tenant from the session and nothing from the body', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const route = src.slice(src.indexOf("'/api/settings/library/asset'"), src.indexOf('GET /api/settings/workspace'));
+  assert.match(route, /settingsWriteLimiter, requireAuth/, 'rate-limited and auth-gated');
+  assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant comes from the session');
+  // req.body appears exactly once, as the argument to the allowlist — never as a
+  // tenant, an id, or a column.
+  assert.strictEqual((route.match(/req\.body/g) || []).length, 1);
+  assert.match(route, /normalizeNewAsset\(req\.body/);
+  assert.ok(!/req\.query|req\.params/.test(route), 'no tenant from the query string either');
+  // The duplicate check runs against the CALLER's library, so a name can only
+  // collide with their own assets.
+  assert.match(route, /existingNames: existing\.map/);
+  // The unique index stays the authority; its error becomes the same sentence.
+  assert.match(route, /err\.code === '23505'/);
+  assert.match(route, /status\(409\)/);
+  // Nothing else in the router writes an asset type.
+  assert.strictEqual((src.match(/createAssetType\(/g) || []).length, 1);
+});
+
+test('the create form survives a dozen-plus fields on a phone', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+
+  // The paste box is the primary input — typing four controls a row, fourteen
+  // times, on a phone is the thing that makes a form like this unusable.
+  const createJs = html.slice(html.indexOf('--- Create an asset type'), html.indexOf('async function libEnsureLoaded'));
+  assert.match(createJs, /LIB_LINE_RE/, 'a bracket-syntax paste box exists');
+  assert.match(createJs, /paste\.value\.split\('\\n'\)\.map\(libParseLine\)\.filter\(Boolean\)/);
+  // …and pressing Create does not silently drop whatever is still in it.
+  const save = createJs.slice(createJs.indexOf("save.addEventListener"));
+  assert.match(save, /var pending = paste\.value\.split/, 'unparsed paste is folded in on save');
+
+  // The row is STACKED: a single grid line put the field name in the narrowest
+  // column, where at 390px it showed nine characters — "Section 1 Headline" and
+  // "Section 1 Body" rendered identically. The name now owns a full line.
+  assert.match(html, /\.lib-fname \{ width: 100%/);
+  assert.ok(!/\.lib-frow \{ display: grid/.test(html), 'the row is no longer a five-column grid');
+  assert.match(createJs, /name\.className = 'lib-fname'/);
+  assert.match(createJs, /var ctl = el\('div', 'lib-fctl'\)/, 'the small values share the line below');
+
+  // Thumb targets. The delete was a 17px glyph sitting beside the number inputs;
+  // it is now 36px square and pushed to the far edge.
+  assert.match(html, /\.lib-fdel \{ margin-left: auto;[^}]*min-height: 36px; min-width: 36px/);
+  assert.match(html, /\.lib-fnotebtn \{[^}]*min-height: 36px/);
+
+  // The optional note costs a line only when wanted — fourteen fields would
+  // otherwise be twenty-eight lines of scrolling — but a row that already has
+  // one opens showing it, so a pasted note is never hidden from its author.
+  assert.match(createJs, /setNoteOpen\(!!f\.spec_note\)/);
+  assert.match(createJs, /note\.classList\.toggle\('hidden', !open\)/);
+  assert.match(createJs, /aria-expanded/);
+  assert.match(html, /\.hidden \{ display: none !important; \}/, 'the class it toggles is real');
+
+  // Every control the user works blind is labelled for a screen reader, since
+  // the column header that used to name them is gone.
+  for (const label of ['Minimum', 'Limit', 'Counted in', 'Remove field']) {
+    assert.ok(createJs.includes(`'${label}'`), `${label} is announced`);
+  }
+  // The header is replaced by a live count — with a dozen-plus rows that is the
+  // thing worth showing, and it confirms the paste parsed what was expected.
+  assert.match(createJs, /n === 1 \? '1 field' : n \+ ' fields'/);
+  assert.match(createJs, /libFieldRow\(f, refreshHead\)/, 'removing a row updates the count');
 });

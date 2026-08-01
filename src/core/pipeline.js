@@ -16,7 +16,7 @@ const { instanceCounter } = require('../utils/instanceKey');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
 const { getAssetDirections, getTenantAssets, getAssetTemplateBindings } = require('../db/assets');
-const { saveProject } = require('../db/projects');
+const { saveProject, getProjectByDocId, setProjectTemplateFill } = require('../db/projects');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
@@ -958,13 +958,25 @@ function partitionSpecsByTemplate(specs, bindingFor) {
 
   for (const spec of specs || []) {
     const binding = lookup(spec.assetType);
-    // No binding, or a binding with no source document to copy, and it renders
-    // into the copy doc. The second case matters: a template row whose imported
-    // Doc was deleted must not silently drop the asset out of every document.
-    if (!binding || !binding.sourceDocId) {
-      copyDocSpecs.push(spec);
-      continue;
-    }
+    // EVERY SPEC GOES IN THE COPY DOC — including template-attached ones. This is
+    // a partition for OUTPUT, not for content.
+    //
+    // Step three diverted attached assets out of the copy doc, and that turned
+    // out to be the wrong cut: the copy doc is where drafting and review happen.
+    // generateDraft re-parses it, copyReview reads it, the web project view
+    // renders it. An asset that is not in it is an asset no writer can draft, no
+    // reviewer can comment on, and no surface can show — and the template
+    // document would arrive empty forever.
+    //
+    // So the asset renders in the copy doc like any other, and the template
+    // document is a SECOND RENDERING of the same copy in the tenant's own format.
+    // That is what a copy matrix is: the deliverable, not the workspace.
+    copyDocSpecs.push(spec);
+
+    // A binding with no source document to copy produces no second rendering.
+    // A template row whose imported Doc was deleted must not stop the asset
+    // reaching the copy doc — which, now, it cannot.
+    if (!binding || !binding.sourceDocId) continue;
     if (!byTemplate.has(binding.templateId)) {
       byTemplate.set(binding.templateId, {
         templateId: binding.templateId,
@@ -1162,9 +1174,10 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
 
   // Build the doc in parallel with the Assets subfolder.
   //
-  // `copyDocSpecs`, not `assetSpecs`: anything routed to a template is no longer
-  // in here. When EVERY requested asset is template-attached this is empty, and
-  // the copy doc is still built — see the note above the return.
+  // `copyDocSpecs` is every spec — a template-attached asset renders here too,
+  // so the existing drafter and reviewer reach it. It stays a distinct name
+  // because partitionSpecsByTemplate owns the decision, and a future rule that
+  // does hold something back should have one place to change.
   const doc = await getDestination().createDocument({
     brief: spec.brief,
     campaignTitle: spec.campaignTitle,
@@ -1214,22 +1227,16 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
     console.error('[pipeline] saveProject skipped:', err.message);
   }
 
-  // WHEN EVERY REQUESTED ASSET IS TEMPLATE-ATTACHED, copyDocSpecs is empty and
-  // the copy doc above has a header, the summary, the writer direction and the
-  // reference insights but no asset sections. It is still built, and that is the
-  // deliberate choice rather than an oversight:
+  // THE COPY DOC ALWAYS HOLDS EVERY ASSET, so the "every requested asset is
+  // template-attached" case step three had to reason about no longer exists —
+  // the copy doc is never empty of assets. It remains the project's primary
+  // artifact: db/projects keys idempotency on copy_doc_id, both surfaces link to
+  // it, copy review runs against it, and drafting happens in it.
   //
-  //   • db/projects keys idempotency on copy_doc_id. No copy doc means no stable
-  //     project identity, and a re-run would insert a second row.
-  //   • Both surfaces link to it, copy review runs against it, and the web
-  //     project view reads it. "No copy doc" is a null every one of those would
-  //     have to learn to handle, for a case that saves nobody any work.
-  //   • The brief context in it is genuinely useful on its own — it is the
-  //     campaign's cover sheet, and a matrix has nowhere to put a writer prompt.
-  //
-  // `assetSpecs` is returned WHOLE (every group, template-bound or not) because
-  // callers use it to tell the writer what the brief produced, and an asset that
-  // went to a template was still produced.
+  // The template documents built above are still UNFILLED at this point. There
+  // is no drafted copy at brief time — the copy doc is built as structure and
+  // the words arrive from generateDraft — so every marker is still visible.
+  // syncTemplateDocuments below fills them, after drafting.
   return { doc, assetSpecs, copyDocSpecs, templateDocs, projectFolderUrl, projectId };
 }
 
@@ -1240,6 +1247,96 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
 // falling back to the repo voice.md when there's no DB / no saved guide, and
 // supplies the asset-level creative direction lookup for the drafter.
 // Returns { title, fieldCount, url }.
+// SYNC THE DRAFTED COPY INTO THIS PROJECT'S TEMPLATE DOCUMENT(S).
+//
+// Runs after every draft. Reads the copy doc back — the same read the web
+// project view uses — maps each field to its marker, and pushes the text into
+// the template document.
+//
+// WHY A FULL RE-SYNC, EVEN FOR A SCOPED DRAFT. Regeneration and scoped drafts
+// target individual fields, so a scoped sync is possible: map scopedFields to
+// their markers and send only those. It is not worth it. getDocContent reads the
+// WHOLE document either way (there is no partial read), the marker set is a
+// couple of dozen strings, and fillTemplateMarkers sends nothing for a field
+// whose copy has not changed — so a full sync of an unchanged document is one
+// Docs read and zero write requests.
+//
+// What the full sync buys is the case a scoped one gets wrong: a writer who
+// regenerated field A after hand-editing field B in the copy doc. A scoped sync
+// carries A and silently leaves B's older copy in the matrix. The full sync
+// carries both, and the two documents agree.
+//
+// EVERYTHING HERE IS BEST-EFFORT. A draft that succeeded must not fail because a
+// template could not be updated — the copy is in the copy doc, which is the
+// writer's working surface. Failures are logged and returned, never thrown.
+//
+// Returns null when there is nothing to sync (the overwhelmingly common case:
+// no DB, no project row, or a project with no template document), so the cost
+// for an ordinary brief is one indexed lookup.
+async function syncTemplateDocuments(docId, clients, tenantId) {
+  if (!docId || !tenantId) return null;
+
+  let project = null;
+  try {
+    project = await getProjectByDocId(tenantId, docId);
+  } catch (err) {
+    console.warn('[pipeline] template sync: project lookup failed:', err.message);
+    return null;
+  }
+  if (!project || !project.template_doc_id) return null;
+
+  try {
+    const bindingFor = await getAssetTemplateBindings(tenantId);
+    // The drafted copy, read back out of the copy doc. This is why the asset has
+    // to render there: this read is the ONLY place the words exist.
+    const content = await getDestination().getDocContent(docId, clients);
+
+    // markerKey -> drafted copy, and the marker display names, gathered from the
+    // bindings of the assets that actually appear in the document.
+    const values = new Map();
+    const markers = new Map();
+    for (const asset of (content && content.assets) || []) {
+      const binding = bindingFor(asset.name);
+      if (!binding) continue;
+      for (const m of binding.markers || []) markers.set(m.key, m);
+      for (const field of asset.fields || []) {
+        const marker = binding.fieldMarkers.get(normalize(field.fieldName));
+        if (!marker) continue; // unmapped field — its marker stays visible
+        const copy = field.copy == null ? '' : String(field.copy);
+        // The LAST instance wins for a repeated asset. A matrix has one cell per
+        // marker, so multiple instances of one asset cannot all be placed; taking
+        // the last is arbitrary but stable, and the copy doc still holds them all.
+        if (copy.trim()) values.set(marker.key, copy.trim());
+      }
+    }
+
+    const result = await getDestination().fillTemplateMarkers(
+      project.template_doc_id,
+      {
+        values,
+        previous: (project.template_fill && typeof project.template_fill === 'object') ? project.template_fill : {},
+        markers: [...markers.values()],
+      },
+      clients
+    );
+
+    // Remember what was written, so the NEXT sync can find it — replaceAllText
+    // consumed the marker, so the copy itself is the only handle left.
+    await setProjectTemplateFill(tenantId, project.id, result.applied);
+
+    console.log(
+      `[pipeline] template sync for project ${project.id}: ` +
+        `${result.filled.length} updated, ${result.unchanged.length} unchanged, ${result.skipped.length} still showing a marker`
+    );
+    return { templateDocId: project.template_doc_id, templateDocUrl: project.template_doc_url, ...result };
+  } catch (err) {
+    // The draft SUCCEEDED. The copy is in the copy doc; the matrix is stale until
+    // the next draft. That is a far better outcome than failing the draft.
+    console.error('[pipeline] template sync failed (the draft is unaffected):', err.message);
+    return { error: err.message };
+  }
+}
+
 async function generateDraft(docId, direction, clients, tenantId, scopedFields, append) {
   // Best-effort: a DB miss/error just falls back to the repo voice.md. Never
   // log the guide content — only whether one was found.
@@ -1256,7 +1353,22 @@ async function generateDraft(docId, direction, clients, tenantId, scopedFields, 
   // `scopedFields` (optional [{assetType, fieldName}]) scopes the draft to those
   // fields; undefined → whole-doc, exactly as before. `append` (Variations Matrix
   // Step 1) makes a scoped call ADDITIVE — insert below existing copy, no delete.
-  return getDestination().generateDraft(docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append);
+  const result = await getDestination().generateDraft(
+    docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append
+  );
+
+  // HOOKED HERE, and not in the adapters, because this is the ONE function both
+  // of them call for every kind of draft: a first draft, a scoped draft, a
+  // regeneration, a riff. Putting it in slackWorkflow would have meant a second
+  // copy in web.js and a third the next time a surface appears — and a
+  // regeneration that skipped the sync is exactly the silent divergence this
+  // step exists to prevent.
+  //
+  // Awaited, so the completion card a caller posts next is telling the truth
+  // about both documents. Never throws — see syncTemplateDocuments.
+  const templateSync = await syncTemplateDocuments(docId, clients, tenantId);
+
+  return templateSync ? { ...result, templateSync } : result;
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web
@@ -1356,6 +1468,9 @@ module.exports = {
   // template. Pure, so what lands where is assertable with no Google client.
   partitionSpecsByTemplate,
   templateValuesFor,
+  // The after-drafting sync. Exported for tests; generateDraft is its only
+  // production caller.
+  syncTemplateDocuments,
   normalizeAssetPlan,
   resolveAssetLimits,
   // The DEFAULT (web) ceilings, and the absolute maximum a surface can ask for.

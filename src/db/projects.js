@@ -159,4 +159,26 @@ async function setProjectStatus(tenantId, projectId, status) {
   return (res.rows && res.rows[0]) || null;
 }
 
-module.exports = { saveProject, getProjects, getProject, setProjectStatus };
+// ONE project, looked up by the copy doc it produced. The same key saveProject
+// uses for idempotency, so it finds exactly the row a given doc belongs to.
+//
+// Exists so a surface holding only a doc id can reach the rest of what the run
+// produced — the campaign folder, and any template documents. Returns null for
+// no DB, no match, or another tenant's doc; every caller falls back to linking
+// the doc it already has, so a null is a smaller card, never an error.
+async function getProjectByDocId(tenantId, copyDocId) {
+  const pool = getPool();
+  if (!pool || !tenantId || !copyDocId) return null;
+  try {
+    const res = await pool.query(
+      'SELECT * FROM projects WHERE tenant_id = $1 AND copy_doc_id = $2 LIMIT 1',
+      [tenantId, copyDocId]
+    );
+    return res.rows[0] || null;
+  } catch (err) {
+    console.warn(`[db/projects] getProjectByDocId failed for ${copyDocId}: ${err.message}`);
+    return null;
+  }
+}
+
+module.exports = { saveProject, getProjects, getProject, getProjectByDocId, setProjectStatus };

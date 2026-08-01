@@ -173,32 +173,66 @@ async function postResult(result, responseUrl) {
   }
 }
 
-// Block Kit for a confirmation: a section + an "Open in Drive" link button.
-function openInDriveBlocks(text, webViewLink) {
+// THE DRIVE BUTTONS, shared by every confirmation card.
+//
+// The FOLDER comes first, and it is the one labelled for the run as a whole. A
+// run can now produce more than one document (custom document types), so a
+// single button opening one of them picks a winner arbitrarily — and even with
+// one document the folder is the better landing place, because it shows
+// everything the run produced rather than one artifact of it.
+//
+// The copy doc keeps its own button. It is what a writer usually wants next, and
+// the folder is one extra click away from it.
+//
+// With no folder url — creation failed, or a project that predates folders —
+// this collapses to exactly the single button it was before, labelled the way it
+// always was. A card is never rendered with a button that goes nowhere.
+//
+// Labels take no terminal punctuation: they are controls, not sentences. They
+// deliberately match the doc-ready card's link text ("Campaign folder", "Copy
+// doc") so the two cards name the same things the same way.
+function driveButtons(webViewLink, folderUrl) {
+  const buttons = [];
+  if (folderUrl) {
+    buttons.push({
+      type: 'button',
+      text: { type: 'plain_text', text: 'Campaign folder', emoji: true },
+      url: folderUrl,
+      action_id: 'open_campaign_folder',
+    });
+    buttons.push({
+      type: 'button',
+      text: { type: 'plain_text', text: 'Copy doc', emoji: true },
+      url: webViewLink,
+      action_id: 'open_in_drive',
+    });
+  } else if (webViewLink) {
+    buttons.push({
+      type: 'button',
+      text: { type: 'plain_text', text: 'Open in Drive', emoji: true },
+      url: webViewLink,
+      action_id: 'open_in_drive',
+    });
+  }
+  return buttons;
+}
+
+// Block Kit for a confirmation: a section + the Drive buttons.
+function openInDriveBlocks(text, webViewLink, folderUrl) {
   return [
     { type: 'section', text: { type: 'mrkdwn', text } },
-    {
-      type: 'actions',
-      elements: [
-        {
-          type: 'button',
-          text: { type: 'plain_text', text: 'Open in Drive', emoji: true },
-          url: webViewLink,
-          action_id: 'open_in_drive',
-        },
-      ],
-    },
+    { type: 'actions', elements: driveButtons(webViewLink, folderUrl) },
   ];
 }
 
-// Copy-complete card with Open in Drive + Regenerate.
-function copyCompleteBlocks(text, webViewLink, docId) {
+// Copy-complete card: the Drive buttons + Regenerate.
+function copyCompleteBlocks(text, webViewLink, docId, folderUrl) {
   return [
     { type: 'section', text: { type: 'mrkdwn', text } },
     {
       type: 'actions',
       elements: [
-        { type: 'button', text: { type: 'plain_text', text: 'Open in Drive', emoji: true }, url: webViewLink, action_id: 'open_in_drive' },
+        ...driveButtons(webViewLink, folderUrl),
         { type: 'button', text: { type: 'plain_text', text: 'Regenerate', emoji: true }, action_id: 'regenerate_draft', value: docId },
       ],
     },
@@ -387,13 +421,13 @@ async function openModal(triggerId, view, token) {
 // a long generation finishes after the interaction's response_url has lapsed.
 // Requires SLACK_BOT_TOKEN (chat:write); the bot must be able to post to the
 // channel (member, or chat:write.public). Returns Slack's JSON response.
-async function postChatMessage({ channel, text, webViewLink, token }) {
+async function postChatMessage({ channel, text, webViewLink, folderUrl, token }) {
   const botToken = token || config.SLACK_BOT_TOKEN;
   if (!botToken) throw new Error('SLACK_BOT_TOKEN is not set.');
   if (!channel) throw new Error('No channel id for chat.postMessage.');
 
   const message = { channel, text };
-  if (webViewLink) message.blocks = openInDriveBlocks(text, webViewLink);
+  if (webViewLink) message.blocks = openInDriveBlocks(text, webViewLink, folderUrl);
 
   const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
@@ -425,7 +459,7 @@ async function updateMessage(text, responseUrl, opts = {}) {
   if (opts.blocks) {
     body.blocks = opts.blocks;
   } else if (opts.webViewLink) {
-    body.blocks = openInDriveBlocks(text, opts.webViewLink);
+    body.blocks = openInDriveBlocks(text, opts.webViewLink, opts.folderUrl);
   }
 
   const tag = opts.label ? `updateMessage[${opts.label}]` : 'updateMessage';
@@ -646,6 +680,7 @@ module.exports = {
   postToSlack,
   buildResultBlocks,
   openInDriveBlocks,
+  driveButtons,
   postResult,
   updateMessage,
   postChatMessage,

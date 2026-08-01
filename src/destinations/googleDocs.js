@@ -1508,9 +1508,89 @@ async function deleteReviewComment(docId, commentId, clients) {
 }
 
 // The destination adapter contract.
+// BUILD ONE TEMPLATE DOCUMENT for a project (custom document types, STEP THREE).
+//
+// A tenant's own document — a landscape multi-table copy matrix, typically —
+// copied into the campaign folder and filled with this project's copy.
+//
+// COPY, DON'T REBUILD. drive.files.copy duplicates the imported Google Doc
+// wholesale: landscape, tables, merged cells, column widths, shading and fonts
+// all come along because they are never re-derived. The fidelity probe
+// (scripts/probeDocxImport.js) confirmed those survive the .docx import in the
+// first place; copy preserves whatever survived. Rebuilding the matrix from a
+// schema — the docBuilder route the copy doc takes — would mean re-implementing
+// every one of those, and getting column widths wrong on someone's client
+// deliverable is not a recoverable kind of wrong.
+//
+// FILL WITH replaceAllText. One batchUpdate carrying one request per marker. No
+// index arithmetic (the two-phase problem docHeaderTable.js exists to solve is
+// avoided entirely), and the replacement INHERITS the formatting of the run it
+// replaces — so copy dropped into a bold header cell comes out bold, which is
+// what the tenant designed and what any insert-at-index approach would lose.
+//
+// AN UNMAPPED MARKER IS LEFT ALONE, on purpose. It stays in the output as a
+// literal {{Marker}}, visible to whoever opens the document. Blanking it would
+// be worse in the exact way that matters: an empty cell in a matrix reads as
+// "nobody wrote this yet" and a visible {{Form ID}} reads as "this one is not
+// mine to write", and only the second is true. Nothing here ever writes an
+// empty string over a marker.
+//
+//   values: Map|Object of markerKey -> copy. A key with no value is skipped.
+//   markers: [{ name, key }] — every marker in the template, so the result can
+//            report what was left unfilled without a second read.
+//
+// Returns { id, url, title, filled: [...], unfilled: [...] }.
+async function createFromTemplate({ sourceDocId, name, folderId, values, markers = [], clients }) {
+  const { drive, docs } = clients || (await getClients());
+  if (!sourceDocId) throw new Error('createFromTemplate: no source document.');
+
+  const copied = await drive.files.copy({
+    fileId: sourceDocId,
+    requestBody: { name: name || 'Template document', ...(folderId ? { parents: [folderId] } : {}) },
+    fields: 'id, name, webViewLink',
+    supportsAllDrives: true,
+  });
+  const id = copied.data.id;
+  const url = copied.data.webViewLink || `https://docs.google.com/document/d/${id}/edit`;
+
+  const get = (k) => (values instanceof Map ? values.get(k) : values ? values[k] : undefined);
+
+  const requests = [];
+  const filled = [];
+  const unfilled = [];
+  for (const m of markers) {
+    const copy = get(m.key);
+    // Only a non-empty string fills. undefined (unmapped) and '' (mapped to a
+    // field that has no copy yet) both leave the marker standing.
+    if (typeof copy === 'string' && copy.trim()) {
+      requests.push({
+        replaceAllText: {
+          containsText: { text: `{{${m.name}}}`, matchCase: false },
+          replaceText: copy,
+        },
+      });
+      filled.push(m.name);
+    } else {
+      unfilled.push(m.name);
+    }
+  }
+
+  if (requests.length) {
+    await docs.documents.batchUpdate({ documentId: id, requestBody: { requests } });
+  }
+
+  console.log(
+    `[googleDocs] template document "${copied.data.name}" -> ${id} — ` +
+      `${filled.length} marker(s) filled, ${unfilled.length} left visible`
+  );
+
+  return { id, url, title: copied.data.name, filled, unfilled };
+}
+
 module.exports = {
   name: 'google-docs',
   createDocument,
+  createFromTemplate,
   generateDraft,
   getDocContent,
   listReviewComments,

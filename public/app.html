@@ -949,6 +949,11 @@
              Regenerate / Regenerate Selected (N). Routes by draft state × selection. -->
         <button class="cta-primary hidden" id="project-primary-btn">Generate First Draft</button>
         <button class="cta-secondary" id="project-open-btn">Open in Drive</button>
+        <!-- The second document, when this brief produced one (custom document
+             types). Hidden for every copy-doc-only project, which is nearly all
+             of them. The copy doc stays primary — "Open in Drive" above is
+             still the default and still opens it. -->
+        <button class="cta-secondary hidden" id="project-template-btn">Open template document</button>
       </div>
       <div id="project-error" class="error hidden"></div>
     </section>
@@ -2924,6 +2929,11 @@
       badge.textContent = statusLabel(pkey);
       badge.className = 'project-card-status ' + (PILL_CLASS[pkey] || 'status-notstarted');
 
+      // The template document, if this brief produced one. The column rides in
+      // on the project row (db/projects selects *), so nothing else is fetched.
+      var tplBtn = document.getElementById('project-template-btn');
+      tplBtn.classList.toggle('hidden', !p.template_doc_url);
+
       // Hide every draft affordance until the content tells us whether the doc
       // already has copy (decided after the fetch below).
       hide(projectPrimaryBtn);
@@ -3171,6 +3181,10 @@
     document.getElementById('nav-settings').addEventListener('click', function () { window.location.href = '/settings'; });
     document.getElementById('project-back').addEventListener('click', loadHistory);
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
+    document.getElementById('project-template-btn').addEventListener('click', function () {
+      var p = projectState.project;
+      if (p && p.template_doc_url) openDocUrl(p.template_doc_url);
+    });
     projectReviewBtn.addEventListener('click', reviewProjectCopy);
     projectPrimaryBtn.addEventListener('click', onProjectPrimary);
     document.getElementById('project-regen-modal-submit').addEventListener('click', regenerateProjectDraft);

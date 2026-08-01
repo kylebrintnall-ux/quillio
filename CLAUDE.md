@@ -129,6 +129,21 @@ scripts/             One-off migrations, seeds, and query/debug utilities.
 test/smoke.test.js   The test suite (see "Running & checking").
 ```
 
+**One brief can produce more than one document.** An asset attached to a tenant
+template (`asset_types.doc_template_id`) is partitioned out of the copy doc at
+build time by `pipeline.partitionSpecsByTemplate`, and its group is built by
+copying the tenant's imported template into the campaign folder and filling its
+`{{markers}}` with `replaceAllText`. Template documents are built BEFORE the copy
+doc, deliberately — the copy doc will carry links to them. `projects.copy_doc_id`
+still means the copy doc and still keys idempotency; the template document is
+recorded in `projects.template_doc_id` / `template_doc_url`.
+
+Note what this does NOT yet do: at brief time there is no drafted copy (the copy
+doc is built as structure; words arrive later from `generateDraft`), so a
+template document is currently created with every marker still visible. Filling
+it needs a drafting path that reaches template-attached assets, which does not
+exist yet.
+
 Data flow for `/quillio [brief]`:
 
 1. `server.js` verifies the Slack signature, then acks Slack instantly.
@@ -177,6 +192,7 @@ returns data instead of posting messages.
   | `name` | `destinations/index.js` registry key |
   | `createDocument({ brief, campaignTitle, summary, writerPrompt, assetSpecs, folderId, referenceLinks, referenceInsights, headerSchema, namingPattern, clients })` → `{ id, url, title }` | `pipeline.generateDoc` |
   | `generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append)` → `{ title, fieldCount, url }` | `pipeline.generateDraft` |
+  | `createFromTemplate({ sourceDocId, name, folderId, values, markers, clients })` → `{ id, url, title, filled, unfilled }` | `pipeline.generateDoc` (custom document types) |
   | `getDocContent(id, clients)` | `pipeline.getProjectContent`, `copyReview` |
   | `listReviewComments(docId, clients)` | `copyReview` |
   | `addReviewComment(docId, { quote, content }, clients)` | `copyReview` |
@@ -188,7 +204,8 @@ returns data instead of posting messages.
   destination interface. The header comment in `destinations/index.js` still
   describes only the original two methods; the table above is the real surface.
   A new adapter must implement all seven consumed members before the review
-  path will work against it.
+  path will work against it, and `createFromTemplate` on top of those before a
+  tenant's own template document can be built.
 - **Google Docs styling** is done in `destinations/docBuilder.js`: build the full
   text once, insert at index 1, then apply paragraph/text styles over recorded
   ranges. There is no native horizontal-rule insert in the Docs API — an HR is an

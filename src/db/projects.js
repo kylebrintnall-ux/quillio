@@ -36,6 +36,11 @@ async function saveProject(tenantId, projectData = {}) {
     // path and any flow with no identified user record NULL, exactly as every
     // row created before this column existed does.
     created_by = null,
+    // The template document this brief produced, if any (custom document types,
+    // step three). Null for every copy-doc-only brief, which is nearly all of
+    // them. copy_doc_id still means the promo doc and still keys idempotency.
+    template_doc_id = null,
+    template_doc_url = null,
   } = projectData;
 
   console.log(
@@ -59,29 +64,49 @@ async function saveProject(tenantId, projectData = {}) {
     }
 
     const cols = [tenantId, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts];
+
+    // The insert degrades by dropping OPTIONAL COLUMN GROUPS. Every column here
+    // arrived in a migration, and Railway auto-deploys `main` on merge, so this
+    // runs against a database missing some of them for as long as it takes
+    // someone to run one. Losing the whole project row from history would be far
+    // worse than a NULL in a column that did not exist a minute ago.
+    //
+    // EVERY COMBINATION, not a priority order. A first cut tried newest-first
+    // (created_by + template, then created_by, then neither) on the assumption
+    // that the older migration is always present. A database with template_doc_*
+    // but no created_by then lost BOTH — the second attempt still named
+    // created_by, so it failed too, and the third dropped everything. Enumerating
+    // the combinations costs three extra array entries and removes the
+    // assumption, which is worth more than the assumption was.
+    const CREATED_BY = { extra: ['created_by'], values: [created_by] };
+    const TEMPLATE = { extra: ['template_doc_id', 'template_doc_url'], values: [template_doc_id, template_doc_url] };
+    const combine = (...gs) => ({ extra: gs.flatMap((g) => g.extra), values: gs.flatMap((g) => g.values) });
+    const attempts = [
+      combine(CREATED_BY, TEMPLATE),
+      combine(CREATED_BY),
+      combine(TEMPLATE),
+      combine(),
+    ];
     let res;
-    try {
-      res = await pool.query(
-        `INSERT INTO projects
-           (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [...cols, created_by]
-      );
-    } catch (err) {
-      // projects.created_by may not exist yet (code shipped ahead of the
-      // migration). Retry without it rather than losing the row: the authorship
-      // column is an addition, and dropping the whole project from history would
-      // be a far worse outcome than a NULL author for a few minutes.
-      if (!isUndefinedColumn(err)) throw err;
-      warnMissingSchema('projects.created_by');
-      res = await pool.query(
-        `INSERT INTO projects
-           (tenant_id, name, drive_folder_id, drive_folder_url, copy_doc_id, copy_doc_url, status, slack_channel_id, slack_thread_ts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        cols
-      );
+    for (let i = 0; i < attempts.length; i++) {
+      const { extra, values } = attempts[i];
+      const names = ['tenant_id', 'name', 'drive_folder_id', 'drive_folder_url', 'copy_doc_id', 'copy_doc_url', 'status', 'slack_channel_id', 'slack_thread_ts', ...extra];
+      const params = [...cols, ...values];
+      try {
+        res = await pool.query(
+          `INSERT INTO projects
+             (${names.join(', ')})
+           VALUES (${params.map((_, n) => '$' + (n + 1)).join(', ')})
+           RETURNING *`,
+          params
+        );
+        break;
+      } catch (err) {
+        if (!isUndefinedColumn(err) || i === attempts.length - 1) throw err;
+        // Named by what the NEXT attempt gives up, so the log says which
+        // migration is outstanding rather than restating the driver's error.
+        warnMissingSchema(`projects (${names.join(', ')})`);
+      }
     }
     const saved = res.rows[0] || null;
     console.log(`[db/projects] saveProject OK → project id=${saved ? saved.id : 'null'} for tenant=${tenantId}`);

@@ -33,6 +33,8 @@ const {
   createAssetType,
   updateAssetType,
   isSeededAssetName,
+  setAssetTemplate,
+  setAssetFieldMarkers,
 } = require('../db/assets');
 const {
   normalizeNewAsset,
@@ -43,9 +45,15 @@ const {
 // Same fold the unique index uses, so "renamed" here means what Postgres means.
 const { normalize } = require('../utils/normalize');
 const { generateVoiceGuide } = require('../services/gemini');
-const { listDocTemplates, saveDocTemplate } = require('../db/docTemplates');
+const {
+  listDocTemplates,
+  saveDocTemplate,
+  getDocTemplate,
+  renameDocTemplate,
+} = require('../db/docTemplates');
 const { importDocxTemplate, DOCX_MIME } = require('../destinations/docTemplateImport');
 const { describeLocation } = require('../destinations/docPlaceholders');
+const { matchMarkersToFields } = require('../destinations/markerMatch');
 const { getClientsForTenant } = require('../google');
 
 const router = express.Router();
@@ -156,6 +164,37 @@ router.post('/api/settings/voice/generate', voiceLimiter, requireAuth, async (re
 // exists) and returns names and active flags only. This one is behind
 // requireAuth and returns ids, limits and spec provenance — a strictly larger
 // payload that must not become reachable without a session by sharing a route.
+// THE MAPPING STATE OF ONE ASSET, in the shape the panel prints.
+//
+// Returns null for an unattached asset — "renders into the copy doc" is not a
+// mapping with zero of everything, it is the absence of one, and collapsing the
+// two would put an empty progress line under every asset a tenant has.
+//
+// `complete` is about FIELDS, not markers. A matrix carries cells no writer
+// drafts ({{Form ID}}, {{Owner}}, {{Last Updated}}), so requiring every marker
+// to be spoken for would mark every real template permanently incomplete and
+// train everyone to ignore the indicator. A field with nowhere to go is the
+// thing that actually loses copy.
+function mappingSummary(asset, template) {
+  if (!asset || asset.doc_template_id == null) return null;
+  const fields = asset.fields || [];
+  const mappedFields = fields.filter((f) => f.template_marker_key);
+  const claimed = new Set(mappedFields.map((f) => f.template_marker_key));
+  const markers = (template && template.placeholders) || [];
+  return {
+    templateId: String(asset.doc_template_id),
+    // A template deleted out from under an asset leaves the id dangling until
+    // the FK sets it null; say so rather than printing "undefined".
+    templateName: template ? template.name : null,
+    templateMissing: !template,
+    markers: markers.length,
+    mappedFields: mappedFields.map((f) => ({ field: f.field_name, marker: f.template_marker_name || f.template_marker_key })),
+    unmappedFields: fields.filter((f) => !f.template_marker_key).map((f) => f.field_name),
+    unmappedMarkers: markers.filter((m) => !claimed.has(m.key)).map((m) => m.name),
+    complete: fields.length > 0 && mappedFields.length === fields.length,
+  };
+}
+
 router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req, res) => {
   try {
     const tenantId = (req.user && req.user.tenant_id) || null;
@@ -164,19 +203,34 @@ router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req
       // No DB / no tenant. Distinct from an empty library, and the UI says so.
       return res.status(200).json({ success: true, available: false, assets: [] });
     }
+    // Templates come along so an attached asset can be described in full without
+    // a second round trip: which template, and which of its markers are spoken
+    // for. null when the table is not there yet (pre-migration), which the
+    // mapping summary treats as "no templates", not as an error.
+    const templates = await listDocTemplates(tenantId);
+    const byId = new Map((templates || []).map((t) => [String(t.id), t]));
+
     // `editable` is derived, not stored — see db/assets.isSeededAssetName. It is
     // sent so the UI can show the right affordance, and it is ALSO enforced
     // server-side in updateAssetType against the stored row, because a flag in a
     // response the client can ignore is a hint, not a rule.
+    const decorated = assets.map((a) => ({
+      ...a,
+      editable: !isSeededAssetName(a.name),
+      mapping: mappingSummary(a, byId.get(String(a.doc_template_id))),
+    }));
     return res.status(200).json({
       success: true,
       available: true,
-      assets: assets.map((a) => ({ ...a, editable: !isSeededAssetName(a.name) })),
+      assets: decorated,
+      templates: (templates || []).map((t) => ({ id: t.id, name: t.name, markers: (t.placeholders || []).length })),
       counts: {
         assets: assets.length,
         active: assets.filter((a) => a.is_active).length,
         fields: assets.reduce((n, a) => n + a.fields.length, 0),
         editable: assets.filter((a) => !isSeededAssetName(a.name)).length,
+        attached: decorated.filter((a) => a.mapping).length,
+        incomplete: decorated.filter((a) => a.mapping && !a.mapping.complete).length,
       },
     });
   } catch (err) {
@@ -437,6 +491,16 @@ router.get('/api/settings/templates', settingsReadLimiter, requireAuth, async (r
       // uploaded", and the UI says so rather than showing an empty list.
       return res.status(200).json({ success: true, available: false, templates: [] });
     }
+    // Which assets render into each template. Read from the library rather than
+    // stored, so it cannot drift from the attachment itself.
+    const lib = await getTenantLibrary(tenantId);
+    const usedBy = new Map();
+    for (const a of lib || []) {
+      if (a.doc_template_id == null) continue;
+      const k = String(a.doc_template_id);
+      if (!usedBy.has(k)) usedBy.set(k, []);
+      usedBy.get(k).push({ id: a.id, name: a.name });
+    }
     return res.status(200).json({
       success: true,
       available: true,
@@ -444,6 +508,7 @@ router.get('/api/settings/templates', settingsReadLimiter, requireAuth, async (r
       // cannot describe the same location differently.
       templates: templates.map((t) => ({
         ...t,
+        assets: usedBy.get(String(t.id)) || [],
         placeholders: (t.placeholders || []).map((p) => ({
           ...p,
           where: (p.locations || []).map(describeLocation),
@@ -532,6 +597,149 @@ router.post('/api/settings/templates', uploadLimiter, requireAuth, (req, res) =>
       fs.unlink(req.file.path, () => {});
     }
   });
+});
+
+// POST /api/settings/templates/:id — rename ONE template (custom document
+// types, STEP TWO). The display name only.
+//
+// The upload names a template after the file it came from, which is how a
+// settings panel ends up reading "copy-matrix-template-v4-FINAL". Nothing else
+// about a template is writable: the imported Doc, the discovered markers and
+// every mapping key off the id, so a rename moves no ground.
+router.post('/api/settings/templates/:id', settingsWriteLimiter, requireAuth, async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!/^\d+$/.test(id)) return res.status(400).json({ success: false, error: 'A valid template id is required.' });
+  const name = String((req.body && req.body.name) || '').trim();
+  if (!name) return res.status(400).json({ success: false, error: 'Give the template a name.' });
+  if (name.length > 120) return res.status(400).json({ success: false, error: 'Keep the name under 120 characters.' });
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const ok = await renameDocTemplate(tenantId, id, name);
+    // False covers "no such template" and "not yours" alike — answering
+    // differently would confirm an id in someone else's account.
+    if (!ok) return res.status(404).json({ success: false, error: 'Template not found.' });
+    return res.status(200).json({ success: true, id, name });
+  } catch (err) {
+    console.error('[settings] POST /templates/:id failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/settings/library/asset/:id/template { templateId } — ATTACH this
+// asset to a template document, or DETACH it with templateId null.
+//
+// null means "this asset renders into the copy doc", which is every asset today
+// and stays the default. Attaching is inert: nothing in the pipeline reads the
+// column, and an attached asset builds exactly as it did before. Step three is
+// what makes it do anything.
+//
+// On a successful attach the response carries the AUTO-MATCH proposal — it is
+// not saved. The mapping is written only by the markers route below, after a
+// human has looked at it. A matcher that saved its own guesses would be indistinguishable
+// from a human's decisions the moment anyone reloaded the page.
+router.post('/api/settings/library/asset/:id/template', settingsWriteLimiter, requireAuth, async (req, res) => {
+  const assetId = String(req.params.id || '').trim();
+  if (!/^\d+$/.test(assetId)) return res.status(400).json({ success: false, error: 'A valid asset id is required.' });
+  const raw = req.body ? req.body.templateId : null;
+  const templateId = raw == null || raw === '' ? null : String(raw).trim();
+  if (templateId !== null && !/^\d+$/.test(templateId)) {
+    return res.status(400).json({ success: false, error: 'A valid template id is required.' });
+  }
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const result = await setAssetTemplate(tenantId, assetId, templateId);
+    if (!result.ok) {
+      if (result.reason === 'seeded') {
+        return res.status(403).json({
+          success: false,
+          error: `"${result.name}" is one of Quillio's built-in asset types. Its fields track platform limits that only the copy doc can show, so it always renders there — copy it into an asset type of your own to send it to a template.`,
+        });
+      }
+      if (result.reason === 'no_template') {
+        return res.status(404).json({ success: false, error: 'Template not found.' });
+      }
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+
+    if (templateId === null) {
+      return res.status(200).json({ success: true, id: assetId, templateId: null, detached: true });
+    }
+
+    const [tpl, lib] = await Promise.all([getDocTemplate(tenantId, templateId), getTenantLibrary(tenantId)]);
+    const asset = (lib || []).find((a) => a.id === assetId);
+    const suggestion = matchMarkersToFields((tpl && tpl.placeholders) || [], (asset && asset.fields) || []);
+    return res.status(200).json({
+      success: true,
+      id: assetId,
+      templateId,
+      templateName: tpl ? tpl.name : null,
+      // A PROPOSAL. Nothing is stored until the markers route is called.
+      suggestion,
+    });
+  } catch (err) {
+    console.error('[settings] POST /library/asset/:id/template failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/settings/library/asset/:id/markers { pairs: [{ fieldId, markerKey,
+// markerName }] } — save the field→marker mapping for an ATTACHED asset.
+//
+// A pair with an empty markerKey unmaps that field. Fields absent from the
+// submission are untouched, so two people mapping different halves of a matrix
+// in two tabs do not erase each other.
+//
+// AN UNMAPPED FIELD AND AN UNMAPPED MARKER ARE BOTH VALID. A matrix carries
+// cells no writer drafts ({{Form ID}}, {{Owner}}, {{Last Updated}}), and an
+// asset can carry a field the template has no cell for. Neither is an error to
+// refuse the save over — both are shown.
+router.post('/api/settings/library/asset/:id/markers', settingsWriteLimiter, requireAuth, async (req, res) => {
+  const assetId = String(req.params.id || '').trim();
+  if (!/^\d+$/.test(assetId)) return res.status(400).json({ success: false, error: 'A valid asset id is required.' });
+  const pairs = (req.body && req.body.pairs) || null;
+  if (!Array.isArray(pairs)) return res.status(400).json({ success: false, error: 'A mapping is required.' });
+  if (pairs.length > 500) return res.status(400).json({ success: false, error: 'That is more fields than an asset can have.' });
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    // Built key by key, never spread: nothing off the request body reaches a
+    // column that is not named here. Same rule as the asset writes.
+    const clean = pairs.map((p) => ({
+      fieldId: p && p.fieldId != null ? String(p.fieldId) : '',
+      markerKey: p && p.markerKey ? String(p.markerKey) : '',
+      markerName: p && p.markerName ? String(p.markerName).slice(0, 200) : '',
+    }));
+    const result = await setAssetFieldMarkers(tenantId, assetId, clean);
+    if (!result.ok) {
+      if (result.reason === 'seeded') {
+        return res.status(403).json({
+          success: false,
+          error: `"${result.name}" is one of Quillio's built-in asset types and cannot be mapped to a template.`,
+        });
+      }
+      if (result.reason === 'not_attached') {
+        return res.status(409).json({ success: false, error: 'Attach a template to this asset before mapping its fields.' });
+      }
+      if (result.reason === 'unknown_marker') {
+        return res.status(400).json({
+          success: false,
+          error: `There is no {{${result.marker}}} in the attached template. Re-upload the template if you have changed it.`,
+        });
+      }
+      if (result.reason === 'duplicate_marker') {
+        return res.status(409).json({
+          success: false,
+          error: result.marker
+            ? `Two fields are mapped to {{${result.marker}}}. One marker holds one field's copy.`
+            : 'Two fields are mapped to the same marker. One marker holds one field\'s copy.',
+        });
+      }
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+    return res.status(200).json({ success: true, id: assetId, mapped: result.mapped, cleared: result.cleared });
+  } catch (err) {
+    console.error('[settings] POST /library/asset/:id/markers failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
 });
 
 // GET /api/settings/workspace — current connections for the Workspace tab.

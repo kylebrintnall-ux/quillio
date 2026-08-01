@@ -504,6 +504,45 @@
     .tpl-dropsub { display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5;
       color: rgba(26,26,46,0.55); }
     #tpl-upload-btn { margin-top: 12px; }
+    /* Naming, renaming, and the field->marker mapper (step two). */
+    .tpl-namerow { margin-top: 12px; }
+    .tpl-namerow label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .tpl-nameinput { width: 100%; max-width: 420px; padding: 8px 10px; font: inherit; font-size: 14px;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .tpl-namehint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .tpl-rename { background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px;
+      cursor: pointer; text-decoration: underline; padding: 0 0 0 8px; }
+    .tpl-rename:hover { color: var(--fg); }
+    .tpl-usedby { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    /* The asset card's template line. */
+    .lib-tpl { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px; }
+    .lib-tpl-state { color: var(--muted); }
+    .lib-tpl-name { color: var(--fg); font-weight: 500; }
+    .lib-tplbtn { background: none; border: 1px solid var(--line); border-radius: 6px; font: inherit;
+      font-size: 12px; padding: 3px 9px; cursor: pointer; color: var(--fg); margin-left: 8px; }
+    .lib-tplbtn:hover { border-color: var(--fg); }
+    .lib-mapbar { display: flex; gap: 3px; margin-top: 7px; }
+    .lib-mapseg { height: 4px; border-radius: 2px; flex: 1 1 auto; background: var(--line); }
+    .lib-mapseg.on { background: #3f8f4f; }
+    .lib-maplines { margin-top: 6px; font-size: 12px; color: var(--muted); }
+    .lib-maplines b { color: var(--fg); font-weight: 500; }
+    .lib-mapwarn { color: #a8632a; }
+    /* The mapper itself. */
+    .map-panel { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+    .map-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0;
+      border-bottom: 1px solid var(--line); }
+    .map-row:last-of-type { border-bottom: 0; }
+    .map-field { flex: 1 1 160px; min-width: 0; }
+    .map-sel { flex: 1 1 220px; min-width: 0; padding: 6px 8px; font: inherit; font-size: 13px;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .map-auto { font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+    .map-left { margin-top: 12px; font-size: 12px; color: var(--muted); }
+    .map-left ul { margin: 4px 0 0; padding-left: 18px; }
+    .map-actions { margin-top: 14px; display: flex; gap: 10px; align-items: center; }
+    @media (max-width: 480px) {
+      .map-row { gap: 4px; }
+      .map-field, .map-sel { flex: 1 1 100%; }
+    }
     .tpl-card { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 16px; margin: 14px 0; }
     .tpl-head { display: flex; align-items: flex-start; gap: 10px; }
@@ -748,6 +787,11 @@
               <input type="file" id="tpl-file" accept=".docx" class="hidden">
             </label>
             <div id="tpl-chosen" class="note hidden"></div>
+            <div class="tpl-namerow hidden" id="tpl-namerow">
+              <label for="tpl-name">What should Quillio call this template?</label>
+              <input type="text" id="tpl-name" class="tpl-nameinput" maxlength="120" placeholder="Form &amp; Confirmation Matrix">
+              <div class="tpl-namehint">Prefilled from the filename. You can change it now or any time after.</div>
+            </div>
             <button class="btn primary hidden" id="tpl-upload-btn">Upload and find markers</button>
           </div>
           <div id="tpl-loading" class="note hidden"><span class="dot"></span><span>Importing and reading it…</span></div>
@@ -945,6 +989,9 @@
     // Counts shown in the summary line. Recomputed from libAssets, which is the
     // client's copy of what the server last confirmed.
     var libAssets = [];
+    // Every template this tenant has, for the mapper's picker. Loaded with the
+    // library in one response.
+    var libTemplates = [];
     function libRenderSummary() {
       var on = libAssets.filter(function (a) { return a.is_active; }).length;
       var fields = libAssets.reduce(function (n, a) { return n + (a.fields || []).length; }, 0);
@@ -1081,8 +1128,253 @@
         ul.appendChild(li);
       });
       body.appendChild(ul);
+
+      // --- Where this asset renders (custom document types, step two) -------
+      // Only for assets the tenant authored. A seeded asset's fields carry
+      // platform limits and citations that render as the tier line in the copy
+      // doc, and a matrix cell has nowhere to put those — the server refuses the
+      // attach regardless, so hiding this is a convenience, not the rule.
+      if (a.editable) body.appendChild(libTemplateSection(a, card));
+
       return card;
     }
+
+    // The template line on one asset card: where it renders, how complete the
+    // mapping is, and the way in to change either.
+    function libTemplateSection(a, card) {
+      var wrap = el('div', 'lib-tpl');
+      var line = el('div');
+      var m = a.mapping;
+
+      if (!m) {
+        line.appendChild(el('span', 'lib-tpl-state', 'Renders into the campaign copy doc'));
+      } else if (m.templateMissing) {
+        // The template was deleted out from under it. Say so rather than
+        // printing a blank where a name should be.
+        line.appendChild(el('span', 'lib-mapwarn', 'Its template is gone — this renders into the copy doc'));
+      } else {
+        line.appendChild(el('span', 'lib-tpl-state', 'Renders into '));
+        line.appendChild(el('span', 'lib-tpl-name', m.templateName));
+      }
+
+      var btn = el('button', 'lib-tplbtn', m ? 'Change' : 'Send to a template…');
+      btn.type = 'button';
+      btn.setAttribute('aria-label', (m ? 'Change the template for ' : 'Send to a template: ') + a.name);
+      line.appendChild(btn);
+      wrap.appendChild(line);
+
+      if (m && !m.templateMissing) {
+        // AT A GLANCE: one segment per field, filled when that field has a
+        // marker. A count alone ("12 of 19") is read as a score; the bar is read
+        // as an amount of work left, which is what it is.
+        var total = m.mappedFields.length + m.unmappedFields.length;
+        if (total) {
+          var bar = el('div', 'lib-mapbar');
+          for (var i = 0; i < total; i++) {
+            bar.appendChild(el('span', 'lib-mapseg' + (i < m.mappedFields.length ? ' on' : '')));
+          }
+          wrap.appendChild(bar);
+        }
+        var lines = el('div', 'lib-maplines');
+        var summary = el('div');
+        summary.appendChild(document.createTextNode(m.mappedFields.length + ' of ' + total + ' fields mapped'));
+        lines.appendChild(summary);
+        if (m.unmappedFields.length) {
+          // A field with nowhere to go LOSES COPY at build time, so it is the
+          // warning. An unmapped marker does not.
+          var uf = el('div', 'lib-mapwarn');
+          uf.textContent = 'No marker for: ' + m.unmappedFields.join(', ');
+          lines.appendChild(uf);
+        }
+        if (m.unmappedMarkers.length) {
+          // Stated plainly and WITHOUT alarm: a matrix carries cells no writer
+          // drafts ({{Form ID}}, {{Owner}}), and marking those as a problem
+          // would make the indicator meaningless on every real template.
+          lines.appendChild(el('div', null,
+            m.unmappedMarkers.length + ' marker' + (m.unmappedMarkers.length === 1 ? '' : 's') +
+            ' left unmapped: ' + m.unmappedMarkers.join(', ')));
+        }
+        wrap.appendChild(lines);
+      }
+
+      var host = el('div');
+      wrap.appendChild(host);
+      btn.addEventListener('click', function () {
+        if (host.firstChild) { host.textContent = ''; btn.textContent = m ? 'Change' : 'Send to a template…'; return; }
+        btn.textContent = 'Cancel';
+        libOpenMapper(a, host, function () { btn.textContent = m ? 'Change' : 'Send to a template…'; });
+      });
+      return wrap;
+    }
+
+    // Attach a template, then map this asset's fields to its markers.
+    //
+    // The auto-match is a PROPOSAL and is shown as one — every row it filled is
+    // labelled, so a human can see what was guessed and what they chose. Nothing
+    // is stored until Save.
+    async function libOpenMapper(a, host, onClose) {
+      var panel = el('div', 'map-panel');
+      host.appendChild(panel);
+      var err = el('div', 'error hidden');
+      panel.appendChild(err);
+
+      var pick = el('div', 'map-row');
+      pick.appendChild(el('div', 'map-field', 'Template'));
+      var sel = document.createElement('select');
+      sel.className = 'map-sel';
+      var none = document.createElement('option');
+      none.value = '';
+      none.textContent = 'The campaign copy doc (default)';
+      sel.appendChild(none);
+      (libTemplates || []).forEach(function (t) {
+        var o = document.createElement('option');
+        o.value = t.id;
+        o.textContent = t.name + ' — ' + t.markers + ' marker' + (t.markers === 1 ? '' : 's');
+        if (a.mapping && a.mapping.templateId === t.id) o.selected = true;
+        sel.appendChild(o);
+      });
+      pick.appendChild(sel);
+      panel.appendChild(pick);
+
+      if (!(libTemplates || []).length) {
+        panel.appendChild(el('div', 'map-left',
+          'No templates uploaded yet. Upload one on the Templates tab, then come back.'));
+        return;
+      }
+
+      var rowsHost = el('div');
+      panel.appendChild(rowsHost);
+      var actions = el('div', 'map-actions');
+      var save = el('button', 'btn primary', 'Save mapping');
+      save.type = 'button';
+      var cancel = el('button', 'lib-tplbtn', 'Cancel');
+      cancel.type = 'button';
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+      panel.appendChild(actions);
+
+      var markers = [];
+      var chosen = {};   // fieldId -> markerKey
+      var auto = {};     // fieldId -> true when the matcher filled it
+
+      function renderRows() {
+        rowsHost.textContent = '';
+        if (!markers.length) { hide(actions); return; }
+        show(actions);
+        (a.fields || []).forEach(function (f) {
+          var row = el('div', 'map-row');
+          row.appendChild(el('div', 'map-field', f.field_name));
+          var s = document.createElement('select');
+          s.className = 'map-sel';
+          s.setAttribute('aria-label', 'Marker for ' + f.field_name);
+          var blank = document.createElement('option');
+          blank.value = '';
+          blank.textContent = '— not in this template —';
+          s.appendChild(blank);
+          markers.forEach(function (mk) {
+            var o = document.createElement('option');
+            o.value = mk.key;
+            o.textContent = '{{' + mk.name + '}}';
+            if (chosen[f.id] === mk.key) o.selected = true;
+            s.appendChild(o);
+          });
+          s.addEventListener('change', function () {
+            chosen[f.id] = s.value;
+            delete auto[f.id];
+            renderRows();
+          });
+          row.appendChild(s);
+          if (auto[f.id]) row.appendChild(el('span', 'map-auto', 'auto-matched'));
+          rowsHost.appendChild(row);
+        });
+
+        // What is left over, on both sides. Neither is an error.
+        var claimed = {};
+        Object.keys(chosen).forEach(function (k) { if (chosen[k]) claimed[chosen[k]] = true; });
+        var left = markers.filter(function (mk) { return !claimed[mk.key]; });
+        var leftBox = el('div', 'map-left');
+        leftBox.appendChild(el('div', null,
+          left.length + ' of ' + markers.length + ' markers not mapped to a field.'));
+        leftBox.appendChild(el('div', null,
+          'That is fine. A matrix carries cells nobody drafts — an id, an owner, a date. Leave them.'));
+        if (left.length) {
+          var ul2 = el('ul');
+          left.forEach(function (mk) { ul2.appendChild(el('li', null, '{{' + mk.name + '}}')); });
+          leftBox.appendChild(ul2);
+        }
+        rowsHost.appendChild(leftBox);
+      }
+
+      async function attach(templateId) {
+        clearError(err);
+        sel.disabled = true;
+        try {
+          var res = await fetch('/api/settings/library/asset/' + encodeURIComponent(a.id) + '/template', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ templateId: templateId || null })
+          });
+          var data = await res.json().catch(function () { return null; });
+          if (!res.ok || !data || !data.success) throw new Error((data && data.error) || 'Could not attach that template.');
+          if (!templateId) { libLoaded = false; await libReload(); return; }
+          markers = [];
+          chosen = {};
+          auto = {};
+          var sug = data.suggestion || {};
+          (sug.matched || []).forEach(function (mm) { chosen[mm.fieldId] = mm.markerKey; auto[mm.fieldId] = true; });
+          // Every marker the template has, matched or not — the human needs the
+          // whole list to fix what the matcher would not guess at.
+          (sug.matched || []).forEach(function (mm) { markers.push({ key: mm.markerKey, name: mm.markerName }); });
+          (sug.unmatchedMarkers || []).forEach(function (mk) { markers.push({ key: mk.key, name: mk.name }); });
+          markers.sort(function (x, y) { return x.name.localeCompare(y.name); });
+          renderRows();
+        } catch (e) {
+          showError(err, e.message || 'Network error.');
+        } finally {
+          sel.disabled = false;
+        }
+      }
+
+      sel.addEventListener('change', function () { attach(sel.value); });
+      cancel.addEventListener('click', function () { host.textContent = ''; if (onClose) onClose(); });
+      save.addEventListener('click', async function () {
+        clearError(err);
+        save.disabled = true;
+        try {
+          var pairs = (a.fields || []).map(function (f) {
+            var key = chosen[f.id] || '';
+            var mk = markers.filter(function (x) { return x.key === key; })[0];
+            return { fieldId: f.id, markerKey: key, markerName: mk ? mk.name : '' };
+          });
+          var res = await fetch('/api/settings/library/asset/' + encodeURIComponent(a.id) + '/markers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pairs: pairs })
+          });
+          var data = await res.json().catch(function () { return null; });
+          if (!res.ok || !data || !data.success) throw new Error((data && data.error) || 'Could not save that mapping.');
+          libLoaded = false;
+          await libReload();
+        } catch (e) {
+          save.disabled = false;
+          showError(err, e.message || 'Network error.');
+        }
+      });
+
+      // Already attached? Load its markers straight away so the panel opens on
+      // the mapping rather than on an empty template picker.
+      if (a.mapping && a.mapping.templateId) await attach(a.mapping.templateId);
+    }
+
+    // Re-read the library and repaint. Used after any write that changes the
+    // mapping, so the card and the panel can never disagree about it.
+    async function libReload() {
+      libLoaded = false;
+      var list = $('lib-list');
+      list.innerHTML = '';
+      await libEnsureLoaded();
+    }
+
     // --- Create an asset type ------------------------------------------------
     // The real case is a house landing page template with a dozen-plus fields,
     // and typing a dozen four-input rows on a phone is the thing that makes a
@@ -1529,6 +1821,9 @@
           return;
         }
         libAssets = data.assets || [];
+        // The template list rides along with the library so the mapper opens
+        // without a second round trip.
+        libTemplates = data.templates || [];
         libRenderSummary();
         show(summary);
         list.innerHTML = '';
@@ -1559,7 +1854,60 @@
         a.textContent = 'Open in Drive';
         head.appendChild(a);
       }
+      // RENAME, in place. Swaps the name for an input and back — no modal, since
+      // the thing being changed is one short string and the card around it is
+      // the context that makes the new name make sense.
+      var renameBtn = el('button', 'tpl-rename', 'Rename');
+      renameBtn.type = 'button';
+      renameBtn.setAttribute('aria-label', 'Rename ' + t.name);
+      renameBtn.addEventListener('click', function () {
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'tpl-nameinput';
+        input.maxLength = 120;
+        input.value = t.name;
+        var save = el('button', 'btn primary', 'Save');
+        save.type = 'button';
+        save.style.marginLeft = '8px';
+        var row = el('div', 'tpl-namerow');
+        row.appendChild(input);
+        row.appendChild(save);
+        head.replaceWith(row);
+        input.focus();
+        input.select();
+        save.addEventListener('click', async function () {
+          var name = input.value.trim();
+          if (!name) { input.focus(); return; }
+          save.disabled = true;
+          try {
+            var res = await fetch('/api/settings/templates/' + encodeURIComponent(t.id), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: name })
+            });
+            var data = await res.json().catch(function () { return null; });
+            if (!res.ok || !data || !data.success) throw new Error((data && data.error) || 'Could not rename that.');
+            // Reload rather than patching in place: the asset panel prints this
+            // name too, and a rename that shows in one place and not the other
+            // reads as a failure.
+            tplLoaded = false; libLoaded = false;
+            await tplEnsureLoaded();
+          } catch (e) {
+            save.disabled = false;
+            showError($('tpl-error'), e.message || 'Network error.');
+          }
+        });
+        input.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') save.click(); });
+      });
+      head.appendChild(renameBtn);
       card.appendChild(head);
+
+      // Which assets send their copy here. Read from the library, so it cannot
+      // disagree with the attachment itself.
+      if ((t.assets || []).length) {
+        card.appendChild(el('div', 'tpl-usedby',
+          'Used by ' + t.assets.map(function (a) { return a.name; }).join(', ')));
+      }
 
       var marks = t.placeholders || [];
       card.appendChild(el('div', 'tpl-meta',
@@ -1622,6 +1970,11 @@
       chosen.textContent = tplFile ? tplFile.name : '';
       chosen.classList.toggle('hidden', !tplFile);
       $('tpl-upload-btn').classList.toggle('hidden', !tplFile);
+      $('tpl-namerow').classList.toggle('hidden', !tplFile);
+      // Prefilled, not imposed: the filename is a decent first guess and a
+      // terrible permanent label. Offering it filled in costs one keystroke to
+      // accept and none to replace.
+      if (tplFile) $('tpl-name').value = tplFile.name.replace(/\.docx$/i, '');
     });
 
     $('tpl-upload-btn').addEventListener('click', async function () {
@@ -1633,6 +1986,8 @@
       try {
         var fd = new FormData();
         fd.append('file', tplFile);
+        var typed = $('tpl-name').value.trim();
+        if (typed) fd.append('name', typed);
         // multipart, so no Content-Type header — the browser sets the boundary.
         var res = await fetch('/api/settings/templates', { method: 'POST', body: fd });
         var data = await res.json().catch(function () { return null; });
@@ -1645,7 +2000,9 @@
         tplRenderWarnings($('tpl-list'), data.warnings);
         tplFile = null;
         $('tpl-file').value = '';
+        $('tpl-name').value = '';
         hide($('tpl-chosen'));
+        hide($('tpl-namerow'));
         hide(btn);
       } catch (e) {
         showError($('tpl-error'), e.message || 'Network error.');

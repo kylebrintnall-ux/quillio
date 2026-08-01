@@ -461,8 +461,11 @@ test('settings router mounts and exposes its routes', () => {
     '/api/settings/library/active', // asset on/off (POST) — is_active only
     '/api/settings/library/asset', // create a tenant asset type (POST)
     '/api/settings/library/asset/:id', // edit a tenant asset type (POST)
+    '/api/settings/library/asset/:id/markers', // map fields to {{markers}} (POST)
+    '/api/settings/library/asset/:id/template', // attach/detach a template (POST)
     '/api/settings/templates', // uploaded template documents (GET)
     '/api/settings/templates', // import a .docx template (POST)
+    '/api/settings/templates/:id', // rename a template (POST)
     '/api/settings/voice',
     '/api/settings/voice',
     '/api/settings/voice/generate',
@@ -8259,17 +8262,25 @@ test('an EXISTING asset card is still read-only apart from its toggle', () => {
   assert.ok(html.includes('data-tab="library"'), 'reachable from the hub and the sidebar');
   assert.match(html, /fetch\('\/api\/settings\/library'\)/, 'and reads the gated route');
 
-  // libRenderAsset draws a card for an asset the tenant ALREADY has. A create
-  // form now exists elsewhere on this panel, but the card itself must stay
-  // read-only: one checkbox (the toggle) and nothing else. Editing an existing
-  // asset — seeded or custom — is a later step.
-  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('--- Create an asset type'));
+  // libRenderAsset draws a card for an asset the tenant ALREADY has. The card
+  // BODY must stay read-only: one checkbox (the toggle) and nothing else. Edits
+  // happen in a form the Edit button opens, and the template mapping in a panel
+  // the Change button opens — both replace the body rather than sitting in it,
+  // so nothing on a card is editable in place.
+  //
+  // Sliced to libRenderAsset ALONE, not to the next section marker: the mapper
+  // (libTemplateSection / libOpenMapper) lives between them and DOES carry a
+  // select. Widening the slice would have silently retired this assertion.
+  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('function libTemplateSection'));
   const inputs = card.match(/createElement\('input'\)/g) || [];
   assert.strictEqual(inputs.length, 1, 'exactly one input on a card: the toggle');
   assert.match(card, /input\.type = 'checkbox'/);
   for (const affordance of ["createElement('textarea')", "createElement('select')", 'contenteditable']) {
     assert.ok(!card.includes(affordance), `no ${affordance} on an existing asset card`);
   }
+  // The template line is appended to the body, and only for assets the tenant
+  // authored — a seeded asset's card is exactly what it was.
+  assert.match(card, /if \(a\.editable\) body\.appendChild\(libTemplateSection\(a, card\)\)/);
 
   // house_default / null must render NO tier — same rule googleDocs specTypeLine
   // applies, so an unsourced field never looks authoritative.
@@ -8406,13 +8417,20 @@ test('the library screen reaches exactly three writes, and none claims a spec', 
   // own upload POST — the old anchor (--- Markdown render) now swallows it.
   const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Template documents'));
 
-  // Three, and only three: flip an asset on/off (the card toggle), save the form
-  // (create OR edit — one fetch, one ternary on the URL), and Remove (which is
-  // the same /active write, said in the words the user is thinking in).
+  // FIVE, and only five, each one named. Was three until custom document types
+  // step two added attach and map; the count is asserted rather than relaxed so
+  // a sixth write cannot arrive unremarked.
+  //   1. flip an asset on/off      — the card toggle        -> /library/active
+  //   2. Remove                    — the same /active write, said in the words
+  //                                  the user is thinking in
+  //   3. save the form             — create OR edit, one fetch, one ternary
+  //   4. attach/detach a template  -> /library/asset/:id/template
+  //   5. save a field->marker map  -> /library/asset/:id/markers
   const posts = libJs.match(/method: 'POST'/g) || [];
-  assert.strictEqual(posts.length, 3, 'three POSTs, no more');
+  assert.strictEqual(posts.length, 5, 'five POSTs, no more');
   assert.strictEqual((libJs.match(/'\/api\/settings\/library\/active'/g) || []).length, 2, 'toggle and Remove');
   assert.match(libJs, /'\/api\/settings\/library\/asset\/' \+ existing\.id : '\/api\/settings\/library\/asset'/);
+  assert.strictEqual((libJs.match(/encodeURIComponent\(a\.id\) \+ '\/(template|markers)'/g) || []).length, 2);
   // No hard delete from this screen — five tables reference asset_types(id) with
   // no ON DELETE, so removal is is_active and nothing else.
   assert.ok(!/method: 'DELETE'|method: 'PATCH'|method: 'PUT'/.test(libJs), 'no delete/patch/put from this screen');
@@ -9760,7 +9778,10 @@ test('discovery is pure — no Drive, no Docs, no database, no Express', () => {
 
 test('a template upload is session-scoped, size-capped and .docx only', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  const region = src.slice(src.indexOf('--- Template documents'), src.indexOf('GET /api/settings/workspace'));
+  // Ends at the STEP TWO routes, which are a separate feature with their own
+  // requireAuth gates — the old anchor (GET /api/settings/workspace) now
+  // swallows them and would count their tenant reads as this one's.
+  const region = src.slice(src.indexOf('--- Template documents'), src.indexOf('// POST /api/settings/templates/:id'));
 
   assert.match(region, /router\.get\(\s*'\/api\/settings\/templates',[\s\S]{0,120}requireAuth/);
   assert.match(region, /router\.post\(\s*'\/api\/settings\/templates',[\s\S]{0,120}requireAuth/);
@@ -9814,7 +9835,13 @@ test('the template store degrades rather than failing before its migration lands
   // panel says "not available yet" in that window; it does not 500.
   assert.match(src, /isUndefinedTable/);
   assert.match(src, /warnMissingSchema/);
-  assert.equal((src.match(/isUndefinedTable\(/g) || []).length, 2, 'both the read and the write');
+  // Four accessors now: list, save, get one, rename. Every one of them degrades,
+  // because a settings page that 500s before someone runs a migration is the
+  // failure this contract exists to prevent.
+  assert.equal((src.match(/isUndefinedTable\(/g) || []).length, 4, 'every accessor degrades');
+  for (const fn of ['listDocTemplates', 'saveDocTemplate', 'getDocTemplate', 'renameDocTemplate']) {
+    assert.ok(new RegExp(`warnMissingSchema\\('doc_templates', '${fn}'`).test(src), `${fn} degrades`);
+  }
   // INSERT names its columns — no spread of caller input into SQL.
   assert.ok(!/\.\.\.template/.test(src));
 });
@@ -9908,4 +9935,241 @@ test('no fidelity check is a floor without a stated reason', () => {
   const calls = code.match(/atLeast\([^)]*\)/g) || [];
   assert.ok(calls.length >= 1);
   for (const c of calls) assert.ok(c.split(',').length >= 3, `atLeast without a reason: ${c}`);
+});
+
+// --- Custom document types, step two: attach a template, map its markers ------
+
+test('auto-match takes the confident pairs and refuses the coin flips', () => {
+  const { matchMarkersToFields } = require('../src/destinations/markerMatch');
+  const markers = [
+    { name: 'Hero Headline', key: 'hero headline' },
+    { name: 'Form Submit Button', key: 'form submit button' },
+    { name: 'Form Headline', key: 'form headline' },
+    { name: 'Confirmation Headline', key: 'confirmation headline' },
+    { name: 'Form ID', key: 'form id' },
+  ];
+  const fields = [
+    { id: '1', field_name: 'Hero Headline' },
+    { id: '2', field_name: 'Submit Button' },
+    { id: '3', field_name: 'Headline' },
+  ];
+  const r = matchMarkersToFields(markers, fields);
+
+  assert.deepEqual(
+    r.matched.map((m) => [m.markerName, m.fieldName, m.how]),
+    [['Hero Headline', 'Hero Headline', 'exact'], ['Form Submit Button', 'Submit Button', 'suffix']]
+  );
+  // THE CASE THAT FORCES THE CONSERVATISM. {{Form Headline}} and
+  // {{Confirmation Headline}} both fit "Headline". Matching either is a coin
+  // flip decided by document order, and a WRONG match is invisible — the mapping
+  // reads as complete and the confirmation copy lands in the form's cell.
+  assert.ok(!r.matched.some((m) => m.fieldName === 'Headline'), '"Headline" is left for a human');
+  const contest = r.contested.find((c) => c.field === 'Headline');
+  assert.deepEqual(contest.candidates.sort(), ['Confirmation Headline', 'Form Headline']);
+  // A marker no writer drafts is simply unmatched, not an error.
+  assert.ok(r.unmatchedMarkers.some((m) => m.name === 'Form ID'));
+});
+
+test('a near-miss is never guessed at, and contains is not a match', () => {
+  const { matchMarkersToFields, isSuffix, tokens } = require('../src/destinations/markerMatch');
+  // "Subhead" vs "Subheadline" is one letter apart and a different field. A
+  // matcher that stems or fuzzy-matches would join them; this one must not.
+  let r = matchMarkersToFields([{ name: 'Form Subhead', key: 'form subhead' }], [{ id: '1', field_name: 'Subheadline' }]);
+  assert.equal(r.counts.matched, 0);
+
+  // Suffix, not contains: the qualifier goes in FRONT. {{Benefit 1 Headline}}
+  // must not claim "Headline", or four benefit rows contest one field.
+  assert.ok(isSuffix(tokens('Form Headline'), tokens('Headline')));
+  assert.ok(!isSuffix(tokens('Benefit Headline 1'), tokens('Headline')));
+  r = matchMarkersToFields(
+    [{ name: 'Benefit 1 Headline', key: 'benefit 1 headline' }, { name: 'Benefit 2 Headline', key: 'benefit 2 headline' }],
+    [{ id: '1', field_name: 'Headline' }]
+  );
+  assert.equal(r.counts.matched, 0, 'two benefit markers do not fight over one Headline');
+
+  // Punctuation a matrix decorates with is separator, not content.
+  r = matchMarkersToFields([{ name: 'CTA / Ask', key: 'cta / ask' }], [{ id: '1', field_name: 'CTA Ask' }]);
+  assert.equal(r.counts.matched, 1);
+});
+
+test('an exact match cannot be re-contested by a looser one', () => {
+  const { matchMarkersToFields } = require('../src/destinations/markerMatch');
+  // Tier 2 sees only what tier 1 left. Without that, {{Form Headline}} would
+  // contest the "Headline" that {{Headline}} already matched exactly.
+  const r = matchMarkersToFields(
+    [{ name: 'Headline', key: 'headline' }, { name: 'Form Headline', key: 'form headline' }],
+    [{ id: '1', field_name: 'Headline' }]
+  );
+  assert.equal(r.counts.matched, 1);
+  assert.equal(r.matched[0].how, 'exact');
+  assert.equal(r.counts.contested, 0);
+});
+
+test('the hit rate counts fields, not markers', () => {
+  const { matchMarkersToFields } = require('../src/destinations/markerMatch');
+  const r = matchMarkersToFields(
+    [
+      { name: 'Headline', key: 'headline' },
+      { name: 'Form ID', key: 'form id' },
+      { name: 'Owner', key: 'owner' },
+      { name: 'Last Updated', key: 'last updated' },
+    ],
+    [{ id: '1', field_name: 'Headline' }]
+  );
+  // Every field a writer drafts is placed, so the hit rate is 100 — even though
+  // three quarters of the markers are unmatched. Counting markers in the
+  // denominator would make the matcher look worse the more metadata a tenant's
+  // template happens to carry, which is a fact about their document, not about
+  // the matcher.
+  assert.equal(r.counts.hitRate, 100);
+  assert.equal(r.counts.markerCoverage, 25);
+});
+
+test('the matcher is pure — it proposes, it does not write', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'markerMatch.js'), 'utf8');
+  const code = src.replace(/\/\/.*$/gm, '');
+  assert.ok(!/getPool|pool\.query|require\('\.\.\/db/.test(code), 'no database');
+  assert.ok(!/express|router/i.test(code), 'no HTTP');
+  // The only thing it requires is the shared fold, so "matches" here means what
+  // Postgres means by it everywhere else.
+  const reqs = code.match(/require\([^)]*\)/g) || [];
+  assert.deepEqual(reqs, ["require('../utils/normalize')"]);
+});
+
+test('the attachment is INERT — the pipeline read cannot see it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  // getTenantAssets is what the pipeline builds from. If it grew a
+  // doc_template_id or a marker, an attached asset would stop rendering into the
+  // copy doc the way it does today — which is exactly what step two must not do.
+  const pipelineRead = src.slice(src.indexOf('async function getTenantAssets'), src.indexOf('// THE EDITOR READ'));
+  // Comments stripped for the CODE checks — the block says the words
+  // "NO doc_template_id AND NO template_marker HERE", which is the claim, not a
+  // violation of it, and is asserted separately below.
+  const pipelineCode = pipelineRead.replace(/\/\/.*$/gm, '');
+  assert.ok(!/doc_template_id/.test(pipelineCode), 'no attachment on the pipeline read');
+  assert.ok(!/template_marker/.test(pipelineCode), 'no marker on the pipeline read');
+  assert.ok(/NO doc_template_id AND NO template_marker HERE/.test(pipelineRead), 'and it says why');
+
+  // The editor read DOES carry both — that is the whole point of it being a
+  // second reader.
+  const editorRead = src.slice(src.indexOf('// THE EDITOR READ'), src.indexOf('// CREATE one tenant-authored'));
+  assert.match(editorRead, /doc_template_id: t\.doc_template_id == null/);
+  assert.match(editorRead, /template_marker_key: row\.template_marker_key/);
+
+  // And nothing in the pipeline or the destinations reads either column.
+  for (const f of ['src/core/pipeline.js', 'src/destinations/googleDocs.js', 'src/adapters/slackWorkflow.js']) {
+    const other = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    assert.ok(!/template_marker|doc_template_id/.test(other), `${f} does not read the attachment`);
+  }
+});
+
+test('a seeded asset is refused a template by the SERVER, from the stored name', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const attach = src.slice(src.indexOf('async function setAssetTemplate'), src.indexOf('// MAP an attached asset'));
+  const map = src.slice(src.indexOf('async function setAssetFieldMarkers'), src.indexOf('module.exports'));
+
+  for (const [what, region] of [['attach', attach], ['map', map]]) {
+    // Checked against the row it LOCKED, not against anything submitted — the
+    // same rule updateAssetType follows, and for the same reason: renaming a
+    // seeded asset in the same request would otherwise walk straight past it.
+    assert.match(region, /FOR UPDATE/, `${what} locks the row`);
+    assert.match(region, /isSeededAssetName\(cur\.rows\[0\]\.name\)/, `${what} checks the stored name`);
+    assert.match(region, /reason: 'seeded'/, `${what} refuses`);
+    assert.match(region, /tenant_id = \$2/, `${what} is tenant-scoped`);
+  }
+  // The template is re-checked against the tenant too: an asset id that is yours
+  // plus a template id that is not is exactly the shape of a cross-tenant write.
+  assert.match(attach, /FROM doc_templates WHERE id = \$1 AND tenant_id = \$2/);
+  assert.match(attach, /reason: 'no_template'/);
+});
+
+test('a marker is verified against the attached template before it is stored', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const map = src.slice(src.indexOf('async function setAssetFieldMarkers'), src.indexOf('module.exports'));
+  // Without this a typo maps a field to a cell that does not exist, and step
+  // three finds out at build time, in front of a writer.
+  assert.match(map, /SELECT placeholders FROM doc_templates/);
+  assert.match(map, /reason: 'unknown_marker'/);
+  // Two fields into one cell is not a preference to resolve later.
+  assert.match(map, /reason: 'duplicate_marker'/);
+  assert.match(map, /err\.code === '23505'/, 'and the partial unique index is the backstop');
+  // Mapping requires an attachment — there is nothing to map against otherwise.
+  assert.match(map, /reason: 'not_attached'/);
+  // A field id that is not this asset's is skipped, never followed.
+  assert.match(map, /if \(!owned\.has\(fieldId\)\) continue/);
+});
+
+test('detaching clears the mapping, because a key means nothing without its template', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const attach = src.slice(src.indexOf('async function setAssetTemplate'), src.indexOf('// MAP an attached asset'));
+  assert.match(attach, /if \(docTemplateId == null\) \{[\s\S]{0,300}template_marker_key = NULL/);
+  // Otherwise attaching a DIFFERENT template later inherits a mapping nobody made.
+  assert.match(attach, /inherit a mapping nobody made/);
+});
+
+test('the mapping routes are session-scoped and answer 404 across tenants', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const region = src.slice(src.indexOf("// POST /api/settings/templates/:id"), src.indexOf('// GET /api/settings/workspace'));
+  for (const r of ['/api/settings/templates/:id', "asset/:id/template", "asset/:id/markers"]) {
+    assert.ok(region.includes(r), `${r} is here`);
+  }
+  // requireAuth on all three, the tenant off req.user, nothing off the body.
+  assert.equal((region.match(/requireAuth/g) || []).length, 3);
+  assert.equal((region.match(/req\.user && req\.user\.tenant_id/g) || []).length, 3);
+  assert.ok(!/req\.body\.tenantId/.test(region));
+  // Not-yours and not-there answer the same, so an id in someone else's account
+  // is never confirmed.
+  assert.ok(region.includes("error: 'Template not found.'"));
+  assert.ok(region.includes("error: 'Asset not found.'"));
+  // Built key by key — nothing off the body reaches a column unnamed here.
+  assert.match(region, /const clean = pairs\.map\(\(p\) => \(\{/);
+  assert.ok(!/\.\.\.p\b/.test(region), 'no spread of request input');
+});
+
+test('an auto-match is a proposal — the attach route stores none of it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const attach = src.slice(src.indexOf("// POST /api/settings/library/asset/:id/template"), src.indexOf('// POST /api/settings/library/asset/:id/markers'));
+  assert.match(attach, /suggestion,/);
+  // The ONLY writer it calls is setAssetTemplate. If it also called
+  // setAssetFieldMarkers, a guess would be indistinguishable from a human's
+  // decision the moment anyone reloaded the page.
+  assert.ok(!/setAssetFieldMarkers/.test(attach));
+  assert.match(attach, /not saved/);
+});
+
+test('mapping state is summarised for the panel, and completeness is about fields', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function mappingSummary'), src.indexOf("router.get('/api/settings/library'"));
+  // Unattached is null, not a mapping with zero of everything — otherwise every
+  // asset a tenant has gets an empty progress line under it.
+  assert.match(fn, /if \(!asset \|\| asset\.doc_template_id == null\) return null/);
+  // complete counts FIELDS. Requiring every marker would mark every real
+  // template permanently incomplete and train everyone to ignore the indicator.
+  assert.match(fn, /complete: fields\.length > 0 && mappedFields\.length === fields\.length/);
+  assert.match(fn, /templateMissing: !template/);
+  for (const k of ['mappedFields', 'unmappedFields', 'unmappedMarkers']) assert.ok(fn.includes(k + ':'));
+});
+
+test('the panel names a template, and says where copy goes at a glance', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  // NAME IT: prefilled from the filename, editable before upload and after.
+  assert.match(html, /id="tpl-name"/);
+  assert.match(html, /What should Quillio call this template\?/);
+  const tplJs = html.slice(html.indexOf('--- Template documents'), html.indexOf('--- Markdown render'));
+  assert.match(tplJs, /tplFile\.name\.replace\(\/\\\.docx\$\/i, ''\)/);
+  assert.match(tplJs, /if \(typed\) fd\.append\('name', typed\)/);
+  assert.match(tplJs, /'\/api\/settings\/templates\/' \+ encodeURIComponent\(t\.id\)/);
+
+  // ATTACH + MAP live on the asset card, and only for assets the tenant authored.
+  const libJs = html.slice(html.indexOf('function libTemplateSection'), html.indexOf('--- Create an asset type'));
+  assert.match(html, /if \(a\.editable\) body\.appendChild\(libTemplateSection\(a, card\)\)/);
+  assert.match(libJs, /Renders into the campaign copy doc/);
+  assert.match(libJs, /asset\/' \+ encodeURIComponent\(a\.id\) \+ '\/template'/);
+  assert.match(libJs, /asset\/' \+ encodeURIComponent\(a\.id\) \+ '\/markers'/);
+  // A field with nowhere to go is the warning; an unmapped marker is not.
+  assert.match(libJs, /'No marker for: '/);
+  assert.match(libJs, /left unmapped/);
+  assert.match(libJs, /A matrix carries cells nobody drafts/);
+  // Auto-matched rows are LABELLED, so a human can see what was guessed.
+  assert.match(libJs, /'auto-matched'/);
 });

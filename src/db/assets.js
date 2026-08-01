@@ -11,7 +11,7 @@
 // core/pipeline.js generateDoc() THROWS when getTenantAssets returns null or an
 // empty library. A null here means "no DB or unseeded tenant", not "fall back".
 
-const { getPool } = require('../db');
+const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { normalize } = require('../utils/normalize');
 
@@ -148,6 +148,11 @@ async function getTenantAssets(tenantId) {
     sort_order: t.sort_order,
     asset_direction: t.asset_direction || null,
     spec_note: t.spec_note || null,
+    // NO doc_template_id AND NO template_marker HERE, deliberately. This is the
+    // PIPELINE's read, and the attachment is inert until step three: an attached
+    // asset must render into the copy doc exactly as it did before. The editor
+    // read below carries the attachment; this one must not, or "inert" becomes a
+    // claim rather than a property of the code.
     fields: fieldsByType.get(t.id) || [],
   }));
 }
@@ -177,24 +182,56 @@ async function getTenantLibrary(tenantId) {
   const pool = getPool();
   if (!pool || !tenantId) return null;
 
-  const typesRes = await pool.query(
-    `SELECT id, name, "group", is_active, sort_order, asset_direction, spec_note
-       FROM asset_types
-      WHERE tenant_id = $1
-      ORDER BY sort_order, id`,
-    [tenantId]
-  );
+  // The template columns arrive in scripts/migrateAddTemplateMapping.js, and
+  // Railway auto-deploys `main` on merge — so this query runs against a database
+  // without them first. Both reads fall back to the pre-migration shape and
+  // report every asset as unattached, which is exactly what it is.
+  let typesRes;
+  try {
+    typesRes = await pool.query(
+      `SELECT id, name, "group", is_active, sort_order, asset_direction, spec_note, doc_template_id
+         FROM asset_types
+        WHERE tenant_id = $1
+        ORDER BY sort_order, id`,
+      [tenantId]
+    );
+  } catch (err) {
+    if (!isUndefinedColumn(err)) throw err;
+    warnMissingSchema('asset_types.doc_template_id', 'getTenantLibrary', err);
+    typesRes = await pool.query(
+      `SELECT id, name, "group", is_active, sort_order, asset_direction, spec_note
+         FROM asset_types
+        WHERE tenant_id = $1
+        ORDER BY sort_order, id`,
+      [tenantId]
+    );
+  }
   if (typesRes.rows.length === 0) return [];
 
   const typeIds = typesRes.rows.map((t) => t.id);
-  const fieldsRes = await pool.query(
-    `SELECT id, asset_type_id, field_name, char_min, char_max, field_type,
-            group_label, sort_order, spec_type, spec_source, spec_note
-       FROM copy_fields
-      WHERE asset_type_id = ANY($1::bigint[])
-      ORDER BY sort_order, id`,
-    [typeIds]
-  );
+  let fieldsRes;
+  try {
+    fieldsRes = await pool.query(
+      `SELECT id, asset_type_id, field_name, char_min, char_max, field_type,
+              group_label, sort_order, spec_type, spec_source, spec_note,
+              template_marker_key, template_marker_name
+         FROM copy_fields
+        WHERE asset_type_id = ANY($1::bigint[])
+        ORDER BY sort_order, id`,
+      [typeIds]
+    );
+  } catch (err) {
+    if (!isUndefinedColumn(err)) throw err;
+    warnMissingSchema('copy_fields.template_marker_key', 'getTenantLibrary', err);
+    fieldsRes = await pool.query(
+      `SELECT id, asset_type_id, field_name, char_min, char_max, field_type,
+              group_label, sort_order, spec_type, spec_source, spec_note
+         FROM copy_fields
+        WHERE asset_type_id = ANY($1::bigint[])
+        ORDER BY sort_order, id`,
+      [typeIds]
+    );
+  }
 
   const fieldsByType = new Map();
   for (const row of fieldsRes.rows) {
@@ -210,6 +247,10 @@ async function getTenantLibrary(tenantId) {
       spec_type: row.spec_type || null,
       spec_source: row.spec_source || null,
       spec_note: row.spec_note || null,
+      // Both null = unmapped, which is a valid state: a matrix carries markers
+      // no writer drafts, and a field with nowhere to go is worth seeing.
+      template_marker_key: row.template_marker_key || null,
+      template_marker_name: row.template_marker_name || null,
     });
   }
 
@@ -224,6 +265,9 @@ async function getTenantLibrary(tenantId) {
     sort_order: t.sort_order,
     asset_direction: t.asset_direction || null,
     spec_note: t.spec_note || null,
+    // null = "renders into the copy doc", which is every asset today and stays
+    // the default. Stringified for the same bigint reason as the ids above.
+    doc_template_id: t.doc_template_id == null ? null : String(t.doc_template_id),
     fields: fieldsByType.get(t.id) || [],
   }));
 }
@@ -550,8 +594,205 @@ async function getAssetDirections(tenantId) {
   return (assetName) => byNorm.get(normName(assetName)) || null;
 }
 
+// ATTACH one tenant-authored asset to a template document — or detach it by
+// passing null. This is the only writer of asset_types.doc_template_id.
+//
+// Same discriminated result the asset UPDATE returns, for the same reason: the
+// route answers 404 vs 409 without parsing an error string.
+//   { ok: true, id, doc_template_id }
+//   { ok: false, reason: 'not_found' }   — no such asset FOR THIS TENANT
+//   { ok: false, reason: 'seeded', name } — a bundled asset
+//   { ok: false, reason: 'no_template' }  — no such template FOR THIS TENANT
+//
+// SEEDED ASSETS CANNOT BE ATTACHED, checked against the STORED name exactly the
+// way updateAssetType checks it. The rule is not decoration: a seeded asset's
+// fields carry platform limits and citations that render as the tier line in the
+// copy doc, and a matrix cell has nowhere to put "Platform limit (LinkedIn)".
+// Sending a LinkedIn ad into a form matrix would silently drop the one thing
+// that makes those fields correct.
+//
+// The TEMPLATE is re-checked against the tenant too. Both ids arrive from the
+// browser, and an asset id that belongs to you plus a template id that does not
+// is precisely the shape of a cross-tenant write.
+async function setAssetTemplate(tenantId, assetTypeId, docTemplateId) {
+  const pool = getPool();
+  if (!pool) {
+    console.warn('[db/assets] DATABASE_URL not set — skipping setAssetTemplate');
+    return { ok: false, reason: 'not_found' };
+  }
+  if (!tenantId || !assetTypeId) return { ok: false, reason: 'not_found' };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query(
+      'SELECT id, name FROM asset_types WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
+      [assetTypeId, tenantId]
+    );
+    if (cur.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+    if (isSeededAssetName(cur.rows[0].name)) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'seeded', name: cur.rows[0].name };
+    }
+
+    if (docTemplateId != null) {
+      const tpl = await client.query(
+        'SELECT id FROM doc_templates WHERE id = $1 AND tenant_id = $2',
+        [docTemplateId, tenantId]
+      );
+      if (tpl.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'no_template' };
+      }
+    }
+
+    await client.query(
+      'UPDATE asset_types SET doc_template_id = $1 WHERE id = $2 AND tenant_id = $3',
+      [docTemplateId == null ? null : docTemplateId, assetTypeId, tenantId]
+    );
+
+    // DETACHING CLEARS THE MAPPINGS. A marker key means nothing without the
+    // template it came from, and leaving them behind would let a later re-attach
+    // of a DIFFERENT template inherit a mapping nobody made. Re-attaching the
+    // same template re-runs the auto-match, which is cheap.
+    if (docTemplateId == null) {
+      await client.query(
+        `UPDATE copy_fields SET template_marker_key = NULL, template_marker_name = NULL
+          WHERE asset_type_id = $1`,
+        [assetTypeId]
+      );
+    }
+
+    await client.query('COMMIT');
+    return { ok: true, id: String(assetTypeId), doc_template_id: docTemplateId == null ? null : String(docTemplateId) };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// MAP an attached asset's copy fields to markers in its template. The whole map
+// is submitted at once and replaces what is stored — the same whole-object shape
+// the asset editor uses, and for the same reason: a field REMOVED from the map
+// has to be expressible, and a per-field PATCH cannot say "no longer mapped"
+// without a second verb.
+//
+// `pairs` is [{ fieldId, markerKey, markerName }]. A pair whose markerKey is
+// null/empty unmaps that field. Fields absent from the submission are left
+// exactly as they are, so two people mapping different halves of a matrix in two
+// tabs do not erase each other.
+//
+//   { ok: true, mapped, cleared }
+//   { ok: false, reason: 'not_found' }      — no such asset FOR THIS TENANT
+//   { ok: false, reason: 'seeded', name }   — a bundled asset
+//   { ok: false, reason: 'not_attached' }   — map to what? no template attached
+//   { ok: false, reason: 'unknown_marker', marker } — not in THAT template
+//   { ok: false, reason: 'duplicate_marker', marker } — two fields, one cell
+async function setAssetFieldMarkers(tenantId, assetTypeId, pairs) {
+  const pool = getPool();
+  if (!pool) {
+    console.warn('[db/assets] DATABASE_URL not set — skipping setAssetFieldMarkers');
+    return { ok: false, reason: 'not_found' };
+  }
+  if (!tenantId || !assetTypeId || !Array.isArray(pairs)) return { ok: false, reason: 'not_found' };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query(
+      'SELECT id, name, doc_template_id FROM asset_types WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
+      [assetTypeId, tenantId]
+    );
+    if (cur.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+    if (isSeededAssetName(cur.rows[0].name)) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'seeded', name: cur.rows[0].name };
+    }
+    const templateId = cur.rows[0].doc_template_id;
+    if (templateId == null) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_attached' };
+    }
+
+    // EVERY MARKER IS CHECKED AGAINST THE ATTACHED TEMPLATE'S OWN LIST. Without
+    // this a typo maps a field to a cell that does not exist, and step three
+    // discovers it at build time in front of a writer.
+    const tplRes = await client.query(
+      'SELECT placeholders FROM doc_templates WHERE id = $1 AND tenant_id = $2',
+      [templateId, tenantId]
+    );
+    if (tplRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_attached' };
+    }
+    const known = new Set(
+      (Array.isArray(tplRes.rows[0].placeholders) ? tplRes.rows[0].placeholders : [])
+        .map((p) => p && p.key)
+        .filter(Boolean)
+    );
+
+    const ownedRes = await client.query('SELECT id FROM copy_fields WHERE asset_type_id = $1', [assetTypeId]);
+    const owned = new Set(ownedRes.rows.map((r) => String(r.id)));
+
+    const seen = new Set();
+    let mapped = 0;
+    let cleared = 0;
+    for (const pair of pairs) {
+      const fieldId = pair && pair.fieldId != null ? String(pair.fieldId) : '';
+      if (!owned.has(fieldId)) continue; // not this asset's field — never reaches another row
+      const key = pair.markerKey ? String(pair.markerKey).trim() : '';
+      if (!key) {
+        await client.query(
+          `UPDATE copy_fields SET template_marker_key = NULL, template_marker_name = NULL
+            WHERE id = $1 AND asset_type_id = $2`,
+          [fieldId, assetTypeId]
+        );
+        cleared += 1;
+        continue;
+      }
+      if (!known.has(key)) {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'unknown_marker', marker: key };
+      }
+      if (seen.has(key)) {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'duplicate_marker', marker: key };
+      }
+      seen.add(key);
+      await client.query(
+        `UPDATE copy_fields SET template_marker_key = $1, template_marker_name = $2
+          WHERE id = $3 AND asset_type_id = $4`,
+        [key, pair.markerName || key, fieldId, assetTypeId]
+      );
+      mapped += 1;
+    }
+
+    await client.query('COMMIT');
+    console.log(`[db/assets] tenant ${tenantId} asset ${assetTypeId} — ${mapped} field(s) mapped, ${cleared} cleared`);
+    return { ok: true, mapped, cleared };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // The partial unique index is the backstop for two fields racing onto one
+    // marker from two tabs; the in-request check above catches the common case.
+    if (err && err.code === '23505') return { ok: false, reason: 'duplicate_marker', marker: null };
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   seedTenantAssets,
+  setAssetTemplate,
+  setAssetFieldMarkers,
   getTenantAssets,
   // The EDITOR read — every asset, active or not, with stable ids. Separate from
   // getTenantAssets on purpose (see its comment).

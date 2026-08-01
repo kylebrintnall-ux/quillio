@@ -94,4 +94,55 @@ async function saveDocTemplate(tenantId, template) {
   }
 }
 
-module.exports = { listDocTemplates, saveDocTemplate };
+// Read ONE template, scoped to the tenant. null = no DB, no table, or not
+// theirs — the caller answers 404 for all three, because distinguishing "does
+// not exist" from "is not yours" confirms an id in someone else's account.
+async function getDocTemplate(tenantId, id) {
+  const pool = getPool();
+  if (!pool || !tenantId || !id) return null;
+  try {
+    const res = await pool.query(
+      `SELECT id, name, source_doc_id, source_doc_url, original_filename,
+              placeholders, discovered_at, created_at
+         FROM doc_templates
+        WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return res.rows.length ? rowToTemplate(res.rows[0]) : null;
+  } catch (err) {
+    if (isUndefinedTable(err)) {
+      warnMissingSchema('doc_templates', 'getDocTemplate', err);
+      return null;
+    }
+    throw err;
+  }
+}
+
+// RENAME one template. The upload takes its name from the filename, which is how
+// a tenant ends up with "copy-matrix-template-v4-FINAL" in a settings panel they
+// read every week. Only the display name is writable — the imported doc, the
+// discovered markers and the mapping all key off the id, so a rename touches
+// nothing but the label.
+//
+// Returns true when a row changed, false when nothing matched THIS TENANT.
+async function renameDocTemplate(tenantId, id, name) {
+  const pool = getPool();
+  if (!pool || !tenantId || !id) return false;
+  const clean = String(name == null ? '' : name).trim().slice(0, 120);
+  if (!clean) return false;
+  try {
+    const res = await pool.query(
+      'UPDATE doc_templates SET name = $1 WHERE id = $2 AND tenant_id = $3',
+      [clean, id, tenantId]
+    );
+    return res.rowCount > 0;
+  } catch (err) {
+    if (isUndefinedTable(err)) {
+      warnMissingSchema('doc_templates', 'renameDocTemplate', err);
+      return false;
+    }
+    throw err;
+  }
+}
+
+module.exports = { listDocTemplates, saveDocTemplate, getDocTemplate, renameDocTemplate };

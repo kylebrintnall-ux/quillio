@@ -10657,3 +10657,84 @@ test('what was written is remembered on the project row', () => {
   const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
   assert.match(pipe, /await setProjectTemplateFill\(tenantId, project\.id, result\.applied\)/);
 });
+
+// --- The table-cell comment anchor probe -------------------------------------
+
+test('the anchor probe LISTS comments back rather than trusting the create', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'probeCellCommentAnchor.js'), 'utf8');
+
+  // THE WHOLE POINT. comments.create returns an id whether or not Drive managed
+  // to anchor anything, so a probe that reported the create response would say
+  // "worked" for a comment that floats. Every case creates, then lists, then
+  // reads what came back.
+  assert.match(src, /comments\.list\(/);
+  assert.match(src, /anchor, deleted, resolved, quotedFileContent\(value, mimeType\)/);
+  assert.match(src, /not evidence — listing it back/);
+  assert.equal((src.match(/await listComments\(clients, docId\)/g) || []).length, 6);
+
+  // ANCHORED and QUOTE-ECHOED are reported as DIFFERENT results. A quote that
+  // comes back with no anchor is the outcome easiest to mistake for success —
+  // the comment exists and shows the text, but floats in the file's comment list
+  // instead of sitting beside the copy.
+  assert.match(src, /if \(anchored\) return \{ label: 'ANCHORED'/);
+  assert.match(src, /label: 'NOT ANCHORED \(quote echoed\)'/);
+  assert.match(src, /label: 'GONE'/);
+
+  // All five cases plus the after-rewrite pair.
+  for (const c of ['case1', 'case2old', 'case2new', 'case3', 'case4', 'case5']) {
+    assert.ok(src.includes(`results.${c}`), `${c} is reported`);
+  }
+});
+
+test('the probe is a probe — it changes nothing in the review or template path', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'probeCellCommentAnchor.js'), 'utf8');
+  // It re-implements addReviewComment's request rather than calling it, so a
+  // later change to that function cannot quietly alter what was measured — and
+  // so this file imports nothing from the review path.
+  assert.ok(!/require\(.*copyReview/.test(src));
+  assert.ok(!/require\(.*googleDocs/.test(src));
+  // Checked as CALLS, not as bare words: the probe's closing summary quotes
+  // REVIEW_PREFIX by name when it explains why a comment on replaced text is
+  // already handled, and naming the mechanism in a report is not coupling to it.
+  assert.ok(!/\baddReviewComment\s*\(/.test(src));
+  assert.ok(!/\blistReviewComments\s*\(/.test(src));
+  // Its own comment prefix, so a probe run can never be mistaken for a review.
+  assert.match(src, /const PREFIX = '🪶 Quillio anchor probe — '/);
+
+  // One file created, deleted unless --keep — same contract as probeDocxImport.
+  assert.match(src, /const KEEP = process\.argv\.includes\('--keep'\)/);
+  assert.match(src, /if \(!KEEP\) \{[\s\S]{0,200}drive\.files\.delete/);
+  // Not in npm test: the suite runs with no credentials and no network.
+  assert.match(src, /It needs REAL GOOGLE CREDENTIALS and is not part of `npm test`/);
+
+  // Cells are chosen from the CONVERTED document, never hardcoded — the .docx
+  // probe already showed the converter can change how merges are represented,
+  // and a missing hardcoded cell would read as a failed anchor.
+  assert.match(src, /const pick = \(n\) => plain\[n % plain\.length\]/);
+  assert.match(src, /const CASE5 = merged\[0\] \|\| null/);
+  assert.match(src, /results\.case5 = 'SKIPPED'/);
+});
+
+test('the probe writes a cell the way a template drafter would have to', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'probeCellCommentAnchor.js'), 'utf8');
+  // A Docs paragraph must keep its trailing newline — deleting it is an error,
+  // not an empty cell. This is the detail a template drafter gets wrong first.
+  assert.match(src, /endIndex: cell\.end - 1/);
+  assert.match(src, /keep its trailing newline/);
+  // An already-empty cell gets an insert and no delete.
+  assert.match(src, /if \(cell\.end - 1 > cell\.start\)/);
+  // Re-reads before each write, so no result is confounded by index drift.
+  assert.match(src, /documents\.get\(\{ documentId: docId \}\)[\s\S]{0,200}cells\(doc\)\.find/);
+});
+
+test('the long-cell case really is 120 words', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'probeCellCommentAnchor.js'), 'utf8');
+  const m = src.match(/const LONG_COPY = \(([\s\S]*?)\)\.trim\(\);/);
+  assert.ok(m, 'found LONG_COPY');
+  // eslint-disable-next-line no-eval
+  const text = eval('(' + m[1] + ')').trim();
+  // The header calls it "a 120-word body paragraph". A probe whose fixture does
+  // not match its own description is a probe whose result cannot be quoted.
+  assert.equal(text.split(/\s+/).length, 120);
+  assert.match(src, /a 120-word body paragraph/);
+});

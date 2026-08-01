@@ -461,6 +461,8 @@ test('settings router mounts and exposes its routes', () => {
     '/api/settings/library/active', // asset on/off (POST) — is_active only
     '/api/settings/library/asset', // create a tenant asset type (POST)
     '/api/settings/library/asset/:id', // edit a tenant asset type (POST)
+    '/api/settings/templates', // uploaded template documents (GET)
+    '/api/settings/templates', // import a .docx template (POST)
     '/api/settings/voice',
     '/api/settings/voice',
     '/api/settings/voice/generate',
@@ -8400,7 +8402,9 @@ test('a failed save reverts the toggle, the card and the count', () => {
 
 test('the library screen reaches exactly three writes, and none claims a spec', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
-  const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Markdown render'));
+  // Ends at the TEMPLATE DOCUMENTS block, which is a separate feature with its
+  // own upload POST — the old anchor (--- Markdown render) now swallows it.
+  const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Template documents'));
 
   // Three, and only three: flip an asset on/off (the card toggle), save the form
   // (create OR edit — one fetch, one ternary on the URL), and Remove (which is
@@ -9535,9 +9539,11 @@ test('the update writes six columns, by id, in one transaction', () => {
 
 test('the update route is session-scoped and answers 404 across tenants', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  // Ends at the TEMPLATE routes below it, which are a separate feature with
+  // their own tests — the old anchor (GET /workspace) now swallows them.
   const route = src.slice(
     src.indexOf("'/api/settings/library/asset/:id'"),
-    src.indexOf('GET /api/settings/workspace')
+    src.indexOf('--- Template documents')
   );
   assert.match(route, /settingsWriteLimiter, requireAuth/, 'rate-limited and auth-gated');
   assert.match(route, /req\.user && req\.user\.tenant_id/, 'tenant from the session');
@@ -9613,4 +9619,221 @@ test('the edit form warns before a rename, not after', () => {
   assert.match(card, /libOpenForm\(a, editHost/);
   const route2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
   assert.match(route2, /editable: !isSeededAssetName\(a\.name\)/);
+});
+
+// --- Custom document types, step one: bring a template and find its markers ---
+
+test('a placeholder split across runs is found, because runs are joined first', () => {
+  const { discoverPlaceholders } = require('../src/destinations/docPlaceholders');
+  // Exactly what Docs returns when a user bolds half a token, or when a
+  // spellcheck mark lands inside one. On screen it is "{{Hero Headline}}".
+  const doc = {
+    body: {
+      content: [
+        {
+          paragraph: {
+            elements: [
+              { textRun: { content: '{{Hero ' } },
+              { textRun: { content: 'Headline}}', textStyle: { bold: true } } },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  const d = discoverPlaceholders(doc);
+  assert.equal(d.counts.distinct, 1);
+  assert.equal(d.placeholders[0].name, 'Hero Headline');
+
+  // The failure mode this guards: scanning a single run finds nothing at all.
+  const perRun = doc.body.content[0].paragraph.elements
+    .map((e) => discoverPlaceholders({ body: { content: [{ paragraph: { elements: [e] } }] } }).counts.distinct)
+    .reduce((a, b) => a + b, 0);
+  assert.equal(perRun, 0, 'run-by-run scanning finds nothing — hence the join');
+});
+
+test('discovery reports where a marker is, including inside a merged cell', () => {
+  const { discoverPlaceholders, describeLocation } = require('../src/destinations/docPlaceholders');
+  const para = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] } });
+  const d = discoverPlaceholders({
+    body: {
+      content: [
+        para('Campaign copy matrix'),
+        {
+          table: {
+            tableRows: [
+              { tableCells: [{ content: [para('Form heading')] }, { content: [para('{{Form Heading}}')] }] },
+              {
+                tableCells: [
+                  { content: [para('Submit')] },
+                  { content: [para('{{Submit Button}}')], tableCellStyle: { columnSpan: 2 } },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(d.counts.tables, 1);
+  assert.equal(describeLocation(d.occurrences[0].location), 'table 1, row 1, column 2');
+  // The span is reported, so "column 2" and "columns 2-3 merged" are tellable
+  // apart — a tenant looking at their own matrix needs to recognize the cell.
+  assert.equal(describeLocation(d.occurrences[1].location), 'table 1, row 2, column 2 (merged 1×2)');
+});
+
+test('two spellings of one marker are ONE placeholder, counted twice', () => {
+  const { discoverPlaceholders, placeholderKey } = require('../src/destinations/docPlaceholders');
+  const para = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] } });
+  const d = discoverPlaceholders({
+    body: { content: [para('{{Hero Headline}}'), para('{{ hero  headline }}')] },
+  });
+  assert.equal(d.counts.distinct, 1);
+  assert.equal(d.counts.total, 2);
+  assert.equal(d.placeholders[0].count, 2);
+  // The name kept is the FIRST spelling seen — what the tenant most likely means.
+  assert.equal(d.placeholders[0].name, 'Hero Headline');
+  assert.equal(placeholderKey('Hero  Headline'), placeholderKey('hero headline'));
+});
+
+test('a malformed marker is a warning, and a well-formed one never is', () => {
+  const { discoverPlaceholders } = require('../src/destinations/docPlaceholders');
+  const para = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] } });
+  const d = discoverPlaceholders({
+    body: { content: [para('{{Hero Headline}} and {{Subhead}}'), para('{{Unclosed legal line')] },
+  });
+  // THE BUG THIS PINS. The first version scanned for `}}` over the raw text, so
+  // the closing braces of every valid token were reported as unopened — seven
+  // warnings for one real typo. Valid tokens are removed before the malformed
+  // scan runs, so a clean document produces a clean report.
+  assert.equal(d.counts.warnings, 1);
+  assert.equal(d.warnings[0].kind, 'unclosed');
+  assert.match(d.warnings[0].text, /^\{\{Unclosed legal line$/);
+  assert.equal(discoverPlaceholders({ body: { content: [para('{{A}} {{B}} {{C}}')] } }).counts.warnings, 0);
+});
+
+test('a marker in a page header or footer is found and labelled as such', () => {
+  const { discoverPlaceholders, describeLocation } = require('../src/destinations/docPlaceholders');
+  const para = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] } });
+  // Headers and footers are NOT in body.content — they are separate top-level
+  // maps. A traversal that only walks the body silently loses them.
+  const d = discoverPlaceholders({
+    body: { content: [para('nothing here')] },
+    headers: { h1: { content: [para('{{Campaign Name}} — internal')] } },
+    footers: { f1: { content: [para('{{Page Label}}')] } },
+  });
+  assert.equal(d.counts.distinct, 2);
+  assert.equal(d.counts.headers, 1);
+  assert.equal(d.counts.footers, 1);
+  assert.equal(describeLocation(d.occurrences[0].location), 'header · paragraph 1');
+  assert.equal(describeLocation(d.occurrences[1].location), 'footer · paragraph 1');
+});
+
+test('the import is one call, and it is the call that triggers the converter', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'destinations', 'docTemplateImport.js'),
+    'utf8'
+  );
+  // The .docx goes in as the MEDIA mime; the Google Doc type goes in as the
+  // REQUEST BODY mime. That exact pairing is what runs Drive's Word→Docs
+  // converter — set only the media mime and Drive stores an opaque .docx.
+  assert.match(src, /media: \{ mimeType: DOCX_MIME, body: stream \}/);
+  assert.match(src, /mimeType: GDOC_MIME/);
+  assert.match(src, /supportsAllDrives: true/);
+  // Discovery runs over the CONVERTED document, read back from the Docs API —
+  // so every marker reported is one that survived the import.
+  assert.match(src, /clients\.docs\.documents\.get\(\{ documentId: docId \}\)/);
+  assert.match(src, /discoverPlaceholders\(doc\.data\)/);
+});
+
+test('discovery is pure — no Drive, no Docs, no database, no Express', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'docPlaceholders.js'), 'utf8');
+  // Deliberate: the risky question ("does the {{marker}} convention survive a
+  // real tenant's document") has to be answerable with no credentials, and the
+  // suite runs with none.
+  assert.ok(!/require\(/.test(src), 'docPlaceholders requires nothing');
+  // Comments stripped: the module's own header says the words "no Drive, no
+  // Docs, no database, no Express", which is the claim, not a violation of it.
+  const code = src.replace(/\/\/.*$/gm, '');
+  assert.ok(!/googleapis|\bpool\b|express/i.test(code));
+});
+
+test('a template upload is session-scoped, size-capped and .docx only', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const region = src.slice(src.indexOf('--- Template documents'), src.indexOf('GET /api/settings/workspace'));
+
+  assert.match(region, /router\.get\(\s*'\/api\/settings\/templates',[\s\S]{0,120}requireAuth/);
+  assert.match(region, /router\.post\(\s*'\/api\/settings\/templates',[\s\S]{0,120}requireAuth/);
+  // Both are rate-limited: reads on the settings limiter, the upload on the
+  // upload limiter, same as /api/upload.
+  assert.match(region, /settingsReadLimiter/);
+  assert.match(region, /uploadLimiter/);
+  // The tenant is taken from the SESSION, never from the request body — the
+  // same rule every other settings route follows.
+  assert.ok(!/req\.body\.tenantId/.test(region));
+  // requireAuth put the signed-in user on req.user; the tenant is read off that,
+  // never off the multipart body, which carries the file and an optional name.
+  assert.equal((region.match(/req\.user && req\.user\.tenant_id/g) || []).length, 2);
+  // The write runs as the acting user, like every other Drive write.
+  assert.match(region, /getClientsForTenant\(\{ tenantId, userId/);
+  // The temp file multer wrote is removed whatever happens, including on throw.
+  assert.match(region, /finally \{[\s\S]{0,200}fs\.unlink/);
+
+  assert.match(src, /const TEMPLATE_MAX_BYTES = 10 \* 1024 \* 1024/);
+  assert.match(src, /fileSize: TEMPLATE_MAX_BYTES, files: 1/);
+  assert.match(src, /file\.mimetype === DOCX_MIME \|\| \/\\\.docx\$\/i\.test/);
+});
+
+test('step one stops at discovery — nothing maps, fills, or reaches the pipeline', () => {
+  const root = path.join(__dirname, '..');
+  const files = [
+    'src/destinations/docPlaceholders.js',
+    'src/destinations/docTemplateImport.js',
+    'src/db/docTemplates.js',
+  ];
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    // The explicit out-of-scope list for this step. If a later step wires
+    // templates into document building, it does it somewhere these three files
+    // can be re-read against — not by quietly growing one of them.
+    assert.ok(!/replaceAllText/.test(src), `${f} does not fill anything in`);
+    assert.ok(!/document_types/.test(src), `${f} does not know about document types`);
+    assert.ok(!/require\(.*core\/pipeline/.test(src), `${f} does not touch the pipeline`);
+    assert.ok(!/getDestination/.test(src), `${f} does not touch the destination registry`);
+    assert.ok(!/slack/i.test(src), `${f} has nothing to do with Slack`);
+  }
+  // And no route outside settings serves templates.
+  const server = fs.readFileSync(path.join(root, 'src', 'server.js'), 'utf8');
+  assert.ok(!/templates/.test(server));
+});
+
+test('the template store degrades rather than failing before its migration lands', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'docTemplates.js'), 'utf8');
+  // Railway deploys main on merge, so this code runs against a database without
+  // doc_templates for as long as it takes someone to run the migration. The
+  // panel says "not available yet" in that window; it does not 500.
+  assert.match(src, /isUndefinedTable/);
+  assert.match(src, /warnMissingSchema/);
+  assert.equal((src.match(/isUndefinedTable\(/g) || []).length, 2, 'both the read and the write');
+  // INSERT names its columns — no spread of caller input into SQL.
+  assert.ok(!/\.\.\.template/.test(src));
+});
+
+test('the templates panel shows every marker with where it was found', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  assert.match(html, /data-tab="templates"/);
+  assert.match(html, /id="panel-templates"/);
+  assert.match(html, /id="tpl-file"[^>]*accept="\.docx"/);
+
+  const js = html.slice(html.indexOf('--- Template documents'), html.indexOf('--- Markdown render'));
+  // FormData with no Content-Type set by hand — the browser has to write the
+  // multipart boundary itself or multer sees nothing.
+  assert.match(js, /new FormData\(\)/);
+  assert.ok(!/Content-Type': 'multipart/.test(js));
+  // The location string is rendered SERVER-side (describeLocation) and printed,
+  // so the page and the logs describe a cell the same way.
+  assert.match(js, /\(m\.where \|\| \[\]\)\.forEach/);
+  assert.match(js, /tpl-warn/);
+  // An unclosed marker is surfaced to the tenant, not swallowed.
+  assert.match(js, /tplRenderWarnings/);
 });

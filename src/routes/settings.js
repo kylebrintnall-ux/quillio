@@ -7,10 +7,18 @@
 // requireAuth attaches a demo user so this still works. All DB ops degrade
 // gracefully. Never logs voice guide content or tokens.
 
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const express = require('express');
+const multer = require('multer');
 const { requireAuth } = require('../middleware/auth');
-const { voiceLimiter, settingsReadLimiter, settingsWriteLimiter } = require('../middleware/rateLimit');
+const {
+  voiceLimiter,
+  settingsReadLimiter,
+  settingsWriteLimiter,
+  uploadLimiter,
+} = require('../middleware/rateLimit');
 const { clientErrorMessage } = require('../utils/errors');
 const {
   resolveTenant,
@@ -35,8 +43,32 @@ const {
 // Same fold the unique index uses, so "renamed" here means what Postgres means.
 const { normalize } = require('../utils/normalize');
 const { generateVoiceGuide } = require('../services/gemini');
+const { listDocTemplates, saveDocTemplate } = require('../db/docTemplates');
+const { importDocxTemplate, DOCX_MIME } = require('../destinations/docTemplateImport');
+const { describeLocation } = require('../destinations/docPlaceholders');
+const { getClientsForTenant } = require('../google');
 
 const router = express.Router();
+
+// Template upload. Same shape as routes/app.js:60 — multer to the OS temp dir, a
+// hard size cap, a mime allowlist — with two deliberate differences: ONE file
+// (a template is a single document, and accepting three would invite the
+// question of which one won), and .docx ONLY.
+//
+// .docx only because the import's whole value is Drive's Word→Docs converter.
+// A PDF would import as an image with no table structure, and a .doc (the old
+// binary format) converts unreliably. Better to refuse the format than to accept
+// it and hand back a document with no placeholders in it for reasons the tenant
+// cannot see.
+const TEMPLATE_MAX_BYTES = 10 * 1024 * 1024;
+const templateUploadMw = multer({
+  dest: os.tmpdir(),
+  limits: { fileSize: TEMPLATE_MAX_BYTES, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const ok = file.mimetype === DOCX_MIME || /\.docx$/i.test(file.originalname || '');
+    cb(null, ok);
+  },
+}).single('file');
 
 // Pull a Drive folder id out of a pasted folder URL (…/folders/<id> or ?id=<id>).
 function folderIdFromUrl(url) {
@@ -380,6 +412,126 @@ router.post('/api/settings/library/asset/:id', settingsWriteLimiter, requireAuth
     console.error('[settings] POST /library/asset/:id failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
+});
+
+// --- Template documents (custom document types, STEP ONE) --------------------
+//
+// A tenant brings their own template document — the landscape multi-table "copy
+// matrix" a form/confirmation page is written in — and Quillio finds the
+// {{Placeholders}} in it. That is all this step does. Nothing maps a placeholder
+// to a field and nothing builds from a template yet.
+//
+// It is an UPLOAD rather than a pasted link because it has to be: the tenant
+// OAuth scope is drive.file (routes/oauth.js:45), which reaches only files the
+// app created, so a link to a hand-made file returns 404. Bytes that arrive
+// through Quillio become a Drive file Quillio created.
+
+// GET /api/settings/templates — what this tenant has uploaded, with the
+// placeholders found in each. Read-only.
+router.get('/api/settings/templates', settingsReadLimiter, requireAuth, async (req, res) => {
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const templates = await listDocTemplates(tenantId);
+    if (templates === null) {
+      // No DB, or the migration has not run here yet. Distinct from "none
+      // uploaded", and the UI says so rather than showing an empty list.
+      return res.status(200).json({ success: true, available: false, templates: [] });
+    }
+    return res.status(200).json({
+      success: true,
+      available: true,
+      // `where` is rendered here rather than in the browser so the two surfaces
+      // cannot describe the same location differently.
+      templates: templates.map((t) => ({
+        ...t,
+        placeholders: (t.placeholders || []).map((p) => ({
+          ...p,
+          where: (p.locations || []).map(describeLocation),
+        })),
+      })),
+    });
+  } catch (err) {
+    console.error('[settings] GET /templates failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/settings/templates — upload ONE .docx, import it to Drive as a Google
+// Doc the app owns, discover its placeholders, store both.
+//
+// The tenant comes from the SESSION and the Drive write runs as the ACTING USER
+// (getClientsForTenant), exactly like every other Drive write — so the imported
+// file lands in that person's Drive and is theirs, not a shared service
+// account's. The multipart body carries the file and nothing else: no tenant, no
+// id, no path.
+router.post('/api/settings/templates', uploadLimiter, requireAuth, (req, res) => {
+  templateUploadMw(req, res, async (err) => {
+    // A rejected mime yields no file rather than an error, so both are handled.
+    if (err) {
+      const tooBig = err.code === 'LIMIT_FILE_SIZE';
+      return res.status(400).json({
+        success: false,
+        error: tooBig ? 'That file is over 10MB. Try a smaller template.' : err.message,
+      });
+    }
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Upload a .docx template. Other formats (PDF, .doc) do not carry table structure through the import.',
+      });
+    }
+
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    const userId = (req.user && req.user.id) || null;
+    const original = req.file.originalname || 'template.docx';
+    const name = String(req.body && req.body.name ? req.body.name : original)
+      .replace(/\.docx$/i, '')
+      .trim()
+      .slice(0, 120) || 'Template';
+
+    try {
+      const clients = await getClientsForTenant({ tenantId, userId });
+      const imported = await importDocxTemplate({
+        clients,
+        stream: fs.createReadStream(req.file.path),
+        name: `Quillio template — ${name}`,
+      });
+
+      const id = await saveDocTemplate(tenantId, {
+        name,
+        source_doc_id: imported.docId,
+        source_doc_url: imported.docUrl,
+        original_filename: original,
+        placeholders: imported.discovery.placeholders,
+        created_by: userId,
+      });
+
+      return res.status(201).json({
+        success: true,
+        id,
+        name,
+        docUrl: imported.docUrl,
+        counts: imported.discovery.counts,
+        placeholders: imported.discovery.placeholders.map((p) => ({
+          ...p,
+          where: (p.locations || []).map(describeLocation),
+        })),
+        // Surfaced, not swallowed: a tenant whose {{Unclosed marker was typo'd
+        // needs to see it here rather than discover it when nothing fills in.
+        warnings: imported.discovery.warnings.map((w) => ({
+          kind: w.kind,
+          text: w.text,
+          where: describeLocation(w.location),
+        })),
+      });
+    } catch (e) {
+      console.error('[settings] template import failed:', e && e.stack ? e.stack : e);
+      return res.status(500).json({ success: false, error: clientErrorMessage(e) });
+    } finally {
+      // The temp file has served its purpose either way.
+      fs.unlink(req.file.path, () => {});
+    }
+  });
 });
 
 // GET /api/settings/workspace — current connections for the Workspace tab.

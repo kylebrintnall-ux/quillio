@@ -79,8 +79,10 @@ function summarizeStructure(doc) {
 
   const tables = [];
   const fonts = new Set();
+  const merges = [];
   let shadedCells = 0;
   let mergedCells = 0;
+  let tableIndex = 0;
 
   const walk = (content) => {
     for (const el of content || []) {
@@ -93,22 +95,53 @@ function summarizeStructure(doc) {
       }
       if (!el.table) continue;
       const t = el.table;
+      const thisTable = tableIndex;
+      tableIndex += 1;
       const rows = t.tableRows || [];
       const colWidths = ((t.tableStyle || {}).tableColumnProperties || []).map((c) =>
         c.width && c.width.magnitude ? Math.round(c.width.magnitude * 10) / 10 : null
       );
       let cells = 0;
+      // Row widths as the API reports them. A vertical merge may be represented
+      // either by an anchor with rowSpan and NO covered cell in the next row, or
+      // by an anchor plus a covered cell — which of those Docs does decides
+      // whether a row is short. Recording it means the report shows the answer
+      // rather than depending on knowing it in advance.
+      const rowCellCounts = [];
       for (const r of rows) {
-        for (const c of r.tableCells || []) {
+        const rowCells = r.tableCells || [];
+        rowCellCounts.push(rowCells.length);
+        rowCells.forEach((c, colIndex) => {
           cells += 1;
           const cs = c.tableCellStyle || {};
-          if ((cs.columnSpan || 1) > 1 || (cs.rowSpan || 1) > 1) mergedCells += 1;
+          const rowSpan = cs.rowSpan || 1;
+          const columnSpan = cs.columnSpan || 1;
+          if (columnSpan > 1 || rowSpan > 1) {
+            mergedCells += 1;
+            // Enumerated, not just counted. "Which merge was lost" has to be
+            // answerable by reading the report — a bare total can only say that
+            // something is missing, never what.
+            merges.push({
+              table: thisTable,
+              row: rowCellCounts.length - 1,
+              column: colIndex,
+              rowSpan,
+              columnSpan,
+              kind: columnSpan > 1 && rowSpan > 1 ? 'both' : columnSpan > 1 ? 'horizontal' : 'vertical',
+            });
+          }
           const bg = cs.backgroundColor;
           if (bg && bg.color) shadedCells += 1;
           walk(c.content);
-        }
+        });
       }
-      tables.push({ rows: rows.length, columns: t.columns || 0, cells, colWidthsPt: colWidths });
+      tables.push({
+        rows: rows.length,
+        columns: t.columns || 0,
+        cells,
+        colWidthsPt: colWidths,
+        rowCellCounts,
+      });
     }
   };
   walk((d.body && d.body.content) || []);
@@ -125,6 +158,7 @@ function summarizeStructure(doc) {
     tables,
     tableCount: tables.length,
     mergedCells,
+    merges,
     shadedCells,
     fonts: [...fonts].sort(),
     headers: Object.keys(d.headers || {}).length,

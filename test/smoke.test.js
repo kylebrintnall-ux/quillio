@@ -9837,3 +9837,75 @@ test('the templates panel shows every marker with where it was found', () => {
   // An unclosed marker is surfaced to the tenant, not swallowed.
   assert.match(js, /tplRenderWarnings/);
 });
+
+test('summarizeStructure names each merge, so a lost one is identifiable', () => {
+  const { summarizeStructure } = require('../src/destinations/docTemplateImport');
+  const para = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] } });
+  const s = summarizeStructure({
+    body: {
+      content: [
+        {
+          table: {
+            columns: 3,
+            tableRows: [
+              { tableCells: [
+                { content: [para('a')] },
+                { content: [para('b')], tableCellStyle: { columnSpan: 2 } },
+              ] },
+              { tableCells: [
+                { content: [para('c')], tableCellStyle: { rowSpan: 2 } },
+                { content: [para('d')] },
+                { content: [para('e')] },
+              ] },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  // A COUNT can only say something is missing. The report has to say WHICH merge,
+  // because "horizontal merges survive, vertical ones do not" is a rule a tenant
+  // has to be told, and no total can express it.
+  assert.equal(s.mergedCells, 2);
+  assert.deepEqual(s.merges.map((m) => m.kind), ['horizontal', 'vertical']);
+  assert.equal(s.merges[0].columnSpan, 2);
+  assert.equal(s.merges[1].rowSpan, 2);
+  assert.deepEqual(s.merges.map((m) => [m.table, m.row, m.column]), [[0, 0, 1], [0, 1, 0]]);
+  // Short rows are reported, so whether a vertically covered cell is emitted at
+  // all is read off the output rather than assumed.
+  assert.deepEqual(s.tables[0].rowCellCounts, [2, 3]);
+});
+
+test('a merge that did not survive is reported LOST, not SURVIVED', () => {
+  const { summarizeStructure } = require('../src/destinations/docTemplateImport');
+  const para = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] } });
+  // The converter flattened the vertical merge and kept the horizontal one.
+  const s = summarizeStructure({
+    body: { content: [{ table: { columns: 3, tableRows: [
+      { tableCells: [{ content: [para('a')] }, { content: [para('b')], tableCellStyle: { columnSpan: 2 } }] },
+      { tableCells: [{ content: [para('c')] }, { content: [para('d')] }, { content: [para('e')] }] },
+    ] } }] },
+  });
+  // THE BUG THIS PINS. The probe compared this with `s.mergedCells >= 1` and
+  // printed SURVIVED while a whole merge type was gone. One surviving merge is
+  // not evidence that merges survive.
+  assert.equal(s.mergedCells, 1);
+  assert.ok(!s.merges.some((m) => m.kind === 'vertical'), 'the vertical merge is absent');
+  assert.ok(s.mergedCells >= 1, 'the old check would still have passed — which is the point');
+});
+
+test('no fidelity check is a floor without a stated reason', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'probeDocxImport.js'), 'utf8');
+  const code = src.replace(/\/\/.*$/gm, '');
+  // A floor with no reason is a check that cannot fail, and three of them shipped:
+  // merged cells, shaded cells and page headers were all `>= 1`. Comparisons now
+  // go through exact() or atLeast(), and atLeast() THROWS without a reason — so a
+  // future lenient check cannot be added silently.
+  assert.ok(!/>= 1\b/.test(code), 'no bare >= 1 comparison survives');
+  assert.match(src, /const exact = \(want, got\)/);
+  assert.match(src, /a floor comparison must state why it is not exact/);
+  // Every atLeast call site passes a third argument.
+  const calls = code.match(/atLeast\([^)]*\)/g) || [];
+  assert.ok(calls.length >= 1);
+  for (const c of calls) assert.ok(c.split(',').length >= 3, `atLeast without a reason: ${c}`);
+});

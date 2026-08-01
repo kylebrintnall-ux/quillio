@@ -37,7 +37,21 @@ const EXPECTED = {
   // Table 1 has 5 grid columns with FIVE DIFFERENT widths; table 2 has 3; table 3 has 2.
   columnsPerTable: [5, 3, 2],
   distinctColWidths: 8,
-  mergedCells: 3, // one gridSpan + two vMerge rows
+  // MERGES ARE COUNTED AS DOCS CELLS THAT SPAN, NOT AS OOXML PROPERTIES.
+  //
+  // This expectation was wrong on the first run and reported "expected 3, got 2".
+  // The 3 counted XML elements carrying a merge property — one w:gridSpan plus
+  // BOTH rows of the w:vMerge pair. summarizeStructure counts something else: a
+  // Docs cell whose tableCellStyle reports rowSpan or columnSpan > 1. A vertical
+  // merge across two rows is two XML elements but ONE spanning Docs cell, so the
+  // fixture contains two spanning cells, not three.
+  //
+  // Stated as the two merges the fixture actually has, so the report names them:
+  mergedCells: 2,
+  merges: [
+    { kind: 'horizontal', columnSpan: 2, what: 'w:gridSpan=2 on the {{Submit Button}} cell' },
+    { kind: 'vertical', rowSpan: 2, what: 'w:vMerge restart+continue on the Element ID column' },
+  ],
   shadedCells: 10,
   fonts: ['Georgia'],
   headers: 1,
@@ -50,6 +64,19 @@ const EXPECTED = {
 
 const line = (s) => console.log('\n' + '='.repeat(78) + '\n' + s + '\n' + '='.repeat(78));
 const verdict = (ok) => (ok ? 'SURVIVED' : 'LOST');
+
+// A row is EXACT unless there is a stated reason it cannot be. The first version
+// of this report compared merged cells, shaded cells and page headers with
+// `>= 1` — which reports SURVIVED when two thirds of something is missing, and
+// did exactly that. A floor is a legitimate comparison only when the converter
+// is genuinely allowed to return a different number, and then the reason has to
+// be written down next to it, because a floor with no reason is a check that
+// cannot fail.
+const exact = (want, got) => ({ want, got, ok: String(want) === String(got) });
+const atLeast = (want, got, why) => {
+  if (!why) throw new Error('a floor comparison must state why it is not exact');
+  return { want: `>= ${want}`, got, ok: Number(got) >= Number(want), why };
+};
 
 (async () => {
   if (!fs.existsSync(FIXTURE)) {
@@ -71,19 +98,62 @@ const verdict = (ok) => (ok ? 'SURVIVED' : 'LOST');
 
   line('STRUCTURAL FIDELITY — what the converter did');
   const rows = [
-    ['page orientation', EXPECTED.orientation, s.orientation, s.orientation === EXPECTED.orientation],
-    ['page size (pt)', 'landscape (w > h)', `${s.pageSizePt.width} x ${s.pageSizePt.height}`, s.pageSizePt.width > s.pageSizePt.height],
-    ['table count', EXPECTED.tableCount, s.tableCount, s.tableCount === EXPECTED.tableCount],
-    ['columns per table', EXPECTED.columnsPerTable.join(','), s.tables.map((t) => t.columns).join(','),
-      s.tables.map((t) => t.columns).join(',') === EXPECTED.columnsPerTable.join(',')],
-    ['merged cells', EXPECTED.mergedCells, s.mergedCells, s.mergedCells >= 1],
-    ['shaded cells', EXPECTED.shadedCells, s.shadedCells, s.shadedCells >= 1],
-    ['non-default fonts', EXPECTED.fonts.join(','), s.fonts.join(',') || '(none)', s.fonts.includes('Georgia')],
-    ['page headers', EXPECTED.headers, s.headers, s.headers >= 1],
+    ['page orientation', exact(EXPECTED.orientation, s.orientation)],
+    ['page size (pt)', {
+      want: 'landscape (w > h)',
+      got: `${s.pageSizePt.width} x ${s.pageSizePt.height}`,
+      ok: s.pageSizePt.width > s.pageSizePt.height,
+    }],
+    ['table count', exact(EXPECTED.tableCount, s.tableCount)],
+    ['columns per table', exact(EXPECTED.columnsPerTable.join(','), s.tables.map((t) => t.columns).join(','))],
+    ['merged cells', exact(EXPECTED.mergedCells, s.mergedCells)],
+    ['shaded cells', exact(EXPECTED.shadedCells, s.shadedCells)],
+    ['non-default fonts', exact(EXPECTED.fonts.join(','), s.fonts.join(',') || '(none)')],
+    ['page headers', atLeast(EXPECTED.headers, s.headers,
+      'Docs may split one Word header into first-page/default/even variants, so more than one is correct; zero is not')],
   ];
-  for (const [what, want, got, ok] of rows) {
-    console.log(`  ${String(what).padEnd(20)} expected ${String(want).padEnd(22)} got ${String(got).padEnd(22)} ${verdict(ok)}`);
+  for (const [what, r] of rows) {
+    console.log(
+      `  ${String(what).padEnd(20)} expected ${String(r.want).padEnd(22)} got ${String(r.got).padEnd(22)} ${verdict(r.ok)}`
+    );
+    if (r.why && r.ok) console.log(`  ${''.padEnd(20)}   (floor, not exact: ${r.why})`);
   }
+  const lost = rows.filter(([, r]) => !r.ok);
+  console.log(lost.length ? `\n  ${lost.length} FEATURE(S) LOST — see below` : '\n  every structural feature survived');
+
+  line('MERGED CELLS, ONE BY ONE — which merge, not how many');
+  // A total can only say something is missing. This says WHICH, and that is the
+  // thing that constrains what a tenant's matrix may contain: if horizontal
+  // merges survive and vertical ones do not, that is a rule they have to be
+  // told, and no count can express it.
+  if (!s.merges.length) {
+    console.log('  none reported — BOTH merge types lost');
+  } else {
+    s.merges.forEach((m) => {
+      console.log(
+        `  table ${m.table + 1}, row ${m.row + 1}, column ${m.column + 1} — ` +
+          `${m.kind} (rowSpan ${m.rowSpan}, columnSpan ${m.columnSpan})`
+      );
+    });
+  }
+  const kinds = new Set(s.merges.map((m) => m.kind));
+  for (const want of EXPECTED.merges) {
+    const found = s.merges.some(
+      (m) =>
+        m.kind === want.kind &&
+        (want.columnSpan ? m.columnSpan === want.columnSpan : true) &&
+        (want.rowSpan ? m.rowSpan === want.rowSpan : true)
+    );
+    console.log(`\n  ${want.kind.toUpperCase()} — ${want.what}`);
+    console.log(`    ${found ? 'SURVIVED' : 'LOST — a tenant matrix must not rely on this merge type'}`);
+  }
+
+  // How a vertical merge is represented decides whether a row is short. Reported
+  // rather than assumed, because both representations are legal and which one
+  // Docs uses is not something to guess at.
+  console.log('\n  cells per row, per table (a short row = the covered cell is omitted):');
+  s.tables.forEach((t, i) => console.log(`    table ${i + 1}: [${(t.rowCellCounts || []).join(', ')}] of ${t.columns} columns`));
+  console.log(`\n  merge kinds present: ${[...kinds].join(', ') || '(none)'}`);
 
   line('COLUMN WIDTHS — the detail a matrix lives or dies on');
   s.tables.forEach((t, i) => {
@@ -92,8 +162,19 @@ const verdict = (ok) => (ok ? 'SURVIVED' : 'LOST');
   });
   const allWidths = s.tables.flatMap((t) => t.colWidthsPt || []).filter((w) => w != null);
   const distinct = new Set(allWidths).size;
+  const widthCheck = exact(EXPECTED.distinctColWidths, distinct);
   console.log(`\n  distinct widths reported: ${distinct} (fixture has ${EXPECTED.distinctColWidths})`);
-  console.log(`  widths preserved rather than equalized: ${verdict(distinct > 2)}`);
+  console.log(`  every distinct width preserved: ${verdict(widthCheck.ok)}`);
+  if (!widthCheck.ok) {
+    // The failure that matters is EQUALIZATION — the converter throwing the grid
+    // away and giving every column the same width. Distinguish that from a
+    // rounding difference, which is harmless, because they look the same in a count.
+    console.log(
+      distinct <= 1
+        ? '    EQUALIZED — the converter discarded the column grid. A tenant matrix cannot rely on column widths.'
+        : `    ${distinct} of ${EXPECTED.distinctColWidths} widths distinct — the grid survived but not exactly; compare the per-table rows above.`
+    );
+  }
 
   line('PLACEHOLDER DISCOVERY over the CONVERTED document');
   const d = imported.discovery;

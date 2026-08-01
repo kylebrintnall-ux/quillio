@@ -23,6 +23,7 @@ const {
 } = require('../services/slack');
 const { emoji } = require('../emoji');
 const { getTenantAssets } = require('../db/assets');
+const { getProjectByDocId } = require('../db/projects');
 const { beginRun } = require('../liveMessage');
 const {
   putPending,
@@ -470,20 +471,35 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   );
   console.log('[workflow] generateDraft returned — posting completion');
 
+  // The campaign folder this doc lives in, so the completion card can offer the
+  // whole run rather than one document of it. The draft path holds only a doc
+  // id — the project row is where the folder is recorded, keyed on exactly that
+  // doc. Best-effort: no DB, an unsaved project, or a run whose folder creation
+  // failed all yield null, and the card falls back to the single doc button it
+  // has always shown.
+  let folderUrl = null;
+  try {
+    const project = await getProjectByDocId(tenant && tenant.id, docId);
+    folderUrl = (project && project.drive_folder_url) || null;
+  } catch (err) {
+    console.warn('[workflow] campaign folder lookup failed — doc link only:', err.message);
+  }
+
   const headline = isRegen ? 'Draft regenerated' : 'First draft ready';
   const completionText = `${emoji('quillio-copy-done')} ${headline} — *${title}* (${fieldCount} field${
     fieldCount === 1 ? '' : 's'
   } drafted).`;
 
   if (canLive) {
-    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId), tokens.slack_bot, runSeq);
+    await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId, folderUrl), tokens.slack_bot, runSeq);
   } else {
     try {
-      await postChatMessage({ channel, text: completionText, webViewLink: url, token: tokens.slack_bot });
+      await postChatMessage({ channel, text: completionText, webViewLink: url, folderUrl, token: tokens.slack_bot });
     } catch (err) {
       console.error('[workflow] completion fallback to response_url:', err.message);
       await updateMessage(completionText, responseUrl, {
         webViewLink: url,
+        folderUrl,
         label: 'draft-complete',
         newMessage: true,
       });

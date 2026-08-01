@@ -880,7 +880,12 @@
 
       <div class="output-ctas">
         <button class="cta-primary" id="draft-btn">Generate First Draft</button>
-        <button class="cta-secondary" id="open-btn">Open in Drive</button>
+        <!-- The FOLDER first: a run can produce more than one document, so
+             opening one of them picks a winner arbitrarily, and the folder shows
+             everything the run produced. The copy doc keeps its own button —
+             it is what a writer usually wants next. -->
+        <button class="cta-secondary" id="open-btn">Campaign folder</button>
+        <button class="cta-secondary" id="open-doc-btn">Copy doc</button>
       </div>
     </section>
 
@@ -906,7 +911,8 @@
       <div class="output-ctas">
         <button class="cta-primary" id="copydone-review-btn">Review Copy</button>
         <button class="cta-primary" id="copydone-regen-btn">Regenerate</button>
-        <button class="cta-secondary" id="copydone-open-btn">Open in Drive</button>
+        <button class="cta-secondary" id="copydone-open-btn">Campaign folder</button>
+        <button class="cta-secondary" id="copydone-open-doc-btn">Copy doc</button>
       </div>
     </section>
 
@@ -948,11 +954,12 @@
         <!-- ONE dynamic primary: Generate First Draft / Generate Selected (N) /
              Regenerate / Regenerate Selected (N). Routes by draft state × selection. -->
         <button class="cta-primary hidden" id="project-primary-btn">Generate First Draft</button>
-        <button class="cta-secondary" id="project-open-btn">Open in Drive</button>
+        <button class="cta-secondary" id="project-open-btn">Campaign folder</button>
+        <button class="cta-secondary" id="project-doc-btn">Copy doc</button>
         <!-- The second document, when this brief produced one (custom document
              types). Hidden for every copy-doc-only project, which is nearly all
-             of them. The copy doc stays primary — "Open in Drive" above is
-             still the default and still opens it. -->
+             of them. "Campaign folder" holds this too — the direct button saves
+             a click and a scan, which is why it stays. -->
         <button class="cta-secondary hidden" id="project-template-btn">Open template document</button>
       </div>
       <div id="project-error" class="error hidden"></div>
@@ -1116,6 +1123,11 @@
         screens[k].classList.toggle('active', k === name);
       });
       setNavActive(name);
+      // Painted here rather than at each call site: the output and copy-done
+      // screens are reachable by several paths (a fresh run, a reload after a
+      // draft, a regenerate), and a folder button left showing from a previous
+      // run would link to the wrong campaign.
+      if (name === 'output' || name === 'copydone') paintDriveButtons();
       window.scrollTo(0, 0);
     }
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
@@ -1333,7 +1345,7 @@
     document.getElementById('progress-check-projects').addEventListener('click', loadHistory);
 
     // --- Screen 3: render output -------------------------------------------
-    var state = { docUrl: null, docId: null, projectId: null, campaignTitle: null, assets: [] };
+    var state = { docUrl: null, folderUrl: null, docId: null, projectId: null, campaignTitle: null, assets: [] };
 
     // Is this field's range counted in WORDS? getDocContent recovers the unit from
     // the doc label's bracket ("[50-125 words]") and returns it as fieldType.
@@ -1864,6 +1876,10 @@
       if (!data || !data.docUrl) throw new Error('That run didn’t come back with a document. Please try again.');
 
       state.docUrl = data.docUrl || null;
+      // The campaign folder for this run. Null when folder creation failed, in
+      // which case the folder button hides and the copy doc is the only link —
+      // a button that goes nowhere is worse than one fewer button.
+      state.folderUrl = data.folderUrl || null;
       state.docId = docIdFromUrl(data.docUrl);
       state.projectId = data.projectId != null ? data.projectId : null;
       state.campaignTitle = data.campaignTitle || 'Campaign';
@@ -2536,8 +2552,23 @@
       document.body.removeChild(a);
     }
 
+    // The folder, which is what both "Campaign folder" buttons open. Falls back
+    // to the doc when the run has no folder, so the button still does the most
+    // useful thing available rather than nothing.
     function openInDrive() {
+      var url = state.folderUrl || state.docUrl;
+      if (url) openDocUrl(url);
+    }
+    function openCopyDoc() {
       if (state.docUrl) openDocUrl(state.docUrl);
+    }
+    // Hide the folder button on a run that has no folder — otherwise it and
+    // "Copy doc" sit side by side going to the same place.
+    function paintDriveButtons() {
+      var has = !!state.folderUrl;
+      ['open-btn', 'copydone-open-btn'].forEach(function (id) {
+        document.getElementById(id).classList.toggle('hidden', !has);
+      });
     }
 
     // --- Screen 4: projects ------------------------------------------------
@@ -2933,6 +2964,9 @@
       // on the project row (db/projects selects *), so nothing else is fetched.
       var tplBtn = document.getElementById('project-template-btn');
       tplBtn.classList.toggle('hidden', !p.template_doc_url);
+      // A project with no folder (creation failed, or one predating folders)
+      // shows the copy doc alone rather than two buttons going to one place.
+      document.getElementById('project-open-btn').classList.toggle('hidden', !p.drive_folder_url);
 
       // Hide every draft affordance until the content tells us whether the doc
       // already has copy (decided after the fetch below).
@@ -3017,9 +3051,12 @@
       });
     }
 
+    // "Campaign folder" — everything the run produced, not one document of it.
+    // Falls back to the copy doc for a project whose folder was never created.
     function openProjectInDrive() {
       var p = projectState.project;
-      if (p && p.copy_doc_url) openDocUrl(p.copy_doc_url);
+      var url = (p && p.drive_folder_url) || (p && p.copy_doc_url);
+      if (url) openDocUrl(url);
     }
 
     // Review Copy: run the review with the magnifying-glass GIF in-progress, then
@@ -3166,6 +3203,8 @@
     fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
     document.getElementById('draft-btn').addEventListener('click', generateDraft);
     document.getElementById('open-btn').addEventListener('click', openInDrive);
+    document.getElementById('open-doc-btn').addEventListener('click', openCopyDoc);
+    document.getElementById('copydone-open-doc-btn').addEventListener('click', openCopyDoc);
     document.getElementById('copydone-review-btn').addEventListener('click', reviewCopyDone);
     document.getElementById('copydone-regen-btn').addEventListener('click', onCopyDonePrimary);
     document.getElementById('copydone-open-btn').addEventListener('click', openInDrive);
@@ -3181,6 +3220,10 @@
     document.getElementById('nav-settings').addEventListener('click', function () { window.location.href = '/settings'; });
     document.getElementById('project-back').addEventListener('click', loadHistory);
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
+    document.getElementById('project-doc-btn').addEventListener('click', function () {
+      var p = projectState.project;
+      if (p && p.copy_doc_url) openDocUrl(p.copy_doc_url);
+    });
     document.getElementById('project-template-btn').addEventListener('click', function () {
       var p = projectState.project;
       if (p && p.template_doc_url) openDocUrl(p.template_doc_url);

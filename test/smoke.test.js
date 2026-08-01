@@ -10400,3 +10400,104 @@ test('the web adapter still imports nothing from Slack', () => {
   const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
   assert.ok(!/require\(['"].*slack/i.test(web));
 });
+
+// --- "Open in Drive" lands on the campaign folder, not one document ----------
+
+test('the Drive buttons lead with the folder and keep the copy doc', () => {
+  const { driveButtons, copyCompleteBlocks, openInDriveBlocks } = require('../src/services/slack');
+
+  const both = driveButtons('https://d/DOC', 'https://d/FOLDER');
+  // A run can produce more than one document, so a single button opening one of
+  // them picks a winner arbitrarily. The folder shows everything the run made.
+  assert.deepEqual(both.map((b) => [b.text.text, b.url]), [
+    ['Campaign folder', 'https://d/FOLDER'],
+    ['Copy doc', 'https://d/DOC'],
+  ]);
+  // Labels match the doc-ready card's link text exactly, so the two cards name
+  // the same things the same way. Controls take no terminal punctuation.
+  assert.ok(both.every((b) => !/[.!?]$/.test(b.text.text)));
+
+  // With no folder — creation failed, or a project predating folders — it
+  // collapses to the single button it always was. Never a button to nowhere.
+  const docOnly = driveButtons('https://d/DOC', null);
+  assert.deepEqual(docOnly.map((b) => [b.text.text, b.url]), [['Open in Drive', 'https://d/DOC']]);
+  assert.deepEqual(driveButtons(null, null), []);
+
+  // The copy-complete card keeps Regenerate LAST, after whichever links exist.
+  const card = copyCompleteBlocks('done.', 'https://d/DOC', 'DOC', 'https://d/FOLDER');
+  const els = card[1].elements;
+  assert.deepEqual(els.map((e) => e.text.text), ['Campaign folder', 'Copy doc', 'Regenerate']);
+  assert.equal(els[2].value, 'DOC', 'Regenerate still carries the doc id');
+  assert.deepEqual(
+    copyCompleteBlocks('done.', 'https://d/DOC', 'DOC').at(1).elements.map((e) => e.text.text),
+    ['Open in Drive', 'Regenerate'],
+    'unchanged when no folder is known'
+  );
+  assert.equal(openInDriveBlocks('x', 'https://d/DOC', 'https://d/FOLDER')[1].elements.length, 2);
+});
+
+test('the doc-ready card already showed both, and still does', () => {
+  const slack = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
+  const links = slack.slice(slack.indexOf('const links = [];'), slack.indexOf('confirmation, below the links'));
+  // This card was ALREADY right — folder and copy doc as separate hyperlinks —
+  // so nothing here changed. Pinned so a later tidy-up does not "simplify" it
+  // into the single link the other cards used to have.
+  assert.match(links, /if \(folderUrl\) links\.push\(`\$\{emoji\('quillio-folder'\)\} <\$\{folderUrl\}\|Campaign folder>`\)/);
+  assert.match(links, /<\$\{webViewLink\}\|Copy doc>/);
+});
+
+test('the draft path finds its campaign folder by the doc it drafted', () => {
+  const sw = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  // The draft path holds only a doc id. The project row is where the folder is
+  // recorded, keyed on exactly that doc — the same key saveProject uses for
+  // idempotency, so it finds the right row or none.
+  assert.match(sw, /getProjectByDocId\(tenant && tenant\.id, docId\)/);
+  assert.match(sw, /folderUrl = \(project && project\.drive_folder_url\) \|\| null/);
+  // Best-effort: a lookup failure still posts the card, with the doc link alone.
+  assert.match(sw, /catch \(err\) \{[\s\S]{0,160}campaign folder lookup failed/);
+  assert.match(sw, /copyCompleteBlocks\(completionText, url, docId, folderUrl\)/);
+  // Both fallback posts carry it too, or the card would differ by delivery path.
+  assert.match(sw, /webViewLink: url, folderUrl, token: tokens\.slack_bot/);
+  assert.match(sw, /webViewLink: url,\n\s+folderUrl,/);
+
+  const projects = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'projects.js'), 'utf8');
+  assert.match(projects, /async function getProjectByDocId\(tenantId, copyDocId\)/);
+  assert.match(projects, /WHERE tenant_id = \$1 AND copy_doc_id = \$2 LIMIT 1/);
+  // Tenant-scoped, and a null is never an error — the card just gets smaller.
+  assert.match(projects, /if \(!pool \|\| !tenantId \|\| !copyDocId\) return null/);
+});
+
+test('every web screen opens the folder, and still offers the copy doc', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // Three screens, each with a folder button and a copy-doc button beside it.
+  for (const [folderBtn, docBtn] of [
+    ['open-btn', 'open-doc-btn'],
+    ['copydone-open-btn', 'copydone-open-doc-btn'],
+    ['project-open-btn', 'project-doc-btn'],
+  ]) {
+    assert.match(html, new RegExp(`id="${folderBtn}">Campaign folder<`), `${folderBtn} opens the folder`);
+    assert.match(html, new RegExp(`id="${docBtn}">Copy doc<`), `${docBtn} kept`);
+  }
+  // "Open in Drive" is gone from those three, and remains ONLY on the review
+  // modal — where the notes are anchored comments inside the doc, so a folder
+  // would show the reader nothing they came for.
+  assert.equal((html.match(/id="[a-z-]*open[a-z-]*btn">Open in Drive</g) || []).length, 0);
+  assert.match(html, /id="project-review-modal-open"[^>]*>Open in Drive</);
+
+  // The run screens read the folder off the run; the project screen off its row.
+  assert.match(html, /state\.folderUrl = data\.folderUrl \|\| null/);
+  assert.match(html, /var url = state\.folderUrl \|\| state\.docUrl/);
+  assert.match(html, /var url = \(p && p\.drive_folder_url\) \|\| \(p && p\.copy_doc_url\)/);
+
+  // A run with no folder hides the folder button rather than duplicating the
+  // copy doc under two labels.
+  assert.match(html, /function paintDriveButtons\(\)/);
+  assert.match(html, /if \(name === 'output' \|\| name === 'copydone'\) paintDriveButtons\(\)/);
+  assert.match(html, /getElementById\('project-open-btn'\)\.classList\.toggle\('hidden', !p\.drive_folder_url\)/);
+  // Painted in showScreen, not per call site: those screens are reachable from a
+  // fresh run, a reload after a draft and a regenerate, and a stale folder
+  // button would link to the previous campaign. The assertion above pins the
+  // hook; this pins that no call site paints it instead.
+  assert.equal((html.match(/paintDriveButtons\(\)/g) || []).length, 2, 'defined once, called once');
+});

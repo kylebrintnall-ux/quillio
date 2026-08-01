@@ -2761,7 +2761,12 @@ test('append: threaded route -> adapter -> pipeline -> destination; scoped-only;
   assert.ok(/pipeline\.generateDraft\(docId, direction, clients, tenantId, scopedFields, append\)/.test(web), 'adapter threads append');
   const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
   assert.ok(/async function generateDraft\(docId, direction, clients, tenantId, scopedFields, append\)/.test(pipe), 'pipeline takes append');
-  assert.ok(/generateDraft\(docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append\)/.test(pipe), 'pipeline threads append to destination');
+  // The call wraps across two lines since custom document types step four made
+  // generateDraft await its result before syncing the template document.
+  assert.ok(
+    /generateDraft\(\s*docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append\s*\)/.test(pipe),
+    'pipeline threads append to destination'
+  );
 });
 
 test('variations (P2/P3): route sanitizes count (1-4) and distance whitelist; payload threads through', () => {
@@ -10189,7 +10194,7 @@ test('the panel names a template, and says where copy goes at a glance', () => {
 
 // --- Custom document types, step three: build the second document ------------
 
-test('specs partition by template, and an unattached asset never leaves the copy doc', () => {
+test('the partition is for OUTPUT — every asset still renders in the copy doc', () => {
   const { partitionSpecsByTemplate } = require('../src/core/pipeline');
   const specs = [
     { assetType: 'LinkedIn Single Image Ad', fields: [] },
@@ -10203,7 +10208,13 @@ test('specs partition by template, and an unattached asset never leaves the copy
       : null;
   const { copyDocSpecs, templateGroups } = partitionSpecsByTemplate(specs, bind);
 
-  assert.deepEqual(copyDocSpecs.map((s) => s.assetType), ['LinkedIn Single Image Ad', 'Meta Single Image Ad']);
+  // STEP THREE DIVERTED ATTACHED ASSETS OUT OF THE COPY DOC. That was the wrong
+  // cut: the copy doc is where drafting and review happen, so an asset missing
+  // from it is one no writer can draft and no reviewer can comment on — and its
+  // template document would arrive empty forever. Every spec renders here now,
+  // and the template is a SECOND rendering of the same copy.
+  assert.deepEqual(copyDocSpecs.map((s) => s.assetType), specs.map((s) => s.assetType));
+
   // GROUPED BY TEMPLATE, NOT BY ASSET. Two assets attached to one matrix fill
   // ONE document between them — which is what a "Form & Confirmation Matrix"
   // holding both pages means.
@@ -10344,12 +10355,21 @@ test('the template documents are built BEFORE the copy doc', () => {
 
 test('the pipeline reaches Google only through the destination', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function generateDraft'));
+  // Ends at syncTemplateDocuments, which step four inserted just above
+  // generateDraft — the old anchor now swallows it and its comments name the
+  // Google APIs it deliberately does not call.
+  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function syncTemplateDocuments'));
   // files.copy and batchUpdate live in googleDocs.js, behind createFromTemplate —
   // the same contract createDocument and generateDraft go through, so a second
   // destination can implement it.
   assert.ok(!/files\.copy|replaceAllText|batchUpdate/.test(build));
   assert.match(build, /getDestination\(\)\.createFromTemplate\(/);
+
+  // The sync goes through the contract too — one more member, not a Google call.
+  const sync = src.slice(src.indexOf('async function syncTemplateDocuments'), src.indexOf('async function generateDraft'));
+  assert.ok(!/files\.copy|docs\.documents|batchUpdate\(/.test(sync.replace(/\/\/.*$/gm, '')));
+  assert.match(sync, /getDestination\(\)\.fillTemplateMarkers\(/);
+  assert.match(sync, /getDestination\(\)\.getDocContent\(/);
 });
 
 test('the project row records the template document without disturbing copy_doc_id', () => {
@@ -10500,4 +10520,140 @@ test('every web screen opens the folder, and still offers the copy doc', () => {
   // button would link to the previous campaign. The assertion above pins the
   // hook; this pins that no call site paints it instead.
   assert.equal((html.match(/paintDriveButtons\(\)/g) || []).length, 2, 'defined once, called once');
+});
+
+// --- Custom document types, step four: sync drafted copy into the template ----
+
+test('a re-fill uses the OLD COPY as its handle, because the marker is gone', async () => {
+  const gdocs = require('../src/destinations/googleDocs');
+  const sent = [];
+  const clients = { docs: { documents: { batchUpdate: async (a) => { sent.push(a.requestBody.requests); return { data: {} }; } } } };
+
+  // FIRST sync: the marker is still standing, so it is the handle.
+  let out = await gdocs.fillTemplateMarkers('TPL', {
+    values: new Map([['form headline', 'Book your seat']]),
+    previous: {},
+    markers: [{ name: 'Form Headline', key: 'form headline' }],
+  }, clients);
+  assert.deepEqual(sent[0].map((r) => [r.replaceAllText.containsText.text, r.replaceAllText.replaceText]),
+    [['{{Form Headline}}', 'Book your seat']]);
+  assert.deepEqual(out.applied, { 'form headline': 'Book your seat' });
+
+  // SECOND sync: replaceAllText CONSUMED the marker on the first pass, so
+  // {{Form Headline}} is no longer in the document. Without the old copy as a
+  // second handle, a regenerated field would never reach the template.
+  out = await gdocs.fillTemplateMarkers('TPL', {
+    values: new Map([['form headline', 'Claim your seat']]),
+    previous: { 'form headline': 'Book your seat' },
+    markers: [{ name: 'Form Headline', key: 'form headline' }],
+  }, clients);
+  assert.deepEqual(sent[1].map((r) => [r.replaceAllText.containsText.text, r.replaceAllText.replaceText]), [
+    ['{{Form Headline}}', 'Claim your seat'],
+    ['Book your seat', 'Claim your seat'],
+  ]);
+  // The marker replacement is case-insensitive (a tenant may vary its casing);
+  // the old-copy replacement is not, because it is a literal from the document.
+  assert.equal(sent[1][0].replaceAllText.containsText.matchCase, false);
+  assert.equal(sent[1][1].replaceAllText.containsText.matchCase, true);
+});
+
+test('an unchanged field sends nothing, so a re-sync is free', async () => {
+  const gdocs = require('../src/destinations/googleDocs');
+  let calls = 0;
+  const clients = { docs: { documents: { batchUpdate: async () => { calls += 1; return { data: {} }; } } } };
+  const out = await gdocs.fillTemplateMarkers('TPL', {
+    values: new Map([['a', 'same'], ['b', 'also same']]),
+    previous: { a: 'same', b: 'also same' },
+    markers: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }],
+  }, clients);
+  assert.equal(calls, 0, 'no batchUpdate at all');
+  assert.equal(out.requests, 0);
+  assert.deepEqual(out.unchanged, ['A', 'B']);
+  // Still remembered, so the NEXT change still has its handle.
+  assert.deepEqual(out.applied, { a: 'same', b: 'also same' });
+});
+
+test('empty copy leaves the cell alone rather than blanking it', async () => {
+  const gdocs = require('../src/destinations/googleDocs');
+  const sent = [];
+  const clients = { docs: { documents: { batchUpdate: async (a) => { sent.push(...a.requestBody.requests); return { data: {} }; } } } };
+  const out = await gdocs.fillTemplateMarkers('TPL', {
+    values: new Map([['a', '   '], ['b', ''], ['c', 'real copy']]),
+    // `a` was filled on an earlier sync; its copy must SURVIVE rather than being
+    // wiped by a field that has since been emptied.
+    previous: { a: 'earlier copy' },
+    markers: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }, { name: 'C', key: 'c' }, { name: 'D', key: 'd' }],
+  }, clients);
+  assert.deepEqual(out.skipped, ['A', 'B', 'D']);
+  assert.deepEqual(out.filled, ['C']);
+  // The rule, as an assertion: nothing ever replaces anything with blank.
+  assert.ok(sent.every((r) => String(r.replaceAllText.replaceText).trim()));
+  // And what was already in A's cell is still remembered, not forgotten.
+  assert.equal(out.applied.a, 'earlier copy');
+});
+
+test('two markers that held identical copy are skipped, not guessed at', async () => {
+  const gdocs = require('../src/destinations/googleDocs');
+  const sent = [];
+  const clients = { docs: { documents: { batchUpdate: async (a) => { sent.push(...a.requestBody.requests); return { data: {} }; } } } };
+  const out = await gdocs.fillTemplateMarkers('TPL', {
+    values: new Map([['a', 'new A'], ['b', 'new B']]),
+    // Both cells hold "Register now". Replacing by old copy would hit BOTH of
+    // them and put A's new copy in B's cell — a wrong cell is worse than a stale
+    // one, because nobody re-reads a matrix cell before shipping it.
+    previous: { a: 'Register now', b: 'Register now' },
+    markers: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }],
+  }, clients);
+  assert.deepEqual(out.ambiguous, ['A', 'B']);
+  assert.ok(!sent.some((r) => r.replaceAllText.containsText.text === 'Register now'));
+  // The marker replacement is still sent — harmless if the marker is gone, and
+  // correct if this cell was never filled.
+  assert.equal(sent.length, 2);
+});
+
+test('the sync is hooked in generateDraft, so every draft path gets it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const draft = src.slice(src.indexOf('async function generateDraft'), src.indexOf('async function getProjectContent'));
+  // ONE hook, in the ONE function both adapters call for a first draft, a scoped
+  // draft, a regeneration and a riff. In an adapter it would need a second copy
+  // in web.js and a third for the next surface — and a regeneration that skipped
+  // the sync is exactly the silent divergence this step exists to prevent.
+  assert.match(draft, /const templateSync = await syncTemplateDocuments\(docId, clients, tenantId\)/);
+  assert.match(draft, /return templateSync \? \{ \.\.\.result, templateSync \} : result/);
+
+  const sw = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  for (const [name, a] of [['slackWorkflow', sw], ['web', web]]) {
+    assert.ok(!/syncTemplateDocuments|fillTemplateMarkers/.test(a), `${name} does not sync for itself`);
+  }
+});
+
+test('a scoped draft triggers a FULL re-sync, not a scoped one', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const sync = src.slice(src.indexOf('async function syncTemplateDocuments'), src.indexOf('async function generateDraft'));
+  // syncTemplateDocuments takes no field scope at all — it reads the whole copy
+  // doc and offers every mapped marker. getDocContent has no partial read, so a
+  // scoped sync would cost the same and get one case wrong: a writer who
+  // regenerated A after hand-editing B would see only A reach the matrix.
+  assert.match(sync, /async function syncTemplateDocuments\(docId, clients, tenantId\)/);
+  assert.ok(!/scopedFields/.test(sync));
+  // Nothing to sync is the common case and must be cheap: one indexed lookup.
+  assert.match(sync, /if \(!project \|\| !project\.template_doc_id\) return null/);
+  // Best-effort throughout — a successful draft must never fail on a template.
+  assert.match(sync, /template sync failed \(the draft is unaffected\)/);
+  assert.ok(!/throw /.test(sync));
+});
+
+test('what was written is remembered on the project row', () => {
+  const projects = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'projects.js'), 'utf8');
+  assert.match(projects, /async function setProjectTemplateFill\(tenantId, projectId, fill\)/);
+  assert.match(projects, /UPDATE projects SET template_fill = \$1::jsonb WHERE tenant_id = \$2 AND id = \$3/);
+  // The column arrives in a migration and Railway deploys main on merge, so this
+  // runs without it first. A sync that worked in Drive but could not record
+  // itself is not worth failing a draft over.
+  assert.match(projects, /isUndefinedColumn\(err\)[\s\S]{0,120}template_fill/);
+  assert.ok(!/throw err/.test(projects.slice(projects.indexOf('async function setProjectTemplateFill'), projects.indexOf('module.exports'))));
+
+  const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.match(pipe, /await setProjectTemplateFill\(tenantId, project\.id, result\.applied\)/);
 });

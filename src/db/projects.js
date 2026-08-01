@@ -181,4 +181,33 @@ async function getProjectByDocId(tenantId, copyDocId) {
   }
 }
 
-module.exports = { saveProject, getProjects, getProject, getProjectByDocId, setProjectStatus };
+// Remember what was last written into each of a project's template markers, so
+// the NEXT sync can find that text and replace it (see
+// scripts/migrateAddProjectTemplateFill.js — replaceAllText consumes the marker,
+// so after the first fill the old copy is the only handle left).
+//
+// Best-effort in exactly the way the rest of this file is: no DB, no column yet,
+// or a failed write all return false rather than throwing. A sync that succeeded
+// in Drive but failed to record itself is not worth failing a draft over — the
+// next sync falls back to looking for {{Marker}}, finds nothing, and leaves the
+// document as it is.
+async function setProjectTemplateFill(tenantId, projectId, fill) {
+  const pool = getPool();
+  if (!pool || !tenantId || !projectId) return false;
+  try {
+    const res = await pool.query(
+      'UPDATE projects SET template_fill = $1::jsonb WHERE tenant_id = $2 AND id = $3',
+      [JSON.stringify(fill && typeof fill === 'object' ? fill : {}), tenantId, projectId]
+    );
+    return res.rowCount > 0;
+  } catch (err) {
+    if (isUndefinedColumn(err)) {
+      warnMissingSchema('projects.template_fill');
+      return false;
+    }
+    console.warn(`[db/projects] setProjectTemplateFill failed for project ${projectId}: ${err.message}`);
+    return false;
+  }
+}
+
+module.exports = { saveProject, getProjects, getProject, getProjectByDocId, setProjectTemplateFill, setProjectStatus };

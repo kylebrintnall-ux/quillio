@@ -138,11 +138,18 @@ doc, deliberately — the copy doc will carry links to them. `projects.copy_doc_
 still means the copy doc and still keys idempotency; the template document is
 recorded in `projects.template_doc_id` / `template_doc_url`.
 
-Note what this does NOT yet do: at brief time there is no drafted copy (the copy
-doc is built as structure; words arrive later from `generateDraft`), so a
-template document is currently created with every marker still visible. Filling
-it needs a drafting path that reaches template-attached assets, which does not
-exist yet.
+The partition is for **output, not content**: a template-attached asset renders
+in the copy doc like any other, so `generateDraft` drafts it and `copyReview`
+reviews it. The template document is a SECOND rendering of that same copy, filled
+by `pipeline.syncTemplateDocuments` — called from `generateDraft`, so every draft
+path (first, scoped, regenerate, riff) syncs.
+
+`replaceAllText` **consumes** what it matches, so after the first fill the marker
+is gone. Each sync therefore offers two replacements per marker — `{{Marker}}` and
+the copy written last time (remembered in `projects.template_fill`) — and
+whichever is present wins. A cell a writer hand-edited matches neither, so their
+edit survives; the matrix is then stale for that field until they change it in
+the copy doc.
 
 Data flow for `/quillio [brief]`:
 
@@ -193,6 +200,7 @@ returns data instead of posting messages.
   | `createDocument({ brief, campaignTitle, summary, writerPrompt, assetSpecs, folderId, referenceLinks, referenceInsights, headerSchema, namingPattern, clients })` → `{ id, url, title }` | `pipeline.generateDoc` |
   | `generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append)` → `{ title, fieldCount, url }` | `pipeline.generateDraft` |
   | `createFromTemplate({ sourceDocId, name, folderId, values, markers, clients })` → `{ id, url, title, filled, unfilled }` | `pipeline.generateDoc` (custom document types) |
+  | `fillTemplateMarkers(id, { values, previous, markers }, clients)` → `{ filled, skipped, unchanged, ambiguous, applied }` | `pipeline.syncTemplateDocuments` |
   | `getDocContent(id, clients)` | `pipeline.getProjectContent`, `copyReview` |
   | `listReviewComments(docId, clients)` | `copyReview` |
   | `addReviewComment(docId, { quote, content }, clients)` | `copyReview` |

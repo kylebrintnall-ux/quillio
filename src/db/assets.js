@@ -11,7 +11,7 @@
 // core/pipeline.js generateDoc() THROWS when getTenantAssets returns null or an
 // empty library. A null here means "no DB or unseeded tenant", not "fall back".
 
-const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
+const { getPool, isUndefinedTable, isUndefinedColumn, warnMissingSchema } = require('../db');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { normalize } = require('../utils/normalize');
 
@@ -594,6 +594,94 @@ async function getAssetDirections(tenantId) {
   return (assetName) => byNorm.get(normName(assetName)) || null;
 }
 
+// WHICH ASSETS RENDER INTO A TEMPLATE, and which marker each of their fields
+// fills (custom document types, STEP THREE).
+//
+// A SEPARATE READ, deliberately. getTenantAssets is the pipeline's spec source
+// and carries neither the attachment nor the markers — step two made that a
+// property of the code rather than a promise, and widening it now would change
+// what every brief builds. This is the second reader, exactly as getTenantLibrary
+// is for the editor, and generateDoc calls it alongside getAssetDirections.
+//
+// Returns a lookup keyed on the NORMALIZED asset name, because that is what the
+// spec groups carry by the time the pipeline sees them (rowToSpecGroup keeps
+// `assetType` as the display name, and tenantAssetsToSpecs already matches by
+// normalize()). Null-safe throughout: no DB, no migration, or no attachments all
+// yield an empty lookup, and an empty lookup means every asset renders into the
+// copy doc — today's behaviour exactly.
+//
+// Shape: (assetName) => null | {
+//   templateId, templateName, sourceDocId,
+//   markers: [{ name, key }],              // every marker in the template
+//   fieldMarkers: Map(normalized field name -> { key, name })
+// }
+async function getAssetTemplateBindings(tenantId) {
+  const empty = () => null;
+  const pool = getPool();
+  if (!pool || !tenantId) return empty;
+
+  let rows;
+  try {
+    rows = (
+      await pool.query(
+        `SELECT at.id            AS asset_id,
+                at.name          AS asset_name,
+                dt.id            AS template_id,
+                dt.name          AS template_name,
+                dt.source_doc_id AS source_doc_id,
+                dt.placeholders  AS placeholders,
+                cf.field_name    AS field_name,
+                cf.template_marker_key  AS marker_key,
+                cf.template_marker_name AS marker_name
+           FROM asset_types at
+           JOIN doc_templates dt ON dt.id = at.doc_template_id
+           LEFT JOIN copy_fields cf ON cf.asset_type_id = at.id
+          WHERE at.tenant_id = $1
+            AND at.is_active = true
+            AND dt.tenant_id = $1`,
+        [tenantId]
+      )
+    ).rows;
+  } catch (err) {
+    // The columns and the table both arrive in migrations, and Railway deploys
+    // main on merge — so this runs against a database without them first. No
+    // attachments is the correct pre-migration answer, and it is also today's
+    // behaviour, so a brief built in that window is not degraded, just ordinary.
+    if (isUndefinedTable(err) || isUndefinedColumn(err)) {
+      warnMissingSchema('asset_types.doc_template_id', 'getAssetTemplateBindings', err);
+      return empty;
+    }
+    throw err;
+  }
+
+  const byNorm = new Map();
+  for (const r of rows) {
+    const key = normName(r.asset_name);
+    if (!byNorm.has(key)) {
+      byNorm.set(key, {
+        templateId: String(r.template_id),
+        templateName: r.template_name,
+        sourceDocId: r.source_doc_id,
+        markers: (Array.isArray(r.placeholders) ? r.placeholders : []).map((p) => ({
+          name: p.name,
+          key: p.key,
+        })),
+        fieldMarkers: new Map(),
+      });
+    }
+    // A field with no marker is simply absent from the map — unmapped is a valid
+    // state, and the marker it would have filled stays visible in the output.
+    if (r.field_name && r.marker_key) {
+      byNorm.get(key).fieldMarkers.set(normName(r.field_name), {
+        key: r.marker_key,
+        name: r.marker_name || r.marker_key,
+      });
+    }
+  }
+
+  return (assetName) => byNorm.get(normName(assetName)) || null;
+}
+
 // ATTACH one tenant-authored asset to a template document — or detach it by
 // passing null. This is the only writer of asset_types.doc_template_id.
 //
@@ -793,6 +881,9 @@ module.exports = {
   seedTenantAssets,
   setAssetTemplate,
   setAssetFieldMarkers,
+  // The pipeline's ONLY view of the attachment — separate from getTenantAssets
+  // on purpose, so the spec source stays exactly what it was.
+  getAssetTemplateBindings,
   getTenantAssets,
   // The EDITOR read — every asset, active or not, with stable ids. Separate from
   // getTenantAssets on purpose (see its comment).

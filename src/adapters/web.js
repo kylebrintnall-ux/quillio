@@ -187,12 +187,23 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
   }
   // Project persistence now lives in the shared pipeline (generateDoc), so both
   // the web and Slack adapters record history identically — nothing to save here.
-  const { doc, assetSpecs, projectFolderUrl, projectId } = docResult;
+  const { doc, assetSpecs, projectFolderUrl, projectId, templateDocs = [] } = docResult;
 
   return {
     projectId,
     docUrl: doc.url,
     folderUrl: projectFolderUrl,
+    // The template documents this brief produced (custom document types, step
+    // three). [] for every copy-doc-only brief. The copy doc stays primary —
+    // `docUrl` above is still the one the UI opens by default.
+    templateDocs: (templateDocs || []).map((t) => ({
+      templateId: t.templateId,
+      templateName: t.templateName,
+      url: t.url || null,
+      filled: t.filled ? t.filled.length : 0,
+      unfilled: t.unfilled ? t.unfilled.length : 0,
+      error: t.error || null,
+    })),
     campaignTitle,
     assets: assetSpecs.map((a) => a.assetType),
     // Richer per-asset detail for the web UI: name + each field's char spec.

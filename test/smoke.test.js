@@ -3708,7 +3708,14 @@ test('both adapters thread the acting user into Drive writes and project authors
 
   // created_by must actually reach the INSERT.
   const projects = read('src/db/projects.js');
-  assert.ok(/created_by/.test(projects) && /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10\)/.test(projects), 'saveProject inserts created_by');
+  // The placeholder list is now built from the column list (custom document
+  // types step three added an optional pair, so a fixed $1..$10 no longer
+  // describes it). What matters is unchanged: created_by is a column the INSERT
+  // names, and its value is the one passed in.
+  assert.ok(/created_by/.test(projects), 'saveProject names created_by');
+  assert.match(projects, /extra: \['created_by'\], values: \[created_by\]/);
+  assert.match(projects, /\$\{names\.join\(', '\)\}/, 'columns drive the placeholders');
+  assert.match(projects, /params\.map\(\(_, n\) => '\$' \+ \(n \+ 1\)\)/);
   const pipeline = read('src/core/pipeline.js');
   assert.ok(/created_by: projectMeta\.createdBy/.test(pipeline), 'pipeline passes createdBy through to saveProject');
 });
@@ -3829,9 +3836,15 @@ test('a project is still recorded when projects.created_by is missing', async ()
     assert.ok(saved, 'the project row is still persisted');
     assert.strictEqual(saved.id, 7);
   });
-  assert.strictEqual(inserts.length, 2, 'tried with created_by, then retried without');
-  assert.ok(inserts[0].includes('created_by'));
-  assert.ok(!inserts[1].includes('created_by'));
+  // THREE attempts now, not two. saveProject enumerates the combinations of
+  // optional columns rather than dropping them in a fixed order, so a database
+  // missing created_by but HAVING template_doc_* keeps the template columns
+  // instead of losing both. The first cut ordered them newest-first and lost
+  // the template document on exactly this database.
+  assert.strictEqual(inserts.length, 3, 'created_by+template, created_by, then template alone');
+  assert.ok(inserts[0].includes('created_by') && inserts[0].includes('template_doc_id'));
+  assert.ok(inserts[1].includes('created_by') && !inserts[1].includes('template_doc_id'));
+  assert.ok(!inserts[2].includes('created_by') && inserts[2].includes('template_doc_id'));
 });
 
 test('the missing-schema catch is narrow — real errors still throw', async () => {
@@ -10172,4 +10185,218 @@ test('the panel names a template, and says where copy goes at a glance', () => {
   assert.match(libJs, /A matrix carries cells nobody drafts/);
   // Auto-matched rows are LABELLED, so a human can see what was guessed.
   assert.match(libJs, /'auto-matched'/);
+});
+
+// --- Custom document types, step three: build the second document ------------
+
+test('specs partition by template, and an unattached asset never leaves the copy doc', () => {
+  const { partitionSpecsByTemplate } = require('../src/core/pipeline');
+  const specs = [
+    { assetType: 'LinkedIn Single Image Ad', fields: [] },
+    { assetType: 'Form & Confirmation Page', fields: [] },
+    { assetType: 'Meta Single Image Ad', fields: [] },
+    { assetType: 'Thank You Page', fields: [] },
+  ];
+  const bind = (name) =>
+    name === 'Form & Confirmation Page' || name === 'Thank You Page'
+      ? { templateId: '7', templateName: 'Matrix', sourceDocId: 'SRC', markers: [], fieldMarkers: new Map() }
+      : null;
+  const { copyDocSpecs, templateGroups } = partitionSpecsByTemplate(specs, bind);
+
+  assert.deepEqual(copyDocSpecs.map((s) => s.assetType), ['LinkedIn Single Image Ad', 'Meta Single Image Ad']);
+  // GROUPED BY TEMPLATE, NOT BY ASSET. Two assets attached to one matrix fill
+  // ONE document between them — which is what a "Form & Confirmation Matrix"
+  // holding both pages means.
+  assert.equal(templateGroups.length, 1);
+  assert.deepEqual(templateGroups[0].specs.map((s) => s.assetType), ['Form & Confirmation Page', 'Thank You Page']);
+});
+
+test('no bindings at all means every spec goes to the copy doc, as today', () => {
+  const { partitionSpecsByTemplate } = require('../src/core/pipeline');
+  const specs = [{ assetType: 'A', fields: [] }, { assetType: 'B', fields: [] }];
+  // The three ways there are no bindings: no DB, no migration, no attachments.
+  // getAssetTemplateBindings returns a lookup for all three, so this is the path
+  // every brief takes today and the one it keeps taking after this ships.
+  for (const bind of [() => null, undefined, null]) {
+    const out = partitionSpecsByTemplate(specs, bind);
+    assert.equal(out.copyDocSpecs.length, 2);
+    assert.equal(out.templateGroups.length, 0);
+  }
+});
+
+test('a template whose source document is gone falls back to the copy doc', () => {
+  const { partitionSpecsByTemplate } = require('../src/core/pipeline');
+  // The attachment survives a deleted Drive file (the FK is ON DELETE SET NULL
+  // on the template row, not on the imported doc). Dropping the asset out of
+  // EVERY document would lose the writer's work silently; the copy doc renders
+  // it the way it did before it was ever attached.
+  const out = partitionSpecsByTemplate(
+    [{ assetType: 'A', fields: [] }],
+    () => ({ templateId: '7', templateName: 'Matrix', sourceDocId: null, markers: [], fieldMarkers: new Map() })
+  );
+  assert.equal(out.copyDocSpecs.length, 1);
+  assert.equal(out.templateGroups.length, 0);
+});
+
+test('two assets in one template cannot collide on a marker', () => {
+  const { partitionSpecsByTemplate, templateValuesFor } = require('../src/core/pipeline');
+  // Both assets have a field called "Headline" mapped to DIFFERENT markers. The
+  // merged map is keyed asset|field, so neither overwrites the other.
+  const bindA = { templateId: '7', templateName: 'M', sourceDocId: 'SRC', markers: [],
+    fieldMarkers: new Map([['headline', { key: 'form headline', name: 'Form Headline' }]]) };
+  const bindB = { templateId: '7', templateName: 'M', sourceDocId: 'SRC', markers: [],
+    fieldMarkers: new Map([['headline', { key: 'thanks headline', name: 'Thanks Headline' }]]) };
+  const specs = [
+    { assetType: 'Form Page', fields: [{ fieldName: 'Headline', copy: 'Book your seat' }] },
+    { assetType: 'Thanks Page', fields: [{ fieldName: 'Headline', copy: 'You are in' }] },
+  ];
+  const { templateGroups } = partitionSpecsByTemplate(specs, (n) => (n === 'Form Page' ? bindA : bindB));
+  const values = templateValuesFor(templateGroups[0]);
+  assert.equal(values.get('form headline'), 'Book your seat');
+  assert.equal(values.get('thanks headline'), 'You are in');
+});
+
+test('a marker is filled only by real copy — never blanked', () => {
+  const { partitionSpecsByTemplate, templateValuesFor } = require('../src/core/pipeline');
+  const bind = { templateId: '7', templateName: 'M', sourceDocId: 'SRC', markers: [],
+    fieldMarkers: new Map([
+      ['headline', { key: 'form headline', name: 'Form Headline' }],
+      ['subhead', { key: 'form subhead', name: 'Form Subhead' }],
+      ['legal line', { key: 'form legal', name: 'Form Legal' }],
+    ]) };
+  const { templateGroups } = partitionSpecsByTemplate(
+    [{ assetType: 'Form Page', fields: [
+      { fieldName: 'Headline', copy: 'Book your seat' },
+      { fieldName: 'Subhead', copy: '   ' },   // whitespace is not copy
+      { fieldName: 'Legal Line' },             // never drafted
+    ] }],
+    () => bind
+  );
+  const values = templateValuesFor(templateGroups[0]);
+  // Only the real one. The other two markers stay standing in the output, which
+  // is the correct failure mode: an empty cell reads as "nobody wrote this yet"
+  // and a visible {{Form Legal}} reads as "this one is not mine to write".
+  assert.deepEqual([...values.keys()], ['form headline']);
+});
+
+test('createFromTemplate copies, then fills, and leaves unmapped markers alone', async () => {
+  const gdocs = require('../src/destinations/googleDocs');
+  const calls = [];
+  const clients = {
+    drive: { files: { copy: async (a) => {
+      calls.push(['copy', a.fileId, a.requestBody.name, (a.requestBody.parents || [])[0]]);
+      return { data: { id: 'NEW1', name: a.requestBody.name, webViewLink: 'https://d/NEW1' } };
+    } } },
+    docs: { documents: { batchUpdate: async (a) => { calls.push(['batchUpdate', a.requestBody.requests]); return { data: {} }; } } },
+  };
+  const out = await gdocs.createFromTemplate({
+    sourceDocId: 'SRC',
+    name: 'Spring — Matrix',
+    folderId: 'FOLDER',
+    values: new Map([['form headline', 'Book your seat']]),
+    markers: [{ name: 'Form Headline', key: 'form headline' }, { name: 'Form ID', key: 'form id' }],
+    clients,
+  });
+
+  assert.deepEqual(calls[0], ['copy', 'SRC', 'Spring — Matrix', 'FOLDER']);
+  // ONE request, for the ONE marker that had copy. Nothing is sent for {{Form ID}}.
+  const requests = calls[1][1];
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].replaceAllText.containsText, { text: '{{Form Headline}}', matchCase: false });
+  assert.equal(requests[0].replaceAllText.replaceText, 'Book your seat');
+  assert.deepEqual(out.filled, ['Form Headline']);
+  assert.deepEqual(out.unfilled, ['Form ID']);
+  // The rule, stated as an assertion: no request ever replaces a marker with ''.
+  assert.ok(!requests.some((r) => !String(r.replaceAllText.replaceText || '').trim()));
+});
+
+test('nothing is sent to Docs when a template has no copy at all', async () => {
+  const gdocs = require('../src/destinations/googleDocs');
+  let batched = 0;
+  const clients = {
+    drive: { files: { copy: async () => ({ data: { id: 'N', webViewLink: 'u' } }) } },
+    docs: { documents: { batchUpdate: async () => { batched += 1; return { data: {} }; } } },
+  };
+  const out = await gdocs.createFromTemplate({
+    sourceDocId: 'SRC', name: 'x', values: new Map(),
+    markers: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }], clients,
+  });
+  // A brief-time build has no drafted copy, so this is the ordinary case, not an
+  // edge one — and an empty batchUpdate is an error from the Docs API.
+  assert.equal(batched, 0);
+  assert.deepEqual(out.unfilled, ['A', 'B']);
+});
+
+test('the template documents are built BEFORE the copy doc', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function generateDraft'));
+  const tplAt = build.indexOf('createFromTemplate');
+  const docAt = build.indexOf('createDocument({');
+  assert.ok(tplAt > -1 && docAt > -1);
+  // Set now so it does not have to be rearranged: the copy doc will carry a link
+  // to these, and a link cannot be written to a document that does not exist.
+  assert.ok(tplAt < docAt, 'createFromTemplate is called before createDocument');
+  // The copy doc gets the PARTITIONED specs, not the whole array.
+  assert.match(build, /assetSpecs: copyDocSpecs,/);
+  // A template failure never takes the brief down — the copy doc is primary.
+  assert.match(build, /catch \(err\) \{[\s\S]{0,200}template document "\$\{group\.templateName\}" failed/);
+});
+
+test('the pipeline reaches Google only through the destination', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function generateDraft'));
+  // files.copy and batchUpdate live in googleDocs.js, behind createFromTemplate —
+  // the same contract createDocument and generateDraft go through, so a second
+  // destination can implement it.
+  assert.ok(!/files\.copy|replaceAllText|batchUpdate/.test(build));
+  assert.match(build, /getDestination\(\)\.createFromTemplate\(/);
+});
+
+test('the project row records the template document without disturbing copy_doc_id', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'projects.js'), 'utf8');
+  // copy_doc_id still means the promo doc, and idempotency still keys on it.
+  assert.match(src, /WHERE tenant_id = \$1 AND copy_doc_id = \$2 LIMIT 1/);
+  assert.match(src, /template_doc_id = null,\n\s+template_doc_url = null,/);
+  // EVERY COMBINATION of optional columns, not a priority order — a database
+  // with template_doc_* but no created_by must not lose both.
+  assert.match(src, /combine\(CREATED_BY, TEMPLATE\)/);
+  assert.match(src, /combine\(CREATED_BY\),/);
+  assert.match(src, /combine\(TEMPLATE\),/);
+  assert.match(src, /combine\(\),/);
+  assert.match(src, /isUndefinedColumn\(err\)/);
+});
+
+test('both surfaces show both documents, and the copy doc stays first', () => {
+  const slack = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
+  // Anchored on the CONFIRMATION comment, not on the phrase "Saved to <folder>"
+  // — that appears in the file header too, 70 lines above, and slicing to it
+  // yields an empty string that passes every indexOf comparison vacuously.
+  const links = slack.slice(slack.indexOf('const links = [];'), slack.indexOf('confirmation, below the links'));
+  assert.ok(links.length > 200, 'found the links block');
+  // Copy doc pushed BEFORE the loop over templateDocs, so it is always first.
+  assert.ok(links.indexOf('Copy doc>') < links.indexOf('for (const t of templateDocs'));
+  assert.match(links, /t\.templateName \|\| 'Template document'/);
+  // A template that failed to build says so — the writer is expecting a second
+  // document and would otherwise just not find one.
+  assert.match(links, /Couldn't build \$\{failed\.map/);
+
+  // The web adapter carries them, and the Slack adapter hands them over.
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  assert.match(web, /templateDocs: \(templateDocs \|\| \[\]\)\.map/);
+  const sw = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  assert.match(sw, /templateDocs = \[\] \} = docResult/);
+
+  // And the project view has a second button, hidden unless there is one.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /id="project-template-btn"/);
+  assert.match(html, /tplBtn\.classList\.toggle\('hidden', !p\.template_doc_url\)/);
+  // "Open in Drive" is still the primary and still opens the copy doc.
+  assert.match(html, /if \(p && p\.copy_doc_url\) openDocUrl\(p\.copy_doc_url\)/);
+});
+
+test('the web adapter still imports nothing from Slack', () => {
+  // The isolation smoke test this repo already enforces, re-asserted because
+  // step three touched the adapter.
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  assert.ok(!/require\(['"].*slack/i.test(web));
 });

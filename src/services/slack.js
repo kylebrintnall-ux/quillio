@@ -45,7 +45,7 @@ function formatAssetList(assets) {
 // "Saved to <folder>" line, and two buttons (Generate First Draft / Skip for now).
 // folderUrl/folderName are optional — the folder link renders only when a project
 // folder was made. `notice` is optional advisory context (see below).
-function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice, unmatchedNotice }) {
+function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice, unmatchedNotice, templateDocs = [] }) {
   // Punctuation rule for every user-facing string in the Slack surface:
   // in-progress → ellipsis, terminal sentence → period, HEADER BLOCK → period
   // (it is a line of copy the reader reads as a sentence, not a control),
@@ -89,8 +89,31 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
   // project folder was actually created.
   const links = [];
   if (folderUrl) links.push(`${emoji('quillio-folder')} <${folderUrl}|Campaign folder>`);
+  // THE COPY DOC STAYS PRIMARY — first in the list, and the button below still
+  // acts on it. A template document is an additional artifact, not a competing
+  // one, and a writer who opens the wrong one first loses the brief context.
   links.push(`${emoji('quillio-doc-done')} <${webViewLink}|Copy doc>`);
+  for (const t of templateDocs || []) {
+    if (t && t.url) links.push(`${emoji('quillio-doc-done')} <${t.url}|${t.templateName || 'Template document'}>`);
+  }
   blocks.push({ type: 'section', text: { type: 'mrkdwn', text: links.join('\n') } });
+
+  // A template document that failed to build. Its own context line, like the
+  // other two advisories: the copy doc above WAS built, so this is context, not
+  // an error card — but it must not be silent, because the writer is expecting a
+  // second document and would otherwise just not find one.
+  const failed = (templateDocs || []).filter((t) => t && t.error);
+  if (failed.length) {
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: `Couldn't build ${failed.map((t) => `*${t.templateName || 'a template document'}*`).join(', ')}. The copy doc is ready; check the template document in Settings.`,
+        },
+      ],
+    });
+  }
 
   // "Saved to <folder>" confirmation, below the links (only for brief-linked folders).
   if (folderName) {

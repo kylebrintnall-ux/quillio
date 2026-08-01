@@ -358,7 +358,7 @@ async function buildAndPost(ctx) {
       }
       throw err;
     }
-    const { doc, assetSpecs, projectFolderUrl } = docResult;
+    const { doc, assetSpecs, projectFolderUrl, templateDocs = [] } = docResult;
     console.log('[workflow] doc created:', doc.id);
 
     // 4. Show the doc-ready card — ONE message. The Campaign folder / Copy doc
@@ -379,6 +379,11 @@ async function buildAndPost(ctx) {
       assets: assetSpecs.map((a) => a.assetType),
       docId: doc.id,
       folderUrl: projectFolderUrl, // null if folder creation failed → link omitted
+      // The template documents this brief produced (custom document types, step
+      // three). Empty for every copy-doc-only brief, which omits the links
+      // entirely. Ones that FAILED to build carry an error instead of a url and
+      // are reported as such rather than silently missing.
+      templateDocs,
       folderName, // null unless the doc went to a brief-linked folder
       // "Built 3 of 5 …" when a per-asset count hit the Slack ceiling; null when
       // nothing was clamped (every brief reachable before instances existed).

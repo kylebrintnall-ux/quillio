@@ -15,7 +15,7 @@ const { normalize } = require('../utils/normalize');
 const { instanceCounter } = require('../utils/instanceKey');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
-const { getAssetDirections, getTenantAssets } = require('../db/assets');
+const { getAssetDirections, getTenantAssets, getAssetTemplateBindings } = require('../db/assets');
 const { saveProject } = require('../db/projects');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
@@ -931,6 +931,87 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = [], limits) {
 // Postgres is mandatory, there is no Sheet fallback.
 // `assetLimits` (optional) is the CALLING SURFACE's instance ceiling — omit for
 // the defaults. A surface with no confirmation step should pass a tighter pair.
+// PARTITION SPEC GROUPS BY THE TEMPLATE THEY RENDER INTO (custom document
+// types, STEP THREE).
+//
+// One brief can produce more than one document. Assets with no attachment — every
+// asset today, and the default forever — go into the copy doc exactly as they
+// always have. Assets attached to a template are pulled out and grouped BY
+// TEMPLATE, not by asset: two assets attached to the same matrix fill one
+// document between them, which is what a "Form & Confirmation Matrix" holding
+// both pages means.
+//
+// Pure, and exported, so the partition is assertable without a Google client or
+// a database — this is the one piece of step three that decides what lands where.
+//
+//   specs:      the expanded assetSpecs array (tenantAssetsToSpecs output)
+//   bindingFor: (assetName) => null | { templateId, templateName, sourceDocId,
+//                                       markers, fieldMarkers }
+//
+// Returns { copyDocSpecs, templateGroups } where templateGroups is
+//   [{ templateId, templateName, sourceDocId, markers, specs, fieldMarkers }]
+// in first-seen order, so document order follows brief order.
+function partitionSpecsByTemplate(specs, bindingFor) {
+  const copyDocSpecs = [];
+  const byTemplate = new Map();
+  const lookup = typeof bindingFor === 'function' ? bindingFor : () => null;
+
+  for (const spec of specs || []) {
+    const binding = lookup(spec.assetType);
+    // No binding, or a binding with no source document to copy, and it renders
+    // into the copy doc. The second case matters: a template row whose imported
+    // Doc was deleted must not silently drop the asset out of every document.
+    if (!binding || !binding.sourceDocId) {
+      copyDocSpecs.push(spec);
+      continue;
+    }
+    if (!byTemplate.has(binding.templateId)) {
+      byTemplate.set(binding.templateId, {
+        templateId: binding.templateId,
+        templateName: binding.templateName,
+        sourceDocId: binding.sourceDocId,
+        markers: binding.markers || [],
+        specs: [],
+        // Merged across every asset in the group, keyed "asset|field" so two
+        // assets sharing a field name cannot collide on one marker.
+        fieldMarkers: new Map(),
+      });
+    }
+    const group = byTemplate.get(binding.templateId);
+    group.specs.push(spec);
+    for (const [fieldNorm, marker] of binding.fieldMarkers || new Map()) {
+      group.fieldMarkers.set(`${normalize(spec.assetType)}|${fieldNorm}`, marker);
+    }
+  }
+
+  return { copyDocSpecs, templateGroups: [...byTemplate.values()] };
+}
+
+// The copy each mapped marker should receive, keyed by marker key.
+//
+// AT BRIEF TIME THIS IS EMPTY, and that is not a bug in this function — it is a
+// fact about when copy exists. generateDoc builds STRUCTURE: field labels, limits
+// and hints, with a blank line under each for copy that has not been written yet.
+// The words arrive later, from generateDraft, which re-reads the copy doc. So a
+// template document built at brief time is correctly a copy of the tenant's
+// matrix with every marker still visible.
+//
+// The function takes the copy from wherever a caller has it (spec.fields[].copy),
+// so the day a drafting path reaches these assets, filling them is this call and
+// nothing else.
+function templateValuesFor(group) {
+  const values = new Map();
+  for (const spec of group.specs || []) {
+    for (const field of spec.fields || []) {
+      const marker = group.fieldMarkers.get(`${normalize(spec.assetType)}|${normalize(field.fieldName)}`);
+      if (!marker) continue; // unmapped field — nothing to place
+      const copy = field.copy || field.draft || null;
+      if (typeof copy === 'string' && copy.trim()) values.set(marker.key, copy);
+    }
+  }
+  return values;
+}
+
 async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, assetLimits) {
   // Asset specs come exclusively from the tenant's Postgres library.
   const tenantAssets = await getTenantAssets(tenantId);
@@ -956,6 +1037,20 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   // re-sets the same value the rows already carry.)
   const lookupDirection = await getAssetDirections(tenantId);
   for (const a of assetSpecs) a.asset_direction = lookupDirection(a.assetType);
+
+  // WHICH OF THESE RENDER SOMEWHERE ELSE. A second, named read — getTenantAssets
+  // deliberately carries neither the attachment nor the markers, so the spec
+  // source is exactly what it always was. An empty lookup (no DB, no migration,
+  // no attachments) puts every asset in the copy doc, which is today's behaviour
+  // reached by today's code path.
+  const bindingFor = await getAssetTemplateBindings(tenantId);
+  const { copyDocSpecs, templateGroups } = partitionSpecsByTemplate(assetSpecs, bindingFor);
+  if (templateGroups.length) {
+    console.log(
+      `[pipeline] ${templateGroups.length} template document(s) to build: ` +
+        JSON.stringify(templateGroups.map((g) => `${g.templateName} <- ${g.specs.map((x) => x.assetType).join(', ')}`))
+    );
+  }
 
   // Create the project folder (named after the campaign) inside the target
   // folder, with an empty Assets subfolder. The copy doc then goes inside the
@@ -1029,13 +1124,53 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   console.log(`[pipeline] doc header schema: ${headerSchema ? 'tenant (Postgres)' : 'default'}`);
   console.log(`[pipeline] doc naming: ${namingPattern ? 'tenant pattern' : 'default'}`);
 
+  // TEMPLATE DOCUMENTS FIRST, then the copy doc.
+  //
+  // The ordering is deliberate and is set now so it does not have to be
+  // rearranged later: the copy doc will eventually carry a link to these, and a
+  // link cannot be written to a document that does not exist yet. Nothing reads
+  // `templateDocs` on the way into createDocument today — that is step six.
+  //
+  // Each one is independent and BEST-EFFORT. The copy doc is the project's
+  // primary artifact: db/projects keys idempotency on copy_doc_id, both surfaces
+  // link to it, and copy review runs against it. A tenant's matrix failing to
+  // copy — a deleted source doc, a Drive permission — must not take the brief
+  // down with it, so a failure is logged and reported, never thrown.
+  const templateDocs = [];
+  for (const group of templateGroups) {
+    try {
+      const built = await getDestination().createFromTemplate({
+        sourceDocId: group.sourceDocId,
+        // NAMING: "<Campaign> — <Template>". The campaign first because the
+        // folder holds one project's documents and they sort together; the
+        // template name second because that is what the tenant called it and
+        // what they will look for. Deliberately NOT the asset name — two assets
+        // can share one template, and naming it after the first would be wrong
+        // half the time.
+        name: `${spec.campaignTitle || 'Untitled Campaign'} — ${group.templateName}`,
+        folderId: docFolderId,
+        values: templateValuesFor(group),
+        markers: group.markers,
+        clients,
+      });
+      templateDocs.push({ ...built, templateId: group.templateId, templateName: group.templateName });
+    } catch (err) {
+      console.error(`[pipeline] template document "${group.templateName}" failed:`, err.message);
+      templateDocs.push({ templateId: group.templateId, templateName: group.templateName, error: err.message });
+    }
+  }
+
   // Build the doc in parallel with the Assets subfolder.
+  //
+  // `copyDocSpecs`, not `assetSpecs`: anything routed to a template is no longer
+  // in here. When EVERY requested asset is template-attached this is empty, and
+  // the copy doc is still built — see the note above the return.
   const doc = await getDestination().createDocument({
     brief: spec.brief,
     campaignTitle: spec.campaignTitle,
     summary: spec.summary,
     writerPrompt: spec.writerPrompt,
-    assetSpecs,
+    assetSpecs: copyDocSpecs,
     folderId: docFolderId,
     referenceLinks: spec.referenceLinks,
     referenceInsights: spec.referenceInsights,
@@ -1061,6 +1196,11 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
       drive_folder_url: projectFolderUrl,
       copy_doc_id: doc.id,
       copy_doc_url: doc.url,
+      // The FIRST template document, if any. A named pair, not a join table —
+      // see scripts/migrateAddProjectTemplateDoc.js for why, and for what
+      // happens when a brief produces more than one.
+      template_doc_id: (templateDocs.find((t) => t.id) || {}).id || null,
+      template_doc_url: (templateDocs.find((t) => t.id) || {}).url || null,
       status: 'not_started',
       slack_channel_id: projectMeta.slackChannelId || null,
       slack_thread_ts: projectMeta.slackThreadTs || null,
@@ -1074,7 +1214,23 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
     console.error('[pipeline] saveProject skipped:', err.message);
   }
 
-  return { doc, assetSpecs, projectFolderUrl, projectId };
+  // WHEN EVERY REQUESTED ASSET IS TEMPLATE-ATTACHED, copyDocSpecs is empty and
+  // the copy doc above has a header, the summary, the writer direction and the
+  // reference insights but no asset sections. It is still built, and that is the
+  // deliberate choice rather than an oversight:
+  //
+  //   • db/projects keys idempotency on copy_doc_id. No copy doc means no stable
+  //     project identity, and a re-run would insert a second row.
+  //   • Both surfaces link to it, copy review runs against it, and the web
+  //     project view reads it. "No copy doc" is a null every one of those would
+  //     have to learn to handle, for a case that saves nobody any work.
+  //   • The brief context in it is genuinely useful on its own — it is the
+  //     campaign's cover sheet, and a matrix has nowhere to put a writer prompt.
+  //
+  // `assetSpecs` is returned WHOLE (every group, template-bound or not) because
+  // callers use it to tell the writer what the brief produced, and an asset that
+  // went to a template was still produced.
+  return { doc, assetSpecs, copyDocSpecs, templateDocs, projectFolderUrl, projectId };
 }
 
 // Draft copy for every field of an existing doc. An optional `direction` string
@@ -1196,6 +1352,10 @@ module.exports = {
   // Asset-plan expansion. Exported for unit tests (and so the ceilings are
   // assertable) — generateDoc is its only production caller.
   tenantAssetsToSpecs,
+  // The build-time partition — which specs go to the copy doc and which to a
+  // template. Pure, so what lands where is assertable with no Google client.
+  partitionSpecsByTemplate,
+  templateValuesFor,
   normalizeAssetPlan,
   resolveAssetLimits,
   // The DEFAULT (web) ceilings, and the absolute maximum a surface can ask for.

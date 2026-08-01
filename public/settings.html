@@ -514,6 +514,37 @@
       cursor: pointer; text-decoration: underline; padding: 0 0 0 8px; }
     .tpl-rename:hover { color: var(--fg); }
     .tpl-usedby { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    /* The confirm screen: one row per marker, editable. */
+    .cf-open { background: none; border: 1px solid var(--line); border-radius: 6px; font: inherit;
+      font-size: 12px; padding: 3px 9px; cursor: pointer; color: var(--fg); margin-left: 8px; }
+    .cf-open:hover { border-color: var(--fg); }
+    .cf-panel { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+    .cf-lede { font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+    .cf-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
+      padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .cf-row:last-of-type { border-bottom: 0; }
+    .cf-row.off .cf-name, .cf-row.off .cf-limit { opacity: 0.45; }
+    .cf-tick { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding-top: 6px; }
+    .cf-tick input { width: 16px; height: 16px; }
+    .cf-main { flex: 1 1 190px; min-width: 0; }
+    .cf-marker { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+      color: var(--muted); display: block; margin-bottom: 3px; word-break: break-all; }
+    .cf-name { width: 100%; padding: 6px 8px; font: inherit; font-size: 13px;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .cf-limit { flex: 0 0 74px; padding: 6px 8px; font: inherit; font-size: 13px;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .cf-unit { flex: 0 0 84px; padding: 6px 4px; font: inherit; font-size: 12px;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .cf-meta { flex: 1 1 100%; font-size: 11px; color: var(--muted); padding-left: 26px; }
+    .cf-meta b { color: var(--fg); font-weight: 500; }
+    .cf-guess { color: #8a6d3b; }
+    .cf-actions { margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .cf-count { font-size: 12px; color: var(--muted); }
+    @media (max-width: 480px) {
+      .cf-main { flex: 1 1 100%; }
+      .cf-limit, .cf-unit { flex: 1 1 calc(50% - 4px); }
+      .cf-meta { padding-left: 0; }
+    }
     /* The asset card's template line. */
     .lib-tpl { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px; }
     .lib-tpl-state { color: var(--muted); }
@@ -1840,6 +1871,7 @@
     // exists so a tenant can see whether their markers are where they think.
     var tplLoaded = false;
     var tplFile = null;
+    var cfToastTimer = null;
 
     function tplRenderOne(t) {
       var card = el('div', 'tpl-card');
@@ -1923,6 +1955,15 @@
         return card;
       }
 
+      // THE CONFIRM SCREEN. Opened from the card, replaces the marker list while
+      // it is open — the list is a read of the same markers, and showing both
+      // would invite editing one while reading the other.
+      var cfHost = el('div');
+      var cfBtn = el('button', 'cf-open', 'Confirm the fields');
+      cfBtn.type = 'button';
+      cfBtn.setAttribute('aria-label', 'Confirm the fields in ' + t.name);
+      head.appendChild(cfBtn);
+
       var ul = el('ul', 'tpl-marks');
       marks.forEach(function (m) {
         var li = el('li', 'tpl-mark');
@@ -1936,7 +1977,187 @@
         ul.appendChild(li);
       });
       card.appendChild(ul);
+      card.appendChild(cfHost);
+      cfBtn.addEventListener('click', function () {
+        if (cfHost.firstChild) {
+          cfHost.textContent = '';
+          show(ul);
+          cfBtn.textContent = 'Confirm the fields';
+          return;
+        }
+        hide(ul);
+        cfBtn.textContent = 'Close';
+        tplOpenConfirm(t, cfHost, function () { show(ul); cfBtn.textContent = 'Confirm the fields'; });
+      });
       return card;
+    }
+
+    // What Quillio read out of the template, for the tenant to correct.
+    //
+    // Every row shows its WORKING — which column the label came from, which the
+    // limit came from, and where the marker sits — because a proposal a reader
+    // cannot check is just an assertion. A row Quillio guessed at is marked, so
+    // the eye goes to the ones that need attention rather than all 33.
+    async function tplOpenConfirm(t, host, onClose) {
+      var panel = el('div', 'cf-panel');
+      host.appendChild(panel);
+      var err = el('div', 'error hidden');
+      panel.appendChild(err);
+      var loading = el('div', 'note', 'Reading what Quillio found…');
+      panel.appendChild(loading);
+
+      var data;
+      try {
+        var res = await fetch('/api/settings/templates/' + encodeURIComponent(t.id) + '/markers');
+        data = await res.json();
+        if (!res.ok || !data || !data.success) throw new Error((data && data.error) || 'Could not read this template.');
+      } catch (e) {
+        hide(loading);
+        showError(err, e.message || 'Network error.');
+        return;
+      }
+      hide(loading);
+
+      if (!data.available) {
+        panel.appendChild(el('p', 'cf-lede',
+          'Template fields need a database connection. Nothing is saved in demo mode.'));
+        return;
+      }
+      var markers = data.markers || [];
+      if (!markers.length) {
+        panel.appendChild(el('p', 'cf-lede',
+          'No fields were read from this template. Upload it again if you have added {{markers}} since.'));
+        return;
+      }
+
+      panel.appendChild(el('p', 'cf-lede',
+        'This is what Quillio read out of the document. Tick the ones a writer drafts — ' +
+        'the rest stay as {{markers}} in the finished file, which is right for an id, ' +
+        'an owner or a date. Correct anything that is wrong; nothing is used until you save.'));
+
+      var rows = el('div');
+      panel.appendChild(rows);
+      var state = markers.map(function (m) { return Object.assign({}, m); });
+
+      var counter = el('span', 'cf-count');
+      function paintCount() {
+        var n = state.filter(function (m) { return m.is_copy; }).length;
+        counter.textContent = n + ' of ' + state.length + ' marked as copy';
+      }
+
+      state.forEach(function (m, i) {
+        var row = el('div', 'cf-row' + (m.is_copy ? '' : ' off'));
+
+        var tick = el('label', 'cf-tick');
+        var box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!m.is_copy;
+        box.setAttribute('aria-label', 'A writer drafts ' + m.marker_name);
+        tick.appendChild(box);
+        row.appendChild(tick);
+
+        var main = el('div', 'cf-main');
+        main.appendChild(el('span', 'cf-marker', '{{' + m.marker_name + '}}'));
+        var name = document.createElement('input');
+        name.type = 'text';
+        name.className = 'cf-name';
+        name.maxLength = 200;
+        name.value = m.marker_name || '';
+        name.setAttribute('aria-label', 'Field name for ' + m.marker_name);
+        main.appendChild(name);
+        row.appendChild(main);
+
+        var limit = document.createElement('input');
+        limit.type = 'number';
+        limit.className = 'cf-limit';
+        limit.min = '0';
+        limit.placeholder = 'none';
+        limit.value = m.char_max > 0 ? String(m.char_max) : '';
+        limit.setAttribute('aria-label', 'Limit for ' + m.marker_name);
+        row.appendChild(limit);
+
+        var unit = document.createElement('select');
+        unit.className = 'cf-unit';
+        [['text', 'characters'], ['words', 'words']].forEach(function (u) {
+          var o = document.createElement('option');
+          o.value = u[0];
+          o.textContent = u[1];
+          if (m.field_type === u[0]) o.selected = true;
+          unit.appendChild(o);
+        });
+        unit.setAttribute('aria-label', 'Unit for ' + m.marker_name);
+        row.appendChild(unit);
+
+        // The working. Where it sits, and — when the name is just the marker
+        // over again — that Quillio had nothing to read.
+        var meta = el('div', 'cf-meta');
+        if (m.where) { meta.appendChild(el('b', null, m.where)); }
+        else { meta.appendChild(el('b', null, 'position not recorded')); }
+        if (!m.label_text) {
+          // No label cell was recorded for this row. Two ways that happens: the
+          // row genuinely had nothing to read, or the row was carried over from
+          // the old attach/map flow, which never looked at the neighbouring
+          // cell. The wording covers both — saying "this name is the marker
+          // itself" would be false for a carried-over row, where the name came
+          // from a field the tenant defined by hand.
+          meta.appendChild(document.createTextNode(' · '));
+          meta.appendChild(el('span', 'cf-guess', 'no label read from this row — worth checking the name'));
+        }
+        row.appendChild(meta);
+
+        box.addEventListener('change', function () {
+          m.is_copy = box.checked;
+          row.classList.toggle('off', !box.checked);
+          paintCount();
+        });
+        name.addEventListener('input', function () { m.marker_name = name.value; });
+        limit.addEventListener('input', function () { m.char_max = parseInt(limit.value, 10) || 0; });
+        unit.addEventListener('change', function () { m.field_type = unit.value; });
+
+        rows.appendChild(row);
+      });
+
+      var actions = el('div', 'cf-actions');
+      var save = el('button', 'btn primary', 'Save fields');
+      save.type = 'button';
+      var cancel = el('button', 'cf-open', 'Cancel');
+      cancel.type = 'button';
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+      actions.appendChild(counter);
+      panel.appendChild(actions);
+      paintCount();
+
+      cancel.addEventListener('click', function () { host.textContent = ''; if (onClose) onClose(); });
+      save.addEventListener('click', async function () {
+        clearError(err);
+        save.disabled = true;
+        try {
+          var r = await fetch('/api/settings/templates/' + encodeURIComponent(t.id) + '/markers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ markers: state })
+          });
+          var d = await r.json().catch(function () { return null; });
+          if (!r.ok || !d || !d.success) throw new Error((d && d.error) || 'Could not save those fields.');
+          host.textContent = '';
+          if (onClose) onClose();
+          // The panel's existing confirmation — the same branded toast the
+          // file-naming editor uses. settings.html has no showToast(); the
+          // element and the pattern are what it has.
+          var toast = $('hdr-toast');
+          toast.className = 'toast locked show';
+          toast.innerHTML = '';
+          toast.appendChild(el('span', 'tk', 'Quillio'));
+          toast.appendChild(document.createTextNode(
+            d.saved + ' field' + (d.saved === 1 ? '' : 's') + ' saved for this template.'));
+          if (cfToastTimer) clearTimeout(cfToastTimer);
+          cfToastTimer = setTimeout(function () { toast.classList.remove('show'); }, 3000);
+        } catch (e) {
+          save.disabled = false;
+          showError(err, e.message || 'Network error.');
+        }
+      });
     }
 
     function tplRenderWarnings(host, warnings) {

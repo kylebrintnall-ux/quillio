@@ -1,0 +1,690 @@
+{
+  "title": "Form & Confirmation Matrix",
+  "body": {
+    "content": [
+      {
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "CAMPAIGN COPY MATRIX"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "table": {
+          "tableRows": [
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Field"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Copy"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Character limit"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Element ID"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Notes"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Form headline"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Form Headline}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "60"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "frm-hd-01"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Above the fold"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Form subhead"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Form Subhead}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "120 chars"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "frm-sh-01"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Optional"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Submit button"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Form Submit Button}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "25"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "frm-btn-01"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Verb first"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Legal line"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Form Legal Line}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "—"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "frm-lgl-01"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Legal to approve"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Form ID"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Form ID}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "frm-id"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Set by ops"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": ""
+              }
+            }
+          ]
+        }
+      },
+      {
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "Confirmation"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "table": {
+          "tableRows": [
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Confirmation headline"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Confirmation Headline}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "60"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Confirmation body"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Confirmation Body}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "200 words"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Owner"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "{{Owner}}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "headers": {
+    "h1": {
+      "content": [
+        {
+          "paragraph": {
+            "elements": [
+              {
+                "textRun": {
+                  "content": "{{Campaign Name}} — internal use only"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

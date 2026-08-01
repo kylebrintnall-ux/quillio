@@ -22,12 +22,14 @@
 // fixture and prints a fidelity report.
 
 const { discoverPlaceholders } = require('./docPlaceholders');
+const { deriveTemplateFields } = require('./templateTableReader');
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const GDOC_MIME = 'application/vnd.google-apps.document';
 
-// Import one .docx into Drive as a Google Doc, then read it back and discover its
-// placeholders. Returns { docId, docUrl, title, discovery }.
+// Import one .docx into Drive as a Google Doc, then read it back, discover its
+// placeholders, and propose what each one is.
+// Returns { docId, docUrl, title, discovery, derived }.
 //
 // `clients` is { drive, docs } — the caller decides whose identity that is
 // (getClientsForTenant, so the import runs as the acting user, exactly like every
@@ -57,13 +59,18 @@ async function importDocxTemplate({ clients, stream, name, folderId = null }) {
   const doc = await clients.docs.documents.get({ documentId: docId });
   const discovery = discoverPlaceholders(doc.data);
 
+  // WHAT EACH MARKER IS, read off the table it sits in — the field name from the
+  // row's label cell, the limit from its limit cell. A PROPOSAL: the tenant
+  // confirms it on one screen and their answer is what gets stored.
+  const derived = deriveTemplateFields(doc.data, discovery.placeholders);
+
   console.log(
     `[templateImport] imported "${created.data.name}" -> ${docId} — ` +
       `${discovery.counts.distinct} placeholder(s), ${discovery.counts.tables} table(s), ` +
       `${discovery.counts.warnings} warning(s)`
   );
 
-  return { docId, docUrl, title: created.data.name, discovery };
+  return { docId, docUrl, title: created.data.name, discovery, derived };
 }
 
 // A compact structural summary of a converted document, for the fidelity report.

@@ -10369,11 +10369,17 @@ test('the pipeline reaches Google only through the destination', () => {
   // Ends at syncTemplateDocuments, which step four inserted just above
   // generateDraft — the old anchor now swallows it and its comments name the
   // Google APIs it deliberately does not call.
-  // Ends at buildTemplateDocument, which the rework inserted between generateDoc
-  // and syncTemplateDocuments — the old anchor now spans it, and its comments
-  // name the Google APIs it deliberately routes around. It has its own
-  // no-Google assertion in the step-two block.
-  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function buildTemplateDocument'));
+  // BOTH build functions — generateDoc and buildTemplateDocument, which the
+  // rework inserted between it and syncTemplateDocuments. Narrowing to the first
+  // would drop the new one from this guarantee, which is the coverage that
+  // matters most while it is the newest code in the file.
+  //
+  // NOT the whole file, and that is not a loosening: pipeline.js DOES call Drive
+  // directly outside the build path — reference ingestion (:64, :75, :83) and the
+  // two best-effort metadata reads, countDocAssets (docs.documents.get) and
+  // getFolderName (drive.files.get). CLAUDE.md's claim is about the DOCUMENT
+  // BUILDING surface, which is what this slice covers.
+  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function syncTemplateDocuments'));
   // files.copy and batchUpdate live in googleDocs.js, behind createFromTemplate —
   // the same contract createDocument and generateDraft go through, so a second
   // destination can implement it.
@@ -11138,4 +11144,32 @@ test('step two touches neither parse nor the plan validators', () => {
     assert.ok(!/buildTemplateDocument/.test(src), `${f} has no entry point`);
   }
   assert.ok(fs.existsSync(path.join(root, 'scripts', 'buildTemplateDoc.js')), 'the runner is the entry point');
+});
+
+test('one line accounts for every copy marker, in all three outcomes', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+
+  // A copy marker ends up in exactly one of three states, and until this line
+  // existed only the third was reported. A marker that was PLACED but drafted
+  // nothing keeps its {{marker}} — which in the finished document looks
+  // identical to one that was never meant to be written.
+  // The literal wraps, so the three counts are asserted as the two fragments the
+  // source actually contains rather than as one line that does not exist.
+  assert.match(build, /\$\{result\.written\.length\} drafted, \$\{result\.skipped\.length\} left as \{\{marker\}\}, /);
+  assert.match(build, /\$\{result\.missing\.length\} unplaced/);
+  assert.match(build, /console\.log\(`\[pipeline\] \$\{summary\}`\)/);
+  assert.match(build, /summary,/, 'the caller gets it too, not just the log');
+
+  // The three buckets are exhaustive by construction. If that stops being true
+  // the counts are lying, so the code says so rather than printing them.
+  assert.match(build, /const accounted = result\.written\.length \+ result\.skipped\.length \+ result\.missing\.length/);
+  assert.match(build, /does not account for every copy marker/);
+  assert.match(build, /accounted: accounted === copyMarkers\.length/);
+
+  // And the runner leads with it.
+  const runner = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'buildTemplateDoc.js'), 'utf8');
+  assert.match(runner, /console\.log\(`\\n {2}\$\{result\.summary\}\.`\)/);
+  assert.match(runner, /LEFT AS \{\{marker\}\} \(\$\{result\.skipped\.length\}\)/);
+  assert.match(runner, /the field was ticked as copy, so somebody expected words/);
 });

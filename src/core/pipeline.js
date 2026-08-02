@@ -1368,6 +1368,27 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
     clients
   );
 
+  // ONE LINE FOR ALL THREE OUTCOMES. A copy marker ends up in exactly one of
+  // them, and until now only the third was reported — a marker that was placed
+  // but drafted nothing kept its {{marker}} silently, which looks identical in
+  // the finished document to one that was never meant to be written. Saying all
+  // three together is what makes "17 of 18" a number somebody can act on.
+  const summary =
+    `${copyMarkers.length} copy marker${copyMarkers.length === 1 ? '' : 's'}: ` +
+    `${result.written.length} drafted, ${result.skipped.length} left as {{marker}}, ` +
+    `${result.missing.length} unplaced`;
+  console.log(`[pipeline] ${summary}`);
+  // The buckets are exhaustive by construction — every copy marker is either
+  // located-and-written, located-and-empty, or not located. If that ever stops
+  // being true the counts are lying, so say so rather than printing them.
+  const accounted = result.written.length + result.skipped.length + result.missing.length;
+  if (accounted !== copyMarkers.length) {
+    console.warn(
+      `[pipeline] template summary does not account for every copy marker: ` +
+        `${accounted} of ${copyMarkers.length}`
+    );
+  }
+
   return {
     docId: copied.id,
     docUrl: copied.url,
@@ -1376,6 +1397,8 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
     markers: markers.length,
     copyMarkers: copyMarkers.length,
     drafted: values.size,
+    summary,
+    accounted: accounted === copyMarkers.length,
     ...result,
   };
 }

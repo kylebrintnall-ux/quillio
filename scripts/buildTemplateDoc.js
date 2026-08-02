@@ -97,21 +97,27 @@ const pad = (s, n) => String(s == null ? '' : s).padEnd(n);
   });
 
   line('RESULT');
-  console.log(`  copied to:     ${result.title}`);
-  console.log(`  markers:       ${result.markers} total, ${result.copyMarkers} to draft`);
-  console.log(`  drafted:       ${result.drafted} field(s) came back with copy`);
-  console.log(`  WRITTEN:       ${result.written.length} cell(s)`);
-  if (result.written.length) console.log(`    ${result.written.join(', ')}`);
-  console.log(`  left as-is:    ${result.skipped.length} copy marker(s) with no drafted copy`);
-  if (result.skipped.length) console.log(`    ${result.skipped.join(', ')}`);
-  console.log(`  metadata:      ${result.markers - result.copyMarkers} marker(s) never touched — still {{showing}}`);
+  console.log(`  copied to:  ${result.title}`);
+  // The one line that accounts for every copy marker. A marker that was placed
+  // but drafted nothing looks identical in the document to one that was never
+  // meant to be written — reporting only the unplaced ones hid that.
+  console.log(`\n  ${result.summary}.`);
+  if (!result.accounted) console.log('  (WARNING: those counts do not add up to the copy-marker total)');
+  console.log(`  plus ${result.markers - result.copyMarkers} metadata marker(s), never touched — still {{showing}}.`);
+
+  if (result.written.length) console.log(`\n  DRAFTED (${result.written.length}):\n    ${result.written.join(', ')}`);
+  if (result.skipped.length) {
+    console.log(`\n  LEFT AS {{marker}} (${result.skipped.length}) — the cell was found, but the draft came back empty:`);
+    console.log(`    ${result.skipped.join(', ')}`);
+    console.log(`    These are worth a look: the field was ticked as copy, so somebody expected words.`);
+  }
 
   if (result.healed.length) {
     console.log(`\n  FOUND BY LABEL after a document edit (${result.healed.length}):`);
     for (const h of result.healed) console.log(`    {{${h.name}}} — ${h.reason}`);
   }
   if (result.missing.length) {
-    console.log(`\n  NOT PLACED (${result.missing.length}) — reported rather than written to a guessed cell:`);
+    console.log(`\n  UNPLACED (${result.missing.length}) — reported rather than written to a guessed cell:`);
     for (const m of result.missing) console.log(`    {{${m.name}}} — ${m.reason}`);
   }
 

@@ -10078,8 +10078,11 @@ test('the attachment is INERT — the pipeline read cannot see it', () => {
 
   // And nothing in the pipeline or the destinations reads either column.
   for (const f of ['src/core/pipeline.js', 'src/destinations/googleDocs.js', 'src/adapters/slackWorkflow.js']) {
-    const other = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-    assert.ok(!/template_marker|doc_template_id/.test(other), `${f} does not read the attachment`);
+    // Comments stripped. The rework's build path names `template_markers` when
+    // it explains what a CONFIRMED template is; naming the new table in prose is
+    // not reading the OLD asset attachment, which is what this guards.
+    const other = fs.readFileSync(path.join(__dirname, '..', f), 'utf8').replace(/\/\/.*$/gm, '');
+    assert.ok(!/copy_fields\.template_marker|doc_template_id/.test(other), `${f} does not read the attachment`);
   }
 });
 
@@ -10366,11 +10369,19 @@ test('the pipeline reaches Google only through the destination', () => {
   // Ends at syncTemplateDocuments, which step four inserted just above
   // generateDraft — the old anchor now swallows it and its comments name the
   // Google APIs it deliberately does not call.
-  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function syncTemplateDocuments'));
+  // Ends at buildTemplateDocument, which the rework inserted between generateDoc
+  // and syncTemplateDocuments — the old anchor now spans it, and its comments
+  // name the Google APIs it deliberately routes around. It has its own
+  // no-Google assertion in the step-two block.
+  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function buildTemplateDocument'));
   // files.copy and batchUpdate live in googleDocs.js, behind createFromTemplate —
   // the same contract createDocument and generateDraft go through, so a second
   // destination can implement it.
-  assert.ok(!/files\.copy|replaceAllText|batchUpdate/.test(build));
+  //
+  // Comments stripped: buildTemplateDocument's header sits inside this slice and
+  // NAMES drive.files.copy when it explains which mechanism createFromTemplate
+  // reuses. Naming an API in prose is the opposite of calling it.
+  assert.ok(!/files\.copy|replaceAllText|batchUpdate/.test(build.replace(/\/\/.*$/gm, '')));
   assert.match(build, /getDestination\(\)\.createFromTemplate\(/);
 
   // The sync goes through the contract too — one more member, not a Google call.
@@ -10904,13 +10915,20 @@ test('this step is INERT — nothing but the confirm screen reads template_marke
   // The whole point of step one. If the build, draft or review path learned
   // about this table now, there would be no safe place to find out the read is
   // wrong before something depends on it.
+  // pipeline.js IS NO LONGER ON THIS LIST. Step two gave it buildTemplateDocument,
+  // which reads the confirmed markers to place copy by coordinate — that is the
+  // step's whole purpose, and it is reachable only from a script. Everything
+  // else below is still untouched, which is what keeps a BRIEF from reaching it.
   for (const f of [
-    'src/core/pipeline.js', 'src/destinations/googleDocs.js', 'src/services/copyReview.js',
+    'src/destinations/googleDocs.js', 'src/services/copyReview.js',
     'src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/services/gemini.js',
     'src/routes/app.js', 'src/pendingBriefs.js',
   ]) {
-    const src = fs.readFileSync(path.join(root, f), 'utf8');
-    assert.ok(!/template_markers|templateMarkers|deriveTemplateFields/.test(src), `${f} does not know about it`);
+    // Comments stripped. googleDocs.writeTemplateCells documents that its
+    // `markers` argument is db/templateMarkers rows — it is HANDED them, it does
+    // not read the table, and naming the shape of an argument is not a coupling.
+    const src = fs.readFileSync(path.join(root, f), 'utf8').replace(/\/\/.*$/gm, '');
+    assert.ok(!/template_markers|require\(.*templateMarkers|deriveTemplateFields/.test(src), `${f} does not know about it`);
   }
   // The upload seeds it, and that is the only other writer.
   const settings = fs.readFileSync(path.join(root, 'src', 'routes', 'settings.js'), 'utf8');
@@ -10938,4 +10956,186 @@ test('the confirm screen shows its working, and defaults nothing on', () => {
   // Opening it hides the read-only marker list rather than showing both.
   const card = html.slice(html.indexOf('function tplRenderOne'), html.indexOf('async function tplOpenConfirm'));
   assert.match(card, /hide\(ul\);\s*\n\s*cfBtn\.textContent = 'Close'/);
+});
+
+// --- Document templates, rework step two: build and draft by coordinate ------
+
+test('cells are written highest-index-first, so one batchUpdate is safe', () => {
+  const { buildCellWriteRequests } = require('../src/destinations/templateCells');
+  const located = [
+    { marker: { marker_key: 'a', marker_name: 'A' }, start: 100, end: 110 },
+    { marker: { marker_key: 'b', marker_name: 'B' }, start: 300, end: 320 },
+    { marker: { marker_key: 'c', marker_name: 'C' }, start: 200, end: 205 },
+  ];
+  const { requests } = buildCellWriteRequests(located, { a: 'alpha', b: 'bravo', c: 'charlie' });
+
+  // Every request in a batchUpdate applies against the SHIFTING document, so an
+  // insert at 100 moves everything after it. Emitting highest-first means each
+  // request only touches indices above the ones still to come.
+  const starts = requests
+    .filter((r) => r.deleteContentRange)
+    .map((r) => r.deleteContentRange.range.startIndex);
+  assert.deepEqual(starts, [300, 200, 100]);
+  // Delete then insert, per cell, in that order.
+  assert.ok(requests[0].deleteContentRange && requests[1].insertText);
+  assert.equal(requests[1].insertText.location.index, 300);
+});
+
+test('the delete range always spares the paragraph mark', () => {
+  const { buildCellWriteRequests } = require('../src/destinations/templateCells');
+  const { requests } = buildCellWriteRequests(
+    [{ marker: { marker_key: 'a', marker_name: 'A' }, start: 50, end: 70 }],
+    { a: 'new copy' }
+  );
+  // [cellStart, cellEnd - 1) — a Docs paragraph must keep its trailing newline,
+  // and deleting it corrupts the cell rather than emptying it.
+  assert.deepEqual(requests[0].deleteContentRange.range, { startIndex: 50, endIndex: 69 });
+
+  // An ALREADY-EMPTY cell (content is just the newline) gets an insert and no
+  // delete — an empty delete range is an API error.
+  const empty = buildCellWriteRequests(
+    [{ marker: { marker_key: 'a', marker_name: 'A' }, start: 50, end: 51 }],
+    { a: 'x' }
+  );
+  assert.equal(empty.requests.length, 1);
+  assert.ok(empty.requests[0].insertText);
+});
+
+test('a marker with no drafted copy is left alone, never blanked', () => {
+  const { buildCellWriteRequests } = require('../src/destinations/templateCells');
+  const located = ['a', 'b', 'c'].map((k, i) => ({
+    marker: { marker_key: k, marker_name: k.toUpperCase() }, start: 100 + i * 50, end: 140 + i * 50,
+  }));
+  const { requests, written, skipped } = buildCellWriteRequests(located, { a: 'real', b: '   ', c: '' });
+  assert.deepEqual(written, ['A']);
+  assert.deepEqual(skipped.sort(), ['B', 'C']);
+  // Nothing is ever replaced with blank. For a fresh copy that means the cell
+  // keeps its {{marker}}, which reads as "not mine to write" rather than as
+  // "nobody got to this".
+  assert.ok(requests.every((r) => !r.insertText || r.insertText.text.trim()));
+});
+
+test('a stored coordinate resolves to a real cell range', () => {
+  const { locateCells } = require('../src/destinations/templateCells');
+  const doc = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'fixtures', 'formConfirmationMatrixDoc.json'), 'utf8')
+  );
+  // The fixture has no startIndex values (it is a shape fixture), so stamp them
+  // the way the API would — sequentially in document order.
+  let n = 1;
+  for (const el of doc.body.content) {
+    if (el.paragraph) { el.startIndex = n; el.endIndex = n += 20; continue; }
+    for (const row of el.table.tableRows) {
+      for (const cell of row.tableCells) {
+        for (const c of cell.content) { c.startIndex = n; c.endIndex = n += 20; }
+      }
+    }
+  }
+  const { found, missing } = locateCells(doc, [
+    { marker_key: 'form headline', marker_name: 'Form Headline', part: 'body',
+      table_index: 0, row_index: 1, column_index: 1, label_text: 'Form headline' },
+  ]);
+  assert.equal(missing.length, 0);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].healed, false);
+  assert.ok(found[0].end > found[0].start);
+});
+
+test('a shifted row is found by its label, and an unfindable one is reported', () => {
+  const { locateCells } = require('../src/destinations/templateCells');
+  const p = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] }, startIndex: 0, endIndex: 1 });
+  const cell = (t, s) => ({ content: [{ ...p(t), startIndex: s, endIndex: s + 10 }] });
+  const doc = { body: { content: [{ table: { tableRows: [
+    { tableCells: [cell('Field', 10), cell('Copy', 20)] },
+    { tableCells: [cell('A NEW ROW SOMEBODY ADDED', 30), cell('{{New}}', 40)] },
+    { tableCells: [cell('Form headline', 50), cell('{{Form Headline}}', 60)] },
+  ] } }] } };
+
+  // The stored coordinate says row 1. A writer inserted a row above it, so
+  // row 1 is now somebody else's. label_text is what makes that survivable.
+  const { found, missing } = locateCells(doc, [
+    { marker_key: 'form headline', marker_name: 'Form Headline', part: 'body',
+      table_index: 0, row_index: 1, column_index: 1, label_text: 'Form headline' },
+  ]);
+  assert.equal(missing.length, 0);
+  assert.equal(found[0].healed, true);
+  assert.equal(found[0].row, 2);
+  assert.equal(found[0].start, 60, 'the right cell, not the stored one');
+  assert.match(found[0].reason, /found by label at row 3 instead of the stored row 2/);
+
+  // A label that is nowhere in the table is NOT guessed at. A wrong cell in a
+  // client deliverable is not a recoverable kind of wrong.
+  const gone = locateCells(doc, [
+    { marker_key: 'x', marker_name: 'X', part: 'body', table_index: 0,
+      row_index: 1, column_index: 1, label_text: 'A label that was deleted' },
+  ]);
+  assert.equal(gone.found.length, 0);
+  assert.match(gone.missing[0].reason, /no other row does — the document has been edited/);
+});
+
+test('a marker with no coordinate is reported, not written somewhere', () => {
+  const { locateCells } = require('../src/destinations/templateCells');
+  const { missing } = locateCells({ body: { content: [] } }, [
+    { marker_key: 'a', marker_name: 'A', part: null, table_index: null, row_index: null, column_index: null },
+    { marker_key: 'b', marker_name: 'B', part: 'body', table_index: 9, row_index: 0, column_index: 0 },
+  ]);
+  assert.equal(missing.length, 2);
+  assert.match(missing[0].reason, /no cell coordinate was recorded/);
+  assert.match(missing[1].reason, /table 10 is not in the body/);
+});
+
+test('the build path copies WITHOUT filling, so the markers survive to be located', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+
+  // createFromTemplate with NO values and NO markers copies and sends no
+  // batchUpdate. Filling here would consume the {{markers}} via replaceAllText —
+  // the mechanism this rework replaced — and step 3 would find empty cells.
+  assert.match(build, /values: new Map\(\),\s*\n\s*markers: \[\],/);
+  assert.match(build, /getDestination\(\)\.createFromTemplate\(/);
+  assert.match(build, /getDestination\(\)\.writeTemplateCells\(/);
+  // The pipeline still reaches Google only through the destination.
+  assert.ok(!/files\.copy|documents\.batchUpdate|deleteContentRange/.test(build.replace(/\/\/.*$/gm, '')));
+
+  // ONLY the copy markers are handed to the writer. A metadata marker is never
+  // located and never written.
+  assert.match(build, /\{ markers: copyMarkers, values \}/);
+  // Refuses an unconfirmed template rather than falling back to a name match —
+  // the position IS the mapping now.
+  assert.match(build, /has no confirmed fields yet/);
+  assert.match(build, /has no markers ticked as copy/);
+});
+
+test('the template drafts through the EXISTING batched call, not a new prompt', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+  // generateAssetDrafts is the same call the copy doc's assets go through, so
+  // the prompt, the character-limit enforcement and the craft/brand context are
+  // all the existing ones.
+  assert.match(build, /const drafts = await generateAssetDrafts\(\{/);
+  assert.match(build, /assetType: template\.name/);
+  assert.match(build, /fieldName: m\.marker_name/);
+  assert.match(build, /charMax: m\.char_max \|\| 0/);
+  assert.match(build, /fieldType: m\.field_type === 'words' \? 'words' : 'text'/);
+  const gemini = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  assert.ok(!/template_markers|buildTemplateDocument/.test(gemini), 'gemini is untouched');
+});
+
+test('step two touches neither parse nor the plan validators', () => {
+  const root = path.join(__dirname, '..');
+  // Explicitly out of scope. A brief cannot reach the template build path yet;
+  // the only entry point is scripts/buildTemplateDoc.js, run by hand.
+  for (const f of ['src/services/gemini.js', 'src/pendingBriefs.js']) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    assert.ok(!/buildTemplateDocument|writeTemplateCells|templateCells/.test(src), `${f} is untouched`);
+  }
+  const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
+  const parse = pipe.slice(pipe.indexOf('async function resolveAssetVocabulary'), pipe.indexOf('async function fetchAllReferences'));
+  assert.ok(!/template/i.test(parse), 'the parse path does not mention templates');
+  // No route reaches it either.
+  for (const f of ['src/routes/app.js', 'src/routes/settings.js', 'src/adapters/slackWorkflow.js', 'src/adapters/web.js']) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    assert.ok(!/buildTemplateDocument/.test(src), `${f} has no entry point`);
+  }
+  assert.ok(fs.existsSync(path.join(root, 'scripts', 'buildTemplateDoc.js')), 'the runner is the entry point');
 });

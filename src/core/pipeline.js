@@ -10,6 +10,9 @@ const {
   parseBrief: geminiParseBrief,
   enrichWithReferences: geminiEnrich,
   describeImage,
+  // The SAME batched draft call the copy doc's assets go through — a template
+  // is one asset whose fields are its copy markers. No new prompt.
+  generateAssetDrafts,
 } = require('../services/gemini');
 const { normalize } = require('../utils/normalize');
 const { instanceCounter } = require('../utils/instanceKey');
@@ -17,6 +20,8 @@ const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
 const { getAssetDirections, getTenantAssets, getAssetTemplateBindings } = require('../db/assets');
 const { saveProject, getProjectByDocId, setProjectTemplateFill } = require('../db/projects');
+const { getDocTemplate } = require('../db/docTemplates');
+const { listTemplateMarkers } = require('../db/templateMarkers');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
@@ -1247,6 +1252,134 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
 // falling back to the repo voice.md when there's no DB / no saved guide, and
 // supplies the asset-level creative direction lookup for the drafter.
 // Returns { title, fieldCount, url }.
+// BUILD AND DRAFT A DOCUMENT TEMPLATE (document templates, rework step two).
+//
+// The whole path from a CONFIRMED template: copy it into the campaign folder,
+// draft copy for every marker the tenant ticked as copy, and write that copy
+// into the cells whose coordinates were stored at confirm time.
+//
+// REACHABLE ONLY FROM THE CONFIRMED-TEMPLATE FLOW. parseBrief does not know
+// templates exist yet (that is step four), so nothing routes here from a brief.
+// A caller has to hand over a template id it already has.
+//
+// A TEMPLATE IS CONFIRMED when it has template_markers rows. Without them there
+// are no coordinates and nothing can be placed, so this refuses rather than
+// falling back to a marker-name match — the whole point of the rework is that
+// the position IS the mapping.
+//
+// THE THREE STEPS, and why each reuses what exists:
+//
+//   1. COPY — getDestination().createFromTemplate with no values and no markers.
+//      That is the same drive.files.copy the existing template import uses;
+//      passing nothing to fill means it copies and sends no batchUpdate, so the
+//      markers are still standing when step 3 goes looking for their cells.
+//   2. DRAFT — gemini.generateAssetDrafts, the same batched call the copy doc's
+//      assets go through. The template becomes one "asset" whose fields are its
+//      copy markers, so the prompt, the character-limit enforcement and the
+//      craft/brand context are all the existing ones. No new prompt.
+//   3. WRITE — getDestination().writeTemplateCells, one batchUpdate in reverse
+//      document order.
+//
+// Returns { docId, docUrl, title, drafted, written, skipped, healed, missing }.
+async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId = null, clients, direction }) {
+  if (!tenantId || !templateId) throw new Error('buildTemplateDocument: tenantId and templateId are required.');
+
+  const template = await getDocTemplate(tenantId, templateId);
+  if (!template) throw new Error(`No template ${templateId} for this tenant.`);
+  if (!template.source_doc_id) throw new Error(`Template "${template.name}" has no imported document to copy.`);
+
+  const markers = await listTemplateMarkers(tenantId, templateId);
+  if (markers === null) {
+    throw new Error('Template fields are not available — run scripts/migrateAddTemplateMarkers.js.');
+  }
+  if (markers.length === 0) {
+    throw new Error(`Template "${template.name}" has no confirmed fields yet. Confirm them in Settings first.`);
+  }
+  const copyMarkers = markers.filter((m) => m.is_copy);
+  if (copyMarkers.length === 0) {
+    throw new Error(`Template "${template.name}" has no markers ticked as copy, so there is nothing to draft.`);
+  }
+
+  console.log(
+    `[pipeline] template "${template.name}": ${markers.length} marker(s), ` +
+      `${copyMarkers.length} to draft, ${markers.length - copyMarkers.length} left as metadata`
+  );
+
+  // --- 1. copy -------------------------------------------------------------
+  // No values, no markers: copy only. The {{markers}} stay in place so step 3
+  // can find their cells, and nothing is filled by replaceAllText — which would
+  // consume the marker and is the mechanism this rework replaced.
+  const copied = await getDestination().createFromTemplate({
+    sourceDocId: template.source_doc_id,
+    name: `${spec.campaignTitle || 'Untitled Campaign'} — ${template.name}`,
+    folderId,
+    values: new Map(),
+    markers: [],
+    clients,
+  });
+
+  // --- 2. draft ------------------------------------------------------------
+  let voiceGuide = null;
+  try {
+    voiceGuide = await getVoiceGuide(tenantId);
+  } catch (err) {
+    console.warn('[pipeline] voice guide lookup failed — using repo voice.md:', err.message);
+  }
+
+  // The template is ONE asset whose fields are its copy markers. `assetType` is
+  // the template's name, which is what gemini slices craft.md by
+  // (mediumKeywordsForAsset) — a name with "form" or "confirmation" in it gets
+  // the right medium section, and one that matches nothing falls back to the
+  // whole file, which is the documented safe outcome.
+  const fields = copyMarkers.map((m) => ({
+    fieldName: m.marker_name,
+    charMin: m.char_min || 0,
+    charMax: m.char_max || 0,
+    fieldType: m.field_type === 'words' ? 'words' : 'text',
+    notes: m.spec_note || '',
+  }));
+
+  const drafts = await generateAssetDrafts({
+    assetType: template.name,
+    summary: spec.summary || '',
+    writerPrompt: spec.writerPrompt || '',
+    fields,
+    direction: direction || '',
+    voiceGuide,
+  });
+
+  // marker_key -> copy. Matched on the field name the draft came back with,
+  // which is the marker name it was asked for.
+  const byName = new Map(copyMarkers.map((m) => [String(m.marker_name).trim().toLowerCase(), m.marker_key]));
+  const values = new Map();
+  for (const d of drafts || []) {
+    const key = byName.get(String(d.fieldName || '').trim().toLowerCase());
+    if (!key) continue;
+    if (typeof d.copy === 'string' && d.copy.trim()) values.set(key, d.copy.trim());
+  }
+
+  // --- 3. write ------------------------------------------------------------
+  // Only the COPY markers are handed over. A metadata marker is never located
+  // and never written — its cell is the tenant's, and leaving {{Form ID}}
+  // standing is the correct outcome, not an omission.
+  const result = await getDestination().writeTemplateCells(
+    copied.id,
+    { markers: copyMarkers, values },
+    clients
+  );
+
+  return {
+    docId: copied.id,
+    docUrl: copied.url,
+    title: copied.title,
+    templateName: template.name,
+    markers: markers.length,
+    copyMarkers: copyMarkers.length,
+    drafted: values.size,
+    ...result,
+  };
+}
+
 // SYNC THE DRAFTED COPY INTO THIS PROJECT'S TEMPLATE DOCUMENT(S).
 //
 // Runs after every draft. Reads the copy doc back — the same read the web
@@ -1471,6 +1604,10 @@ module.exports = {
   // The after-drafting sync. Exported for tests; generateDraft is its only
   // production caller.
   syncTemplateDocuments,
+  // The confirmed-template build path (rework step two). Reachable only from a
+  // caller that already has a template id — parseBrief does not know templates
+  // exist yet.
+  buildTemplateDocument,
   normalizeAssetPlan,
   resolveAssetLimits,
   // The DEFAULT (web) ceilings, and the absolute maximum a surface can ask for.

@@ -16,6 +16,7 @@ const { DocBuilder } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
+const { locateCells, buildCellWriteRequests } = require('./templateCells');
 const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, cleanDraft, DOORWAYS, INTENSITIES } = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
 // Same asset-name folding the pipeline uses to match a name to a library row, so
@@ -1692,11 +1693,55 @@ async function fillTemplateMarkers(documentId, { values, previous = {}, markers 
   return { filled, skipped, unchanged, ambiguous, applied, requests: requests.length };
 }
 
+// WRITE DRAFTED COPY INTO A TEMPLATE'S CELLS BY STORED COORDINATE (document
+// templates, rework step two).
+//
+// The template document is a COPY, so its tables already exist and documents.get
+// hands back every cell's index — one read, one write, no re-parse. See
+// destinations/templateCells.js for why the two-phase insertTable problem does
+// not apply here and why the requests come out in reverse document order.
+//
+//   markers: db/templateMarkers rows carrying the stored coordinates
+//   values:  Map|Object of marker_key -> drafted copy
+//
+// Returns { written, skipped, healed, missing, requests }.
+async function writeTemplateCells(documentId, { markers, values }, clients) {
+  const { docs } = clients || (await getClients());
+  if (!documentId) throw new Error('writeTemplateCells: no document.');
+
+  const doc = (await docs.documents.get({ documentId })).data;
+  const { found, missing } = locateCells(doc, markers || []);
+  const { requests, written, skipped } = buildCellWriteRequests(found, values);
+
+  if (requests.length) {
+    await docs.documents.batchUpdate({ documentId, requestBody: { requests } });
+  }
+
+  const healed = found.filter((c) => c.healed).map((c) => ({ name: c.marker.marker_name, reason: c.reason }));
+  console.log(
+    `[googleDocs] template cells ${documentId} — ${written.length} written, ${skipped.length} left as-is` +
+      (healed.length ? `, ${healed.length} found by label after an edit` : '') +
+      (missing.length ? `, ${missing.length} NOT LOCATED` : '')
+  );
+  for (const m of missing) {
+    console.warn(`[googleDocs]   could not place {{${m.marker && m.marker.marker_name}}}: ${m.reason}`);
+  }
+
+  return {
+    written,
+    skipped,
+    healed,
+    missing: missing.map((m) => ({ name: m.marker && m.marker.marker_name, reason: m.reason })),
+    requests: requests.length,
+  };
+}
+
 module.exports = {
   name: 'google-docs',
   createDocument,
   createFromTemplate,
   fillTemplateMarkers,
+  writeTemplateCells,
   generateDraft,
   getDocContent,
   listReviewComments,

@@ -52,7 +52,13 @@ const {
   renameDocTemplate,
 } = require('../db/docTemplates');
 const { importDocxTemplate, DOCX_MIME } = require('../destinations/docTemplateImport');
-const { describeLocation } = require('../destinations/docPlaceholders');
+const { describeLocation, discoverPlaceholders } = require('../destinations/docPlaceholders');
+const { deriveTemplateFields } = require('../destinations/templateTableReader');
+const {
+  listTemplateMarkers,
+  saveTemplateMarkers,
+  seedTemplateMarkers,
+} = require('../db/templateMarkers');
 const { matchMarkersToFields } = require('../destinations/markerMatch');
 const { getClientsForTenant } = require('../google');
 
@@ -571,6 +577,12 @@ router.post('/api/settings/templates', uploadLimiter, requireAuth, (req, res) =>
         created_by: userId,
       });
 
+      // Seed the confirm screen with what the reader proposed. Best-effort and
+      // never overwriting: the document imported fine either way, and a template
+      // re-uploaded over one the tenant has already confirmed keeps their
+      // answers (ON CONFLICT DO NOTHING).
+      if (id) await seedTemplateMarkers(id, imported.derived || []);
+
       return res.status(201).json({
         success: true,
         id,
@@ -738,6 +750,105 @@ router.post('/api/settings/library/asset/:id/markers', settingsWriteLimiter, req
     return res.status(200).json({ success: true, id: assetId, mapped: result.mapped, cleared: result.cleared });
   } catch (err) {
     console.error('[settings] POST /library/asset/:id/markers failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// --- The confirm screen (document templates, REWORK step one) ----------------
+//
+// On upload Quillio reads the template's tables and proposes, per marker, a
+// field name and a limit. These two routes are where the tenant sees that and
+// corrects it. NOTHING ELSE READS template_markers — the build, draft and review
+// paths do not know it exists. This step is deliberately inert.
+
+// GET /api/settings/templates/:id/markers — the proposed (or confirmed) fields.
+router.get('/api/settings/templates/:id/markers', settingsReadLimiter, requireAuth, async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!/^\d+$/.test(id)) return res.status(400).json({ success: false, error: 'A valid template id is required.' });
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    // Ownership first: a template that is not this tenant's is a 404 before the
+    // markers are read, so a foreign id never reaches a second query.
+    const tpl = await getDocTemplate(tenantId, id);
+    if (!tpl) return res.status(404).json({ success: false, error: 'Template not found.' });
+
+    const markers = await listTemplateMarkers(tenantId, id);
+    if (markers === null) {
+      // No DB, or the migration has not run here yet. Distinct from "none
+      // found", and the UI says so rather than showing an empty list.
+      return res.status(200).json({ success: true, available: false, markers: [] });
+    }
+    return res.status(200).json({
+      success: true,
+      available: true,
+      templateName: tpl.name,
+      markers: markers.map((m) => ({
+        ...m,
+        // `where` is rendered server-side, exactly as the placeholder list is,
+        // so the two halves of this panel describe a cell the same way.
+        where: m.part
+          ? describeLocation({
+              part: m.part,
+              kind: m.table_index == null ? 'paragraph' : 'table',
+              tableIndex: m.table_index,
+              row: m.row_index,
+              column: m.column_index,
+              rowSpan: m.row_span,
+              columnSpan: m.column_span,
+              index: m.row_index,
+            })
+          : null,
+      })),
+      counts: {
+        markers: markers.length,
+        copy: markers.filter((m) => m.is_copy).length,
+        limited: markers.filter((m) => m.is_copy && m.char_max > 0).length,
+      },
+    });
+  } catch (err) {
+    console.error('[settings] GET /templates/:id/markers failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ success: false, error: clientErrorMessage(err) });
+  }
+});
+
+// POST /api/settings/templates/:id/markers { markers: [...] } — the tenant's
+// confirmed answers. Upserted by marker key, so a later re-upload of the same
+// template keeps them.
+//
+// The POSITION is never taken from the browser (see db/templateMarkers) — it
+// comes from reading the document. A screen that could move a marker to a
+// different cell would be a way to point a field at the wrong column with no way
+// to notice.
+router.post('/api/settings/templates/:id/markers', settingsWriteLimiter, requireAuth, async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!/^\d+$/.test(id)) return res.status(400).json({ success: false, error: 'A valid template id is required.' });
+  const markers = (req.body && req.body.markers) || null;
+  if (!Array.isArray(markers)) return res.status(400).json({ success: false, error: 'A marker list is required.' });
+  if (markers.length > 500) return res.status(400).json({ success: false, error: 'That is more markers than a template can have.' });
+  try {
+    const tenantId = (req.user && req.user.tenant_id) || null;
+    // Built key by key, never spread. Only these seven are writable; everything
+    // else on the row — the position, the label hint — is the document's.
+    const clean = markers.map((m, i) => ({
+      marker_key: m && m.marker_key != null ? String(m.marker_key) : '',
+      marker_name: m && m.marker_name != null ? String(m.marker_name) : '',
+      is_copy: m ? m.is_copy === true : false,
+      char_min: m ? m.char_min : 0,
+      char_max: m ? m.char_max : 0,
+      field_type: m && m.field_type === 'words' ? 'words' : 'text',
+      spec_note: m && m.spec_note ? String(m.spec_note) : null,
+      sort_order: i,
+    }));
+    const result = await saveTemplateMarkers(tenantId, id, clean);
+    if (!result.ok) {
+      if (result.reason === 'unavailable') {
+        return res.status(409).json({ success: false, error: 'Template fields need a database connection. Nothing was saved.' });
+      }
+      return res.status(404).json({ success: false, error: 'Template not found.' });
+    }
+    return res.status(200).json({ success: true, id, saved: result.saved });
+  } catch (err) {
+    console.error('[settings] POST /templates/:id/markers failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: clientErrorMessage(err) });
   }
 });

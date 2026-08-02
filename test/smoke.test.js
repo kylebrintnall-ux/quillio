@@ -466,6 +466,8 @@ test('settings router mounts and exposes its routes', () => {
     '/api/settings/templates', // uploaded template documents (GET)
     '/api/settings/templates', // import a .docx template (POST)
     '/api/settings/templates/:id', // rename a template (POST)
+    '/api/settings/templates/:id/markers', // the confirm screen (GET)
+    '/api/settings/templates/:id/markers', // the confirm screen (POST)
     '/api/settings/voice',
     '/api/settings/voice',
     '/api/settings/voice/generate',
@@ -10127,7 +10129,13 @@ test('detaching clears the mapping, because a key means nothing without its temp
 
 test('the mapping routes are session-scoped and answer 404 across tenants', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  const region = src.slice(src.indexOf("// POST /api/settings/templates/:id"), src.indexOf('// GET /api/settings/workspace'));
+  // Ends at the confirm-screen block, which the rework inserted just above the
+  // workspace route — the old anchor now swallows it and would count its
+  // requireAuth gates and tenant reads as this region's.
+  const region = src.slice(
+    src.indexOf("// POST /api/settings/templates/:id"),
+    src.indexOf('// --- The confirm screen (document templates')
+  );
   for (const r of ['/api/settings/templates/:id', "asset/:id/template", "asset/:id/markers"]) {
     assert.ok(region.includes(r), `${r} is here`);
   }
@@ -10737,4 +10745,197 @@ test('the long-cell case really is 120 words', () => {
   // not match its own description is a probe whose result cannot be quoted.
   assert.equal(text.split(/\s+/).length, 120);
   assert.match(src, /a 120-word body paragraph/);
+});
+
+// --- Document templates, rework step one: read on upload, confirm, store -----
+
+test('column roles are read from the header row, and a data row is not one', () => {
+  const { columnRoles } = require('../src/destinations/templateTableReader');
+  const p = (t) => ({ paragraph: { elements: [{ textRun: { content: t } }] } });
+  const row = (...t) => ({ tableCells: t.map((x) => ({ content: [p(x)] })) });
+
+  assert.deepEqual(
+    columnRoles({ tableRows: [row('Field', 'Copy', 'Character limit', 'Element ID', 'Notes')] }),
+    { label: 0, limit: 2, note: 4 }
+  );
+  // A matrix whose first row is already DATA has no header. Treating it as one
+  // would label every field with the first field's copy.
+  assert.deepEqual(columnRoles({ tableRows: [row('Form headline', '{{Form Headline}}', '60')] }), {});
+  // A header that names nothing recognisable claims nothing — a wrong role is
+  // worse than no role, because it puts a confident wrong label in front of
+  // somebody skim-reading 33 rows.
+  assert.deepEqual(columnRoles({ tableRows: [row('A', 'B', 'C')] }), {});
+});
+
+test('a limit is read only when the cell is a count, never lifted from prose', () => {
+  const { parseLimit } = require('../src/destinations/templateTableReader');
+  for (const [text, want] of [
+    ['60', 60], ['  60 ', 60], ['120 chars', 120], ['max 60', 60], ['up to 40 characters', 40],
+    ['200 words', 200], ['25 char', 25],
+  ]) {
+    assert.equal(parseLimit(text), want, `${JSON.stringify(text)} -> ${want}`);
+  }
+  // Absent, or explicitly none. char_max 0 means NO LIMIT throughout this
+  // codebase, which is what an unreadable limit should mean — never zero.
+  for (const text of ['', '—', 'n/a', '-', 'TBD']) assert.equal(parseLimit(text), null);
+  // Prose with a number in it is a NOTE. Lifting 60 out of "keep under 60 if
+  // possible" is exactly the confident-wrong-answer this module exists to avoid.
+  assert.equal(parseLimit('keep under 60 if possible'), null);
+  assert.equal(parseLimit('60-80 depending on placement'), null);
+});
+
+test('the reader proposes a field name and a limit, and says which path found them', () => {
+  const { deriveTemplateFields } = require('../src/destinations/templateTableReader');
+  const { discoverPlaceholders } = require('../src/destinations/docPlaceholders');
+  const doc = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'fixtures', 'formConfirmationMatrixDoc.json'), 'utf8')
+  );
+  const fields = deriveTemplateFields(doc, discoverPlaceholders(doc).placeholders);
+  const by = Object.fromEntries(fields.map((f) => [f.name, f]));
+
+  // Table 1 names its columns, so label and limit both come from roles.
+  assert.equal(by['Form Headline'].label, 'Form headline');
+  assert.equal(by['Form Headline'].labelSource, 'header-column');
+  assert.equal(by['Form Headline'].charMax, 60);
+  assert.equal(by['Form Headline'].limitSource, 'header-column');
+  assert.equal(by['Form Subhead'].charMax, 120, '"120 chars" is a limit');
+  // An em dash is not a limit. char_max stays 0 = unlimited.
+  assert.equal(by['Form Legal Line'].charMax, 0);
+  assert.equal(by['Form Legal Line'].limitSource, 'none');
+
+  // Table 2 has NO header row, so the positional fallback carries it.
+  assert.equal(by['Confirmation Headline'].labelSource, 'leftmost');
+  assert.equal(by['Confirmation Headline'].charMax, 60);
+  assert.equal(by['Confirmation Body'].fieldType, 'words', '"200 words" is a word count');
+
+  // Outside a table there is nothing to read, and the marker's own name is the
+  // honest fallback rather than a blank.
+  assert.equal(by['Campaign Name'].labelSource, 'marker-name');
+  assert.equal(by['Campaign Name'].labelText, null, 'no neighbouring cell to self-heal against');
+});
+
+test('is_copy is proposed FALSE for anything that looks like metadata', () => {
+  const { deriveTemplateFields, METADATA_HINT } = require('../src/destinations/templateTableReader');
+  const { discoverPlaceholders } = require('../src/destinations/docPlaceholders');
+  const doc = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'fixtures', 'formConfirmationMatrixDoc.json'), 'utf8')
+  );
+  const by = Object.fromEntries(
+    deriveTemplateFields(doc, discoverPlaceholders(doc).placeholders).map((f) => [f.name, f])
+  );
+  // Wrongly copy = prose drafted into a form-ID cell, invisible until a client
+  // reads it. Wrongly metadata = the marker stays visible, which is this
+  // feature's established failure mode everywhere else.
+  assert.equal(by['Form ID'].isCopy, false);
+  assert.equal(by['Owner'].isCopy, false);
+  assert.equal(by['Form Headline'].isCopy, true);
+  assert.ok(METADATA_HINT.test('Last Updated') && METADATA_HINT.test('Redirect URL'));
+  assert.ok(!METADATA_HINT.test('Form Headline'));
+  // Every proposal carries its reason, so the screen can show its working.
+  assert.ok(Object.values(by).every((f) => typeof f.isCopyReason === 'string' && f.isCopyReason));
+});
+
+test('the reader is pure — no Drive, no Docs, no database, no model', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'templateTableReader.js'), 'utf8');
+  // Requires NOTHING. The structural read has to be runnable over a fixture with
+  // no credentials, which is what makes its behaviour checkable at all.
+  assert.ok(!/require\(/.test(src));
+  const code = src.replace(/\/\/.*$/gm, '');
+  assert.ok(!/gemini|generateContent|fetch\(/i.test(code), 'no model call');
+});
+
+test('the browser can never move a marker to a different cell', () => {
+  const db = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'templateMarkers.js'), 'utf8');
+  const update = db.slice(db.indexOf('ON CONFLICT (template_id, marker_key) DO UPDATE SET'), db.indexOf('// The POSITION is deliberately'));
+  // The position columns are ABSENT from the DO UPDATE list. A confirm screen
+  // that could re-point a field at another column would be a way to put copy in
+  // the wrong cell with no way to notice.
+  for (const col of ['part', 'table_index', 'row_index', 'column_index', 'label_text']) {
+    assert.ok(!new RegExp(`\\b${col}\\s*=`).test(update), `${col} is not updatable`);
+  }
+  for (const col of ['marker_name', 'is_copy', 'char_max', 'field_type', 'spec_note']) {
+    assert.ok(new RegExp(`\\b${col}\\s*=\\s*EXCLUDED`).test(update), `${col} IS updatable`);
+  }
+  // And the route builds its payload key by key rather than spreading input.
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  // The WRITE route only. The read above spreads a DATABASE ROW into its
+  // response to add a rendered `where` — that is not request input, and a slice
+  // covering both would fail on it for the wrong reason.
+  const write = routes.slice(
+    routes.indexOf('router.post(\'/api/settings/templates/:id/markers\''),
+    routes.indexOf('// GET /api/settings/workspace')
+  );
+  assert.match(write, /const clean = markers\.map\(\(m, i\) => \(\{/);
+  assert.ok(!/\.\.\.m\b/.test(write), 'no spread of request input');
+});
+
+test('a re-upload never overwrites what the tenant confirmed', () => {
+  const db = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'templateMarkers.js'), 'utf8');
+  const seed = db.slice(db.indexOf('async function seedTemplateMarkers'), db.indexOf('module.exports'));
+  // ON CONFLICT DO NOTHING on the seed: re-uploading a revised .docx adds the
+  // markers that are new and leaves every answer already given alone. That is
+  // the whole reason these are ROWS keyed on marker_key rather than more JSONB.
+  assert.match(seed, /ON CONFLICT \(template_id, marker_key\) DO NOTHING/);
+  // A seed failure must never fail an upload — the document imported fine.
+  assert.match(seed, /seed failed for template/);
+  assert.ok(!/throw /.test(seed));
+
+  const backfill = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateBackfillTemplateMarkers.js'), 'utf8');
+  assert.equal((backfill.match(/ON CONFLICT \(template_id, marker_key\) DO NOTHING/g) || []).length, 2);
+});
+
+test('the confirm-screen routes are session-scoped and answer 404 across tenants', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const region = src.slice(src.indexOf('// --- The confirm screen'), src.indexOf('// GET /api/settings/workspace'));
+  assert.equal((region.match(/requireAuth/g) || []).length, 2);
+  assert.equal((region.match(/req\.user && req\.user\.tenant_id/g) || []).length, 2);
+  assert.ok(!/req\.body\.tenantId/.test(region));
+  // Ownership is checked BEFORE the markers are read, so a foreign id never
+  // reaches a second query, and not-yours reads the same as not-there.
+  assert.match(region, /const tpl = await getDocTemplate\(tenantId, id\);\s*\n\s*if \(!tpl\) return res\.status\(404\)/);
+  assert.equal((region.match(/Template not found\./g) || []).length, 2);
+  // No DB / no migration is a DIFFERENT answer from "none found".
+  assert.match(region, /available: false/);
+  assert.match(region, /reason === 'unavailable'/);
+});
+
+test('this step is INERT — nothing but the confirm screen reads template_markers', () => {
+  const root = path.join(__dirname, '..');
+  // The whole point of step one. If the build, draft or review path learned
+  // about this table now, there would be no safe place to find out the read is
+  // wrong before something depends on it.
+  for (const f of [
+    'src/core/pipeline.js', 'src/destinations/googleDocs.js', 'src/services/copyReview.js',
+    'src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/services/gemini.js',
+    'src/routes/app.js', 'src/pendingBriefs.js',
+  ]) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    assert.ok(!/template_markers|templateMarkers|deriveTemplateFields/.test(src), `${f} does not know about it`);
+  }
+  // The upload seeds it, and that is the only other writer.
+  const settings = fs.readFileSync(path.join(root, 'src', 'routes', 'settings.js'), 'utf8');
+  assert.match(settings, /if \(id\) await seedTemplateMarkers\(id, imported\.derived \|\| \[\]\)/);
+});
+
+test('the confirm screen shows its working, and defaults nothing on', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const js = html.slice(html.indexOf('async function tplOpenConfirm'), html.indexOf('function tplRenderWarnings'));
+  assert.ok(js.length > 500, 'found the confirm screen');
+
+  // A checkbox per marker, reflecting the STORED value — which the schema
+  // defaults to false. Nothing here flips one on.
+  assert.match(js, /box\.checked = !!m\.is_copy/);
+  assert.ok(!/is_copy = true|checked = true/.test(js));
+  // Its working: where the cell is, and when the name is just the marker again.
+  assert.match(js, /meta\.appendChild\(el\('b', null, m\.where\)\)/);
+  // Worded for BOTH ways label_text is null: a row that had nothing to read,
+  // and a row carried over from the old flow, which never read the neighbouring
+  // cell. "This name is the marker itself" would be false for the second.
+  assert.match(js, /no label read from this row — worth checking the name/);
+  // Name, limit and unit are all correctable — the read is a proposal.
+  for (const c of ['cf-name', 'cf-limit', 'cf-unit']) assert.ok(js.includes(c), `${c} present`);
+  assert.match(js, /'\/api\/settings\/templates\/' \+ encodeURIComponent\(t\.id\) \+ '\/markers'/);
+  // Opening it hides the read-only marker list rather than showing both.
+  const card = html.slice(html.indexOf('function tplRenderOne'), html.indexOf('async function tplOpenConfirm'));
+  assert.match(card, /hide\(ul\);\s*\n\s*cfBtn\.textContent = 'Close'/);
 });

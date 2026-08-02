@@ -1345,10 +1345,20 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
   // which is the marker name it was asked for.
   const byName = new Map(copyMarkers.map((m) => [String(m.marker_name).trim().toLowerCase(), m.marker_key]));
   const values = new Map();
+  // A draft the drafter marked `unenforced` is copy whose limit was never
+  // enforced: the batch came back over, the single-field rescue that would have
+  // rewritten and trimmed it threw, and the over-limit text was kept so the rest
+  // of the asset could proceed. It IS written to its cell — it is real copy — so
+  // it counts as drafted, and that is exactly the problem: it looked identical
+  // to a clean draft in the summary. Named here so it does not.
+  const unenforced = [];
   for (const d of drafts || []) {
     const key = byName.get(String(d.fieldName || '').trim().toLowerCase());
     if (!key) continue;
-    if (typeof d.copy === 'string' && d.copy.trim()) values.set(key, d.copy.trim());
+    if (typeof d.copy === 'string' && d.copy.trim()) {
+      values.set(key, d.copy.trim());
+      if (d.unenforced) unenforced.push(d.fieldName);
+    }
   }
 
   // --- 3. write ------------------------------------------------------------
@@ -1366,10 +1376,17 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
   // but drafted nothing kept its {{marker}} silently, which looks identical in
   // the finished document to one that was never meant to be written. Saying all
   // three together is what makes "17 of 18" a number somebody can act on.
+  //
+  // The unenforced count is a QUALIFIER on the first bucket, not a fourth one —
+  // those markers are drafted and written, they are counted in `written`, and
+  // the buckets still add up. It is appended only when it is non-zero, because a
+  // "0 over limit" on every normal run is noise that trains people to skip the
+  // line the one time it says 1.
   const summary =
     `${copyMarkers.length} copy marker${copyMarkers.length === 1 ? '' : 's'}: ` +
     `${result.written.length} drafted, ${result.skipped.length} left as {{marker}}, ` +
-    `${result.missing.length} unplaced`;
+    `${result.missing.length} unplaced` +
+    (unenforced.length ? ` (${unenforced.length} of the drafted are OVER LIMIT — the rescue failed)` : '');
   console.log(`[pipeline] ${summary}`);
   // The buckets are exhaustive by construction — every copy marker is either
   // located-and-written, located-and-empty, or not located. If that ever stops
@@ -1390,6 +1407,7 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
     markers: markers.length,
     copyMarkers: copyMarkers.length,
     drafted: values.size,
+    unenforced,
     summary,
     accounted: accounted === copyMarkers.length,
     ...result,

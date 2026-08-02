@@ -106,6 +106,12 @@ const pad = (s, n) => String(s == null ? '' : s).padEnd(n);
   console.log(`  plus ${result.markers - result.copyMarkers} metadata marker(s), never touched — still {{showing}}.`);
 
   if (result.written.length) console.log(`\n  DRAFTED (${result.written.length}):\n    ${result.written.join(', ')}`);
+  if (result.unenforced && result.unenforced.length) {
+    console.log(`\n  OVER LIMIT (${result.unenforced.length}) — drafted and written, but the limit was never enforced:`);
+    console.log(`    ${result.unenforced.join(', ')}`);
+    console.log(`    The batch draft came back over, the single-field rescue failed, and the`);
+    console.log(`    over-limit text was kept. Check these against their limits by hand.`);
+  }
   if (result.skipped.length) {
     console.log(`\n  LEFT AS {{marker}} (${result.skipped.length}) — the cell was found, but the draft came back empty:`);
     console.log(`    ${result.skipped.join(', ')}`);

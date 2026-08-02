@@ -7269,6 +7269,18 @@ test('word units: the Gemini prompt states the constraint in words, not characte
   // it returns put the literal string "null" in the prompt.
   assert.strictEqual((gem.match(/fieldType === 'words'/g) || []).length, 5,
     'per-field draft line, variations (x2), variant review, and the review payload');
+
+  // Stating the limit in the right unit is only half of it — the CHECK has to
+  // use the same unit, or the code contradicts its own instruction. It did:
+  // generateAssetDrafts compared copy.length to a word count, so every correct
+  // word-field draft measured "over" and was sent to a rescue it did not need.
+  // These three are the check-and-report side, and they branch the same way.
+  assert.match(gem, /function overLimit\(copy, charMax, fieldType\)/);
+  assert.match(gem, /return String\(fieldType \|\| ''\) === 'words' \? countWords\(copy\) > max : String\(copy\)\.length > max;/);
+  assert.match(gem, /if \(!copy \|\| overLimit\(copy, f\.charMax, f\.fieldType\)\)/,
+    'the batch drafter checks in the unit, not in characters');
+  assert.match(gem, /function describeLength\(copy, charMax, fieldType\)/,
+    'and a warning about a length says which unit it counted');
   assert.ok(/lengthUnit: f\.fieldType === 'words' \? 'words' : 'characters'/.test(gem),
     'the copy-review payload names the unit rather than implying characters');
 });
@@ -9129,6 +9141,11 @@ test('no ceiling is ever interpolated into a prompt without a > 0 guard', () => 
     /const ceiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
     /const wordCeiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
     /const max = Number\(charMax\) > 0 \? Number\(charMax\) : null;/,
+    // generateFieldDraft's, restored after 326c777 deleted it and left the
+    // enforcement block below referencing a name that no longer existed. Same
+    // guard, wrapped in the word check that can only ever make it null — so the
+    // name is still null-or-positive, and the interpolations above still hold.
+    /const ceiling =\n {4}String\(fieldType \|\| ''\) === 'words' \? null : \(Number\(charMax\) > 0 \? Number\(charMax\) : null\);/,
   ]) {
     assert.match(gem, decl);
   }
@@ -11171,4 +11188,210 @@ test('one line accounts for every copy marker, in all three outcomes', () => {
   assert.match(runner, /console\.log\(`\\n {2}\$\{result\.summary\}\.`\)/);
   assert.match(runner, /LEFT AS \{\{marker\}\} \(\$\{result\.skipped\.length\}\)/);
   assert.match(runner, /the field was ticked as copy, so somebody expected words/);
+});
+
+// --- The field-fallback ReferenceError, and the unit confusion that hid it ---
+//
+// Reported from a real buildTemplateDoc.js run:
+//
+//   [gemini] field fallback failed for Form and Confirmation Page / Form Body:
+//   ceiling is not defined
+//
+// on the template's only two WORD-limited fields. Two faults, stacked:
+//
+//   1. generateFieldDraft referenced `ceiling` without declaring it. Commit
+//      326c777 replaced `const ceiling = …; const limitLine = ceiling ? …` with
+//      a lengthClause() call and the binding went with the line that used it,
+//      while the enforcement block below kept naming it. 'use strict' → a
+//      ReferenceError on EVERY call, for every field type.
+//   2. generateAssetDrafts decided "is this over its limit?" with
+//      copy.length > charMax. On a word field charMax is a WORD count, so a
+//      correct 120-word body (~850 chars) always measured "over" and always went
+//      to the rescue — which is why fault 1 fired on exactly the word fields and
+//      on nothing else.
+//
+// These drive the real functions through a stubbed fetch: the bug was a runtime
+// ReferenceError, and no amount of reading the source catches one of those.
+
+// Run gemini against a canned model, counting calls and keeping every prompt.
+// `reply(prompt, n)` returns the text, or throws to simulate a Gemini failure.
+async function geminiWith(reply, fn) {
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  const prompts = [];
+  cfg.GEMINI_API_KEY = 'test-key';
+  global.fetch = async (_url, opts) => {
+    const prompt = JSON.parse(opts.body).contents[0].parts[0].text;
+    prompts.push(prompt);
+    const text = reply(prompt, prompts.length);
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text }] } }] }) };
+  };
+  try {
+    return { out: await fn(require('../src/services/gemini')), prompts };
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+  }
+}
+
+const isBatchPrompt = (p) => /Respond with valid JSON only/.test(p);
+// 120 words — what a correctly-drafted 120-WORD body looks like, and ~850 chars.
+const WORDS_120 = Array.from({ length: 120 }, (_, i) => `word${i + 1}`).join(' ');
+
+test('generateFieldDraft returns copy instead of throwing "ceiling is not defined"', async () => {
+  assert.strictEqual(WORDS_120.trim().split(/\s+/).length, 120, 'the fixture really is 120 words');
+
+  for (const field of [
+    { fieldName: 'Form Headline', charMax: 50, fieldType: 'text' },
+    { fieldName: 'Form Body', charMax: 120, charMin: 50, fieldType: 'words' },
+  ]) {
+    const { out } = await geminiWith(
+      () => 'Book your spot today',
+      (g) => g.generateFieldDraft({ assetType: 'Form and Confirmation Page', summary: 's', writerPrompt: 'w', ...field })
+    );
+    assert.strictEqual(out, 'Book your spot today', `${field.fieldName} drafted`);
+  }
+});
+
+test('the character ceiling is enforced on a character field and NOT on a word field', async () => {
+  // Over its 50-CHARACTER limit → one corrective rewrite, then a hard trim.
+  const over = 'x'.repeat(80);
+  const char = await geminiWith(
+    (_p, n) => (n === 1 ? over : 'y'.repeat(70)),
+    (g) => g.generateFieldDraft({ assetType: 'A', fieldName: 'Headline', charMax: 50, fieldType: 'text', summary: 's', writerPrompt: 'w' })
+  );
+  assert.strictEqual(char.prompts.length, 2, 'the corrective rewrite ran');
+  assert.match(char.prompts[1], /too long/);
+  assert.ok(char.out.length <= 50, `trimmed to the ceiling, got ${char.out.length}`);
+
+  // The same numbers on a WORD field: 120 means 120 WORDS. Enforcing it in
+  // characters would rewrite this body to fit 120 chars and then cut it to 120 —
+  // the 5x error 326c777 removed, pointed the other way and destructive.
+  const word = await geminiWith(
+    () => WORDS_120,
+    (g) => g.generateFieldDraft({ assetType: 'A', fieldName: 'Form Body', charMax: 120, charMin: 50, fieldType: 'words', summary: 's', writerPrompt: 'w' })
+  );
+  assert.strictEqual(word.prompts.length, 1, 'no corrective rewrite — it was never over');
+  assert.strictEqual(word.out, WORDS_120, 'returned whole, not trimmed to 120 characters');
+  assert.match(word.prompts[0], /WORD count, not characters/, 'and the limit reached it in words');
+});
+
+test('overLimit measures in the field\'s own unit, and treats char_max 0 as no limit', () => {
+  const { overLimit } = require('../src/services/gemini');
+  // The exact case from the run: 120 words, limit 120 words. Not over — but 851
+  // characters, which is what the old copy.length > charMax test compared.
+  assert.strictEqual(overLimit(WORDS_120, 120, 'words'), false, '120 words is not over 120 words');
+  assert.ok(WORDS_120.length > 120, 'though it is well over 120 CHARACTERS');
+  assert.strictEqual(overLimit(WORDS_120, 119, 'words'), true, '120 words is over 119');
+  assert.strictEqual(overLimit('x'.repeat(51), 50, 'text'), true);
+  assert.strictEqual(overLimit('x'.repeat(50), 50, 'text'), false);
+  // char_max 0 = NO LIMIT, as everywhere else in the codebase.
+  assert.strictEqual(overLimit(WORDS_120, 0, 'words'), false);
+  assert.strictEqual(overLimit('x'.repeat(9999), 0, 'text'), false);
+});
+
+test('a correct word-field batch draft is not sent to the rescue at all', async () => {
+  const { out, prompts } = await geminiWith(
+    (p) => (isBatchPrompt(p) ? JSON.stringify({ 'Form Body': WORDS_120, 'Form Headline': 'Book your spot' }) : 'rescued'),
+    (g) =>
+      g.generateAssetDrafts({
+        assetType: 'Form and Confirmation Page',
+        summary: 's',
+        writerPrompt: 'w',
+        fields: [
+          { fieldName: 'Form Body', charMax: 120, charMin: 50, fieldType: 'words' },
+          { fieldName: 'Form Headline', charMax: 50, fieldType: 'text' },
+        ],
+      })
+  );
+  assert.strictEqual(prompts.length, 1, 'the batch call, and nothing else');
+  assert.strictEqual(out[0].copy, WORDS_120, 'the body survived whole');
+  assert.ok(!out.some((o) => o.unenforced), 'nothing is flagged — nothing failed');
+});
+
+test('a genuinely over-limit field still goes to the rescue, and the rescue is told the unit', async () => {
+  const { out, prompts } = await geminiWith(
+    (p, n) => {
+      if (isBatchPrompt(p)) return JSON.stringify({ 'Form Body': `${WORDS_120} ${WORDS_120}`, Headline: 'x'.repeat(80) });
+      return n === 2 ? 'a rescued body' : 'a rescued headline';
+    },
+    (g) =>
+      g.generateAssetDrafts({
+        assetType: 'A',
+        summary: 's',
+        writerPrompt: 'w',
+        fields: [
+          { fieldName: 'Form Body', charMax: 120, charMin: 50, fieldType: 'words' }, // 240 words: really over
+          { fieldName: 'Headline', charMax: 50, fieldType: 'text' }, // 80 chars: really over
+        ],
+      })
+  );
+  assert.strictEqual(prompts.length, 3, 'batch + one rescue per over-limit field');
+  assert.deepStrictEqual(out.map((o) => o.copy), ['a rescued body', 'a rescued headline']);
+  // The rescue used to be called without fieldType/charMin, so it asked a
+  // 120-word field for 120 CHARACTERS while the batch prompt above asked for
+  // words. Both now say the same thing.
+  assert.match(prompts[1], /Length: 50-120 words. This is a WORD count/);
+  assert.match(prompts[2], /Character limit: 50/);
+});
+
+test('a kept over-limit draft is flagged unenforced, not returned as a clean draft', async () => {
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let out;
+  try {
+    ({ out } = await geminiWith(
+      (p) => {
+        if (isBatchPrompt(p)) return JSON.stringify({ Headline: 'x'.repeat(80), Subhead: '' });
+        throw new Error('Gemini request timed out after 60000ms');
+      },
+      (g) =>
+        g.generateAssetDrafts({
+          assetType: 'A',
+          summary: 's',
+          writerPrompt: 'w',
+          fields: [
+            { fieldName: 'Headline', charMax: 50, fieldType: 'text' }, // over, rescue fails, KEPT
+            { fieldName: 'Subhead', charMax: 50, fieldType: 'text' }, // missing, rescue fails, empty
+          ],
+        })
+    ));
+  } finally {
+    console.warn = realWarn;
+  }
+
+  // The rescue is the only thing enforcing the limit on this path. When it fails
+  // the over-limit text is kept so the rest of the asset can proceed — that is
+  // deliberate — but it is NOT a clean draft, and it used to be indistinguishable
+  // from one.
+  assert.strictEqual(out[0].copy.length, 80, 'the over-limit batch draft was kept');
+  assert.strictEqual(out[0].unenforced, true, 'and flagged');
+  assert.strictEqual(out[1].copy, '', 'the missing one is still empty');
+  assert.strictEqual(out[1].unenforced, undefined, 'an empty field is not "over limit"');
+
+  assert.strictEqual(warned.length, 2, 'both failures were reported');
+  assert.match(warned[0], /Headline: Gemini request timed out.*OVER ITS LIMIT and unenforced \(80 chars, limit 50\)/);
+  assert.match(warned[1], /Subhead: Gemini request timed out.*no copy for this field/);
+});
+
+test('the build summary says when a drafted marker was never enforced', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+
+  // Collected only for markers that actually got copy — an unenforced flag on a
+  // field whose copy was empty would be counted in a bucket it isn't in.
+  assert.match(build, /if \(d\.unenforced\) unenforced\.push\(d\.fieldName\)/);
+  // A qualifier on `written`, not a fourth bucket: these markers ARE drafted and
+  // written, so the three counts must still add up.
+  assert.match(build, /unenforced\.length \? ` \(\$\{unenforced\.length\} of the drafted are OVER LIMIT/);
+  assert.match(build, /const accounted = result\.written\.length \+ result\.skipped\.length \+ result\.missing\.length/);
+  assert.match(build, /unenforced,/, 'and the caller gets the names, not just a count');
+
+  // Appended only when non-zero: "0 over limit" on every normal run is the kind
+  // of noise that trains people to skip the line the one time it says 1.
+  const runner = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'buildTemplateDoc.js'), 'utf8');
+  assert.match(runner, /OVER LIMIT \(\$\{result\.unenforced\.length\}\)/);
+  assert.match(runner, /the limit was never enforced/);
 });

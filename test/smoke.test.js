@@ -10366,13 +10366,12 @@ test('the template documents are built BEFORE the copy doc', () => {
 
 test('the pipeline reaches Google only through the destination', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  // Ends at syncTemplateDocuments, which step four inserted just above
-  // generateDraft — the old anchor now swallows it and its comments name the
-  // Google APIs it deliberately does not call.
-  // BOTH build functions — generateDoc and buildTemplateDocument, which the
-  // rework inserted between it and syncTemplateDocuments. Narrowing to the first
-  // would drop the new one from this guarantee, which is the coverage that
-  // matters most while it is the newest code in the file.
+  // BOTH build functions — generateDoc and buildTemplateDocument. The slice ends
+  // at syncTemplateDocuments, which is not a build path (it reads a doc back and
+  // fills a template that already exists) and whose comments name the Google
+  // APIs it routes around. Narrowing this to the first function would drop the
+  // newest code in the file from the guarantee, which is the coverage that
+  // matters most.
   //
   // NOT the whole file, and that is not a loosening: pipeline.js DOES call Drive
   // directly outside the build path — reference ingestion (:64, :75, :83) and the

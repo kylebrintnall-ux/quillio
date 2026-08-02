@@ -1245,13 +1245,6 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   return { doc, assetSpecs, copyDocSpecs, templateDocs, projectFolderUrl, projectId };
 }
 
-// Draft copy for every field of an existing doc. An optional `direction` string
-// is passed through as user revision feedback (the "Regenerate" path). Optional
-// `clients` runs the Docs read/write as a specific tenant's OAuth user. Optional
-// `tenantId` selects that tenant's saved voice guide (Postgres) for the prompt,
-// falling back to the repo voice.md when there's no DB / no saved guide, and
-// supplies the asset-level creative direction lookup for the drafter.
-// Returns { title, fieldCount, url }.
 // BUILD AND DRAFT A DOCUMENT TEMPLATE (document templates, rework step two).
 //
 // The whole path from a CONFIRMED template: copy it into the campaign folder,
@@ -1493,6 +1486,13 @@ async function syncTemplateDocuments(docId, clients, tenantId) {
   }
 }
 
+// Draft copy for every field of an existing doc. An optional `direction` string
+// is passed through as user revision feedback (the "Regenerate" path). Optional
+// `clients` runs the Docs read/write as a specific tenant's OAuth user. Optional
+// `tenantId` selects that tenant's saved voice guide (Postgres) for the prompt,
+// falling back to the repo voice.md when there's no DB / no saved guide, and
+// supplies the asset-level creative direction lookup for the drafter.
+// Returns { title, fieldCount, url }.
 async function generateDraft(docId, direction, clients, tenantId, scopedFields, append) {
   // Best-effort: a DB miss/error just falls back to the repo voice.md. Never
   // log the guide content — only whether one was found.

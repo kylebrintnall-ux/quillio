@@ -1534,6 +1534,17 @@ async function generateFieldVariations({
     // Which leaves the word fields, on both endings — the re-draft threw and the
     // model's own variation was kept, or the re-draft returned and is still long.
     // Neither is trimmed, by design, so the only honest thing left is to say so.
+    //
+    // KNOWN GAP: `unenforced` on a variation is INERT. The batch drafter's flag
+    // is collected into a summary line by its caller in core/, which names the
+    // fields, but the riff/regenerate path has no per-field report to put this in
+    // — googleDocs.generateDraft returns { title, fieldCount, url } and
+    // buildVariantBlock reads only .copy and .doorway. So the warning below is the
+    // only surfacing today, and riff can still write over-limit word copy into the
+    // copy doc without the writer being told in the UI. Bounded: word fields are
+    // the two body fields, and riff is a copy-doc affordance, so nothing reaches a
+    // client deliverable this way. Wiring it out means giving that path a report
+    // it does not currently have.
     const stillOver = copy && overLimit(copy, charMax, fieldType);
     if (stillOver) {
       console.warn(

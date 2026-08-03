@@ -11621,3 +11621,19 @@ test('neither flag path trims a word field — only the report changed', () => {
   assert.match(gem, /if \(!unenforced && overLimit\(copy, f\.charMax, f\.fieldType\)\)/);
   assert.match(gem, /const stillOver = copy && overLimit\(copy, charMax, fieldType\)/);
 });
+
+test('the inert variations flag is recorded as a known gap, not left to be rediscovered', () => {
+  // The flag is real and the warning fires, but nothing downstream reads it: the
+  // riff/regenerate path has no per-field report to carry it. That is a scope
+  // decision, not an oversight, and the next person to touch this path should
+  // find it written down rather than work it out from the absence of a consumer.
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  assert.match(gem, /KNOWN GAP: `unenforced` on a variation is INERT/);
+  assert.match(gem, /riff can still write over-limit word copy/);
+
+  // And it is still only a reporting gap: no consumer means no consumer, so the
+  // extra key cannot break the block builder that does read these entries.
+  const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  const block = docs.slice(docs.indexOf('function buildVariantBlock'), docs.indexOf('function buildVariantBlock') + 1400);
+  assert.ok(!/unenforced/.test(block), 'buildVariantBlock ignores it, so an extra key is inert not breaking');
+});

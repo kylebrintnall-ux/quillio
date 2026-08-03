@@ -896,6 +896,54 @@ function lengthClause(charMax, fieldType, charMin) {
   );
 }
 
+function countWords(s) {
+  const t = String(s || '').trim();
+  return t ? t.split(/\s+/).length : 0;
+}
+
+// Is this draft over its limit, measured in the field's OWN unit? The companion
+// to lengthClause: that one states the limit in the right unit, this one CHECKS
+// it in the right unit, and both have to agree or the check contradicts the
+// instruction.
+//
+// A word field's charMax is a WORD count. Comparing copy.length (characters) to
+// it reports "over" for every correctly-drafted body — a 120-word paragraph is
+// ~850 characters — so the caller's rescue path fired on fields that had nothing
+// wrong with them. That is how a latent ReferenceError inside that rescue path
+// stayed invisible for every character field and fired on both word fields.
+//
+// char_max 0 is NO LIMIT, as everywhere else, so nothing is ever over it.
+function overLimit(copy, charMax, fieldType) {
+  const max = Number(charMax) > 0 ? Number(charMax) : null;
+  if (!max || !copy) return false;
+  return String(fieldType || '') === 'words' ? countWords(copy) > max : String(copy).length > max;
+}
+
+// The ceiling that may be enforced by CHARACTER COUNT — the corrective rewrite
+// and, at the end of the ladder, trimToCeiling. Null for a word field, because a
+// word field's charMax is a WORD count and every enforcement step below measures
+// characters: handing 120 to trimToCeiling on a 120-word body does not shorten it
+// to 120 words, it cuts it to 120 CHARACTERS and throws the rest away.
+//
+// That is why this is a named helper rather than the expression written twice.
+// Both places that trim have to make the same decision, and the one that got it
+// wrong was silent about it — the copy simply came back short.
+function trimCeiling(charMax, fieldType) {
+  if (String(fieldType || '') === 'words') return null;
+  return Number(charMax) > 0 ? Number(charMax) : null;
+}
+
+// How long this copy is against its limit, in that same unit, phrased for a human
+// reading a log line. It lives next to overLimit so a warning can never report a
+// length in one unit while the check that produced the warning used the other —
+// which is the whole failure mode this pair exists to close.
+function describeLength(copy, charMax, fieldType) {
+  const max = Number(charMax) > 0 ? Number(charMax) : null;
+  const unit = String(fieldType || '') === 'words' ? 'words' : 'chars';
+  const size = unit === 'words' ? countWords(copy) : String(copy || '').length;
+  return max ? `${size} ${unit}, limit ${max}` : `${size} ${unit}, no limit`;
+}
+
 // Draft ONE field. Builds a prompt from the brief, the field's own length
 // constraint and the creative direction. Enforces the limit: if the draft is
 // over, it gets one corrective rewrite, then a hard trim as a last resort.
@@ -952,6 +1000,31 @@ async function generateFieldDraft({
       generationConfig: { temperature: 0.8 },
     })
   );
+
+  // THE CEILING THIS FUNCTION ENFORCES, IN CHARACTERS.
+  //
+  // Restored. Commit 326c777 replaced the old pair
+  //
+  //   const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
+  //   const limitLine = ceiling ? `Character limit: ${ceiling}. …` : '…';
+  //
+  // with a single lengthClause() call, and the `ceiling` binding went with the
+  // line that used it — while the enforcement block below kept referring to it.
+  // This file is 'use strict', so that is a ReferenceError on EVERY call to this
+  // function, for every field type. It survived because every caller reaches it
+  // off the happy path and swallows what it throws: the batch drafter and the
+  // variations generator only fall back here when a draft is missing or over,
+  // and both catch; the scoped single-field regenerate (googleDocs.js, "Stay
+  // close" with one option) calls it directly, inside a per-asset catch that
+  // logs "asset N/M FAILED" and returns no fields for that asset.
+  //
+  // NULL FOR A WORD FIELD — see trimCeiling. Everything below measures
+  // characters, so enforcing a word count here would take a correct 120-word
+  // body, "rewrite it to fit within 120 characters", and then trim it to 120
+  // characters if that failed. A word field's limit is carried into the prompt by
+  // lengthClause above; there is no post-hoc word enforcement, and inventing one
+  // is beyond this fix.
+  const ceiling = trimCeiling(charMax, fieldType);
 
   // Enforce the hard ceiling: one corrective rewrite, then a hard trim.
   if (ceiling && copy.length > ceiling) {
@@ -1079,20 +1152,30 @@ async function generateAssetDrafts({
   const out = [];
   for (const f of fields) {
     let copy = cleanDraft(byKey.get(f.fieldName.trim().toLowerCase()) || '');
-    const ceiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
+    let unenforced = false;
     // Missing from the batch, or over its limit → fall back to the robust
     // single-field generator (which rewrites and, if needed, hard-trims).
     // One field's fallback failing (a Gemini timeout / rate-limit / error) must
     // NOT abandon the whole asset — the many-field assets (carousels) fire the
     // most fallback calls and so are the most exposed. Isolate each: on failure
     // keep whatever the batch gave (or empty), and let the other fields proceed.
-    if (!copy || (ceiling && copy.length > ceiling)) {
+    //
+    // The over-limit test is overLimit(), in the field's own unit. It used to be
+    // `copy.length > f.charMax` — which, on a word field, called every correct
+    // draft too long and sent it here for a rescue it did not need.
+    if (!copy || overLimit(copy, f.charMax, f.fieldType)) {
       try {
         copy = await generateFieldDraft({
           assetType,
           channel,
           fieldName: f.fieldName,
           charMax: f.charMax,
+          // charMin and fieldType were not passed, so the rescue drafted every
+          // field in CHARACTERS — a 120-word field asked for 120 characters, the
+          // 5x error in the direction that matters. The batch prompt above has
+          // said WORDS since 326c777; this call now says the same thing.
+          charMin: f.charMin,
+          fieldType: f.fieldType,
           toneNotes,
           notes: f.notes,
           funnelStage: f.funnelStage,
@@ -1103,14 +1186,44 @@ async function generateAssetDrafts({
           voiceGuide,
         });
       } catch (err) {
-        console.warn(
-          `[gemini] field fallback failed for ${assetType} / ${f.fieldName}: ${err.message}`
-        );
         // Keep the batch value if we had one; otherwise leave it empty (dropped
         // downstream) rather than throwing away every field on this asset.
+        //
+        // But say which one happened. This rescue is the ONLY thing that enforces
+        // the limit on this path, so a kept draft got NO enforcement — it is here
+        // precisely because it was over. It still counts as drafted, because copy
+        // exists, and it used to come back indistinguishable from a clean draft.
+        // `unenforced` is what makes the difference visible to the caller.
+        unenforced = Boolean(copy);
+        console.warn(
+          `[gemini] field fallback failed for ${assetType} / ${f.fieldName}: ${err.message} — ` +
+            (unenforced
+              ? `keeping the batch draft OVER ITS LIMIT and unenforced (${describeLength(copy, f.charMax, f.fieldType)})`
+              : 'no copy for this field')
+        );
       }
     }
-    out.push({ fieldName: f.fieldName, copy });
+
+    // AND THE OTHER WAY A DRAFT LEAVES HERE OVER ITS LIMIT: a rescue that
+    // SUCCEEDS. generateFieldDraft has no post-hoc word enforcement — its ceiling
+    // is null on a word field, deliberately, because the only trim available
+    // counts characters — so nothing between there and here shortens a long word
+    // body. The catch above only covers the rescue THROWING; this covers it
+    // returning, and re-covers the throw case for free.
+    //
+    // A character field cannot reach this line over its limit: trimToCeiling
+    // guarantees compliance on that path. So in practice this is the word fields,
+    // which had nothing. It is the report that changes, not the copy — the draft
+    // is still kept and still written, it just stops being counted as clean.
+    if (!unenforced && overLimit(copy, f.charMax, f.fieldType)) {
+      unenforced = true;
+      console.warn(
+        `[gemini] ${assetType} / ${f.fieldName} drafted OVER ITS LIMIT and unenforced ` +
+          `(${describeLength(copy, f.charMax, f.fieldType)}) — a word field has no post-hoc trim`
+      );
+    }
+
+    out.push(unenforced ? { fieldName: f.fieldName, copy, unenforced: true } : { fieldName: f.fieldName, copy });
   }
   return out;
 }
@@ -1341,7 +1454,13 @@ async function generateFieldVariations({
     : assignDoorways(fieldName, distance, count).map((d) => ({ doorway: d, intensity: null }));
   const doorways = spec.map((s) => s.doorway);
   const n = spec.length;
-  const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
+  // Null on a word field. This name reaches trimToCeiling below, and the old
+  // `Number(charMax) > 0` form fed it a WORD count: a variation on a 120-word
+  // field was cut to 120 CHARACTERS and the rest discarded, with nothing logged.
+  // The over-limit TEST is overLimit(), in the field's own unit — the two are
+  // separate because a word variation can be genuinely over (worth re-drafting)
+  // and still must never be character-trimmed.
+  const ceiling = trimCeiling(charMax, fieldType);
   const prompt = buildVariationsPrompt({
     assetType,
     fieldName,
@@ -1377,9 +1496,11 @@ async function generateFieldVariations({
     const row = parsed[i];
     let copy = cleanDraft((row && (typeof row === 'string' ? row : row.copy)) || '');
 
-    // Missing or over the ceiling → fall back to the single-field generator with
-    // this doorway injected as revision direction (reuses its rewrite + trim).
-    if (!copy || (ceiling && copy.length > ceiling)) {
+    // Missing or over the limit IN ITS OWN UNIT → fall back to the single-field
+    // generator with this doorway injected as revision direction (reuses its
+    // rewrite + trim). This used to be `copy.length > ceiling`, which called
+    // every correct word-field variation too long and re-drafted all of them.
+    if (!copy || overLimit(copy, charMax, fieldType)) {
       const doorwayDirection = [direction, `Use the "${doorway}" angle — ${DOORWAYS[doorway] || ''}`]
         .filter(Boolean)
         .join('. ');
@@ -1388,6 +1509,11 @@ async function generateFieldVariations({
           assetType,
           fieldName,
           charMax,
+          // Both were missing, so the re-draft asked a 120-word field for 120
+          // characters — while buildVariationsPrompt above asked the same field
+          // for words. The two prompts now agree.
+          charMin,
+          fieldType,
           assetDirection,
           summary,
           writerPrompt,
@@ -1399,8 +1525,34 @@ async function generateFieldVariations({
         console.warn(`[gemini] variation fallback failed ${fieldName}/${doorway}: ${err.message}`);
       }
     }
+    // Last-resort trim, characters only — `ceiling` is null on a word field, so
+    // this cannot fire there. A char-field variation is still trimmed even when
+    // the fallback above threw, so a failed fallback leaves no over-limit copy on
+    // this path.
     if (copy && ceiling && copy.length > ceiling) copy = trimToCeiling(copy, ceiling);
-    if (copy) out.push({ doorway, copy });
+
+    // Which leaves the word fields, on both endings — the re-draft threw and the
+    // model's own variation was kept, or the re-draft returned and is still long.
+    // Neither is trimmed, by design, so the only honest thing left is to say so.
+    //
+    // KNOWN GAP: `unenforced` on a variation is INERT. The batch drafter's flag
+    // is collected into a summary line by its caller in core/, which names the
+    // fields, but the riff/regenerate path has no per-field report to put this in
+    // — googleDocs.generateDraft returns { title, fieldCount, url } and
+    // buildVariantBlock reads only .copy and .doorway. So the warning below is the
+    // only surfacing today, and riff can still write over-limit word copy into the
+    // copy doc without the writer being told in the UI. Bounded: word fields are
+    // the two body fields, and riff is a copy-doc affordance, so nothing reaches a
+    // client deliverable this way. Wiring it out means giving that path a report
+    // it does not currently have.
+    const stillOver = copy && overLimit(copy, charMax, fieldType);
+    if (stillOver) {
+      console.warn(
+        `[gemini] variation ${fieldName}/${doorway} is OVER ITS LIMIT and unenforced ` +
+          `(${describeLength(copy, charMax, fieldType)}) — a word field has no post-hoc trim`
+      );
+    }
+    if (copy) out.push(stillOver ? { doorway, copy, unenforced: true } : { doorway, copy });
   }
   return out;
 }
@@ -2214,6 +2366,7 @@ module.exports = {
   mediumKeywordsForAsset,
   builtInFieldGuidance,
   siblingContextBlock,
+  overLimit,
   assignDoorways,
   buildVariationsPrompt,
   doorwayRankingForField,

@@ -74,6 +74,24 @@ function notesForRow(row) {
   if (overLimit(row.text, row.char_max, row.field_type)) {
     const { n, unit } = measure(row.text, row.field_type);
     out.push(`${name} — over its limit: ${n} ${unit} against a limit of ${row.char_max}.`);
+    return out; // Cannot also be under its minimum.
+  }
+
+  // 4. UNDER its minimum. Exactly as measurable as being over, and it was
+  //    missing: a 50-120 word field coming back at 12 words is a one-line email
+  //    where a structured one was specified, and nothing said so.
+  //
+  //    Only when char_min > 0. A floor of 0 is "no floor", the same sentinel
+  //    char_max 0 uses for "no limit", so a field without one is never short.
+  //    In practice these are the word fields — lengthClause already treats the
+  //    floor as half the point there ("50-125 words says this is a structured
+  //    email, where 'up to 125' would read as shorter is safer") — but the check
+  //    is written on char_min itself, not on the unit, so a character field that
+  //    grows a floor is covered without a second rule.
+  const min = Number(row.char_min) > 0 ? Number(row.char_min) : null;
+  if (min) {
+    const { n, unit } = measure(row.text, row.field_type);
+    if (n < min) out.push(`${name} — under its minimum: ${n} ${unit} against a minimum of ${min}.`);
   }
 
   return out;

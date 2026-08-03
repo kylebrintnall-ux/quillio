@@ -11894,3 +11894,167 @@ test('the runner writes nothing without a flag, and reads the BUILT document', (
   assert.match(runner, /regenerate\.split\(','\)/);
   assert.match(runner, /One cell holds one answer/);
 });
+
+// --- The review dedupe roundtrip, and the floor -----------------------------
+//
+// The dedupe compares a note's text against listReviewComments' `content`, while
+// addUnanchoredComment writes REVIEW_PREFIX + content. Those only match because
+// listReviewComments STRIPS the prefix on the way back out
+// (googleDocs.js: c.content.slice(REVIEW_PREFIX.length)). If that ever stops
+// being true, dedupe silently never fires and every --review run re-posts every
+// note — a failure with no symptom except a growing comment queue.
+//
+// So this drives the real postTemplateReview through a stubbed Drive whose
+// comment list is built from WHAT addUnanchoredComment ACTUALLY WROTE, rather
+// than asserting on source strings. The prefix roundtrip is the thing under
+// test, and only a roundtrip can test it.
+
+function driveCommentStub() {
+  const posted = [];
+  let live = [];
+  return {
+    posted,
+    // Feed back exactly what was written — same prefix, same shape the Drive API
+    // returns. Anything reshaped here would be testing the reshaping.
+    seedFromPosted: (opts = {}) => {
+      live = posted.map((body, i) => ({ id: 'c' + i, content: body.content, deleted: false, resolved: !!opts.resolved }));
+    },
+    clients: {
+      drive: {
+        comments: {
+          list: async () => ({ data: { comments: live } }),
+          create: async ({ requestBody }) => {
+            posted.push(requestBody);
+            return { data: { id: 'c' + posted.length } };
+          },
+        },
+      },
+    },
+  };
+}
+
+const REVIEWABLE_ROWS = [
+  { marker_name: 'Form Subhead', marker_key: 'form subhead', is_copy: true, char_min: 0, char_max: 60, field_type: 'text', text: 'x'.repeat(71), empty: false, showingMarker: false },
+  { marker_name: 'Form Body', marker_key: 'form body', is_copy: true, char_min: 0, char_max: 120, field_type: 'words', text: '{{Form Body}}', empty: false, showingMarker: true },
+];
+
+test('a re-run finds its own comments: the prefix survives the roundtrip', async () => {
+  const { postTemplateReview } = require('../src/services/templateReview');
+  const stub = driveCommentStub();
+
+  const first = await postTemplateReview('DOC', REVIEWABLE_ROWS, stub.clients);
+  assert.strictEqual(first.notes.length, 2);
+  assert.strictEqual(first.posted.length, 2, 'nothing was live, so both posted');
+  assert.strictEqual(first.duplicates.length, 0);
+
+  // What actually reached Drive carries the prefix...
+  const { REVIEW_PREFIX } = require('../src/destinations/googleDocs');
+  for (const body of stub.posted) {
+    assert.ok(body.content.startsWith(REVIEW_PREFIX), `posted with the prefix: ${body.content}`);
+    assert.ok(!body.quotedFileContent, 'and with no anchor');
+  }
+  // ...and the note text does NOT. These two only meet because the reader strips.
+  assert.ok(!first.notes[0].text.startsWith(REVIEW_PREFIX), 'the note itself is unprefixed');
+
+  // Second run against those same comments: everything is a duplicate, nothing
+  // new reaches Drive.
+  stub.seedFromPosted();
+  const postedAfterFirst = stub.posted.length;
+  const second = await postTemplateReview('DOC', REVIEWABLE_ROWS, stub.clients);
+  assert.strictEqual(second.duplicates.length, 2, 'both recognised as already live');
+  assert.strictEqual(second.posted.length, 0);
+  assert.strictEqual(stub.posted.length, postedAfterFirst, 'nothing new was written');
+});
+
+test('a resolved note is not treated as live, and a changed fault is a new note', async () => {
+  const { postTemplateReview } = require('../src/services/templateReview');
+
+  // Ticked off in Google Docs → "handled". If the fault is still there on the
+  // next run, the reader should hear about it again.
+  const resolved = driveCommentStub();
+  await postTemplateReview('DOC', REVIEWABLE_ROWS, resolved.clients);
+  resolved.seedFromPosted({ resolved: true });
+  const again = await postTemplateReview('DOC', REVIEWABLE_ROWS, resolved.clients);
+  assert.strictEqual(again.posted.length, 2, 'resolved does not suppress a fault that is still there');
+
+  // And the exact-text match is what makes a CHANGED fault read as new: 71
+  // characters became 78, so it is a different sentence and posts again.
+  const changed = driveCommentStub();
+  await postTemplateReview('DOC', REVIEWABLE_ROWS, changed.clients);
+  changed.seedFromPosted();
+  const worse = REVIEWABLE_ROWS.map((r) => (r.marker_name === 'Form Subhead' ? { ...r, text: 'x'.repeat(78) } : r));
+  const third = await postTemplateReview('DOC', worse, changed.clients);
+  assert.strictEqual(third.posted.length, 1, 'the changed one posts');
+  assert.strictEqual(third.duplicates.length, 1, 'the unchanged one does not');
+  assert.match(third.posted[0].text, /78 characters against a limit of 60/);
+});
+
+test('a listing failure posts anyway rather than silently reviewing nothing', async () => {
+  const { postTemplateReview } = require('../src/services/templateReview');
+  const stub = driveCommentStub();
+  stub.clients.drive.comments.list = async () => { throw new Error('rate limited'); };
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    const out = await postTemplateReview('DOC', REVIEWABLE_ROWS, stub.clients);
+    // A duplicate comment is visible and harmless; a review that silently posts
+    // nothing because a LIST call failed is neither.
+    assert.strictEqual(out.posted.length, 2);
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.ok(warned.some((w) => /posting without dedupe/.test(w)), 'and it says why');
+});
+
+test('review reads the floor as well as the ceiling', () => {
+  const { reviewNotes } = require('../src/services/templateReview');
+  const words = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
+  const notes = reviewNotes([
+    // 12 words against 50-120. Exactly as measurable as coming back at 140, and
+    // it used to get nothing: a one-line email where a structured one was asked
+    // for reads as finished copy.
+    { marker_name: 'Form Body', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(12), empty: false, showingMarker: false },
+    { marker_name: 'In Range', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(80), empty: false, showingMarker: false },
+    { marker_name: 'At The Floor', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(50), empty: false, showingMarker: false },
+    { marker_name: 'Over Instead', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(140), empty: false, showingMarker: false },
+    // char_min 0 is NO FLOOR — the same sentinel char_max 0 uses for no limit.
+    { marker_name: 'No Floor', is_copy: true, char_min: 0, char_max: 60, field_type: 'text', text: 'Hi', empty: false, showingMarker: false },
+    // Written on char_min, not on the unit, so a character field with a floor is
+    // covered by the same rule rather than a second one.
+    { marker_name: 'Short Headline', is_copy: true, char_min: 20, char_max: 60, field_type: 'text', text: 'Hi', empty: false, showingMarker: false },
+  ]);
+  const texts = notes.map((n) => n.text);
+
+  assert.deepStrictEqual(texts, [
+    'Form Body — under its minimum: 12 words against a minimum of 50.',
+    'Over Instead — over its limit: 140 words against a limit of 120.',
+    'Short Headline — under its minimum: 2 characters against a minimum of 20.',
+  ]);
+  // In range and exactly at the floor say nothing — a minimum is a floor, not a
+  // target, so hitting it is passing.
+  assert.ok(!texts.some((t) => /In Range|At The Floor|No Floor/.test(t)));
+});
+
+test('over and under are exclusive, and both come after the marker and empty checks', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'templateReview.js'), 'utf8');
+  // A row cannot be both over its ceiling and under its floor, and emitting two
+  // contradicting notes for one cell is how a reader learns to skip them.
+  assert.match(src, /out\.push\(`\$\{name\} — over its limit[\s\S]{0,120}return out; \/\/ Cannot also be under its minimum\./);
+  assert.match(src, /const min = Number\(row\.char_min\) > 0 \? Number\(row\.char_min\) : null;/);
+  // Both length checks measure through the same helper the note text uses.
+  const { measure } = require('../src/services/templateReview');
+  assert.strictEqual(measure('a b c d', 'words').n, 4);
+
+  // A cell still showing its marker, or empty, returns before either — measuring
+  // the length of "{{Form Body}}" would be arithmetic about the wrong string.
+  const { reviewNotes } = require('../src/services/templateReview');
+  const notes = reviewNotes([
+    { marker_name: 'A', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: '{{A}}', empty: false, showingMarker: true },
+    { marker_name: 'B', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: '', empty: true, showingMarker: false },
+  ]);
+  assert.strictEqual(notes.length, 2, 'one note each, not two');
+  assert.match(notes[0].text, /still showing its \{\{marker\}\}/);
+  assert.match(notes[1].text, /empty\./);
+  assert.ok(!notes.some((n) => /minimum/.test(n.text)), 'neither is also called short');
+});

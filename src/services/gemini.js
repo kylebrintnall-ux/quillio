@@ -919,6 +919,20 @@ function overLimit(copy, charMax, fieldType) {
   return String(fieldType || '') === 'words' ? countWords(copy) > max : String(copy).length > max;
 }
 
+// The ceiling that may be enforced by CHARACTER COUNT — the corrective rewrite
+// and, at the end of the ladder, trimToCeiling. Null for a word field, because a
+// word field's charMax is a WORD count and every enforcement step below measures
+// characters: handing 120 to trimToCeiling on a 120-word body does not shorten it
+// to 120 words, it cuts it to 120 CHARACTERS and throws the rest away.
+//
+// That is why this is a named helper rather than the expression written twice.
+// Both places that trim have to make the same decision, and the one that got it
+// wrong was silent about it — the copy simply came back short.
+function trimCeiling(charMax, fieldType) {
+  if (String(fieldType || '') === 'words') return null;
+  return Number(charMax) > 0 ? Number(charMax) : null;
+}
+
 // How long this copy is against its limit, in that same unit, phrased for a human
 // reading a log line. It lives next to overLimit so a warning can never report a
 // length in one unit while the check that produced the warning used the other —
@@ -1004,16 +1018,13 @@ async function generateFieldDraft({
   // close" with one option) calls it directly, inside a per-asset catch that
   // logs "asset N/M FAILED" and returns no fields for that asset.
   //
-  // NULL FOR A WORD FIELD, deliberately. Everything below measures characters.
-  // A word field's charMax is a WORD count, so enforcing it here would take a
-  // correct 120-word body, "rewrite it to fit within 120 characters", and then
-  // trimToCeiling it to 120 characters if that failed. That is the same unit
-  // confusion 326c777 existed to remove — pointed the other way, and destructive
-  // rather than merely wrong in the prompt. A word field's limit is carried into
-  // the prompt by lengthClause above; there is no post-hoc word enforcement, and
-  // inventing one is beyond this fix.
-  const ceiling =
-    String(fieldType || '') === 'words' ? null : (Number(charMax) > 0 ? Number(charMax) : null);
+  // NULL FOR A WORD FIELD — see trimCeiling. Everything below measures
+  // characters, so enforcing a word count here would take a correct 120-word
+  // body, "rewrite it to fit within 120 characters", and then trim it to 120
+  // characters if that failed. A word field's limit is carried into the prompt by
+  // lengthClause above; there is no post-hoc word enforcement, and inventing one
+  // is beyond this fix.
+  const ceiling = trimCeiling(charMax, fieldType);
 
   // Enforce the hard ceiling: one corrective rewrite, then a hard trim.
   if (ceiling && copy.length > ceiling) {
@@ -1423,7 +1434,13 @@ async function generateFieldVariations({
     : assignDoorways(fieldName, distance, count).map((d) => ({ doorway: d, intensity: null }));
   const doorways = spec.map((s) => s.doorway);
   const n = spec.length;
-  const ceiling = Number(charMax) > 0 ? Number(charMax) : null;
+  // Null on a word field. This name reaches trimToCeiling below, and the old
+  // `Number(charMax) > 0` form fed it a WORD count: a variation on a 120-word
+  // field was cut to 120 CHARACTERS and the rest discarded, with nothing logged.
+  // The over-limit TEST is overLimit(), in the field's own unit — the two are
+  // separate because a word variation can be genuinely over (worth re-drafting)
+  // and still must never be character-trimmed.
+  const ceiling = trimCeiling(charMax, fieldType);
   const prompt = buildVariationsPrompt({
     assetType,
     fieldName,
@@ -1459,9 +1476,11 @@ async function generateFieldVariations({
     const row = parsed[i];
     let copy = cleanDraft((row && (typeof row === 'string' ? row : row.copy)) || '');
 
-    // Missing or over the ceiling → fall back to the single-field generator with
-    // this doorway injected as revision direction (reuses its rewrite + trim).
-    if (!copy || (ceiling && copy.length > ceiling)) {
+    // Missing or over the limit IN ITS OWN UNIT → fall back to the single-field
+    // generator with this doorway injected as revision direction (reuses its
+    // rewrite + trim). This used to be `copy.length > ceiling`, which called
+    // every correct word-field variation too long and re-drafted all of them.
+    if (!copy || overLimit(copy, charMax, fieldType)) {
       const doorwayDirection = [direction, `Use the "${doorway}" angle — ${DOORWAYS[doorway] || ''}`]
         .filter(Boolean)
         .join('. ');
@@ -1470,6 +1489,11 @@ async function generateFieldVariations({
           assetType,
           fieldName,
           charMax,
+          // Both were missing, so the re-draft asked a 120-word field for 120
+          // characters — while buildVariationsPrompt above asked the same field
+          // for words. The two prompts now agree.
+          charMin,
+          fieldType,
           assetDirection,
           summary,
           writerPrompt,
@@ -1481,6 +1505,10 @@ async function generateFieldVariations({
         console.warn(`[gemini] variation fallback failed ${fieldName}/${doorway}: ${err.message}`);
       }
     }
+    // Last-resort trim, characters only — `ceiling` is null on a word field, so
+    // this cannot fire there. A char-field variation is still trimmed even when
+    // the fallback above threw, so a failed fallback leaves no over-limit copy on
+    // this path.
     if (copy && ceiling && copy.length > ceiling) copy = trimToCeiling(copy, ceiling);
     if (copy) out.push({ doorway, copy });
   }

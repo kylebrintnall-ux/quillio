@@ -9141,14 +9141,27 @@ test('no ceiling is ever interpolated into a prompt without a > 0 guard', () => 
     /const ceiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
     /const wordCeiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
     /const max = Number\(charMax\) > 0 \? Number\(charMax\) : null;/,
-    // generateFieldDraft's, restored after 326c777 deleted it and left the
-    // enforcement block below referencing a name that no longer existed. Same
-    // guard, wrapped in the word check that can only ever make it null — so the
-    // name is still null-or-positive, and the interpolations above still hold.
-    /const ceiling =\n {4}String\(fieldType \|\| ''\) === 'words' \? null : \(Number\(charMax\) > 0 \? Number\(charMax\) : null\);/,
   ]) {
     assert.match(gem, decl);
   }
+
+  // The two ENFORCEMENT ceilings — the ones that reach trimToCeiling — come from
+  // trimCeiling instead. Same > 0 guard, wrapped in a word-field check that can
+  // only ever make the result null, so the name stays null-or-positive and every
+  // interpolation above still holds. Asserted here so `const ceiling = …` can
+  // never quietly become something unguarded.
+  assert.match(gem, /function trimCeiling\(charMax, fieldType\) \{\n {2}if \(String\(fieldType \|\| ''\) === 'words'\) return null;\n {2}return Number\(charMax\) > 0 \? Number\(charMax\) : null;\n\}/);
+  // Anchored to the start of a line so the commented-out original quoted in
+  // generateFieldDraft's explanation is not counted as a fifth assignment.
+  const assignments = gem.match(/^ *const ceiling = .*/gm) || [];
+  for (const a of assignments) {
+    assert.ok(
+      /Number\((?:f\.)?charMax\) > 0 \? Number\((?:f\.)?charMax\) : null;$/.test(a) ||
+        /trimCeiling\(charMax, fieldType\);$/.test(a),
+      `ceiling assigned without a guard: ${a}`
+    );
+  }
+  assert.strictEqual(assignments.length, 4, 'two prompt ceilings, two enforcement ceilings');
 });
 
 // --- A terminal Slack card cannot be reverted by a late write ----------------
@@ -11394,4 +11407,102 @@ test('the build summary says when a drafted marker was never enforced', () => {
   const runner = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'buildTemplateDoc.js'), 'utf8');
   assert.match(runner, /OVER LIMIT \(\$\{result\.unenforced\.length\}\)/);
   assert.match(runner, /the limit was never enforced/);
+});
+
+// --- The same unit confusion in generateFieldVariations, which DESTROYED copy --
+//
+// Same defect as the batch drafter's, one function over, but with a worse ending.
+// Both sites read a WORD count as a character count:
+//
+//   if (!copy || (ceiling && copy.length > ceiling))        // spurious re-draft
+//   if (copy && ceiling && copy.length > ceiling)           // trimToCeiling(copy, 120)
+//     copy = trimToCeiling(copy, ceiling);
+//
+// The first only wasted a Gemini call. The second CUT a 120-word variation to 120
+// CHARACTERS — about six words — and threw the rest away, silently: no warning,
+// no flag, just short copy in the doc. `ceiling` is now trimCeiling(), null on a
+// word field, so the trim cannot fire there at all.
+
+test('a word-field variation is never trimmed to its word count in characters', async () => {
+  const { out, prompts } = await geminiWith(
+    () => JSON.stringify([WORDS_120, WORDS_120]),
+    (g) =>
+      g.generateFieldVariations({
+        assetType: 'Nurture Email',
+        fieldName: 'Body',
+        charMax: 120,
+        charMin: 50,
+        fieldType: 'words',
+        summary: 's',
+        writerPrompt: 'w',
+        rows: [{ doorway: 'Pain' }, { doorway: 'Outcome' }],
+      })
+  );
+
+  assert.strictEqual(prompts.length, 1, 'one variations call — neither was "over"');
+  assert.strictEqual(out.length, 2);
+  for (const v of out) {
+    assert.strictEqual(v.copy, WORDS_120, `${v.doorway} came back whole`);
+    assert.strictEqual(v.copy.trim().split(/\s+/).length, 120, 'still 120 words');
+    // The exact loss: trimToCeiling(copy, 120) on 851 characters of body.
+    assert.ok(v.copy.length > 120, `${v.copy.length} chars, not cut to 120`);
+  }
+});
+
+test('a character-field variation is still trimmed to its ceiling', async () => {
+  // Unchanged behaviour for the ~all fields that count characters: over the
+  // limit → one re-draft through generateFieldDraft, then a hard trim.
+  const { out, prompts } = await geminiWith(
+    (p, n) => (n === 1 ? JSON.stringify(['x'.repeat(90)]) : 'y'.repeat(75)),
+    (g) =>
+      g.generateFieldVariations({
+        assetType: 'Paid Social',
+        fieldName: 'Headline',
+        charMax: 50,
+        fieldType: 'text',
+        summary: 's',
+        writerPrompt: 'w',
+        rows: [{ doorway: 'Pain' }],
+      })
+  );
+  assert.strictEqual(prompts.length, 3, 'variations + re-draft + the re-draft\'s own corrective rewrite');
+  assert.ok(out[0].copy.length <= 50, `trimmed to 50, got ${out[0].copy.length}`);
+});
+
+test('a genuinely over-limit word variation is re-drafted, and told the unit', async () => {
+  const { out, prompts } = await geminiWith(
+    (p, n) => (n === 1 ? JSON.stringify([`${WORDS_120} ${WORDS_120}`]) : 'a re-drafted body'),
+    (g) =>
+      g.generateFieldVariations({
+        assetType: 'Nurture Email',
+        fieldName: 'Body',
+        charMax: 120,
+        charMin: 50,
+        fieldType: 'words',
+        summary: 's',
+        writerPrompt: 'w',
+        rows: [{ doorway: 'Pain' }],
+      })
+  );
+  assert.strictEqual(prompts.length, 2, '240 words really is over 120 — this one re-drafts');
+  // The re-draft used to be called without fieldType/charMin, so it asked a
+  // 120-WORD field for 120 CHARACTERS while the variations prompt above asked
+  // for words. Both now say the same thing.
+  assert.match(prompts[1], /Length: 50-120 words\. This is a WORD count/);
+  assert.ok(!/Character limit: 120/.test(prompts[1]), 'and never states it in characters');
+  assert.strictEqual(out[0].copy, 'a re-drafted body');
+});
+
+test('one helper decides the character-trim ceiling for both trim sites', () => {
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  // Written once, not twice: both places that reach trimToCeiling have to make
+  // the same word-field decision, and the one that got it wrong was silent.
+  assert.match(gem, /function trimCeiling\(charMax, fieldType\)/);
+  assert.strictEqual((gem.match(/= trimCeiling\(charMax, fieldType\);/g) || []).length, 2,
+    'generateFieldDraft and generateFieldVariations both use it');
+  // And every remaining trimToCeiling call is fed that name, never a raw charMax.
+  for (const call of gem.match(/trimToCeiling\([^)]*\)/g) || []) {
+    if (/^trimToCeiling\(s, max\)/.test(call)) continue; // the definition itself
+    assert.match(call, /trimToCeiling\(copy, ceiling\)/, `unguarded trim: ${call}`);
+  }
 });

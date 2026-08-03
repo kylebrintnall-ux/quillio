@@ -1588,123 +1588,6 @@ async function createFromTemplate({ sourceDocId, name, folderId, values, markers
   return { id, url, title: copied.data.name, filled, unfilled };
 }
 
-// RE-FILL AN ALREADY-BUILT TEMPLATE DOCUMENT (custom document types, STEP FOUR).
-//
-// createFromTemplate copies and fills once, at brief time, when there is no
-// drafted copy yet — so every marker is still standing. This is the call that
-// runs after drafting, and after every regeneration.
-//
-// THE PROBLEM IT SOLVES. replaceAllText CONSUMES what it matches. Once
-// {{Form Headline}} has become "Book your seat", a second sync looking for
-// {{Form Headline}} finds nothing, and a regenerated field would never reach the
-// template. So each marker is offered TWO replacements in the same batchUpdate:
-//
-//   {{Form Headline}}  -> new copy     (first sync — the marker is still there)
-//   "Book your seat"   -> new copy     (later syncs — the old copy is the handle)
-//
-// Exactly one of them matches, and Docs applies whichever does. `previous` is
-// the map of what was last written, kept on the project row.
-//
-// WHAT THIS DELIBERATELY WILL NOT DO:
-//
-//   • Blank a cell. Empty or whitespace copy sends no request at all, so an
-//     undrafted field leaves its marker visible rather than emptying the cell.
-//     Same rule as createFromTemplate, for the same reason.
-//   • Overwrite a hand edit. If a writer edited the cell directly, neither the
-//     marker nor the remembered copy is in the document, both replacements match
-//     nothing, and their text stays. Silently replacing a person's work with a
-//     model's is the worse failure.
-//   • Guess between duplicates. If two markers were last filled with the SAME
-//     text, replacing by old copy would hit both cells. Those are skipped and
-//     reported rather than applied to the wrong cell.
-//
-// Returns { filled, skipped, ambiguous, unchanged, requests }.
-async function fillTemplateMarkers(documentId, { values, previous = {}, markers = [] }, clients) {
-  const { docs } = clients || (await getClients());
-  if (!documentId) throw new Error('fillTemplateMarkers: no document.');
-
-  const get = (k) => (values instanceof Map ? values.get(k) : values ? values[k] : undefined);
-  const prev = previous && typeof previous === 'object' ? previous : {};
-
-  // Old values that are not unique cannot be used as a handle — see above.
-  const seen = new Map();
-  for (const key of Object.keys(prev)) {
-    const v = prev[key];
-    if (typeof v !== 'string' || !v.trim()) continue;
-    seen.set(v, (seen.get(v) || 0) + 1);
-  }
-
-  const requests = [];
-  const filled = [];
-  const skipped = [];
-  const unchanged = [];
-  const ambiguous = [];
-  const applied = {};
-
-  for (const m of markers) {
-    const copy = get(m.key);
-    if (typeof copy !== 'string' || !copy.trim()) {
-      // Nothing drafted for this marker. Whatever is in the cell — the marker,
-      // or copy from an earlier sync — stays exactly as it is.
-      skipped.push(m.name);
-      if (typeof prev[m.key] === 'string') applied[m.key] = prev[m.key];
-      continue;
-    }
-    const before = prev[m.key];
-    if (before === copy) {
-      // Already there. Sending the replacement would be a no-op in the document
-      // and a wasted request; more importantly it keeps a re-sync honest.
-      unchanged.push(m.name);
-      applied[m.key] = copy;
-      continue;
-    }
-
-    // First sync for this marker: the marker itself is the handle.
-    requests.push({
-      replaceAllText: { containsText: { text: `{{${m.name}}}`, matchCase: false }, replaceText: copy },
-    });
-
-    if (typeof before === 'string' && before.trim()) {
-      if ((seen.get(before) || 0) > 1) {
-        ambiguous.push(m.name);
-      } else {
-        // Later syncs: the copy written last time is the only handle left.
-        // matchCase TRUE here — this is a literal string from the document, not a
-        // marker whose casing a tenant may have varied.
-        requests.push({
-          replaceAllText: { containsText: { text: before, matchCase: true }, replaceText: copy },
-        });
-      }
-    }
-    filled.push(m.name);
-    applied[m.key] = copy;
-  }
-
-  if (requests.length) {
-    await docs.documents.batchUpdate({ documentId, requestBody: { requests } });
-  }
-
-  console.log(
-    `[googleDocs] template ${documentId} synced — ${filled.length} updated, ${unchanged.length} unchanged, ` +
-      `${skipped.length} left showing their marker` +
-      (ambiguous.length ? `, ${ambiguous.length} ambiguous (identical prior copy): ${ambiguous.join(', ')}` : '')
-  );
-
-  return { filled, skipped, unchanged, ambiguous, applied, requests: requests.length };
-}
-
-// WRITE DRAFTED COPY INTO A TEMPLATE'S CELLS BY STORED COORDINATE (document
-// templates, rework step two).
-//
-// The template document is a COPY, so its tables already exist and documents.get
-// hands back every cell's index — one read, one write, no re-parse. See
-// destinations/templateCells.js for why the two-phase insertTable problem does
-// not apply here and why the requests come out in reverse document order.
-//
-//   markers: db/templateMarkers rows carrying the stored coordinates
-//   values:  Map|Object of marker_key -> drafted copy
-//
-// Returns { written, skipped, healed, missing, requests }.
 async function writeTemplateCells(documentId, { markers, values }, clients) {
   const { docs } = clients || (await getClients());
   if (!documentId) throw new Error('writeTemplateCells: no document.');
@@ -1796,7 +1679,6 @@ module.exports = {
   name: 'google-docs',
   createDocument,
   createFromTemplate,
-  fillTemplateMarkers,
   writeTemplateCells,
   readTemplateCells,
   addUnanchoredComment,

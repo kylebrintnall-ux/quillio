@@ -545,35 +545,6 @@
       .cf-limit, .cf-unit { flex: 1 1 calc(50% - 4px); }
       .cf-meta { padding-left: 0; }
     }
-    /* The asset card's template line. */
-    .lib-tpl { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px; }
-    .lib-tpl-state { color: var(--muted); }
-    .lib-tpl-name { color: var(--fg); font-weight: 500; }
-    .lib-tplbtn { background: none; border: 1px solid var(--line); border-radius: 6px; font: inherit;
-      font-size: 12px; padding: 3px 9px; cursor: pointer; color: var(--fg); margin-left: 8px; }
-    .lib-tplbtn:hover { border-color: var(--fg); }
-    .lib-mapbar { display: flex; gap: 3px; margin-top: 7px; }
-    .lib-mapseg { height: 4px; border-radius: 2px; flex: 1 1 auto; background: var(--line); }
-    .lib-mapseg.on { background: #3f8f4f; }
-    .lib-maplines { margin-top: 6px; font-size: 12px; color: var(--muted); }
-    .lib-maplines b { color: var(--fg); font-weight: 500; }
-    .lib-mapwarn { color: #a8632a; }
-    /* The mapper itself. */
-    .map-panel { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
-    .map-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0;
-      border-bottom: 1px solid var(--line); }
-    .map-row:last-of-type { border-bottom: 0; }
-    .map-field { flex: 1 1 160px; min-width: 0; }
-    .map-sel { flex: 1 1 220px; min-width: 0; padding: 6px 8px; font: inherit; font-size: 13px;
-      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
-    .map-auto { font-size: 11px; color: var(--muted); flex: 0 0 auto; }
-    .map-left { margin-top: 12px; font-size: 12px; color: var(--muted); }
-    .map-left ul { margin: 4px 0 0; padding-left: 18px; }
-    .map-actions { margin-top: 14px; display: flex; gap: 10px; align-items: center; }
-    @media (max-width: 480px) {
-      .map-row { gap: 4px; }
-      .map-field, .map-sel { flex: 1 1 100%; }
-    }
     .tpl-card { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 16px; margin: 14px 0; }
     .tpl-head { display: flex; align-items: flex-start; gap: 10px; }
@@ -1165,240 +1136,20 @@
       // platform limits and citations that render as the tier line in the copy
       // doc, and a matrix cell has nowhere to put those — the server refuses the
       // attach regardless, so hiding this is a convenience, not the rule.
-      if (a.editable) body.appendChild(libTemplateSection(a, card));
 
       return card;
     }
 
-    // The template line on one asset card: where it renders, how complete the
-    // mapping is, and the way in to change either.
-    function libTemplateSection(a, card) {
-      var wrap = el('div', 'lib-tpl');
-      var line = el('div');
-      var m = a.mapping;
-
-      if (!m) {
-        line.appendChild(el('span', 'lib-tpl-state', 'Renders into the campaign copy doc'));
-      } else if (m.templateMissing) {
-        // The template was deleted out from under it. Say so rather than
-        // printing a blank where a name should be.
-        line.appendChild(el('span', 'lib-mapwarn', 'Its template is gone — this renders into the copy doc'));
-      } else {
-        line.appendChild(el('span', 'lib-tpl-state', 'Renders into '));
-        line.appendChild(el('span', 'lib-tpl-name', m.templateName));
-      }
-
-      var btn = el('button', 'lib-tplbtn', m ? 'Change' : 'Send to a template…');
-      btn.type = 'button';
-      btn.setAttribute('aria-label', (m ? 'Change the template for ' : 'Send to a template: ') + a.name);
-      line.appendChild(btn);
-      wrap.appendChild(line);
-
-      if (m && !m.templateMissing) {
-        // AT A GLANCE: one segment per field, filled when that field has a
-        // marker. A count alone ("12 of 19") is read as a score; the bar is read
-        // as an amount of work left, which is what it is.
-        var total = m.mappedFields.length + m.unmappedFields.length;
-        if (total) {
-          var bar = el('div', 'lib-mapbar');
-          for (var i = 0; i < total; i++) {
-            bar.appendChild(el('span', 'lib-mapseg' + (i < m.mappedFields.length ? ' on' : '')));
-          }
-          wrap.appendChild(bar);
-        }
-        var lines = el('div', 'lib-maplines');
-        var summary = el('div');
-        summary.appendChild(document.createTextNode(m.mappedFields.length + ' of ' + total + ' fields mapped'));
-        lines.appendChild(summary);
-        if (m.unmappedFields.length) {
-          // A field with nowhere to go LOSES COPY at build time, so it is the
-          // warning. An unmapped marker does not.
-          var uf = el('div', 'lib-mapwarn');
-          uf.textContent = 'No marker for: ' + m.unmappedFields.join(', ');
-          lines.appendChild(uf);
-        }
-        if (m.unmappedMarkers.length) {
-          // Stated plainly and WITHOUT alarm: a matrix carries cells no writer
-          // drafts ({{Form ID}}, {{Owner}}), and marking those as a problem
-          // would make the indicator meaningless on every real template.
-          lines.appendChild(el('div', null,
-            m.unmappedMarkers.length + ' marker' + (m.unmappedMarkers.length === 1 ? '' : 's') +
-            ' left unmapped: ' + m.unmappedMarkers.join(', ')));
-        }
-        wrap.appendChild(lines);
-      }
-
-      var host = el('div');
-      wrap.appendChild(host);
-      btn.addEventListener('click', function () {
-        if (host.firstChild) { host.textContent = ''; btn.textContent = m ? 'Change' : 'Send to a template…'; return; }
-        btn.textContent = 'Cancel';
-        libOpenMapper(a, host, function () { btn.textContent = m ? 'Change' : 'Send to a template…'; });
-      });
-      return wrap;
-    }
-
-    // Attach a template, then map this asset's fields to its markers.
+    // THE ATTACH/MAP UI IS GONE (rework step four). libTemplateSection and
+    // libOpenMapper lived here: a "Send to a template…" line on every asset card,
+    // a template picker, and a field->marker mapper seeded by an auto-match.
     //
-    // The auto-match is a PROPOSAL and is shown as one — every row it filled is
-    // labelled, so a human can see what was guessed and what they chose. Nothing
-    // is stored until Save.
-    async function libOpenMapper(a, host, onClose) {
-      var panel = el('div', 'map-panel');
-      host.appendChild(panel);
-      var err = el('div', 'error hidden');
-      panel.appendChild(err);
+    // Nothing replaced them on this card because nothing belongs here. A template
+    // is not something an asset is sent to any more — it is its own deliverable
+    // that a BRIEF names, with its own fields confirmed on the Templates panel.
+    // The asset card is about the copy doc again.
 
-      var pick = el('div', 'map-row');
-      pick.appendChild(el('div', 'map-field', 'Template'));
-      var sel = document.createElement('select');
-      sel.className = 'map-sel';
-      var none = document.createElement('option');
-      none.value = '';
-      none.textContent = 'The campaign copy doc (default)';
-      sel.appendChild(none);
-      (libTemplates || []).forEach(function (t) {
-        var o = document.createElement('option');
-        o.value = t.id;
-        o.textContent = t.name + ' — ' + t.markers + ' marker' + (t.markers === 1 ? '' : 's');
-        if (a.mapping && a.mapping.templateId === t.id) o.selected = true;
-        sel.appendChild(o);
-      });
-      pick.appendChild(sel);
-      panel.appendChild(pick);
-
-      if (!(libTemplates || []).length) {
-        panel.appendChild(el('div', 'map-left',
-          'No templates uploaded yet. Upload one on the Templates tab, then come back.'));
-        return;
-      }
-
-      var rowsHost = el('div');
-      panel.appendChild(rowsHost);
-      var actions = el('div', 'map-actions');
-      var save = el('button', 'btn primary', 'Save mapping');
-      save.type = 'button';
-      var cancel = el('button', 'lib-tplbtn', 'Cancel');
-      cancel.type = 'button';
-      actions.appendChild(save);
-      actions.appendChild(cancel);
-      panel.appendChild(actions);
-
-      var markers = [];
-      var chosen = {};   // fieldId -> markerKey
-      var auto = {};     // fieldId -> true when the matcher filled it
-
-      function renderRows() {
-        rowsHost.textContent = '';
-        if (!markers.length) { hide(actions); return; }
-        show(actions);
-        (a.fields || []).forEach(function (f) {
-          var row = el('div', 'map-row');
-          row.appendChild(el('div', 'map-field', f.field_name));
-          var s = document.createElement('select');
-          s.className = 'map-sel';
-          s.setAttribute('aria-label', 'Marker for ' + f.field_name);
-          var blank = document.createElement('option');
-          blank.value = '';
-          blank.textContent = '— not in this template —';
-          s.appendChild(blank);
-          markers.forEach(function (mk) {
-            var o = document.createElement('option');
-            o.value = mk.key;
-            o.textContent = '{{' + mk.name + '}}';
-            if (chosen[f.id] === mk.key) o.selected = true;
-            s.appendChild(o);
-          });
-          s.addEventListener('change', function () {
-            chosen[f.id] = s.value;
-            delete auto[f.id];
-            renderRows();
-          });
-          row.appendChild(s);
-          if (auto[f.id]) row.appendChild(el('span', 'map-auto', 'auto-matched'));
-          rowsHost.appendChild(row);
-        });
-
-        // What is left over, on both sides. Neither is an error.
-        var claimed = {};
-        Object.keys(chosen).forEach(function (k) { if (chosen[k]) claimed[chosen[k]] = true; });
-        var left = markers.filter(function (mk) { return !claimed[mk.key]; });
-        var leftBox = el('div', 'map-left');
-        leftBox.appendChild(el('div', null,
-          left.length + ' of ' + markers.length + ' markers not mapped to a field.'));
-        leftBox.appendChild(el('div', null,
-          'That is fine. A matrix carries cells nobody drafts — an id, an owner, a date. Leave them.'));
-        if (left.length) {
-          var ul2 = el('ul');
-          left.forEach(function (mk) { ul2.appendChild(el('li', null, '{{' + mk.name + '}}')); });
-          leftBox.appendChild(ul2);
-        }
-        rowsHost.appendChild(leftBox);
-      }
-
-      async function attach(templateId) {
-        clearError(err);
-        sel.disabled = true;
-        try {
-          var res = await fetch('/api/settings/library/asset/' + encodeURIComponent(a.id) + '/template', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ templateId: templateId || null })
-          });
-          var data = await res.json().catch(function () { return null; });
-          if (!res.ok || !data || !data.success) throw new Error((data && data.error) || 'Could not attach that template.');
-          if (!templateId) { libLoaded = false; await libReload(); return; }
-          markers = [];
-          chosen = {};
-          auto = {};
-          var sug = data.suggestion || {};
-          (sug.matched || []).forEach(function (mm) { chosen[mm.fieldId] = mm.markerKey; auto[mm.fieldId] = true; });
-          // Every marker the template has, matched or not — the human needs the
-          // whole list to fix what the matcher would not guess at.
-          (sug.matched || []).forEach(function (mm) { markers.push({ key: mm.markerKey, name: mm.markerName }); });
-          (sug.unmatchedMarkers || []).forEach(function (mk) { markers.push({ key: mk.key, name: mk.name }); });
-          markers.sort(function (x, y) { return x.name.localeCompare(y.name); });
-          renderRows();
-        } catch (e) {
-          showError(err, e.message || 'Network error.');
-        } finally {
-          sel.disabled = false;
-        }
-      }
-
-      sel.addEventListener('change', function () { attach(sel.value); });
-      cancel.addEventListener('click', function () { host.textContent = ''; if (onClose) onClose(); });
-      save.addEventListener('click', async function () {
-        clearError(err);
-        save.disabled = true;
-        try {
-          var pairs = (a.fields || []).map(function (f) {
-            var key = chosen[f.id] || '';
-            var mk = markers.filter(function (x) { return x.key === key; })[0];
-            return { fieldId: f.id, markerKey: key, markerName: mk ? mk.name : '' };
-          });
-          var res = await fetch('/api/settings/library/asset/' + encodeURIComponent(a.id) + '/markers', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pairs: pairs })
-          });
-          var data = await res.json().catch(function () { return null; });
-          if (!res.ok || !data || !data.success) throw new Error((data && data.error) || 'Could not save that mapping.');
-          libLoaded = false;
-          await libReload();
-        } catch (e) {
-          save.disabled = false;
-          showError(err, e.message || 'Network error.');
-        }
-      });
-
-      // Already attached? Load its markers straight away so the panel opens on
-      // the mapping rather than on an empty template picker.
-      if (a.mapping && a.mapping.templateId) await attach(a.mapping.templateId);
-    }
-
-    // Re-read the library and repaint. Used after any write that changes the
-    // mapping, so the card and the panel can never disagree about it.
+    // Re-read the library and repaint, after any write that changes it.
     async function libReload() {
       libLoaded = false;
       var list = $('lib-list');
@@ -1934,12 +1685,10 @@
       head.appendChild(renameBtn);
       card.appendChild(head);
 
-      // Which assets send their copy here. Read from the library, so it cannot
-      // disagree with the attachment itself.
-      if ((t.assets || []).length) {
-        card.appendChild(el('div', 'tpl-usedby',
-          'Used by ' + t.assets.map(function (a) { return a.name; }).join(', ')));
-      }
+      // NO "used by" LINE ANY MORE. A template is not attached to assets — a
+      // brief names it directly, so the thing worth showing is its name, which
+      // is what a brief has to say.
+      card.appendChild(el('div', 'tpl-usedby', 'Name this in a brief to build it: "' + t.name + '"'));
 
       var marks = t.placeholders || [];
       card.appendChild(el('div', 'tpl-meta',

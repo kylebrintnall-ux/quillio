@@ -50,22 +50,32 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
   // in-progress → ellipsis, terminal sentence → period, HEADER BLOCK → period
   // (it is a line of copy the reader reads as a sentence, not a control),
   // BUTTON LABEL → nothing (it is a control, and a period on a button is wrong).
+  // TEMPLATE-ONLY: the brief named a document template and no assets, so there is
+  // no copy doc. The template document IS the deliverable, there is nothing to
+  // draft, and the card must not offer a button that would act on nothing.
+  const templateOnly = !webViewLink;
   const assetList = assets.length ? formatAssetList(assets) : '_No assets matched — included all specs._';
 
   const blocks = [
     {
       type: 'header',
-      text: { type: 'plain_text', text: `${emoji('quillio-doc-done')} Your doc is ready.`, emoji: true },
+      text: {
+        type: 'plain_text',
+        text: `${emoji('quillio-doc-done')} Your ${templateOnly ? 'document' : 'doc'} is ready.`,
+        emoji: true,
+      },
     },
     {
       type: 'section',
       text: { type: 'mrkdwn', text: `*${title}*` },
     },
-    {
-      type: 'section',
-      text: { type: 'mrkdwn', text: `*Assets:*\n${assetList}` },
-    },
   ];
+  // The asset list is about the COPY DOC. With no copy doc there are no assets
+  // and printing "No assets matched — included all specs" would be a lie about a
+  // document that does not exist.
+  if (!templateOnly) {
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Assets:*\n${assetList}` } });
+  }
 
   // An advisory line under the asset list — today, "built 3 of the 5 you asked
   // for" when a per-asset count hit the Slack ceiling. The build SUCCEEDED, so
@@ -92,7 +102,7 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
   // THE COPY DOC STAYS PRIMARY — first in the list, and the button below still
   // acts on it. A template document is an additional artifact, not a competing
   // one, and a writer who opens the wrong one first loses the brief context.
-  links.push(`${emoji('quillio-doc-done')} <${webViewLink}|Copy doc>`);
+  if (webViewLink) links.push(`${emoji('quillio-doc-done')} <${webViewLink}|Copy doc>`);
   for (const t of templateDocs || []) {
     if (t && t.url) links.push(`${emoji('quillio-doc-done')} <${t.url}|${t.templateName || 'Template document'}>`);
   }
@@ -109,7 +119,11 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
       elements: [
         {
           type: 'mrkdwn',
-          text: `Couldn't build ${failed.map((t) => `*${t.templateName || 'a template document'}*`).join(', ')}. The copy doc is ready; check the template document in Settings.`,
+          text:
+            `Couldn't build ${failed.map((t) => `*${t.templateName || 'a template document'}*`).join(', ')}. ` +
+            (templateOnly
+              ? 'Nothing else was requested, so nothing was built.'
+              : 'The copy doc is ready; check the template document in Settings.'),
         },
       ],
     });
@@ -122,6 +136,11 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
       text: { type: 'mrkdwn', text: `${emoji('quillio-folder')} Saved to ${folderName}.` },
     });
   }
+
+  // NO BUTTONS ON A TEMPLATE-ONLY CARD. Both act on the copy doc id, and the
+  // template document was already drafted when it was built — there is no second
+  // step to offer.
+  if (templateOnly) return { blocks };
 
   blocks.push({
     type: 'actions',

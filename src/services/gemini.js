@@ -449,7 +449,7 @@ function refusalRuleLine(allowed) {
 // `assets` is an ordered PLAN — [{ asset, count, labels? }] — constrained to the
 // allowed list regardless of how the brief was written (bullets, numbers, prose).
 // Repeats are preserved: two entries naming one asset are two separate asks.
-async function parseBrief(brief, allowedAssets) {
+async function parseBrief(brief, allowedAssets, allowedTemplates) {
   // The asset VOCABULARY for this parse — used both as prompt data and as the
   // defensive filter below, which is why it has to be one value.
   //
@@ -468,6 +468,20 @@ async function parseBrief(brief, allowedAssets) {
     ? allowedAssets
     : config.ALLOWED_ASSETS;
 
+  // THE SECOND VOCABULARY: this tenant's DOCUMENT TEMPLATES (rework step four).
+  //
+  // A template is a first-class thing a brief names, not an asset with a
+  // document attached. The old shape put an asset in the middle — attach an
+  // asset type to a template, map its fields to markers — and that was wrong in
+  // a way worth stating: form and confirmation copy ended up in BOTH the copy
+  // doc and the matrix. They are different deliverables from one brief. The copy
+  // doc holds copy assets; the matrix holds form and confirmation copy; naming
+  // the template asks for the matrix, and nothing else.
+  //
+  // Empty for a tenant with no templates, which is every tenant today and stays
+  // the default — the prompt below then says nothing about templates at all, so
+  // an ordinary brief's prompt is byte-identical to before.
+  const templates = Array.isArray(allowedTemplates) ? allowedTemplates.filter(Boolean) : [];
   const prompt = [
     'You are a marketing operations assistant. Read the campaign brief below and extract structured data.',
     '',
@@ -547,8 +561,29 @@ async function parseBrief(brief, allowedAssets) {
     "  Example: ['https://docs.google.com/...', 'https://www.salesforce.com/...']",
     '- unmatchedAssets: asset types the brief asked for that do NOT map to the',
     '  allowed list. [] if none. Never force these into assets.',
+    // DOCUMENT TEMPLATES — omitted entirely for a tenant with none, so an
+    // ordinary brief's prompt is exactly what it was.
+    ...(templates.length
+      ? [
+        '',
+        'DOCUMENT TEMPLATES. This tenant has their own documents that a brief can',
+        'ask for BY NAME. They are NOT asset types and do not go in `assets`:',
+        ...templates.map((t) => `  - ${t}`),
+        'If the brief names one of these, put it in `templates`. Match the same way',
+        'you match an asset — semantically, tolerating plurals, casing and obvious',
+        'shorthand — but NEVER map an asset request onto a template or the reverse.',
+        'A template is a whole document, so `count` is always 1. If the brief asks',
+        'for two of one, still return 1 and let the system say why.',
+        'A brief can ask for assets AND a template; they are separate deliverables',
+        'and both get built. A brief that names only a template returns assets: [].',
+        '- unmatchedTemplates: template names the brief asked for that are NOT in',
+        '  the list above. [] if none. Never force these into templates.',
+      ]
+      : []),
     '',
-    'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": [{"asset": string, "count": number, "labels": string[]}], "unmatchedAssets": string[], "folderId": string|null, "referenceLinks": string[]}.',
+    templates.length
+      ? 'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": [{"asset": string, "count": number, "labels": string[]}], "templates": [{"template": string, "count": number}], "unmatchedAssets": string[], "unmatchedTemplates": string[], "folderId": string|null, "referenceLinks": string[]}.'
+      : 'Return an object of the shape: {"campaignTitle": string, "summary": string, "writerPrompt": string, "assets": [{"asset": string, "count": number, "labels": string[]}], "unmatchedAssets": string[], "folderId": string|null, "referenceLinks": string[]}.',
     'Respond with valid JSON only, no markdown, no backticks.',
     '',
     'CAMPAIGN BRIEF:',
@@ -586,6 +621,41 @@ async function parseBrief(brief, allowedAssets) {
   // em dash with no spaces, which the local one rejected) and collision-free
   // across the allowed list, which a smoke test pins.
   const canonicalByNorm = new Map(allowed.map((a) => [normalize(a), a]));
+  // The template vocabulary, folded the same way, and built BEFORE the asset
+  // loop on purpose — see the misroute check inside it.
+  const templateByNorm = new Map(templates.map((t) => [normalize(t), t]));
+
+  // THE REVERSE MISROUTE CHECK, run BEFORE the asset loop so what it recovers
+  // goes through the same clamping every other asset entry does.
+  //
+  // The forward check (below, inside the asset loop) was built first because it
+  // is the direction the reported failure came from: a template in `assets` was
+  // refused as an unknown asset. This direction is the more dangerous one, and
+  // it is the reason it needed finding rather than guessing at: an ASSET name in
+  // `templates` failed the template lookup, landed in unmatchedTemplates — which
+  // nothing read — and vanished. The brief then had no assets at all, and an
+  // empty asset plan used to mean "build the whole library".
+  //
+  // So: one loud wrong refusal in one direction, one silent wrong document in
+  // the other. Both are misroutes by a model that was told not to, and both are
+  // recovered here rather than reported.
+  const rawTemplateEntries = Array.isArray(parsed.templates) ? parsed.templates : [];
+  const templateEntries = [];
+  const assetsFromTemplates = [];
+  for (const entry of rawTemplateEntries) {
+    if (entry == null) continue;
+    const isString = typeof entry === 'string';
+    if (!isString && typeof entry !== 'object') continue;
+    const name = String((isString ? entry : entry.template || entry.name || entry.asset) || '').trim();
+    if (!name) continue;
+    if (!templateByNorm.has(normalize(name)) && canonicalByNorm.has(normalize(name))) {
+      // Carry the count across: "three nurture emails" misfiled as a template is
+      // still an ask for three, and the asset loop clamps it like any other.
+      assetsFromTemplates.push({ asset: canonicalByNorm.get(normalize(name)), count: isString ? 1 : entry.count });
+      continue;
+    }
+    templateEntries.push(entry);
+  }
 
   // `assets` is now an ordered PLAN: [{ asset, count, labels }]. Entries are NOT
   // deduped any more — a brief can ask for the same asset more than once, and two
@@ -599,9 +669,15 @@ async function parseBrief(brief, allowedAssets) {
   // plan is capped at PARSE_MAX_TOTAL. Those are parse-side sanity limits, NOT the
   // surface ceilings — core/pipeline clamps again per surface (3/6 on Slack,
   // 10/40 on the web) and is the authority.
-  const rawAssets = Array.isArray(parsed.assets) ? parsed.assets : [];
+  const rawAssets = [
+    ...(Array.isArray(parsed.assets) ? parsed.assets : []),
+    ...assetsFromTemplates,
+  ];
   const assets = [];
   const unmatchedFromAssets = [];
+  // Templates the model put in `assets` by mistake. Merged into the template
+  // plan below rather than dropped or refused.
+  const misroutedTemplates = [];
   let planTotal = 0;
   for (const entry of rawAssets) {
     if (entry == null) continue;
@@ -613,6 +689,17 @@ async function parseBrief(brief, allowedAssets) {
 
     const canonical = canonicalByNorm.get(normalize(name));
     if (!canonical) {
+      // A TEMPLATE NAME IS NOT AN UNKNOWN ASSET. Before this, every gate treated
+      // it as one: it failed this lookup, landed in unmatchedAssets, and the
+      // adapters refused the brief with "not in your asset library" naming a
+      // document the tenant definitely had. The model is told to put templates
+      // in `templates`, but it is a model, so the miss list is checked against
+      // the other vocabulary before anything is called unknown.
+      const asTemplate = templateByNorm.get(normalize(name));
+      if (asTemplate) {
+        misroutedTemplates.push(asTemplate);
+        continue;
+      }
       unmatchedFromAssets.push(name);
       continue;
     }
@@ -642,9 +729,63 @@ async function parseBrief(brief, allowedAssets) {
     assets.push(labels.some(Boolean) ? { asset: canonical, count, labels } : { asset: canonical, count });
   }
 
+  // THE TEMPLATE PLAN, filtered exactly as defensively as the asset plan and
+  // against its OWN vocabulary. Same normalize(), so a brief writing
+  // "form & confirmation page" reaches the template the tenant called
+  // "Form and Confirmation Page".
+  //
+  // count is pinned to 1 rather than clamped. A template is a whole document and
+  // projects carries ONE template_doc_id/url pair, so two of one template is a
+  // thing the data model cannot record. The pipeline refuses an explicit ask for
+  // more than one by name; this only stops a model-invented 3 from arriving as a
+  // number nobody asked for.
+  const rawTemplates = [...templateEntries, ...misroutedTemplates];
+  const templatePlan = [];
+  const unmatchedFromTemplates = [];
+  const seenTemplates = new Set();
+  for (const entry of rawTemplates) {
+    if (entry == null) continue;
+    const isString = typeof entry === 'string';
+    if (!isString && typeof entry !== 'object') continue;
+    const rawName = isString ? entry : entry.template || entry.name || entry.asset;
+    const name = String(rawName == null ? '' : rawName).trim();
+    if (!name) continue;
+    const canonical = templateByNorm.get(normalize(name));
+    if (!canonical) {
+      unmatchedFromTemplates.push(name);
+      continue;
+    }
+    // The model naming one template twice is one ask, not two.
+    const key = normalize(canonical);
+    if (seenTemplates.has(key)) continue;
+    seenTemplates.add(key);
+    const requested = isString ? 1 : parseInt(entry.count, 10);
+    templatePlan.push({
+      template: canonical,
+      count: 1,
+      // What the brief actually asked for, kept so the pipeline can refuse an
+      // explicit "two of these" by name instead of silently building one.
+      requestedCount: Number.isFinite(requested) && requested > 0 ? requested : 1,
+    });
+  }
+
   const unmatchedAssets = [
     ...(Array.isArray(parsed.unmatchedAssets) ? parsed.unmatchedAssets : []),
     ...unmatchedFromAssets,
+  ]
+    .map((a) => String(a).trim())
+    .filter(Boolean);
+
+  // NON-EMPTY IS REACHABLE, so this cannot stay a list nothing reads. After the
+  // reverse misroute check above, a name lands here only when it matches NEITHER
+  // vocabulary — "build the rate card" against a workspace with no such template
+  // and no such asset. That is a genuine miss and the same kind of thing
+  // unmatchedAssets is: something the brief asked for that was not built. Both
+  // adapters merge the two lists into one refusal/notice, so a writer is told
+  // once, in one sentence, whichever namespace the miss came from.
+  const unmatchedTemplates = [
+    ...(Array.isArray(parsed.unmatchedTemplates) ? parsed.unmatchedTemplates : []),
+    ...unmatchedFromTemplates,
   ]
     .map((a) => String(a).trim())
     .filter(Boolean);
@@ -659,7 +800,9 @@ async function parseBrief(brief, allowedAssets) {
     summary: toReadableText(parsed.summary).trim(),
     writerPrompt: toReadableText(parsed.writerPrompt).trim(),
     assets,
+    templates: templatePlan,
     unmatchedAssets,
+    unmatchedTemplates,
     folderId,
     referenceLinks,
   };

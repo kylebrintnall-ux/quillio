@@ -167,7 +167,14 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     const parsedBrief = await pipeline.parseBrief(brief, tenantId);
     // NB: parsedBrief.folderId (Gemini's guess) is intentionally NOT used — it
     // can truncate a long id. Folder routing uses extractBriefFolderId below.
-    const { campaignTitle, assets, unmatchedAssets, referenceLinks } = parsedBrief;
+    const { campaignTitle, assets, templates, referenceLinks } = parsedBrief;
+  // ONE MISS LIST. A name the brief asked for and did not get is the same news
+  // to a writer whichever vocabulary it failed against, and unmatchedTemplates
+  // reaching no surface at all would be worse than not collecting it.
+  const unmatchedAssets = [
+    ...(parsedBrief.unmatchedAssets || []),
+    ...(parsedBrief.unmatchedTemplates || []),
+  ];
     // Which vocabulary gated this parse — decides whether the unmatched message
     // can honestly say "your asset library" and offer adding to it as the fix.
     const vocabularySource = (parsedBrief.assetVocabulary && parsedBrief.assetVocabulary.source) || 'default';
@@ -182,7 +189,9 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
     // guess; tell the user exactly what couldn't be matched and build nothing.
     // (A vague brief with no assets at all still falls through to "all assets".)
     // Unchanged behavior — only the wording moved to the shared builder.
-    if (assets.length === 0 && unmatchedAssets.length > 0) {
+    // A brief naming ONLY a template is a complete brief — a resolved template
+    // is not a failed ask, so it is counted before the total-miss refusal.
+    if (assets.length === 0 && (templates || []).length === 0 && unmatchedAssets.length > 0) {
       console.log('[workflow] no assets matched — surfacing unmatched list, building nothing');
       const unmatchedText = totalMissMessage(unmatchedAssets, vocabularySource);
       await emit(unmatchedText, undefined, () =>
@@ -271,6 +280,11 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
         referenceLinks,
         referenceInsights,
         plan: assets,
+        // Parked with the plan, and NOT editable in the confirm modal: that modal
+        // adjusts asset counts, and a template has no count to adjust. Without
+        // this a confirm-then-build would silently drop the matrix the brief
+        // asked for.
+        templates,
         // Parked so the doc-ready card can still say what was left out after the
         // user clicks Build — resumeBriefWorkflow re-resolves the tenant but never
         // re-parses the brief, so this is the only way the notice survives.
@@ -296,7 +310,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 
     await buildAndPost({
       brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
-      plan: assets, effectiveFolderId, folderFromBrief, unmatchedAssets, vocabularySource,
+      plan: assets, templates, effectiveFolderId, folderFromBrief, unmatchedAssets, vocabularySource,
       tenantId, actingUserId, live, responseUrl, emit,
     });
 
@@ -314,7 +328,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
 async function buildAndPost(ctx) {
   const {
     brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
-    plan, effectiveFolderId, folderFromBrief, unmatchedAssets, vocabularySource, tenantId, actingUserId,
+    plan, templates, effectiveFolderId, folderFromBrief, unmatchedAssets, vocabularySource, tenantId, actingUserId,
     live, responseUrl, emit,
   } = ctx;
   {
@@ -330,7 +344,7 @@ async function buildAndPost(ctx) {
       // back to the tenant token and then the shared env client.
       const clients = await getClientsForTenant({ tenantId, userId: actingUserId });
       docResult = await pipeline.generateDoc(
-        { brief, campaignTitle, summary, writerPrompt, assets: plan, referenceLinks, referenceInsights },
+        { brief, campaignTitle, summary, writerPrompt, assets: plan, templates, referenceLinks, referenceInsights },
         effectiveFolderId,
         clients,
         tenantId,
@@ -360,7 +374,13 @@ async function buildAndPost(ctx) {
       throw err;
     }
     const { doc, assetSpecs, projectFolderUrl, templateDocs = [] } = docResult;
-    console.log('[workflow] doc created:', doc.id);
+    // `doc` is null on a template-only brief — the brief named a document
+    // template and no assets, so there is no copy doc to create. The card below
+    // renders the template document as the artifact and offers no draft button,
+    // because the template was drafted when it was built.
+    const primary = doc || (templateDocs || []).find((t) => t && t.id) || null;
+    console.log('[workflow] doc created:', doc ? doc.id : `(none — template only: ${primary ? primary.id : 'nothing built'})`);
+    if (!primary) throw new Error('Nothing was built — the brief named no assets and no template could be built.');
 
     // 4. Show the doc-ready card — ONE message. The Campaign folder / Copy doc
     //    links and the "Saved to <folder>" line are folded into this single card
@@ -375,10 +395,12 @@ async function buildAndPost(ctx) {
       ? (await pipeline.getFolderName(effectiveFolderId)) || 'your linked folder'
       : null;
     const result = {
-      title: doc.title,
-      webViewLink: doc.url,
+      title: primary.title,
+      // Null when there is no copy doc. buildResultBlocks reads that as
+      // "template only" and drops the asset list and both buttons.
+      webViewLink: doc ? doc.url : null,
       assets: assetSpecs.map((a) => a.assetType),
-      docId: doc.id,
+      docId: doc ? doc.id : null,
       folderUrl: projectFolderUrl, // null if folder creation failed → link omitted
       // The template documents this brief produced (custom document types, step
       // three). Empty for every copy-doc-only brief, which omits the links
@@ -395,11 +417,11 @@ async function buildAndPost(ctx) {
       unmatchedNotice: partialMissNotice(unmatchedAssets, vocabularySource),
     };
     const resultBlocks = buildResultBlocks(result).blocks;
-    await emit(`${emoji('quillio-doc-done')} Your doc is ready — ${doc.title}.`, resultBlocks, () =>
+    await emit(`${emoji('quillio-doc-done')} Your ${doc ? 'doc' : 'document'} is ready — ${primary.title}.`, resultBlocks, () =>
       postResult(result, responseUrl)
     );
 
-    console.log('[workflow] build DONE — doc', doc.id);
+    console.log('[workflow] build DONE — doc', primary.id);
   }
 }
 
@@ -634,6 +656,7 @@ async function resumeBriefWorkflow(pendingId, rawPlan, opts = {}) {
       referenceLinks: pending.referenceLinks,
       referenceInsights: pending.referenceInsights,
       plan,
+      templates: pending.templates,
       // Parked at parse time — the brief is never re-parsed here, so without this
       // the doc-ready card would drop a notice the plan card had already shown.
       unmatchedAssets: pending.unmatchedAssets,

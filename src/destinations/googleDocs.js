@@ -16,7 +16,7 @@ const { DocBuilder } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
-const { locateCells, buildCellWriteRequests } = require('./templateCells');
+const { locateCells, readCells, buildCellWriteRequests } = require('./templateCells');
 const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, cleanDraft, DOORWAYS, INTENSITIES } = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
 // Same asset-name folding the pipeline uses to match a name to a library row, so
@@ -1736,12 +1736,70 @@ async function writeTemplateCells(documentId, { markers, values }, clients) {
   };
 }
 
+// READ BACK a built template document by stored coordinate (step three).
+//
+// One documents.get, no write. The coordinate is structural, so it still finds
+// the cell after the marker has been replaced by copy — reading it back is how
+// that stops being an assertion and starts being an observation.
+//
+// Returns { rows, missing } from templateCells.readCells. A row carries the
+// cell's CURRENT text and whether it still shows its {{marker}}.
+async function readTemplateCells(documentId, { markers } = {}, clients) {
+  const { docs } = clients || (await getClients());
+  if (!documentId) throw new Error('readTemplateCells: no document.');
+
+  const doc = (await docs.documents.get({ documentId })).data;
+  const { rows, missing } = readCells(doc, markers || []);
+
+  const drafted = rows.filter((r) => r.is_copy && !r.showingMarker && !r.empty).length;
+  const standing = rows.filter((r) => r.showingMarker).length;
+  console.log(
+    `[googleDocs] read ${documentId} — ${rows.length} located, ${drafted} holding copy, ` +
+      `${standing} still showing a marker` + (missing.length ? `, ${missing.length} NOT LOCATED` : '')
+  );
+  return { rows, missing, title: (doc && doc.title) || '' };
+}
+
+// Post ONE branded review comment with NO ANCHOR.
+//
+// WHY UNANCHORED, AND WHY THIS IS NOT A DEGRADED addReviewComment. The anchoring
+// probe settled it: a Drive comment whose quotedFileContent is text inside a
+// TABLE CELL does not resolve. All six probe cases came back with Google
+// rendering "Original content deleted" — the comment exists, carries its text,
+// and points nowhere. Every cell of a template document is a table cell, so
+// there is no anchored path here to fall back FROM.
+//
+// Which makes the field name load-bearing: it is the only thing tying the
+// comment to a cell. A matrix is already a lookup table with a Field column, so
+// naming the field in the body text is not a workaround — it is the same way a
+// human would refer to a row.
+async function addUnanchoredComment(docId, content, clients) {
+  if (!content || !String(content).trim()) return null;
+  const { drive } = clients || (await getClients());
+  try {
+    const res = await drive.comments.create({
+      fileId: docId,
+      fields: 'id',
+      supportsAllDrives: true,
+      // No quotedFileContent. Sending one that cannot resolve is what produces
+      // the "Original content deleted" banner, so the absence is deliberate.
+      requestBody: { content: REVIEW_PREFIX + content },
+    });
+    return (res.data && res.data.id) || null;
+  } catch (err) {
+    console.error(`[review] failed to add unanchored comment: ${err.message}`);
+    return null;
+  }
+}
+
 module.exports = {
   name: 'google-docs',
   createDocument,
   createFromTemplate,
   fillTemplateMarkers,
   writeTemplateCells,
+  readTemplateCells,
+  addUnanchoredComment,
   generateDraft,
   getDocContent,
   listReviewComments,

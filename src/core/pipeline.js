@@ -13,6 +13,11 @@ const {
   // The SAME batched draft call the copy doc's assets go through — a template
   // is one asset whose fields are its copy markers. No new prompt.
   generateAssetDrafts,
+  // Step three: the single-field revision, and the drafter's own over-limit
+  // check — imported rather than reimplemented so a regenerate and a review
+  // cannot disagree with the drafter about what "over" means.
+  generateFieldDraft,
+  overLimit,
 } = require('../services/gemini');
 const { normalize } = require('../utils/normalize');
 const { instanceCounter } = require('../utils/instanceKey');
@@ -22,6 +27,7 @@ const { getAssetDirections, getTenantAssets, getAssetTemplateBindings } = requir
 const { saveProject, getProjectByDocId, setProjectTemplateFill } = require('../db/projects');
 const { getDocTemplate } = require('../db/docTemplates');
 const { listTemplateMarkers } = require('../db/templateMarkers');
+const { postTemplateReview } = require('../services/templateReview');
 
 // Matches a Google Drive *file* link (Drive file, Doc, or Slides) and captures its id.
 const DRIVE_FILE_RE = /(?:drive\.google\.com\/file\/d\/|docs\.google\.com\/(?:document|presentation)\/d\/)([a-zA-Z0-9_-]+)/;
@@ -1414,6 +1420,197 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
   };
 }
 
+// --- Step three: read a built template back, revise a cell, review it --------
+//
+// All three start from the same place — the stored coordinates resolved against
+// the BUILT document (the copy in the campaign folder, never the source
+// template). Step two proved the coordinate finds the cell; these prove it still
+// finds it after the marker has been replaced by copy, which is the property the
+// whole design rests on and the one that was only ever asserted.
+
+// Load a template's markers, refusing the same two ways buildTemplateDocument
+// does. Shared so read/regenerate/review cannot drift on what "confirmed" means.
+async function loadTemplateMarkers(tenantId, templateId) {
+  const template = await getDocTemplate(tenantId, templateId);
+  if (!template) throw new Error(`No template ${templateId} for this tenant.`);
+
+  const markers = await listTemplateMarkers(tenantId, templateId);
+  if (markers === null) {
+    throw new Error('Template fields are not available — run scripts/migrateAddTemplateMarkers.js.');
+  }
+  if (markers.length === 0) {
+    throw new Error(`Template "${template.name}" has no confirmed fields yet. Confirm them in Settings first.`);
+  }
+  return { template, markers };
+}
+
+// PART 1 — READ BACK. Every marker with a stored coordinate, resolved against
+// the built document, with what its cell holds right now.
+//
+// Reads ALL markers, not just the copy ones. A metadata cell still showing
+// {{Form ID}} is the evidence that the build left it alone, and leaving it out
+// of the report would hide the thing most worth confirming by eye.
+async function readTemplateDocument({ tenantId, templateId, docId, clients }) {
+  if (!tenantId || !templateId || !docId) {
+    throw new Error('readTemplateDocument: tenantId, templateId and docId are required.');
+  }
+  const { template, markers } = await loadTemplateMarkers(tenantId, templateId);
+  const { rows, missing, title } = await getDestination().readTemplateCells(docId, { markers }, clients);
+
+  const copyRows = rows.filter((r) => r.is_copy);
+  const summary =
+    `${rows.length} of ${markers.length} marker(s) located: ` +
+    `${copyRows.filter((r) => !r.showingMarker && !r.empty).length} holding copy, ` +
+    `${rows.filter((r) => r.showingMarker).length} still showing a marker, ` +
+    `${missing.length} unplaced`;
+  console.log(`[pipeline] read "${template.name}" — ${summary}`);
+
+  return { templateName: template.name, title, rows, missing, summary, markers: markers.length };
+}
+
+// PART 2 — REGENERATE named fields, in place.
+//
+// REPLACES, NEVER STACKS. The copy doc answers a regenerate with a numbered
+// block of options under a "Riff N" divider, and that is right there — the field
+// is a labelled run of paragraphs with room below it. A matrix cell has no room
+// below it and no way to say "these three are alternatives": stacking would put
+// three headlines in the cell a client reads as the headline. One cell, one
+// answer. Nothing here builds variants or riff marks.
+//
+// The redraft carries the cell's CURRENT copy, so it is a revision. A regenerate
+// that started from nothing would quietly re-decide the offer when it was asked
+// to shorten a line.
+//
+// Refuses per field rather than in bulk: a run naming four fields, one of them a
+// metadata cell, should revise the three and say exactly why the fourth was left
+// alone. Refusing the whole run would make the caller guess which one was wrong.
+async function regenerateTemplateFields({
+  tenantId,
+  templateId,
+  docId,
+  fieldNames,
+  direction,
+  spec = {},
+  clients,
+}) {
+  const wanted = (Array.isArray(fieldNames) ? fieldNames : [fieldNames])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+  if (wanted.length === 0) throw new Error('regenerateTemplateFields: name at least one field.');
+
+  const { template, markers } = await loadTemplateMarkers(tenantId, templateId);
+  const { rows, missing } = await getDestination().readTemplateCells(docId, { markers }, clients);
+
+  // Matched on the marker name, folded for case and whitespace — the same
+  // looseness sameLabel applies, because a person typing --regenerate "form
+  // headline" means the field called "Form Headline".
+  const fold = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const byName = new Map(markers.map((m) => [fold(m.marker_name), m]));
+  const rowByKey = new Map(rows.map((r) => [r.marker_key, r]));
+  const unplaced = new Set(missing.map((m) => fold(m.name)));
+
+  const targets = [];
+  const refused = [];
+  for (const name of wanted) {
+    const m = byName.get(fold(name));
+    if (!m) {
+      refused.push({ name, reason: `there is no field called "${name}" on template "${template.name}"` });
+    } else if (!m.is_copy) {
+      refused.push({
+        name: m.marker_name,
+        reason: 'this marker is not ticked as copy — its cell belongs to the tenant, and writing to it is exactly what the is_copy flag exists to prevent',
+      });
+    } else if (m.part == null || m.table_index == null || m.row_index == null || m.column_index == null) {
+      refused.push({ name: m.marker_name, reason: 'no cell coordinate was recorded for this marker, so there is nowhere to write it' });
+    } else if (!rowByKey.has(m.marker_key)) {
+      const why = unplaced.has(fold(m.marker_name)) ? 'it could not be located in this document' : 'it is not in this document';
+      refused.push({ name: m.marker_name, reason: `${why} — reported rather than written to a guessed cell` });
+    } else {
+      targets.push({ marker: m, row: rowByKey.get(m.marker_key) });
+    }
+  }
+
+  for (const r of refused) console.warn(`[pipeline] refusing to regenerate ${r.name}: ${r.reason}`);
+  if (targets.length === 0) return { templateName: template.name, regenerated: [], refused, unenforced: [], failed: [] };
+
+  let voiceGuide = null;
+  try {
+    voiceGuide = await getVoiceGuide(tenantId);
+  } catch (err) {
+    console.warn('[pipeline] voice guide lookup failed — using repo voice.md:', err.message);
+  }
+
+  // The other copy cells, as context, so a revised field still sits with the
+  // ones around it. Same role siblings play on the copy doc's scoped path.
+  const siblings = rows
+    .filter((r) => r.is_copy && !r.showingMarker && !r.empty)
+    .map((r) => ({ fieldName: r.marker_name, copy: r.text }));
+
+  const values = new Map();
+  const regenerated = [];
+  const unenforced = [];
+  const failed = [];
+  for (const t of targets) {
+    const m = t.marker;
+    try {
+      const copy = await generateFieldDraft({
+        assetType: template.name,
+        fieldName: m.marker_name,
+        charMax: m.char_max || 0,
+        charMin: m.char_min || 0,
+        fieldType: m.field_type === 'words' ? 'words' : 'text',
+        notes: m.spec_note || '',
+        summary: spec.summary || '',
+        writerPrompt: spec.writerPrompt || '',
+        direction: direction || '',
+        voiceGuide,
+        siblings: siblings.filter((s) => s.fieldName !== m.marker_name),
+        currentCopy: t.row.text,
+      });
+      if (!copy || !copy.trim()) {
+        failed.push({ name: m.marker_name, reason: 'the redraft came back empty — the cell is unchanged' });
+        continue;
+      }
+      values.set(m.marker_key, copy.trim());
+      regenerated.push({ name: m.marker_name, before: t.row.text, after: copy.trim() });
+      // Same reporting rule as the drafter: a word field has no post-hoc trim, so
+      // a redraft can come back over and nothing will shorten it. Say so.
+      if (overLimit(copy, m.char_max, m.field_type)) unenforced.push(m.marker_name);
+    } catch (err) {
+      failed.push({ name: m.marker_name, reason: err.message });
+      console.warn(`[pipeline] regenerate failed for ${m.marker_name}: ${err.message}`);
+    }
+  }
+
+  // The SAME write step two uses: one batchUpdate, reverse document order, the
+  // delete range stopping one character short of the paragraph mark. Only the
+  // regenerated markers are handed over, so no other cell is touched.
+  let result = { written: [], skipped: [], healed: [], missing: [], requests: 0 };
+  if (values.size) {
+    result = await getDestination().writeTemplateCells(
+      docId,
+      { markers: targets.map((t) => t.marker), values },
+      clients
+    );
+  }
+
+  const summary =
+    `${wanted.length} named: ${result.written.length} rewritten, ${refused.length} refused, ${failed.length} failed` +
+    (unenforced.length ? ` (${unenforced.length} OVER LIMIT — a word field has no post-hoc trim)` : '');
+  console.log(`[pipeline] regenerate "${template.name}" — ${summary}`);
+
+  return { templateName: template.name, regenerated, refused, failed, unenforced, summary, ...result };
+}
+
+// PART 3 — REVIEW. Unanchored comments naming their field, for cells that are
+// measurably wrong. The judgement lives in services/templateReview.js; this only
+// gets it the rows.
+async function reviewTemplateDocument({ tenantId, templateId, docId, clients }) {
+  const read = await readTemplateDocument({ tenantId, templateId, docId, clients });
+  const result = await postTemplateReview(docId, read.rows, clients);
+  return { ...result, templateName: read.templateName, rows: read.rows, missing: read.missing };
+}
+
 // SYNC THE DRAFTED COPY INTO THIS PROJECT'S TEMPLATE DOCUMENT(S).
 //
 // Runs after every draft. Reads the copy doc back — the same read the web
@@ -1649,6 +1846,11 @@ module.exports = {
   // caller that already has a template id — parseBrief does not know templates
   // exist yet.
   buildTemplateDocument,
+  // Step three, same entry rule: a caller that already has a template id and a
+  // built document. Read back by stored coordinate, revise one cell, review.
+  readTemplateDocument,
+  regenerateTemplateFields,
+  reviewTemplateDocument,
   normalizeAssetPlan,
   resolveAssetLimits,
   // The DEFAULT (web) ceilings, and the absolute maximum a surface can ask for.

@@ -3,7 +3,8 @@
 // LOCATE AND REWRITE TEMPLATE CELLS BY STORED COORDINATE (document templates,
 // rework step two).
 //
-// Pure — requires nothing. Given a Docs API documents.get JSON and the marker
+// Pure — no Drive, no Docs, no database, no Express. Its one import is
+// docPlaceholders, which is itself pure. Given a Docs API documents.get JSON and the marker
 // rows stored at confirm time, it resolves each stored (part, table, row,
 // column) to a real character range and builds the batchUpdate requests that
 // replace those cells' contents.
@@ -34,6 +35,11 @@
 // exactly this: go to the coordinate, check the label beside it, and if it does
 // not match, find the row whose label does. A marker that cannot be located
 // either way is REPORTED, never written to a guessed cell.
+
+// The ONE import: the same name fold that produced marker_key at discovery time.
+// Reimplementing it here is how a cell would report "still showing its marker"
+// for one spelling and not another.
+const { placeholderKey } = require('./docPlaceholders');
 
 // Every table in one document part, numbered the way docPlaceholders numbers
 // them, so a stored table_index means the same thing here.
@@ -171,6 +177,11 @@ function locateCells(doc, markers) {
       start: range.start,
       end: range.end,
       row: rowIndex,
+      // What the cell reads RIGHT NOW. Carried here because the caller already
+      // paid for the traversal that found the cell, and because every consumer
+      // that wants a range wants the text too: the writer diffs against it, the
+      // reader reports it, the reviewer measures it.
+      text: cellText(cell),
       healed,
       reason: healed ? `found by label at row ${rowIndex + 1} instead of the stored row ${m.row_index + 1}` : null,
     });
@@ -222,8 +233,73 @@ function buildCellWriteRequests(located, values) {
   return { requests, written: writable.map((c) => c.marker.marker_name), skipped };
 }
 
+// Is this cell still showing the marker it was meant to have copy written into?
+//
+// Compared through placeholderKey, the same fold docPlaceholders used to derive
+// marker_key in the first place, so `{{Form Headline}}`, `{{ form headline }}`
+// and `{{Form  Headline}}` all read as the same marker still standing. Any OTHER
+// {{token}} in the cell is somebody else's marker and is not this one.
+//
+// The distinction matters more than it looks. An empty cell means "nobody has
+// written this yet"; a cell reading {{Form ID}} means "this one is not Quillio's
+// to write". Only the second is a finished state, and only a cell that is BOTH
+// marked as copy AND still showing its marker is a fault worth a comment.
+function markerStillShowing(text, markerKey) {
+  const key = String(markerKey || '').trim();
+  if (!key) return false;
+  for (const m of String(text || '').matchAll(/\{\{([^{}\n]*?)\}\}/g)) {
+    if (placeholderKey(m[1]) === key) return true;
+  }
+  return false;
+}
+
+// READ BACK every stored coordinate against a BUILT document.
+//
+// The copy in the campaign folder, not the source template. The coordinate is
+// structural — body table N, row R, column C — so it still points at the right
+// cell after the marker has been replaced by copy. That is the property the whole
+// rework rests on, and this is the function that makes it checkable: the marker
+// text is gone, and the cell is still found.
+//
+// Returns one row per marker in the order given, plus the same `missing` list
+// locateCells produces. A row is a report, not a write plan — nothing here
+// touches the document.
+function readCells(doc, markers) {
+  const { found, missing } = locateCells(doc, markers || []);
+  const byKey = new Map(found.map((c) => [c.marker.marker_key, c]));
+
+  const rows = [];
+  for (const m of markers || []) {
+    const c = byKey.get(m.marker_key);
+    if (!c) continue; // reported through `missing`
+    rows.push({
+      marker_key: m.marker_key,
+      marker_name: m.marker_name,
+      is_copy: m.is_copy === true,
+      char_max: m.char_max || 0,
+      char_min: m.char_min || 0,
+      field_type: m.field_type === 'words' ? 'words' : 'text',
+      part: m.part,
+      table_index: m.table_index,
+      row_index: c.row,
+      column_index: m.column_index,
+      text: c.text,
+      empty: !String(c.text || '').trim(),
+      showingMarker: markerStillShowing(c.text, m.marker_key),
+      healed: c.healed,
+      healedReason: c.reason,
+      start: c.start,
+      end: c.end,
+    });
+  }
+
+  return { rows, missing: missing.map((x) => ({ name: x.marker && x.marker.marker_name, reason: x.reason })) };
+}
+
 module.exports = {
   locateCells,
+  readCells,
+  markerStillShowing,
   buildCellWriteRequests,
   cellText,
   cellRange,

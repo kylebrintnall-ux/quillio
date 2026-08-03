@@ -1203,6 +1203,26 @@ async function generateAssetDrafts({
         );
       }
     }
+
+    // AND THE OTHER WAY A DRAFT LEAVES HERE OVER ITS LIMIT: a rescue that
+    // SUCCEEDS. generateFieldDraft has no post-hoc word enforcement — its ceiling
+    // is null on a word field, deliberately, because the only trim available
+    // counts characters — so nothing between there and here shortens a long word
+    // body. The catch above only covers the rescue THROWING; this covers it
+    // returning, and re-covers the throw case for free.
+    //
+    // A character field cannot reach this line over its limit: trimToCeiling
+    // guarantees compliance on that path. So in practice this is the word fields,
+    // which had nothing. It is the report that changes, not the copy — the draft
+    // is still kept and still written, it just stops being counted as clean.
+    if (!unenforced && overLimit(copy, f.charMax, f.fieldType)) {
+      unenforced = true;
+      console.warn(
+        `[gemini] ${assetType} / ${f.fieldName} drafted OVER ITS LIMIT and unenforced ` +
+          `(${describeLength(copy, f.charMax, f.fieldType)}) — a word field has no post-hoc trim`
+      );
+    }
+
     out.push(unenforced ? { fieldName: f.fieldName, copy, unenforced: true } : { fieldName: f.fieldName, copy });
   }
   return out;
@@ -1510,7 +1530,18 @@ async function generateFieldVariations({
     // the fallback above threw, so a failed fallback leaves no over-limit copy on
     // this path.
     if (copy && ceiling && copy.length > ceiling) copy = trimToCeiling(copy, ceiling);
-    if (copy) out.push({ doorway, copy });
+
+    // Which leaves the word fields, on both endings — the re-draft threw and the
+    // model's own variation was kept, or the re-draft returned and is still long.
+    // Neither is trimmed, by design, so the only honest thing left is to say so.
+    const stillOver = copy && overLimit(copy, charMax, fieldType);
+    if (stillOver) {
+      console.warn(
+        `[gemini] variation ${fieldName}/${doorway} is OVER ITS LIMIT and unenforced ` +
+          `(${describeLength(copy, charMax, fieldType)}) — a word field has no post-hoc trim`
+      );
+    }
+    if (copy) out.push(stillOver ? { doorway, copy, unenforced: true } : { doorway, copy });
   }
   return out;
 }

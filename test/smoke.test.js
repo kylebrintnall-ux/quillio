@@ -11507,3 +11507,117 @@ test('one helper decides the character-trim ceiling for both trim sites', () => 
     assert.match(call, /trimToCeiling\(copy, ceiling\)/, `unguarded trim: ${call}`);
   }
 });
+
+// --- The other way over-limit copy leaves: a rescue that SUCCEEDS -------------
+//
+// `unenforced` started life set only inside the catch — when the rescue threw.
+// But generateFieldDraft has no post-hoc word enforcement (its ceiling is null on
+// a word field, deliberately: the only trim available counts characters), so a
+// rescue that RETURNS can hand back copy still over its word limit. That copy was
+// written, counted as cleanly drafted, and flagged nowhere.
+//
+// Character fields never had this hole — trimToCeiling guarantees compliance on
+// that path. The check is after the try/catch so it covers both endings.
+
+test('a rescue that succeeds but comes back over its word limit is still flagged', async () => {
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let out;
+  try {
+    // Batch: 240 words against a 120-word limit → genuinely over → rescue.
+    // Rescue: RETURNS, no throw — but hands back 120 words against a 60-word
+    // limit. Nothing trims it, and nothing used to notice.
+    ({ out } = await geminiWith(
+      (p) => (isBatchPrompt(p) ? JSON.stringify({ Body: `${WORDS_120} ${WORDS_120}` }) : WORDS_120),
+      (g) =>
+        g.generateAssetDrafts({
+          assetType: 'Nurture Email',
+          summary: 's',
+          writerPrompt: 'w',
+          fields: [{ fieldName: 'Body', charMax: 60, charMin: 25, fieldType: 'words' }],
+        })
+    ));
+  } finally {
+    console.warn = realWarn;
+  }
+
+  assert.strictEqual(out[0].copy, WORDS_120, 'the copy is kept — this changes the report, not the draft');
+  assert.strictEqual(out[0].unenforced, true, 'and it is no longer counted as a clean draft');
+  assert.strictEqual(warned.length, 1, 'said once, not once per ending');
+  assert.match(warned[0], /Body drafted OVER ITS LIMIT and unenforced \(120 words, limit 60\)/);
+});
+
+test('a rescue that succeeds and comes back within its limit is not flagged', async () => {
+  // The guard has to be a real check, not "word field → always suspect".
+  const { out } = await geminiWith(
+    (p) => (isBatchPrompt(p) ? JSON.stringify({ Body: `${WORDS_120} ${WORDS_120}` }) : 'three words here'),
+    (g) =>
+      g.generateAssetDrafts({
+        assetType: 'Nurture Email',
+        summary: 's',
+        writerPrompt: 'w',
+        fields: [{ fieldName: 'Body', charMax: 60, charMin: 25, fieldType: 'words' }],
+      })
+  );
+  assert.strictEqual(out[0].copy, 'three words here');
+  assert.strictEqual(out[0].unenforced, undefined, '3 words is not over 60');
+});
+
+test('a character field is never flagged, because the trim already guarantees it', async () => {
+  const { out } = await geminiWith(
+    (p, n) => (isBatchPrompt(p) ? JSON.stringify({ Headline: 'x'.repeat(90) }) : 'y'.repeat(90)),
+    (g) =>
+      g.generateAssetDrafts({
+        assetType: 'A',
+        summary: 's',
+        writerPrompt: 'w',
+        fields: [{ fieldName: 'Headline', charMax: 50, fieldType: 'text' }],
+      })
+  );
+  // Even with the rescue ALSO returning something over, trimToCeiling inside
+  // generateFieldDraft brings it back under before it ever reaches the check.
+  assert.ok(out[0].copy.length <= 50, `trimmed, got ${out[0].copy.length}`);
+  assert.strictEqual(out[0].unenforced, undefined, 'so there is nothing to flag');
+});
+
+test('a word variation still over its limit after a successful re-draft is flagged', async () => {
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let out;
+  try {
+    ({ out } = await geminiWith(
+      (p, n) => (n === 1 ? JSON.stringify([`${WORDS_120} ${WORDS_120}`]) : WORDS_120),
+      (g) =>
+        g.generateFieldVariations({
+          assetType: 'Nurture Email',
+          fieldName: 'Body',
+          charMax: 60,
+          charMin: 25,
+          fieldType: 'words',
+          summary: 's',
+          writerPrompt: 'w',
+          rows: [{ doorway: 'Pain' }],
+        })
+    ));
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.strictEqual(out[0].copy, WORDS_120, 'kept, not trimmed — no word trimming was added');
+  assert.strictEqual(out[0].unenforced, true);
+  assert.match(warned[0], /variation Body\/Pain is OVER ITS LIMIT and unenforced \(120 words, limit 60\)/);
+});
+
+test('neither flag path trims a word field — only the report changed', () => {
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  // The whole point of the null ceiling. If a word-trim ever appears, these two
+  // flag sites become the wrong fix and this test is the thing that says so.
+  assert.strictEqual((gem.match(/trimToCeiling\(copy, ceiling\)/g) || []).length, 2,
+    'the only two trims, both fed a null-on-words ceiling');
+  assert.ok(!/countWords\([^)]*\)\s*>\s*\w+\s*\)\s*copy =/.test(gem), 'nothing trims by word count');
+  // Both flags are set from the same unit-aware check, after the fallback, so a
+  // rescue that throws and a rescue that returns long are reported alike.
+  assert.match(gem, /if \(!unenforced && overLimit\(copy, f\.charMax, f\.fieldType\)\)/);
+  assert.match(gem, /const stillOver = copy && overLimit\(copy, charMax, fieldType\)/);
+});

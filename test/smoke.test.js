@@ -11419,9 +11419,10 @@ test('the build summary says when a drafted marker was never enforced', () => {
 //     copy = trimToCeiling(copy, ceiling);
 //
 // The first only wasted a Gemini call. The second CUT a 120-word variation to 120
-// CHARACTERS — about six words — and threw the rest away, silently: no warning,
-// no flag, just short copy in the doc. `ceiling` is now trimCeiling(), null on a
-// word field, so the trim cannot fire there at all.
+// CHARACTERS — measured on this fixture: 851 chars in, 116 out, 18 words of 120
+// kept and 102 discarded — silently: no warning, no flag, just short copy in the
+// doc. `ceiling` is now trimCeiling(), null on a word field, so the trim cannot
+// fire there at all.
 
 test('a word-field variation is never trimmed to its word count in characters', async () => {
   const { out, prompts } = await geminiWith(

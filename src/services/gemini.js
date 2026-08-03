@@ -864,6 +864,23 @@ function siblingContextBlock(siblings) {
   ].join('\n');
 }
 
+// The field's CURRENT copy, for a redraft that is a revision rather than a fresh
+// start. Distinct from siblingContextBlock, which is the OTHER fields: those are
+// context to sit alongside and must never be rewritten; this one IS the thing
+// being rewritten, and saying so is what stops the model quietly re-deciding the
+// offer when it was asked to shorten a headline. Returns '' when there is no
+// current copy — a first draft has none and must not be told there is.
+function currentCopyBlock(currentCopy) {
+  const s = String(currentCopy || '').trim();
+  if (!s) return '';
+  return [
+    'This field ALREADY has copy. Revise it — keep what works, change what the',
+    'direction asks for, and stay on the same offer and angle unless told otherwise.',
+    'Do not start over. Return only the new version.',
+    `Current copy: ${s}`,
+  ].join('\n');
+}
+
 // --- Length constraint, in the field's own UNIT ------------------------------
 // Every prompt below used to hard-code "Character limit: N". Email body fields now
 // carry a WORD range (copy_fields.field_type = 'words'), and telling a model to
@@ -963,6 +980,7 @@ async function generateFieldDraft({
   direction,
   voiceGuide,
   siblings,
+  currentCopy,
 }) {
   const limitLine =
     lengthClause(charMax, fieldType, charMin) ||
@@ -989,6 +1007,9 @@ async function generateFieldDraft({
     // this field's sibling fields, so it hangs together with them even though it's
     // drafted alone rather than in the cohesive whole-asset batch.
     siblingContextBlock(siblings),
+    // THIS field's current copy, when there is any. Absent on a first draft, so
+    // every existing caller's prompt is byte-identical to before.
+    currentCopyBlock(currentCopy),
     limitLine,
   ]
     .filter(Boolean)

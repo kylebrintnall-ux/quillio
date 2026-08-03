@@ -11637,3 +11637,424 @@ test('the inert variations flag is recorded as a known gap, not left to be redis
   const block = docs.slice(docs.indexOf('function buildVariantBlock'), docs.indexOf('function buildVariantBlock') + 1400);
   assert.ok(!/unenforced/.test(block), 'buildVariantBlock ignores it, so an extra key is inert not breaking');
 });
+
+// === STEP THREE: read a built template back, revise a cell, review it ========
+//
+// Step two wrote by stored coordinate. Step three READS by the same coordinate,
+// against a document whose markers have been replaced by copy — which is the
+// property the whole rework rests on and, until now, the one that was only ever
+// asserted. If the coordinate still finds the cell when the marker text is gone,
+// "the position IS the mapping" is an observation rather than a claim.
+
+// A built document: one table, N rows x 2 columns (label | value), with real
+// startIndex/endIndex so the ranges are the ranges a write would use.
+function builtDoc(cells) {
+  let idx = 1;
+  const rows = cells.map(([label, value]) => {
+    const mk = (t) => {
+      const start = idx;
+      const end = idx + t.length + 1; // the paragraph mark is part of the cell
+      idx = end;
+      return { content: [{ startIndex: start, endIndex: end, paragraph: { elements: [{ textRun: { content: t + '\n' } }] } }] };
+    };
+    return { tableCells: [mk(label), mk(value)] };
+  });
+  return { title: 'Spring Launch', body: { content: [{ table: { tableRows: rows } }] } };
+}
+const cellMarker = (name, opts = {}) => ({
+  marker_key: name.toLowerCase(),
+  marker_name: name,
+  is_copy: opts.is_copy !== false,
+  char_min: opts.char_min || 0,
+  char_max: opts.char_max || 0,
+  field_type: opts.field_type || 'text',
+  part: 'body',
+  table_index: 0,
+  row_index: opts.row,
+  column_index: 1,
+  label_text: opts.label_text === undefined ? name : opts.label_text,
+});
+
+test('a coordinate still finds its cell after the marker has been replaced by copy', () => {
+  const { readCells } = require('../src/destinations/templateCells');
+  // The built document: row 0 drafted, row 1 still showing its marker.
+  const doc = builtDoc([
+    ['Form Headline', 'Book your spot in under a minute'],
+    ['Form ID', '{{Form ID}}'],
+  ]);
+  const { rows, missing } = readCells(doc, [
+    cellMarker('Form Headline', { row: 0, char_max: 60 }),
+    cellMarker('Form ID', { row: 1, is_copy: false }),
+  ]);
+
+  assert.strictEqual(missing.length, 0, 'both located — the marker text is not what finds the cell');
+  assert.strictEqual(rows[0].text, 'Book your spot in under a minute');
+  assert.strictEqual(rows[0].showingMarker, false, 'its marker is gone, replaced by copy');
+  assert.strictEqual(rows[1].text, '{{Form ID}}');
+  assert.strictEqual(rows[1].showingMarker, true, 'this one was never meant to be written');
+});
+
+test('a cell still showing its marker is told apart from an empty one', () => {
+  const { readCells, markerStillShowing } = require('../src/destinations/templateCells');
+  const doc = builtDoc([['Body', '{{Body}}'], ['Subhead', ''], ['Other', '{{Something Else}}']]);
+  const { rows } = readCells(doc, [
+    cellMarker('Body', { row: 0 }),
+    cellMarker('Subhead', { row: 1 }),
+    cellMarker('Other', { row: 2 }),
+  ]);
+  // Three genuinely different states, and only the naming keeps them apart:
+  // "not mine to write", "mine and not done", and "mine, and somebody else's
+  // marker is sitting in it".
+  assert.deepStrictEqual(
+    rows.map((r) => [r.showingMarker, r.empty]),
+    [[true, false], [false, true], [false, false]]
+  );
+
+  // Matched through placeholderKey, the same fold that produced marker_key.
+  assert.strictEqual(markerStillShowing('{{ form  headline }}', 'form headline'), true, 'spacing and case fold');
+  assert.strictEqual(markerStillShowing('{{Form ID}}', 'form headline'), false, "another marker is not this one");
+  assert.strictEqual(markerStillShowing('Book your spot', 'form headline'), false);
+  assert.strictEqual(markerStillShowing('{{Form Headline}}', ''), false, 'no key, no claim');
+});
+
+test('the read reports every marker, not just the copy ones', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const read = src.slice(src.indexOf('async function readTemplateDocument'), src.indexOf('// PART 2 — REGENERATE'));
+  // A metadata cell still showing {{Form ID}} is the EVIDENCE the build left it
+  // alone. Filtering it out of the report would hide the thing most worth
+  // confirming by eye.
+  assert.ok(!/filter\(\(?\w*\)? => \w+\.is_copy\)/.test(read.split('const copyRows')[0]),
+    'markers are not filtered to is_copy before the read');
+  assert.match(read, /readTemplateCells\(docId, \{ markers \}, clients\)/);
+  assert.match(read, /still showing a marker/);
+});
+
+test('regenerate refuses a metadata cell and a field with no coordinate, per field', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const regen = src.slice(src.indexOf('async function regenerateTemplateFields'), src.indexOf('// PART 3 — REVIEW'));
+
+  // Both refusals, each with its own reason — "no" is not a useful answer if it
+  // does not say which of the two rules was hit.
+  assert.match(regen, /!m\.is_copy/);
+  assert.match(regen, /not ticked as copy/);
+  assert.match(regen, /m\.part == null \|\| m\.table_index == null \|\| m\.row_index == null \|\| m\.column_index == null/);
+  assert.match(regen, /no cell coordinate was recorded/);
+  assert.match(regen, /there is no field called/);
+
+  // PER FIELD, not per run: a run naming four fields with one bad one revises
+  // the three. Refusing the whole run would make the caller guess which.
+  assert.match(regen, /for \(const name of wanted\) \{/);
+  assert.match(regen, /refused\.push\(/);
+  assert.ok(/if \(targets\.length === 0\)/.test(regen), 'only an EMPTY target list stops the run');
+});
+
+test('regenerate replaces — it never stacks variations or riff marks', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const regen = src.slice(src.indexOf('async function regenerateTemplateFields'), src.indexOf('// PART 3 — REVIEW'));
+  const code = regen.replace(/\/\/[^\n]*/g, ''); // the comments discuss riffs; the code must not use them
+
+  // One cell holds one answer. The copy doc's numbered options under a "Riff N"
+  // divider have nowhere to go in a matrix cell, and three headlines in the cell
+  // a client reads as THE headline is not a recoverable kind of wrong.
+  for (const banned of ['generateFieldVariations', 'buildVariantBlock', 'riffN', 'doorway', 'variations']) {
+    assert.ok(!new RegExp(banned).test(code), `regenerate must not use ${banned}`);
+  }
+  // It goes through the single-field drafter and step two's write, unchanged.
+  assert.match(code, /await generateFieldDraft\(\{/);
+  assert.match(code, /getDestination\(\)\.writeTemplateCells\(/);
+});
+
+test('the redraft is a revision: it carries the cell current copy', async () => {
+  const { out, prompts } = await geminiWith(
+    () => 'Book your spot today',
+    (g) =>
+      g.generateFieldDraft({
+        assetType: 'Form and Confirmation Page',
+        fieldName: 'Form Subhead',
+        charMax: 60,
+        fieldType: 'text',
+        summary: 's',
+        writerPrompt: 'w',
+        direction: 'shorter',
+        currentCopy: 'Tell us where to send it and we will actually have it with you today',
+      })
+  );
+  assert.strictEqual(out, 'Book your spot today');
+  assert.match(prompts[0], /Current copy: Tell us where to send it/);
+  assert.match(prompts[0], /Do not start over/);
+  assert.match(prompts[0], /Revise it/);
+
+  // A FIRST draft has no current copy and must not be told there is any — every
+  // existing caller's prompt stays byte-identical.
+  const first = await geminiWith(
+    () => 'Book your spot today',
+    (g) => g.generateFieldDraft({ assetType: 'A', fieldName: 'Headline', charMax: 60, fieldType: 'text', summary: 's', writerPrompt: 'w' })
+  );
+  assert.ok(!/Current copy|Do not start over/.test(first.prompts[0]), 'no revision block on a first draft');
+});
+
+test('review notes are measurable only — no model is called to produce them', () => {
+  const { reviewNotes } = require('../src/services/templateReview');
+  const long = Array.from({ length: 140 }, (_, i) => `word${i}`).join(' ');
+  const notes = reviewNotes([
+    { marker_name: 'Form Headline', is_copy: true, char_max: 60, field_type: 'text', text: 'Book your spot', empty: false, showingMarker: false },
+    { marker_name: 'Form Subhead', is_copy: true, char_max: 60, field_type: 'text', text: 'x'.repeat(71), empty: false, showingMarker: false },
+    { marker_name: 'Form Body', is_copy: true, char_max: 120, field_type: 'words', text: long, empty: false, showingMarker: false },
+    { marker_name: 'Confirm Body', is_copy: true, char_max: 100, field_type: 'words', text: '', empty: true, showingMarker: false },
+    { marker_name: 'Undrafted', is_copy: true, char_max: 60, field_type: 'text', text: '{{Undrafted}}', empty: false, showingMarker: true },
+    { marker_name: 'Form ID', is_copy: false, char_max: 0, field_type: 'text', text: '{{Form ID}}', empty: false, showingMarker: true },
+  ]);
+
+  // Every note names its field first — unanchored, so the name is the only thing
+  // tying it to a cell.
+  for (const n of notes) assert.ok(n.text.startsWith(n.marker_name + ' — '), `names its field: ${n.text}`);
+
+  const texts = notes.map((n) => n.text);
+  assert.ok(!texts.some((t) => t.startsWith('Form Headline')), 'inside its limit → nothing to say');
+  assert.ok(!texts.some((t) => t.startsWith('Form ID')), 'a metadata cell keeping its marker is CORRECT, not a fault');
+  assert.match(texts[0], /Form Subhead — over its limit: 71 characters against a limit of 60\./);
+  assert.match(texts[1], /Form Body — over its limit: 140 words against a limit of 120\./, 'counted in its own unit');
+  assert.match(texts[2], /Confirm Body — empty\./);
+  assert.match(texts[3], /Undrafted — still showing its \{\{marker\}\}\./);
+  assert.strictEqual(notes.length, 4);
+
+  // No craft feedback, and no Gemini. That is a later decision, not this commit.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'templateReview.js'), 'utf8');
+  const code = src.replace(/\/\/[^\n]*/g, '');
+  assert.ok(!/callGemini|reviewCopyFields|generateAssetDrafts/.test(code), 'nothing here calls a model');
+  assert.match(code, /require\('\.\/gemini'\)/, 'it imports overLimit rather than reimplementing "over"');
+});
+
+test('the over-limit note and the drafter agree on what "over" means', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'templateReview.js'), 'utf8');
+  // A review that disagreed with the drafter about the unit would be the worse
+  // of the two bugs: it would flag every correct word field forever.
+  assert.match(src, /const \{ overLimit \} = require\('\.\/gemini'\)/);
+  assert.match(src, /if \(overLimit\(row\.text, row\.char_max, row\.field_type\)\)/);
+  const { measure } = require('../src/services/templateReview');
+  assert.deepStrictEqual(measure('one two three', 'words'), { n: 3, unit: 'words' });
+  assert.deepStrictEqual(measure('abc', 'text'), { n: 3, unit: 'characters' });
+  assert.deepStrictEqual(measure('one', 'words'), { n: 1, unit: 'word' }, 'singular reads as English');
+});
+
+test('review comments are posted UNANCHORED, because a cell quote cannot resolve', () => {
+  const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  const fn = docs.slice(docs.indexOf('async function addUnanchoredComment'), docs.indexOf('module.exports = {\n  name:'));
+  const code = fn.replace(/\/\/[^\n]*/g, '');
+
+  // The probe settled this: a Drive comment quoting text inside a TABLE CELL
+  // does not resolve — all six cases came back with "Original content deleted".
+  // Every cell of a template document is a table cell, so sending a quote here
+  // is how you GET that banner.
+  assert.ok(!/quotedFileContent/.test(code), 'no quote is sent at all');
+  assert.match(code, /content: REVIEW_PREFIX \+ content/, 'still branded, so listReviewComments can find it');
+  // And the anchored one is untouched — the copy doc still anchors.
+  assert.match(docs, /quotedFileContent: \{ mimeType: 'text\/plain', value: q \}/);
+});
+
+test('re-running the review does not double the queue, and respects a resolved note', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'templateReview.js'), 'utf8');
+  // Exact-text match is crude, but it is the honest bound: these notes are
+  // generated deterministically from the cell, so the same fault produces the
+  // same sentence — and a CHANGED fault (71 characters became 78) correctly
+  // reads as a new note rather than the same one.
+  assert.match(src, /already\.has\(n\.text\)/);
+  assert.match(src, /live\.filter\(\(c\) => !c\.resolved\)/);
+  // A listing failure posts anyway: a duplicate comment is visible and harmless,
+  // silently posting nothing is neither.
+  assert.match(src, /posting without dedupe/);
+});
+
+test('step three is runner-only: no Slack, no web, no parse', () => {
+  const root = path.join(__dirname, '..');
+  for (const f of ['src/routes/app.js', 'src/routes/settings.js', 'src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/adapters/slackReview.js', 'src/server.js']) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    assert.ok(!/readTemplateDocument|regenerateTemplateFields|reviewTemplateDocument|templateReview/.test(src), `${f} has no entry point`);
+  }
+  // The parse path still does not know templates exist.
+  const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
+  const parse = pipe.slice(pipe.indexOf('async function resolveAssetVocabulary'), pipe.indexOf('async function fetchAllReferences'));
+  assert.ok(!/template/i.test(parse), 'the parse path does not mention templates');
+  // gemini gained a revision block and nothing else — it still must not know
+  // about the template build path.
+  const gem = fs.readFileSync(path.join(root, 'src', 'services', 'gemini.js'), 'utf8');
+  assert.ok(!/template_markers|readTemplateDocument|regenerateTemplateFields/.test(gem), 'gemini is untouched by the template path');
+  assert.ok(fs.existsSync(path.join(root, 'scripts', 'readTemplateDoc.js')), 'the runner is the entry point');
+});
+
+test('the runner writes nothing without a flag, and reads the BUILT document', () => {
+  const runner = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'readTemplateDoc.js'), 'utf8');
+  // Plain read is the default and is inspectable before anything writes.
+  assert.match(runner, /if \(!regenerate && !review\) \{/);
+  assert.match(runner, /Read only — nothing was written/);
+  // Pointing --doc at the SOURCE template would write copy into the file every
+  // future build is copied from, so the usage says which one it wants.
+  assert.match(runner, /the BUILT document — the copy in the campaign folder/);
+  // --regenerate takes a list.
+  assert.match(runner, /regenerate\.split\(','\)/);
+  assert.match(runner, /One cell holds one answer/);
+});
+
+// --- The review dedupe roundtrip, and the floor -----------------------------
+//
+// The dedupe compares a note's text against listReviewComments' `content`, while
+// addUnanchoredComment writes REVIEW_PREFIX + content. Those only match because
+// listReviewComments STRIPS the prefix on the way back out
+// (googleDocs.js: c.content.slice(REVIEW_PREFIX.length)). If that ever stops
+// being true, dedupe silently never fires and every --review run re-posts every
+// note — a failure with no symptom except a growing comment queue.
+//
+// So this drives the real postTemplateReview through a stubbed Drive whose
+// comment list is built from WHAT addUnanchoredComment ACTUALLY WROTE, rather
+// than asserting on source strings. The prefix roundtrip is the thing under
+// test, and only a roundtrip can test it.
+
+function driveCommentStub() {
+  const posted = [];
+  let live = [];
+  return {
+    posted,
+    // Feed back exactly what was written — same prefix, same shape the Drive API
+    // returns. Anything reshaped here would be testing the reshaping.
+    seedFromPosted: (opts = {}) => {
+      live = posted.map((body, i) => ({ id: 'c' + i, content: body.content, deleted: false, resolved: !!opts.resolved }));
+    },
+    clients: {
+      drive: {
+        comments: {
+          list: async () => ({ data: { comments: live } }),
+          create: async ({ requestBody }) => {
+            posted.push(requestBody);
+            return { data: { id: 'c' + posted.length } };
+          },
+        },
+      },
+    },
+  };
+}
+
+const REVIEWABLE_ROWS = [
+  { marker_name: 'Form Subhead', marker_key: 'form subhead', is_copy: true, char_min: 0, char_max: 60, field_type: 'text', text: 'x'.repeat(71), empty: false, showingMarker: false },
+  { marker_name: 'Form Body', marker_key: 'form body', is_copy: true, char_min: 0, char_max: 120, field_type: 'words', text: '{{Form Body}}', empty: false, showingMarker: true },
+];
+
+test('a re-run finds its own comments: the prefix survives the roundtrip', async () => {
+  const { postTemplateReview } = require('../src/services/templateReview');
+  const stub = driveCommentStub();
+
+  const first = await postTemplateReview('DOC', REVIEWABLE_ROWS, stub.clients);
+  assert.strictEqual(first.notes.length, 2);
+  assert.strictEqual(first.posted.length, 2, 'nothing was live, so both posted');
+  assert.strictEqual(first.duplicates.length, 0);
+
+  // What actually reached Drive carries the prefix...
+  const { REVIEW_PREFIX } = require('../src/destinations/googleDocs');
+  for (const body of stub.posted) {
+    assert.ok(body.content.startsWith(REVIEW_PREFIX), `posted with the prefix: ${body.content}`);
+    assert.ok(!body.quotedFileContent, 'and with no anchor');
+  }
+  // ...and the note text does NOT. These two only meet because the reader strips.
+  assert.ok(!first.notes[0].text.startsWith(REVIEW_PREFIX), 'the note itself is unprefixed');
+
+  // Second run against those same comments: everything is a duplicate, nothing
+  // new reaches Drive.
+  stub.seedFromPosted();
+  const postedAfterFirst = stub.posted.length;
+  const second = await postTemplateReview('DOC', REVIEWABLE_ROWS, stub.clients);
+  assert.strictEqual(second.duplicates.length, 2, 'both recognised as already live');
+  assert.strictEqual(second.posted.length, 0);
+  assert.strictEqual(stub.posted.length, postedAfterFirst, 'nothing new was written');
+});
+
+test('a resolved note is not treated as live, and a changed fault is a new note', async () => {
+  const { postTemplateReview } = require('../src/services/templateReview');
+
+  // Ticked off in Google Docs → "handled". If the fault is still there on the
+  // next run, the reader should hear about it again.
+  const resolved = driveCommentStub();
+  await postTemplateReview('DOC', REVIEWABLE_ROWS, resolved.clients);
+  resolved.seedFromPosted({ resolved: true });
+  const again = await postTemplateReview('DOC', REVIEWABLE_ROWS, resolved.clients);
+  assert.strictEqual(again.posted.length, 2, 'resolved does not suppress a fault that is still there');
+
+  // And the exact-text match is what makes a CHANGED fault read as new: 71
+  // characters became 78, so it is a different sentence and posts again.
+  const changed = driveCommentStub();
+  await postTemplateReview('DOC', REVIEWABLE_ROWS, changed.clients);
+  changed.seedFromPosted();
+  const worse = REVIEWABLE_ROWS.map((r) => (r.marker_name === 'Form Subhead' ? { ...r, text: 'x'.repeat(78) } : r));
+  const third = await postTemplateReview('DOC', worse, changed.clients);
+  assert.strictEqual(third.posted.length, 1, 'the changed one posts');
+  assert.strictEqual(third.duplicates.length, 1, 'the unchanged one does not');
+  assert.match(third.posted[0].text, /78 characters against a limit of 60/);
+});
+
+test('a listing failure posts anyway rather than silently reviewing nothing', async () => {
+  const { postTemplateReview } = require('../src/services/templateReview');
+  const stub = driveCommentStub();
+  stub.clients.drive.comments.list = async () => { throw new Error('rate limited'); };
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    const out = await postTemplateReview('DOC', REVIEWABLE_ROWS, stub.clients);
+    // A duplicate comment is visible and harmless; a review that silently posts
+    // nothing because a LIST call failed is neither.
+    assert.strictEqual(out.posted.length, 2);
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.ok(warned.some((w) => /posting without dedupe/.test(w)), 'and it says why');
+});
+
+test('review reads the floor as well as the ceiling', () => {
+  const { reviewNotes } = require('../src/services/templateReview');
+  const words = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
+  const notes = reviewNotes([
+    // 12 words against 50-120. Exactly as measurable as coming back at 140, and
+    // it used to get nothing: a one-line email where a structured one was asked
+    // for reads as finished copy.
+    { marker_name: 'Form Body', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(12), empty: false, showingMarker: false },
+    { marker_name: 'In Range', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(80), empty: false, showingMarker: false },
+    { marker_name: 'At The Floor', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(50), empty: false, showingMarker: false },
+    { marker_name: 'Over Instead', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: words(140), empty: false, showingMarker: false },
+    // char_min 0 is NO FLOOR — the same sentinel char_max 0 uses for no limit.
+    { marker_name: 'No Floor', is_copy: true, char_min: 0, char_max: 60, field_type: 'text', text: 'Hi', empty: false, showingMarker: false },
+    // Written on char_min, not on the unit, so a character field with a floor is
+    // covered by the same rule rather than a second one.
+    { marker_name: 'Short Headline', is_copy: true, char_min: 20, char_max: 60, field_type: 'text', text: 'Hi', empty: false, showingMarker: false },
+  ]);
+  const texts = notes.map((n) => n.text);
+
+  assert.deepStrictEqual(texts, [
+    'Form Body — under its minimum: 12 words against a minimum of 50.',
+    'Over Instead — over its limit: 140 words against a limit of 120.',
+    'Short Headline — under its minimum: 2 characters against a minimum of 20.',
+  ]);
+  // In range and exactly at the floor say nothing — a minimum is a floor, not a
+  // target, so hitting it is passing.
+  assert.ok(!texts.some((t) => /In Range|At The Floor|No Floor/.test(t)));
+});
+
+test('over and under are exclusive, and both come after the marker and empty checks', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'templateReview.js'), 'utf8');
+  // A row cannot be both over its ceiling and under its floor, and emitting two
+  // contradicting notes for one cell is how a reader learns to skip them.
+  assert.match(src, /out\.push\(`\$\{name\} — over its limit[\s\S]{0,120}return out; \/\/ Cannot also be under its minimum\./);
+  assert.match(src, /const min = Number\(row\.char_min\) > 0 \? Number\(row\.char_min\) : null;/);
+  // Both length checks measure through the same helper the note text uses.
+  const { measure } = require('../src/services/templateReview');
+  assert.strictEqual(measure('a b c d', 'words').n, 4);
+
+  // A cell still showing its marker, or empty, returns before either — measuring
+  // the length of "{{Form Body}}" would be arithmetic about the wrong string.
+  const { reviewNotes } = require('../src/services/templateReview');
+  const notes = reviewNotes([
+    { marker_name: 'A', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: '{{A}}', empty: false, showingMarker: true },
+    { marker_name: 'B', is_copy: true, char_min: 50, char_max: 120, field_type: 'words', text: '', empty: true, showingMarker: false },
+  ]);
+  assert.strictEqual(notes.length, 2, 'one note each, not two');
+  assert.match(notes[0].text, /still showing its \{\{marker\}\}/);
+  assert.match(notes[1].text, /empty\./);
+  assert.ok(!notes.some((n) => /minimum/.test(n.text)), 'neither is also called short');
+});

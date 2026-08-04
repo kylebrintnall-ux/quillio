@@ -364,6 +364,12 @@ const ASSET_PHRASE_HINTS = [
     line: '- "3 linkedin ads to a/b test" → one entry: LinkedIn Single Image Ad, count 3',
   },
   // Only worth saying to a tenant who actually has "… — Variant A"-style types.
+  //
+  // KEPT, THOUGH THE SEED NO LONGER SHIPS ANY. The four bundled Variant assets
+  // are retired, so for a stock tenant this rule now emits nothing — `anyMatching`
+  // tests the tenant's own vocabulary, not the bundled one. A tenant who built
+  // their own "— Variant" types still needs the rule, and they are exactly the
+  // tenant this was written for.
   {
     anyMatching: /—\s*variant\s/i,
     line: [
@@ -387,7 +393,13 @@ const ASSET_PHRASE_HINTS = [
   { target: 'Event Landing Page', line: '- "landing page" or "event page" → Event Landing Page' },
   { target: 'On-Site Signage — General', line: '- "signage" or "on-site" → On-Site Signage — General' },
   { target: 'Campaign Landing Page', line: '- "campaign page" → Campaign Landing Page' },
-  { target: 'Form Confirm Page', line: '- "confirm page" or "form confirm" → Form Confirm Page' },
+  // NO 'Form Confirm Page' HINT. The asset is retired (see defaultAssets.js), and
+  // this line is the reason it is worth saying so here: it taught the model to
+  // read "confirm page" as an ASSET at a time when the same words are how a
+  // tenant names their form-and-confirmation TEMPLATE. The hint table is filtered
+  // against the tenant's vocabulary, so a leftover entry would have gone quiet on
+  // its own — but a hint pointing at a name nothing can return is a trap for the
+  // next person reading this list.
   { target: 'Organic Social — LinkedIn', line: '- "organic social" or "organic" → Organic Social — LinkedIn' },
   { target: 'Organic Social — Instagram', line: '- "instagram" → Organic Social — Instagram' },
   { target: 'Direct Mail — Box / Mailer', line: '- "direct mail" or "mailer" → Direct Mail — Box / Mailer' },

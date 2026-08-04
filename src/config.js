@@ -7,10 +7,10 @@
 const ALLOWED_ASSETS = [
   'LinkedIn Single Image Ad',
   'LinkedIn Carousel Ad',
-  'LinkedIn Single Image Ad — Variant A',
-  'LinkedIn Single Image Ad — Variant B',
-  'LinkedIn Single Image Ad — Variant C',
-  'LinkedIn Single Image Ad — Variant D',
+  // The four "— Variant A/B/C/D" copies were retired with the seed: asking for
+  // four of an asset is a count now, not four asset types. Must stay in step with
+  // src/data/defaultAssets.js — this list is the fallback vocabulary for a no-DB
+  // or unseeded tenant, so a name left here is a name they can still be given.
   'Meta Single Image Ad',
   'Meta Carousel Ad',
   'Twitter/X Ad',
@@ -26,7 +26,8 @@ const ALLOWED_ASSETS = [
   'On-Site Signage — Session Title Card',
   'On-Site Signage — Directional',
   'Campaign Landing Page',
-  'Form Confirm Page',
+  // 'Form Confirm Page' retired with the seed — a form-and-confirmation page is a
+  // document a tenant names, not a house asset type competing with that name.
   'Organic Social — LinkedIn',
   'Organic Social — Instagram',
   'Organic Social — Twitter/X',

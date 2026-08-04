@@ -149,9 +149,9 @@ test('copyCompleteBlocks builds Open in Drive + Regenerate', () => {
   );
 });
 
-test('config.ALLOWED_ASSETS is the 30-name v3 taxonomy', () => {
+test('config.ALLOWED_ASSETS is the 25-name v3 taxonomy, post-prune', () => {
   const { ALLOWED_ASSETS } = require('../src/config');
-  assert.strictEqual(ALLOWED_ASSETS.length, 30);
+  assert.strictEqual(ALLOWED_ASSETS.length, 25);
   assert.ok(ALLOWED_ASSETS.includes('Battle Card'));
   assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad'));
 });
@@ -523,9 +523,9 @@ test('resolveTenant falls back to a consistent env-var shape with no DB', async 
 
 // --- Week 7: per-tenant asset library ---
 
-test('defaultAssets is the 30-type v3 library with valid shape', () => {
+test('defaultAssets is the 25-type v3 library with valid shape, post-prune', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
-  assert.strictEqual(DEFAULT_ASSETS.length, 30, 'exactly 30 asset types');
+  assert.strictEqual(DEFAULT_ASSETS.length, 25, 'exactly 25 asset types');
 
   const groups = new Set([
     'Paid Social',
@@ -570,10 +570,11 @@ test('defaultAssets is the 30-type v3 library with valid shape', () => {
       assert.ok(f.char_max >= f.char_min, `field "${f.field_name}" max >= min`);
     }
   }
-  // sort_order is 1..30 contiguous
+  // sort_order is contiguous from 1, with no gap left by the prune — it is
+  // derived from position in RAW, so removing five entries renumbers the rest.
   assert.deepStrictEqual(
     [...seenSortOrders].sort((x, y) => x - y),
-    Array.from({ length: 30 }, (_, i) => i + 1)
+    Array.from({ length: DEFAULT_ASSETS.length }, (_, i) => i + 1)
   );
 });
 
@@ -851,7 +852,8 @@ test('email Subject Line + Preheader seed mobile-truncation notes; reused names 
 test('defaultAssets Graphic Copy group is contiguous and correctly placed', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const grouped = DEFAULT_ASSETS.filter((a) => a.fields.some((f) => f.group_label === 'Graphic Copy'));
-  assert.strictEqual(grouped.length, 14, '14 assets carry a Graphic Copy group');
+  // 14 before the prune; the four retired LinkedIn Variant copies each carried one.
+  assert.strictEqual(grouped.length, 10, '10 assets carry a Graphic Copy group');
   for (const a of grouped) {
     // Grouped fields must be one uninterrupted run so the Doc renders a single
     // sub-heading (and the Figma population step maps them as a unit).
@@ -4490,7 +4492,7 @@ test('asset plan: an EMPTY plan still returns the whole library, in library orde
   // NOT the silent fallback removed below.
   for (const empty of [[], undefined, null, 'nonsense', 42]) {
     const specs = tenantAssetsToSpecs(DEFAULT_ASSETS, empty);
-    assert.strictEqual(specs.length, 30, `empty plan (${JSON.stringify(empty)}) → whole library`);
+    assert.strictEqual(specs.length, DEFAULT_ASSETS.length, `empty plan (${JSON.stringify(empty)}) → whole library`);
     assert.deepStrictEqual(
       specs.map((s) => s.assetType),
       DEFAULT_ASSETS.map((a) => a.name),
@@ -4745,9 +4747,10 @@ test('instance headings: decomposition never shreds a real asset name', () => {
   const { decomposeAssetHeading } = require('../src/destinations/googleDocs');
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
 
-  // THE HAZARD: 14 of 30 bundled names contain ' — '. None may decompose.
+  // THE HAZARD: 10 of the 25 bundled names contain ' — '. None may decompose.
+  // (14 of 30 before the prune — four of the removed five were '— Variant X'.)
   const dashNames = DEFAULT_ASSETS.map((a) => a.name).filter((n) => n.includes('—'));
-  assert.ok(dashNames.length >= 14, `expected the em-dash names, got ${dashNames.length}`);
+  assert.ok(dashNames.length >= 10, `expected the em-dash names, got ${dashNames.length}`);
   for (const name of DEFAULT_ASSETS.map((a) => a.name)) {
     assert.strictEqual(decomposeAssetHeading(name), null, `bare library name must not decompose: ${name}`);
   }
@@ -5273,9 +5276,9 @@ test('surface ceilings: a stricter surface would still be honoured', () => {
     tenantAssetsToSpecs(rows, [{ asset: 'Battle Card', count: 3 }, { asset: 'Campaign Landing Page', count: 3 }], STRICT_LIMITS).length,
     6
   );
-  // A vague brief still renders the whole library — 30 assets is not 30 instances.
+  // A vague brief still renders the whole library — N assets is not N instances.
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
-  assert.strictEqual(tenantAssetsToSpecs(DEFAULT_ASSETS, [], STRICT_LIMITS).length, 30);
+  assert.strictEqual(tenantAssetsToSpecs(DEFAULT_ASSETS, [], STRICT_LIMITS).length, DEFAULT_ASSETS.length);
 });
 
 test('surface ceilings: the Slack adapter passes its limits to generateDoc', () => {
@@ -5468,12 +5471,20 @@ test('parseBrief: the prompt asks for a plan and routes A/B tests to counts', as
   assert.ok(/"ab test".*→ the BASE asset, count 2/.test(prompt), 'A/B routes to a count');
   // No mapping arrow anywhere points AT a Variant asset type.
   assert.ok(!/→[^\n]*Variant [A-D]/.test(prompt), 'nothing routes to Variant A-D any more');
-  assert.ok(/never as a way of expressing "two versions"/.test(prompt), 'and the model is told why');
-  // The Variant A-D types still EXIST — they were not deleted from the taxonomy.
+  // THE VARIANT TYPES ARE GONE FROM THE TAXONOMY. This test used to assert the
+  // opposite — "they were not deleted" — because routing A/B phrasing to a count
+  // was done first and the four asset types were left standing beside it. They
+  // were four of thirty names the parse had to choose between, and near-duplicates
+  // are what a name match gets wrong, so the prune finished the job.
   const { ALLOWED_ASSETS } = require('../src/config');
-  assert.strictEqual(ALLOWED_ASSETS.length, 30);
-  assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad — Variant A'));
-  assert.ok(prompt.includes('LinkedIn Single Image Ad — Variant A'), 'still offered in the allowed list');
+  assert.strictEqual(ALLOWED_ASSETS.length, 25);
+  assert.ok(!ALLOWED_ASSETS.some((n) => /— Variant [A-D]$/.test(n)), 'no Variant types in the taxonomy');
+  assert.ok(!prompt.includes('LinkedIn Single Image Ad — Variant A'), 'and none offered in the allowed list');
+  // The RULE about them is gone too, for a stock tenant — `anyMatching` tests the
+  // TENANT's vocabulary, so with no Variant types there is nothing to warn about.
+  // A tenant who built their own still gets it; that is asserted separately below.
+  assert.ok(!/never as a way of expressing "two versions"/.test(prompt),
+    'the Variant rule self-suppresses when the vocabulary has none');
   // The cap is on TOTAL VERSIONS now, not distinct names, and it only binds when
   // the brief gave no numbers of its own.
   assert.ok(/when the brief gives NO numbers, keep the total number of versions to 5 or\nfewer/.test(prompt),
@@ -12173,21 +12184,33 @@ test('a phrase hint pointing at the same thing as a template is not emitted', ()
   const config = require('../src/config');
   const { assetPhraseHintLines } = require('../src/services/gemini');
 
-  // THE PROMPT ARGUING WITH ITSELF. The bundled library has an asset called
-  // "Form Confirm Page"; the tenant's template is "Form and Confirmation Page".
-  // normalize() says these are different names — and they are — so the collision
-  // check correctly does not fire. But the hint instructs the model to route a
-  // "form confirm" ask to the ASSET, a hundred lines before it is told templates
-  // exist, and the asset side wins on position and on having a worked example.
+  // THE PROMPT ARGUING WITH ITSELF. A hint instructs the model to route a phrase
+  // to an ASSET, a hundred lines before it is told templates exist, and the asset
+  // side wins on position and on having a worked example. So a hint whose target
+  // describes the same artifact as one of the tenant's templates is withheld.
+  //
+  // THE ORIGINAL CASE IS GONE, and that is the better fix. This used to be
+  // demonstrated with the bundled "Form Confirm Page" asset against a tenant's
+  // "Form and Confirmation Page" template — the pair that caused the bug. That
+  // asset has since been retired from the seed entirely, so the suppression has
+  // nothing to suppress there any more. The RULE still matters for every other
+  // near-duplicate, and is exercised here on one that still exists.
   const base = assetPhraseHintLines(config.ALLOWED_ASSETS);
-  assert.ok(base.some((l) => /→ Form Confirm Page$/.test(l)), 'the hint exists for a tenant with no template');
+  assert.ok(base.some((l) => /→ Campaign Landing Page$/.test(l)), 'the hint exists for a tenant with no template');
 
-  const filtered = assetPhraseHintLines(config.ALLOWED_ASSETS, ['Form and Confirmation Page']);
-  assert.ok(!filtered.some((l) => /→ Form Confirm Page$/.test(l)), 'and is gone for one who has that template');
+  const filtered = assetPhraseHintLines(config.ALLOWED_ASSETS, ['Campaign Landing Page Matrix']);
+  assert.ok(!filtered.some((l) => /→ Campaign Landing Page$/.test(l)), 'and is gone for one who has that template');
   assert.strictEqual(filtered.length, base.length - 1, 'exactly one hint went, not a swathe of them');
 
   // The ampersand spelling folds the same way.
-  assert.strictEqual(assetPhraseHintLines(config.ALLOWED_ASSETS, ['Form & Confirmation Page']).length, base.length - 1);
+  assert.strictEqual(assetPhraseHintLines(config.ALLOWED_ASSETS, ['Campaign & Landing Page']).length, base.length - 1);
+
+  // AND NO HINT NAMES A RETIRED ASSET. A hint is filtered against the tenant's
+  // vocabulary, so a leftover entry would go quiet on its own — which is exactly
+  // why it would sit there unnoticed, pointing at a name nothing can return.
+  for (const gone of [/Form Confirm Page/, /Variant [A-D]/]) {
+    assert.ok(!base.some((l) => gone.test(l)), `no hint targets ${gone}`);
+  }
 });
 
 test('the overlap rule is strict, and says which way it fails', () => {
@@ -12199,8 +12222,9 @@ test('the overlap rule is strict, and says which way it fails', () => {
   // THE RULE: significant tokens (stopwords dropped), each cut to five
   // characters, and one signature must be a SUBSET of the other with at least
   // two tokens. Five characters is what makes "confirm" and "confirmation" the
-  // same token, which is the pair that had to match.
-  assert.strictEqual(suppressed('Form and Confirmation Page'), 1, 'the real case');
+  // same token — the pair this was written for, whose asset has since been
+  // retired from the seed, so the rule is demonstrated on a surviving name.
+  assert.strictEqual(suppressed('Campaign Landing Page Matrix'), 1, 'a template that extends an asset name');
 
   // A template genuinely unrelated to every hint suppresses NOTHING — which is
   // every tenant who has not named a template after an asset type.
@@ -12213,8 +12237,8 @@ test('the overlap rule is strict, and says which way it fails', () => {
   // FAILS STRICT, ON PURPOSE: a hint that stays is the behaviour that shipped;
   // a hint wrongly removed silently stops an asset matching for every brief. So
   // a near-miss is left alone rather than guessed at.
-  assert.strictEqual(suppressed('Form and Confirmation Matrix'), 0,
-    'matrix vs page — neither signature contains the other, so nothing is removed');
+  assert.strictEqual(suppressed('Campaign Launch Page'), 0,
+    'launch vs landing — neither signature contains the other, so nothing is removed');
 });
 
 test('the phrase-hint table is static, and was already filtered by what the tenant owns', () => {
@@ -12856,4 +12880,81 @@ test('the brief box is whole line boxes, and grows with its content', () => {
   // Scrolling past the cap has to stay possible, or a long brief is unreachable.
   assert.match(css, /overflow-y: auto/);
   assert.match(css, /resize: none/);
+});
+
+test('the retired asset types are gone from BOTH vocabularies, and stay gone', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { ALLOWED_ASSETS } = require('../src/config');
+  const { normalize } = require('../src/utils/normalize');
+
+  // Two vocabularies, and a name left in either is a name a tenant can still be
+  // given: the seed feeds a NEW tenant's rows, ALLOWED_ASSETS is the fallback for
+  // no-DB / demo / unseeded. Pruning one and not the other prunes nothing.
+  const RETIRED = [
+    'Form Confirm Page',
+    'LinkedIn Single Image Ad — Variant A',
+    'LinkedIn Single Image Ad — Variant B',
+    'LinkedIn Single Image Ad — Variant C',
+    'LinkedIn Single Image Ad — Variant D',
+  ];
+  const seed = new Set(DEFAULT_ASSETS.map((a) => normalize(a.name)));
+  const allowed = new Set(ALLOWED_ASSETS.map(normalize));
+  for (const name of RETIRED) {
+    assert.ok(!seed.has(normalize(name)), `"${name}" is out of the seed`);
+    assert.ok(!allowed.has(normalize(name)), `"${name}" is out of ALLOWED_ASSETS`);
+  }
+
+  // THE TWO LISTS MUST AGREE, which is the invariant that catches a future edit
+  // to one of them. They were 30 and 30; they are 25 and 25.
+  assert.strictEqual(DEFAULT_ASSETS.length, ALLOWED_ASSETS.length);
+  assert.deepStrictEqual([...seed].sort(), [...allowed].sort(), 'seed and fallback name the same assets');
+
+  // The BASE asset the four Variants copied is still here — the prune removed the
+  // duplicates, not the thing they duplicated.
+  assert.ok(seed.has(normalize('LinkedIn Single Image Ad')));
+  // And nothing is left half-removed: no direction keyed to a name that is gone.
+  for (const a of DEFAULT_ASSETS) assert.ok(a.asset_direction, `${a.name} kept its direction`);
+});
+
+test('the retirement migration deactivates, reports its blast radius, and names the permissions change', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateRetireDeadAssets.js'), 'utf8');
+
+  // DEACTIVATES. asset_types(id) is referenced by tables with no ON DELETE, so a
+  // DELETE is refused by Postgres the moment a child row exists — and is_active
+  // is what getTenantAssets filters on, so an inactive row is as absent from
+  // parse as a deleted one, and reversible.
+  assert.match(src, /UPDATE asset_types SET is_active = false/);
+  // Comments stripped: the header explains why there is no DELETE by quoting the
+  // rule, and the prose must not be what satisfies — or fails — the assertion.
+  const code = src.replace(/\/\/[^\n]*/g, '');
+  assert.ok(!/DELETE FROM asset_types/.test(code), 'it never deletes an asset row');
+  assert.ok(!/DELETE FROM copy_fields/.test(code), 'nor its fields');
+
+  // All six names, including the tenant-created one that is in no seed.
+  for (const n of ['Form Confirm Page', 'Variant A', 'Variant B', 'Variant C', 'Variant D', 'Form and Confirmation Copy']) {
+    assert.ok(src.includes(n), `targets ${n}`);
+  }
+  // Matched through the normalizer, or spacing and dash variants survive the
+  // prune — which is the exact class of duplicate this exists to remove.
+  assert.match(src, /quillio_normalize_name\(name\) = ANY\(/);
+  assert.match(src, /proname = 'quillio_normalize_name'/, 'and refuses to run without it');
+
+  // Reads the FK list from information_schema rather than hard-coding it, so a
+  // reference added by hand-run DDL shows up instead of being found by a failure.
+  assert.match(src, /information_schema\.referential_constraints/);
+  assert.match(src, /ccu\.table_name = 'asset_types'/);
+
+  // THE PERMISSIONS CHANGE, said out loud. Settings treats a bundled asset as
+  // read-only apart from its toggle; these names have left the seed, so a
+  // surviving row now reads as tenant-created and becomes fully editable.
+  assert.match(src, /A PERMISSIONS CHANGE COMES WITH THIS/);
+  assert.match(src, /isSeededAssetName/);
+  assert.match(src, /fully editable and renameable in Settings/);
+
+  // House rules for a migration: dry by default, idempotent, plain node.
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/);
+  assert.match(code, /await client\.query\('ROLLBACK'\)/, 'the dry run actually rolls back');
+  assert.match(src, /ROLLED BACK \(dry run\)/, 'and says so');
+  assert.match(src, /WHERE is_active = true/, 'already-inactive rows are a no-op');
+  assert.match(src, /NEVER `railway run`/);
 });

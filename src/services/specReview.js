@@ -71,12 +71,31 @@ function validateEdit(edit) {
 
 // Current per-tenant values for a (asset, field) pair. Uses a supplied runner
 // (pool or transaction client).
+//
+// ACTIVE ROWS ONLY. Deactivating an asset type is how this schema removes one
+// (db/assets.js; there is no DELETE FROM asset_types anywhere), and an inactive
+// row is invisible to every doc — getTenantAssets filters on is_active, so its
+// values cannot reach a brief, a draft or a review. Counting it here would
+// inflate tenant_count and pad the divergence breakdown with tenants who are not
+// actually affected, and that breakdown exists precisely so an admin can see
+// whether tenants already disagree before deciding what to type. A number that
+// includes dead rows is a number that lies about the blast radius.
+//
+// This is the ONLY read in this file that joins asset_types, and all four
+// callers (getFlagForReview, buildPreview, commitReview's `before` capture, and
+// getSuggestions) go through it — which is why the filter belongs here and not
+// at each call site. The UPDATE in commitReview carries the same predicate.
+//
+// Inert today: nothing retired so far has a tiered field, so no pair reachable
+// through affected_fields has an inactive row behind it. This is the guard for
+// the next retirement, not a fix for a live miscount.
 async function currentValues(runner, asset, field) {
   const res = await runner.query(
     'SELECT at.tenant_id, cf.char_max, cf.spec_note' +
       '  FROM copy_fields cf' +
       '  JOIN asset_types at ON at.id = cf.asset_type_id' +
       ' WHERE at.name = $1 AND cf.field_name = $2' +
+      '   AND at.is_active' +
       ' ORDER BY at.tenant_id',
     [asset, field]
   );
@@ -374,6 +393,12 @@ async function commitReview(flagId, edits, changedBy) {
       params.push(e.field);
       const fieldIdx = params.length;
 
+      // `AND at.is_active` matches currentValues above, and the two must stay in
+      // step: `before` was captured through that helper, so a write reaching a
+      // row the capture skipped would report an overwrite nobody could have seen
+      // coming — and would log a spec_change_log entry for a row no doc reads.
+      // Deliberately still no TENANT predicate: one platform changing a limit
+      // for everyone at once is the designed behaviour, not an oversight.
       const upd = await client.query(
         'UPDATE copy_fields cf' +
           '   SET ' + sets.join(', ') +
@@ -381,6 +406,7 @@ async function commitReview(flagId, edits, changedBy) {
           ' WHERE cf.asset_type_id = at.id' +
           '   AND at.name = $' + assetIdx +
           '   AND cf.field_name = $' + fieldIdx +
+          '   AND at.is_active' +
           ' RETURNING at.tenant_id',
         params
       );

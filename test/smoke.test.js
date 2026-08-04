@@ -8243,6 +8243,29 @@ test('the unmatched message names the gate that actually ran', () => {
   assert.strictEqual(partialMissNotice(['X'], 'nonsense'), partialMissNotice(['X'], 'default'));
 });
 
+test('LiveSpecs reads and writes both skip deactivated asset rows', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+
+  // currentValues is the ONLY read in the file that joins asset_types, and all
+  // four callers go through it — so one predicate here covers the review form,
+  // the preview, the pre-commit capture and the Gemini suggestion pass.
+  const read = src.slice(src.indexOf('async function currentValues'), src.indexOf('// Distinct current value'));
+  assert.match(read, /JOIN asset_types at ON at\.id = cf\.asset_type_id/);
+  assert.match(read, /AND at\.is_active/, 'the shared read filters inactive assets');
+  assert.strictEqual(
+    (src.match(/JOIN asset_types at ON at\.id = cf\.asset_type_id/g) || []).length,
+    1,
+    'still exactly one asset_types read — a second would need its own filter'
+  );
+
+  // The write must agree with the read: `before` is captured through
+  // currentValues, so a row the capture skipped must not then be written.
+  const write = src.slice(src.indexOf("'UPDATE copy_fields cf'"), src.indexOf('RETURNING at.tenant_id'));
+  assert.match(write, /AND at\.is_active/, 'and so does the write');
+});
+
 // --- A retired asset name is told what replaced it ---------------------------
 // f3683f4 retired six asset types. "Add it to your asset library" is the wrong
 // instruction for any of them: following it rebuilds the near-duplicate the
@@ -9721,6 +9744,10 @@ test('a seeded asset is read-only apart from is_active, decided by NAME', () => 
   // that is the opposite of filtering by it.)
   assert.ok(!/WHERE[\s\S]*tenant_id|AND\s+\S*tenant_id/.test(sql),
     'and still has no tenant filter — which is the whole reason for this rule');
+  // It DOES filter on is_active, which is a different axis: no tenant predicate
+  // (every tenant's row is rewritten) but no dead rows either (a retired asset
+  // is invisible to every doc, so writing to it only pollutes the audit log).
+  assert.match(sql, /AND at\.is_active/, 'and skips deactivated asset rows');
 
   // Enforced in the DB layer against the STORED row, not just the request: a
   // rename in the same call cannot walk past the check.

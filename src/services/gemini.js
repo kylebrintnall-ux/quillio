@@ -605,6 +605,24 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
   }
 
   console.log('[gemini] raw referenceLinks from parse:', JSON.stringify(parsed.referenceLinks));
+  // THE RAW TEMPLATE FIELDS, logged for the same reason referenceLinks are: an
+  // absent line is not evidence of an empty list. A template that did not match
+  // produces no warning anywhere downstream — resolveTemplatePlan is never
+  // reached with an empty plan — so without this the only signal is a silence
+  // that looks identical to "this brief named no template".
+  //
+  // Logged BEFORE the filters below, so it says what the MODEL returned rather
+  // than what survived: a name in `templates` that no vocabulary matched, and a
+  // name the model put in `assets` that is really a template, are different
+  // failures and the raw shape is the only place they are still distinguishable.
+  if (templates.length) {
+    console.log(
+      `[gemini] template vocabulary: ${templates.length} — ${JSON.stringify(templates)}; ` +
+        `model returned templates=${JSON.stringify(parsed.templates || [])} ` +
+        `unmatchedTemplates=${JSON.stringify(parsed.unmatchedTemplates || [])} ` +
+        `assets=${JSON.stringify((Array.isArray(parsed.assets) ? parsed.assets : []).map((a) => (a && (a.asset || a.assetType || a)) || a))}`
+    );
+  }
 
   // Defensively constrain assets to the allowed list. Match case- and
   // dash-insensitively (Gemini may emit a hyphen where the canonical name uses
@@ -789,6 +807,15 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
   ]
     .map((a) => String(a).trim())
     .filter(Boolean);
+
+  if (templates.length) {
+    console.log(
+      `[gemini] template plan after filtering: ${JSON.stringify(templatePlan.map((t) => t.template))}` +
+        (misroutedTemplates.length ? `, recovered from assets: ${JSON.stringify(misroutedTemplates)}` : '') +
+        (assetsFromTemplates.length ? `, assets recovered from templates: ${JSON.stringify(assetsFromTemplates.map((a) => a.asset))}` : '') +
+        (unmatchedFromTemplates.length ? `, matched NEITHER vocabulary: ${JSON.stringify(unmatchedFromTemplates)}` : '')
+    );
+  }
 
   const folderId = parsed.folderId ? String(parsed.folderId).trim() : null;
   const referenceLinks = Array.isArray(parsed.referenceLinks)

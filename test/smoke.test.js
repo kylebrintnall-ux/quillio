@@ -12030,3 +12030,106 @@ test('unmatchedTemplates is reachable, so it reaches the same surface as a misse
     assert.ok(src.indexOf('unmatchedTemplates') < src.indexOf('assets.length === 0 &&'), `${f} merges first`);
   }
 });
+
+// === The prompt structure that made an explicit template ask invisible ======
+//
+// A brief whose first instruction was "Build the Form and Confirmation Page for
+// this campaign" came back with three unrelated assets and templates: []. The
+// plumbing was intact — the vocabulary arrived, the block was in the prompt sent
+// — so it was prompt structure. Two causes, both fixed here.
+
+test('the Return: list names both containers before anything about matching', async () => {
+  const config = require('../src/config');
+  const { prompt } = await parseBriefWith(MODEL_BASE, 'a brief', config.ALLOWED_ASSETS, ['Form and Confirmation Page']);
+  const lines = prompt.split('\n');
+  const templatesEntry = lines.findIndex((l) => l.startsWith('- templates: the DOCUMENT TEMPLATES this brief names'));
+  const detailBlock = lines.findIndex((l) => l.startsWith('DOCUMENT TEMPLATES.'));
+  const semantic = lines.findIndex((l) => l.startsWith('INTERPRET INTENT SEMANTICALLY'));
+
+  // The Return: list is where the model learns what containers EXIST. It named
+  // one home for "things the brief asks for" — assets — and the model committed
+  // to that reading long before the detail block appeared.
+  assert.ok(templatesEntry > -1, 'templates is in the Return: list');
+  assert.ok(templatesEntry < semantic, 'and before the model is told how to match anything');
+  assert.ok(templatesEntry < detailBlock, 'the detail block stays where it was, below');
+  // The assets field says plainly that not everything named is an asset.
+  const assetsEntry = lines.find((l) => l.startsWith('- assets:'));
+  assert.match(assetsEntry, /NOT everything a brief names is an asset type/);
+  assert.match(assetsEntry, /those go in `templates` instead of here/);
+});
+
+test('a tenant with no templates still gets a byte-identical prompt', async () => {
+  const config = require('../src/config');
+  // The property that has to survive every change to this prompt: a workspace
+  // with no document templates must not be able to tell that templates exist.
+  const undef = await parseBriefWith(MODEL_BASE, 'a brief', config.ALLOWED_ASSETS);
+  const empty = await parseBriefWith(MODEL_BASE, 'a brief', config.ALLOWED_ASSETS, []);
+  assert.strictEqual(undef.prompt, empty.prompt, 'undefined and [] are the same prompt');
+  assert.ok(!/template/i.test(undef.prompt), 'and it says nothing about templates at all');
+});
+
+test('a phrase hint pointing at the same thing as a template is not emitted', () => {
+  const config = require('../src/config');
+  const { assetPhraseHintLines } = require('../src/services/gemini');
+
+  // THE PROMPT ARGUING WITH ITSELF. The bundled library has an asset called
+  // "Form Confirm Page"; the tenant's template is "Form and Confirmation Page".
+  // normalize() says these are different names — and they are — so the collision
+  // check correctly does not fire. But the hint instructs the model to route a
+  // "form confirm" ask to the ASSET, a hundred lines before it is told templates
+  // exist, and the asset side wins on position and on having a worked example.
+  const base = assetPhraseHintLines(config.ALLOWED_ASSETS);
+  assert.ok(base.some((l) => /→ Form Confirm Page$/.test(l)), 'the hint exists for a tenant with no template');
+
+  const filtered = assetPhraseHintLines(config.ALLOWED_ASSETS, ['Form and Confirmation Page']);
+  assert.ok(!filtered.some((l) => /→ Form Confirm Page$/.test(l)), 'and is gone for one who has that template');
+  assert.strictEqual(filtered.length, base.length - 1, 'exactly one hint went, not a swathe of them');
+
+  // The ampersand spelling folds the same way.
+  assert.strictEqual(assetPhraseHintLines(config.ALLOWED_ASSETS, ['Form & Confirmation Page']).length, base.length - 1);
+});
+
+test('the overlap rule is strict, and says which way it fails', () => {
+  const config = require('../src/config');
+  const { assetPhraseHintLines } = require('../src/services/gemini');
+  const base = assetPhraseHintLines(config.ALLOWED_ASSETS).length;
+  const suppressed = (t) => base - assetPhraseHintLines(config.ALLOWED_ASSETS, [t]).length;
+
+  // THE RULE: significant tokens (stopwords dropped), each cut to five
+  // characters, and one signature must be a SUBSET of the other with at least
+  // two tokens. Five characters is what makes "confirm" and "confirmation" the
+  // same token, which is the pair that had to match.
+  assert.strictEqual(suppressed('Form and Confirmation Page'), 1, 'the real case');
+
+  // A template genuinely unrelated to every hint suppresses NOTHING — which is
+  // every tenant who has not named a template after an asset type.
+  for (const unrelated of ['Rate Card', 'Media Plan', 'Quarterly Review Deck']) {
+    assert.strictEqual(suppressed(unrelated), 0, `"${unrelated}" suppresses nothing`);
+  }
+  // A ONE-TOKEN template cannot silence a whole family of hints.
+  assert.strictEqual(suppressed('Page'), 0, 'a one-word template is inert, deliberately');
+
+  // FAILS STRICT, ON PURPOSE: a hint that stays is the behaviour that shipped;
+  // a hint wrongly removed silently stops an asset matching for every brief. So
+  // a near-miss is left alone rather than guessed at.
+  assert.strictEqual(suppressed('Form and Confirmation Matrix'), 0,
+    'matrix vs page — neither signature contains the other, so nothing is removed');
+});
+
+test('the phrase-hint table is static, and was already filtered by what the tenant owns', () => {
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  // Worth pinning because it is the half of this that did NOT need fixing: the
+  // table is a hardcoded array, but a hint can only ever name an asset the
+  // tenant actually has. A hint for an asset they lack was never reachable.
+  assert.match(gem, /^const ASSET_PHRASE_HINTS = \[/m, 'static table');
+  assert.match(gem, /if \(!have\.has\(normalize\(h\.target\)\)\) return false;/, 'already filtered by target');
+  const { assetPhraseHintLines } = require('../src/services/gemini');
+  // A tenant with no assets gets exactly one hint: the universal count rule,
+  // which is marked `always` because it describes the `count` MECHANISM and
+  // names no asset — it says "the BASE asset", whatever that turns out to be.
+  // Every hint that names a concrete asset is gone.
+  const forNobody = assetPhraseHintLines([]);
+  assert.strictEqual(forNobody.length, 1);
+  assert.match(forNobody[0], /→ the BASE asset, count 2/);
+  assert.ok(!forNobody.some((l) => /→ [A-Z]/.test(l)), 'no hint names a concrete asset');
+});

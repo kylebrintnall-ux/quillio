@@ -406,12 +406,83 @@ const ASSET_PHRASE_HINTS = [
 const REFUSAL_EXAMPLES = ['TikTok', 'podcast ad', 'billboard', 'SMS'];
 
 // The phrase-mapping lines that apply to THIS list of asset names.
-function assetPhraseHintLines(allowed) {
+// Words that carry no identity in an asset or template name. Dropped before
+// comparison so "Form and Confirmation Page" and "Form Confirm Page" are
+// compared on the words that mean something.
+const NAME_STOPWORDS = new Set(['and', 'the', 'a', 'an', 'of', 'for', 'to', 'or', 'with']);
+
+// A name reduced to the tokens that identify it, each cut to five characters.
+//
+// FIVE IS THE WHOLE TRICK, and it is a blunt stemmer on purpose: "confirm" and
+// "confirmation" both become "confi", which is the pair that had to match. A
+// real stemmer would be more precise and would be one more thing that has to
+// agree with normalize() forever; a prefix cut is inspectable by reading it.
+function nameSignature(s) {
+  return new Set(
+    nameTokens(s)
+      .filter((t) => !NAME_STOPWORDS.has(t))
+      .map((t) => t.slice(0, 5))
+  );
+}
+
+// Does this hint's TARGET describe the same artifact as one of the tenant's
+// document templates?
+//
+// WHY NOT normalize() EQUALITY. That is what the collision check uses, and it
+// is right there — it decides whether two names are THE SAME NAME. This is a
+// different question: whether two DIFFERENT names describe the same thing.
+// "form confirm page" and "form and confirmation page" are not the same name,
+// and the tenant means the same document by both.
+//
+// THE RULE: one signature is a subset of the other, and the smaller has at
+// least two tokens. Subset rather than a similarity score because a threshold
+// is a number nobody can predict the behaviour of; two tokens because a
+// one-token template ("Page", "Matrix") would otherwise silence every hint that
+// happens to share that word.
+//
+// WHICH WAY IT FAILS. Strictly, and deliberately: a hint that stays is the
+// behaviour that shipped, a hint wrongly removed silently stops an asset
+// matching for every brief. So a template named "Form and Confirmation Matrix"
+// does NOT suppress the "Form Confirm Page" hint — {form,confi,matri} and
+// {form,confi,page} are neither a subset of the other. A template named
+// something genuinely unrelated — "Rate Card", "Media Plan" — suppresses
+// nothing at all, which is the case for every tenant who has not named a
+// template after an asset type.
+function hintOverlapsTemplate(target, templateSignatures) {
+  const t = nameSignature(target);
+  if (t.size < 2) return false;
+  for (const sig of templateSignatures) {
+    if (sig.size < 2) continue;
+    const [small, large] = t.size <= sig.size ? [t, sig] : [sig, t];
+    let subset = true;
+    for (const tok of small) {
+      if (!large.has(tok)) { subset = false; break; }
+    }
+    if (subset) return true;
+  }
+  return false;
+}
+
+// `allowed` filters by TARGET — a hint can only ever name an asset this tenant
+// actually has, which has been true since these were made per-tenant.
+//
+// `templateNames` is the new one. A hint pointing at "Form Confirm Page" while
+// the tenant owns a "Form and Confirmation Page" TEMPLATE is the prompt arguing
+// against itself: it instructs the model to route the ask to an asset, a
+// hundred lines before it is told templates exist. The asset side wins on
+// position and on having a worked example, and the template is never returned.
+function assetPhraseHintLines(allowed, templateNames = []) {
   const have = new Set(allowed.map(normalize));
+  const templateSignatures = (templateNames || []).filter(Boolean).map(nameSignature);
   return ASSET_PHRASE_HINTS.filter((h) => {
     if (h.always) return true;
     if (h.anyMatching) return allowed.some((n) => h.anyMatching.test(n));
-    return have.has(normalize(h.target));
+    if (!have.has(normalize(h.target))) return false;
+    if (templateSignatures.length && hintOverlapsTemplate(h.target, templateSignatures)) {
+      console.log(`[gemini] phrase hint suppressed — "${h.target}" describes the same thing as a document template`);
+      return false;
+    }
+    return true;
   }).map((h) => h.line);
 }
 
@@ -493,9 +564,36 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
     '  Dating Event", not "Promos For A". No date, no quotes, no trailing punctuation.',
     '- summary: 2-3 sentences summarizing the campaign.',
     '- writerPrompt: ONE sentence of creative direction for a copywriter.',
-    `- assets: an ORDERED list of the asset types the brief asks for, in the order the brief mentions them. Each entry is an object {"asset": string, "count": number, "labels": string[]}. \`asset\` MUST be an exact name from this list:\n\n${allowed.join(
+    // THE TOP-LEVEL MENTION. Everything below this point teaches the model how to
+    // MATCH; the Return: list is where it learns what containers exist at all.
+    // Without this clause the list named ONE home for "things the brief asks
+    // for" — assets — and the model had committed to that reading 124 lines
+    // before the DOCUMENT TEMPLATES block appeared. An explicit
+    // "Build the <template name>" line came back absorbed into the nearest
+    // asset, or dropped, with nothing in `templates` and nothing in
+    // `unmatchedTemplates` to say so.
+    //
+    // The clause is absent when the tenant has no templates, so their prompt
+    // stays byte-identical.
+    `- assets: an ORDERED list of the asset types the brief asks for, in the order the brief mentions them. Each entry is an object {"asset": string, "count": number, "labels": string[]}.${
+      templates.length
+        ? ' NOT everything a brief names is an asset type — this workspace also owns whole DOCUMENTS a brief can name, listed under DOCUMENT TEMPLATES below, and those go in `templates` instead of here.'
+        : ''
+    } \`asset\` MUST be an exact name from this list:\n\n${allowed.join(
       '\n'
     )}\n\nReturn only names from this list. If no specific assets are mentioned, return the 3 most relevant for the campaign goal described, each with count 1.`,
+    // The second container, named in the Return: list BESIDE assets rather than
+    // only at the bottom. The DETAIL stays where it was — what was missing is
+    // the mention, not the explanation.
+    ...(templates.length
+      ? [
+        '- templates: the DOCUMENT TEMPLATES this brief names, chosen from the list further down.',
+        '  A template is a whole document this workspace owns. It is NOT an asset type and it is',
+        '  a SEPARATE deliverable — a brief naming a template AND some assets gets both.',
+        '  If the brief names one, it MUST appear here. Never leave it out because an asset type',
+        '  sounds similar: that similarity is the mistake this field exists to prevent.',
+      ]
+      : []),
     '',
     'HOW MANY OF EACH (the `count` field):',
     '- count is HOW MANY SEPARATE VERSIONS of that asset the brief wants — how many',
@@ -548,7 +646,7 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
     'are illustrative, not exhaustive; treat obvious variants, plurals, and',
     'casing the same way:',
     // Filtered to mappings whose TARGET is in `allowed` — see ASSET_PHRASE_HINTS.
-    ...assetPhraseHintLines(allowed),
+    ...assetPhraseHintLines(allowed, templates),
     '',
     'Rules:',
     '- Only include an asset when the intent is reasonably clear; do not invent assets that are not implied. Never return all asset types for a vague brief.',
@@ -605,6 +703,24 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
   }
 
   console.log('[gemini] raw referenceLinks from parse:', JSON.stringify(parsed.referenceLinks));
+  // THE RAW TEMPLATE FIELDS, logged for the same reason referenceLinks are: an
+  // absent line is not evidence of an empty list. A template that did not match
+  // produces no warning anywhere downstream — resolveTemplatePlan is never
+  // reached with an empty plan — so without this the only signal is a silence
+  // that looks identical to "this brief named no template".
+  //
+  // Logged BEFORE the filters below, so it says what the MODEL returned rather
+  // than what survived: a name in `templates` that no vocabulary matched, and a
+  // name the model put in `assets` that is really a template, are different
+  // failures and the raw shape is the only place they are still distinguishable.
+  if (templates.length) {
+    console.log(
+      `[gemini] template vocabulary: ${templates.length} — ${JSON.stringify(templates)}; ` +
+        `model returned templates=${JSON.stringify(parsed.templates || [])} ` +
+        `unmatchedTemplates=${JSON.stringify(parsed.unmatchedTemplates || [])} ` +
+        `assets=${JSON.stringify((Array.isArray(parsed.assets) ? parsed.assets : []).map((a) => (a && (a.asset || a.assetType || a)) || a))}`
+    );
+  }
 
   // Defensively constrain assets to the allowed list. Match case- and
   // dash-insensitively (Gemini may emit a hyphen where the canonical name uses
@@ -789,6 +905,15 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
   ]
     .map((a) => String(a).trim())
     .filter(Boolean);
+
+  if (templates.length) {
+    console.log(
+      `[gemini] template plan after filtering: ${JSON.stringify(templatePlan.map((t) => t.template))}` +
+        (misroutedTemplates.length ? `, recovered from assets: ${JSON.stringify(misroutedTemplates)}` : '') +
+        (assetsFromTemplates.length ? `, assets recovered from templates: ${JSON.stringify(assetsFromTemplates.map((a) => a.asset))}` : '') +
+        (unmatchedFromTemplates.length ? `, matched NEITHER vocabulary: ${JSON.stringify(unmatchedFromTemplates)}` : '')
+    );
+  }
 
   const folderId = parsed.folderId ? String(parsed.folderId).trim() : null;
   const referenceLinks = Array.isArray(parsed.referenceLinks)

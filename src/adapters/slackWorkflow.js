@@ -162,7 +162,7 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
   try {
     // 1. Parse the brief into title / summary / writerPrompt / assets (+ folder & links).
     // `tenantId` constrains the model to THIS tenant's asset names, so an asset
-    // they own but the bundled 30 lack is requestable. Falls back to
+    // they own but the bundled library lacks is requestable. Falls back to
     // config.ALLOWED_ASSETS when there's no library (demo / unseeded tenant).
     const parsedBrief = await pipeline.parseBrief(brief, tenantId);
     // NB: parsedBrief.folderId (Gemini's guess) is intentionally NOT used — it

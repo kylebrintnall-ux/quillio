@@ -430,7 +430,7 @@ function isFolderAccessError(err, folderId) {
 // The tenant's own active asset_types names when they have a library, else
 // config.ALLOWED_ASSETS. The fallback is the no-DB / demo / unseeded case
 // (db/assets.js getTenantAssets returns null), where there is no library to read
-// and the bundled 30 are the only sensible vocabulary.
+// and the bundled library is the only sensible vocabulary.
 //
 // Active rows only, because that is what getTenantAssets returns and what
 // tenantAssetsToSpecs will expand against later — an asset the tenant switched

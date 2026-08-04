@@ -353,7 +353,7 @@ async function createAssetType(tenantId, asset) {
 // WHICH ASSETS A TENANT MAY EDIT — and the single most load-bearing rule in this
 // file, because getting it wrong is silent.
 //
-// An asset is SEEDED if its name is one of the 30 in the bundled default library.
+// An asset is SEEDED if its name is one of those in the bundled default library.
 // Seeded assets are read-only apart from is_active; a tenant's own creations are
 // fully editable.
 //

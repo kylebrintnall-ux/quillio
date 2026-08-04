@@ -742,7 +742,7 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
   // This used a LOCAL normalizer that folded case and the three dash characters
   // but did NOT drop the spaces around a hyphen, so it disagreed with
   // utils/normalize (the one core/pipeline, googleDocs and pendingBriefs all
-  // use) on 14 of the 30 allowed names. Two functions deciding what "the same
+  // use) on most of the allowed names. Two functions deciding what "the same
   // asset name" means is one too many — especially now that a UNIQUE INDEX
   // enforces the same question in Postgres. Converged onto utils/normalize:
   // strictly more tolerant here (it additionally matches "Direct Mail—Box",

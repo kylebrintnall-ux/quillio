@@ -150,7 +150,7 @@ const GROUP_INDENT_PT = 18;
 // heading shows `instance + 1`.
 //
 // PARSING THIS BACK IS THE DELICATE PART. The label separator ' — ' is NOT a safe
-// anchor on its own: 14 of the 30 bundled asset names already contain it ('Direct
+// anchor on its own: 10 of the 25 bundled asset names already contain it ('Direct
 // Mail — Box / Mailer', 'Organic Social — LinkedIn', …), so splitting on it would
 // shred real names. What makes the format parseable is that the ORDINAL sits
 // between the name and the label, so the anchor is ' <digits>' followed by either

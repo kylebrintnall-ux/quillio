@@ -424,6 +424,22 @@ environment and is not the path these scripts expect. Use plain `node`.
 Most migrations are written to be idempotent (`CREATE TABLE IF NOT EXISTS`,
 guarded seeds), but read the script's header before re-running one.
 
+**Applied to production.** The document-template work's migrations have all run
+and came back clean, so nothing on that path is waiting on a schema change:
+
+| Script | Result |
+| --- | --- |
+| `migrateAddTemplateUniqueness.js` | index created |
+| `migrateAddProjectTemplateDraft.js` | `doc_template_id`, `brief_summary`, `brief_writer_prompt` added |
+| `auditDriveUrls.js` (read-only) | 0 rows across all four url columns |
+
+A matrix has since been built and drafted end to end on tenant `T0B8LPRDKHR`.
+
+The code's pre-migration tolerances still stand and are still correct — a
+project row created *before* `migrateAddProjectTemplateDraft` has NULL in those
+three columns, so `resolveProjectTemplate` still returns `unlinked` for it and
+still names the script. That is a row-age condition now, not a deployment one.
+
 ## The review overlay's wording lives in two places — keep them in step
 
 The web review overlay renders `{ hadCopy, status, digest }`. Two functions

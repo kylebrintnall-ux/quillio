@@ -13108,3 +13108,39 @@ test('the whole-library fallback survives, and its comment no longer describes a
   assert.ok(!/this branch is dormant/.test(html), 'the stale "dormant" comment is gone');
   assert.match(html, /TWO PAUSES, AND NEITHER IS DORMANT\./);
 });
+
+test('a disabled primary is opaque, and the picker lede is body text', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // THE FIXED CTA BAR MAKES TRANSLUCENCY A LAYOUT BUG, not a style choice. The
+  // bar is position:fixed, so a see-through button shows whatever the page is
+  // scrolled over — on the picker, where the primary rests disabled until
+  // something is ticked, a list row appeared through it and read as the button
+  // overlapping the list.
+  // To the rule's own closing brace — a fixed-length slice runs into the next
+  // rule, and "no fractional opacity here" would then be judged on someone
+  // else's declarations.
+  const disAt = html.indexOf('.cta-primary:disabled {');
+  // To the rule's own closing brace, comments stripped. The rule's comment quotes
+  // the global `opacity: 0.55` it exists to defeat, and prose must not be what
+  // fails an assertion about declarations.
+  const dis = html.slice(disAt, html.indexOf('\n    }', disAt) + 6).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(dis, /opacity: 1;/, 'the disabled primary is opaque');
+  assert.match(dis, /background: #B7C2C6;/, 'and solid, not faded gold');
+  assert.ok(!/opacity: 0\.\d/.test(dis), 'no fractional opacity survives in the rule');
+
+  // opacity:1 is LOAD-BEARING because of a global rule further up the file. A
+  // solid background alone does not defeat it — that global still applied and the
+  // button stayed see-through, which is how the first attempt at this failed.
+  assert.match(html, /button:disabled \{ opacity: 0\.55; cursor: default; \}/,
+    'the global disabled rule still exists — which is why the reset is needed');
+
+  // The picker's opening line explains why the screen exists; it is not the muted
+  // italic aside .field-select-hint gives a tappable-fields nudge. At 12.5px,
+  // half-opacity and italic it was unreadable on the sky background on a phone.
+  assert.match(html, /<p class="picker-lede">This brief didn’t name any assets/);
+  assert.match(html, /\.picker-lede \{ font-size: 14px; line-height: 1\.6; color: var\(--ink\); margin: 0 0 22px; \}/);
+  const lede = html.slice(html.indexOf('.picker-lede {'), html.indexOf('.picker-lede {') + 120);
+  assert.ok(!/italic/.test(lede), 'not italic');
+  assert.ok(!/rgba\(26,26,46,0\.\d/.test(lede), 'not a faded ink');
+});

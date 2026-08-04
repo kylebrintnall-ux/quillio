@@ -12779,3 +12779,45 @@ test('every Drive create/copy that yields a link guards it — the whole sweep, 
     }
   }
 });
+
+test('a spent brief clears the input — and the three paths that must keep it do', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // The attachments already cleared on success and the textarea did not, so a
+  // second brief inherited the first one's words but not its files. One reset,
+  // both halves.
+  assert.match(html, /function consumeBriefInput\(\) \{\s*\n\s*briefEl\.value = '';\s*\n\s*clearAttachedFiles\(\);\s*\n\s*\}/);
+
+  // Called at the TWO success points — the direct run and the confirmed build —
+  // and nowhere else.
+  assert.strictEqual((html.match(/consumeBriefInput\(\);/g) || []).length, 2, 'exactly two call sites');
+
+  // NOT on entry to the screen. Three paths arrive at the brief screen with text
+  // that has to survive, and clearing there would break all three:
+  //   a failed run's "Back to brief" (the text IS the retry), the confirm
+  //   screen's Back (edit-then-rebuild), and runBrief's stale-shell refusal.
+  assert.ok(!/showScreen\('brief'\)[^\n]*consumeBriefInput/.test(html), 'not wired to a brief-screen navigation');
+  assert.ok(!/name === 'brief'[^\n]*consumeBriefInput/.test(html), 'not wired into showScreen');
+  // Those three navigations are still plain screen changes.
+  assert.match(html, /progressBack\.addEventListener\('click', function \(\) \{ showScreen\('brief'\); \}\)/);
+  assert.match(html, /getElementById\('confirm-back-btn'\)\.addEventListener\('click', function \(\) \{ showScreen\('brief'\); \}\)/);
+  // And the stale-shell refusal still returns BEFORE anything is spent.
+  assert.match(html, /if \(await checkShellFresh\(\)\) \{ showError\(briefError, STALE_MSG\); return; \}/);
+
+  // The confirmation PAUSE is not a success: it clears attachments (as it always
+  // did) but must not take the text, because Back from there is how you edit it.
+  // A bounded window, not a slice to the next renderOutput — that string first
+  // occurs in confirmBrief, ABOVE this block, which yields an empty slice that
+  // matches nothing and passes every `!` assertion for free.
+  const pauseAt = html.indexOf('if (data && data.needsConfirmation) {');
+  assert.ok(pauseAt > -1, 'the confirmation pause branch exists');
+  // To its own `return;` — the branch ENDS there. A fixed-length window runs
+  // past the closing brace into the success path below, which does call
+  // consumeBriefInput, and the "does not spend the brief" assertion would then
+  // fail for the wrong reason.
+  const pauseEnd = html.indexOf('return;', pauseAt);
+  assert.ok(pauseEnd > pauseAt && pauseEnd - pauseAt < 200, 'the pause branch returns');
+  const pause = html.slice(pauseAt, pauseEnd);
+  assert.match(pause, /clearAttachedFiles\(\);/);
+  assert.ok(!/consumeBriefInput/.test(pause), 'the pause does not spend the brief');
+});

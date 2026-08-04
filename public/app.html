@@ -1257,6 +1257,26 @@
 
     function removeFile(i) { attachedFiles.splice(i, 1); renderFileTags(); }
     function clearAttachedFiles() { attachedFiles = []; renderFileTags(); }
+    // THE BRIEF HAS BEEN SPENT. Called only where a run produced a document, so
+    // the next visit to this screen starts empty instead of holding the last
+    // campaign's text.
+    //
+    // The attachments already cleared here and the textarea did not, which is
+    // the whole bug: half the input reset and half of it persisted, so a second
+    // brief inherited the first one's words but not its files.
+    //
+    // DELIBERATELY NOT ON ENTRY TO THE SCREEN. Three paths arrive at the brief
+    // screen with text that must survive:
+    //   - a FAILED run → "Back to brief", where the text is the retry;
+    //   - the confirm screen's Back, which is an edit-then-rebuild;
+    //   - the stale-shell block in runBrief, which refuses before spending the
+    //     brief precisely because "the brief text stays in the box".
+    // Clearing on showScreen('brief') would break all three. Clearing on
+    // SUCCESS reaches none of them.
+    function consumeBriefInput() {
+      briefEl.value = '';
+      clearAttachedFiles();
+    }
 
     function addFiles(fileList) {
       clearError(briefError);
@@ -2153,6 +2173,8 @@
         finishBriefBar();
         renderOutput(data);
         showScreen('output');
+        // The confirmed build is the same spent brief as the direct path's.
+        consumeBriefInput();
       } catch (e) {
         var msg = e.message || 'Network error — please try again.';
         var mayHaveStarted = msg === NET_MSG || /taking longer than expected/i.test(msg);
@@ -2205,7 +2227,7 @@
         }
         renderOutput(data);
         showScreen('output');
-        clearAttachedFiles();
+        consumeBriefInput();
       } catch (e) {
         var msg = e.message || 'Network error — please try again.';
         // A lost start response (NET_MSG) or an exhausted poll deadline means the

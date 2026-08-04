@@ -119,6 +119,18 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
     referenceLinks,
     referenceInsights,
     plan,
+    // THE DOCUMENT TEMPLATES THIS BRIEF NAMED. This return value is the whole
+    // interface between the two halves of the web path: runWebBriefGenerate
+    // reads `parsed.templates` off it, and putPending stores it verbatim across
+    // the confirmation pause. It is built by NAMING KEYS, so a field absent here
+    // is a field that does not exist downstream — and this one was absent, which
+    // is why a template the parse resolved correctly never reached generateDoc
+    // and produced no refusal either: resolveTemplatePlan got [] and had nothing
+    // to refuse.
+    //
+    // Not editable at the confirm step — that screen adjusts asset counts, and a
+    // template has no count — so it rides through untouched.
+    templates: templates || [],
     unmatchedAssets,
     // Carried so runWebBriefGenerate can re-render the notice after the
     // confirmation pause without re-parsing (and without guessing the wording).

@@ -9894,8 +9894,11 @@ test('the template store degrades rather than failing before its migration lands
   // Railway deploys main on merge, so this code runs against a database without
   // doc_templates for as long as it takes someone to run the migration. The
   // panel says "not available yet" in that window; it does not 500.
-  assert.match(src, /isUndefinedTable/);
-  assert.match(src, /warnMissingSchema/);
+  // Anchored to the CALLS, not the words: both names appear in this file's
+  // import line and in prose, so a bare /isUndefinedTable/ matched whether or
+  // not anything used it.
+  assert.match(src, /if \(isUndefinedTable\(err\)\) \{/);
+  assert.match(src, /warnMissingSchema\('doc_templates', /);
   // Four accessors now: list, save, get one, rename. Every one of them degrades,
   // because a settings page that 500s before someone runs a migration is the
   // failure this contract exists to prevent.
@@ -11797,8 +11800,12 @@ test('a brief naming only a template is a complete brief on both surfaces', () =
   for (const f of ['src/adapters/web.js', 'src/adapters/slackWorkflow.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
     assert.match(src, /assets\.length === 0 && \(templates \|\| \[\]\)\.length === 0 && unmatchedAssets\.length > 0/, `${f}`);
-    assert.match(src, /templates/, `${f} passes them on`);
   }
+  // `assert.match(src, /templates/)` used to stand here as "passes them on". It
+  // matched the destructure at the top of the file and could not fail — and did
+  // not, while the web adapter dropped `templates` from its return object and
+  // every template ask died silently between the two halves. Replaced by the
+  // round trip below, which asserts what reaches generateDoc.
   // And both carry the plan across their confirmation pause — the confirm step
   // edits asset COUNTS, and a template has no count to edit, so it would
   // otherwise be silently dropped between "looks right" and "build it".
@@ -11823,7 +11830,11 @@ test('the old attach/map path is gone, all of it', () => {
   // The columns themselves are deliberately STILL THERE and read by nothing.
   // Dropping them is a separate irreversible migration, and doing it in the same
   // commit that stops using them leaves no way back if this is wrong.
-  assert.match(assets, /doc_template_id/, 'the column is still selected by getTenantLibrary, harmlessly');
+  // Anchored to the SELECT, not the word: doc_template_id appears six times in
+  // this file, mostly in comments about the path that was removed, so matching
+  // the bare name proved nothing about the query.
+  assert.match(assets, /is_active, sort_order, asset_direction, spec_note, doc_template_id/,
+    'still selected by getTenantLibrary, harmlessly');
 
   // The re-sync trick and its state.
   const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
@@ -11861,8 +11872,11 @@ test('the template uniqueness migration matches the asset one, character for cha
   assert.ok(!/DELETE FROM|UPDATE doc_templates/.test(src), 'it never resolves a conflict itself');
   // The cross-namespace pairs are REPORTED but do not refuse — no index spans
   // two tables, and the parse-time check already covers them safely.
-  assert.match(src, /CROSS-NAMESPACE/);
-  assert.match(src, /assertNoNameCollision/);
+  // Anchored to the report and the reference, not the words — both appear in
+  // this script's header comment too.
+  assert.match(src, /function reportCrossConflicts\(rows\)/);
+  assert.match(src, /const cross = assetsReg\.rows\[0\]\.oid \? \(await client\.query\(CROSS_CONFLICT_SQL\)\)\.rows : \[\]/);
+  assert.match(src, /core\/pipeline\.js assertNoNameCollision refuses at parse time/);
 });
 
 // === The three faults step four introduced, and their fixes =================
@@ -12132,4 +12146,131 @@ test('the phrase-hint table is static, and was already filtered by what the tena
   assert.strictEqual(forNobody.length, 1);
   assert.match(forNobody[0], /→ the BASE asset, count 2/);
   assert.ok(!forNobody.some((l) => /→ [A-Z]/.test(l)), 'no hint names a concrete asset');
+});
+
+// === The parse half and the generate half must agree on the key =============
+//
+// The web adapter is two functions with an OBJECT between them, and that object
+// is built by naming keys. runWebBriefParse returned every field except
+// `templates`; runWebBriefGenerate read `parsed.templates`, got undefined,
+// resolved it to [], and handed generateDoc an empty plan. resolveTemplatePlan
+// then had nothing to refuse, so there was no warning either — a template the
+// parse had resolved correctly died in the gap between the halves, silently.
+//
+// Slack never had this: it passes named variables through, so there was no
+// whitelist to leave an entry out of.
+//
+// These drive the REAL adapter functions and assert on the spec that reaches
+// generateDoc. A regex on either half alone is what missed it the first time.
+
+// Run the web adapter end to end against a stubbed model, capturing the spec
+// generateDoc is called with.
+async function webBriefRoundTrip({ modelTemplates, confirm = false }) {
+  const pipelinePath = require.resolve('../src/core/pipeline');
+  const geminiPath = require.resolve('../src/services/gemini');
+  const realGenerateDoc = require(pipelinePath).generateDoc;
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  const assetsDb = require('../src/db/assets');
+  const realAssets = assetsDb.getTenantAssets;
+  const tplDb = require('../src/db/docTemplates');
+  const realList = tplDb.listDocTemplates;
+  const cache = require.cache[require.resolve('../src/db/docTemplates')];
+  const realExports = cache.exports;
+  // The generate half asks for Google clients before it builds anything. There
+  // are none here and none are needed — generateDoc itself is stubbed below.
+  const googleCache = require.cache[require.resolve('../src/google')];
+  const realGoogle = googleCache.exports;
+  googleCache.exports = { ...realGoogle, getClients: async () => ({}), getClientsForTenant: async () => ({}) };
+
+  cfg.GEMINI_API_KEY = 'test-key';
+  assetsDb.getTenantAssets = async () => ([
+    { id: '1', name: 'Nurture Email', group: 'G', is_active: true, sort_order: 0,
+      fields: [{ field_name: 'Headline', char_min: 0, char_max: 60, field_type: 'text' }] },
+  ]);
+  // pipeline destructures listDocTemplates at require time, so the module object
+  // is swapped rather than the property patched — same reason as the vocabulary
+  // tests above.
+  cache.exports = { ...realExports, listDocTemplates: async () => ([{ id: 7, name: 'Form and Confirmation Page', source_doc_id: 'SRC' }]) };
+  delete require.cache[pipelinePath];
+  delete require.cache[require.resolve('../src/adapters/web')];
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+      campaignTitle: 'Spring', summary: 'S', writerPrompt: 'W',
+      assets: [{ asset: 'Nurture Email', count: confirm ? 3 : 1 }],
+      templates: modelTemplates,
+      unmatchedAssets: [], unmatchedTemplates: [], folderId: null, referenceLinks: [],
+    }) }] } }] }),
+  });
+
+  let specSeen = null;
+  try {
+    const pipeline = require(pipelinePath);
+    pipeline.generateDoc = async (spec) => {
+      specSeen = spec;
+      return { doc: { id: 'D', url: 'u', title: 't' }, assetSpecs: [], copyDocSpecs: [], templateDocs: [], projectFolderUrl: null, projectId: 1 };
+    };
+    const web = require('../src/adapters/web');
+    const ctx = { tenant: { id: 'T1' } };
+    const parsed = await web.runWebBriefParse('Build the Form and Confirmation Page.', ctx);
+    // The CONFIRM PAUSE stores the parse result verbatim and hands it back, so
+    // routing through it proves the object survives the round trip rather than
+    // only the direct call.
+    const carried = confirm
+      ? (() => {
+        const { putPending, getPending } = require('../src/pendingBriefs');
+        return getPending(putPending('T1', parsed), 'T1');
+      })()
+      : parsed;
+    await web.runWebBriefGenerate(carried, carried.plan, ctx);
+    return { parsed, carried, spec: specSeen };
+  } finally {
+    require(pipelinePath).generateDoc = realGenerateDoc;
+    cache.exports = realExports;
+    googleCache.exports = realGoogle;
+    tplDb.listDocTemplates = realList;
+    assetsDb.getTenantAssets = realAssets;
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+    delete require.cache[pipelinePath];
+    delete require.cache[require.resolve('../src/adapters/web')];
+  }
+}
+
+test('the web parse half puts templates on the object the generate half reads', async () => {
+  const { parsed, spec } = await webBriefRoundTrip({ modelTemplates: [{ template: 'Form and Confirmation Page', count: 1 }] });
+
+  // The object BETWEEN the halves. `templates` absent here is the whole bug:
+  // the read side was always correct and always got undefined.
+  assert.ok('templates' in parsed, 'the parse return carries the key at all');
+  assert.deepStrictEqual(parsed.templates.map((t) => t.template), ['Form and Confirmation Page']);
+
+  // And what actually reached generateDoc — the assertion that would have failed.
+  assert.ok(spec, 'generateDoc was called');
+  assert.deepStrictEqual(
+    (spec.templates || []).map((t) => t.template),
+    ['Form and Confirmation Page'],
+    'the template reaches the build path'
+  );
+  assert.deepStrictEqual((spec.assets || []).map((a) => a.asset), ['Nurture Email'], 'and the assets still do');
+});
+
+test('the confirm pause round-trips the templates it was given', async () => {
+  // putPending stores the payload verbatim, so the pause was never the culprit —
+  // it faithfully carried an object that had no templates key. Proven by routing
+  // through it with a plan that DOES need confirming (count 3).
+  const { carried, spec } = await webBriefRoundTrip({
+    modelTemplates: [{ template: 'Form and Confirmation Page', count: 1 }],
+    confirm: true,
+  });
+  assert.deepStrictEqual(carried.templates.map((t) => t.template), ['Form and Confirmation Page'], 'survives the pause');
+  assert.deepStrictEqual((spec.templates || []).map((t) => t.template), ['Form and Confirmation Page']);
+});
+
+test('a web brief naming no template sends an empty list, not undefined', async () => {
+  const { parsed, spec } = await webBriefRoundTrip({ modelTemplates: [] });
+  assert.deepStrictEqual(parsed.templates, [], 'an empty array, so the key is always present');
+  assert.deepStrictEqual(spec.templates, [], 'and generateDoc sees a list rather than undefined');
 });

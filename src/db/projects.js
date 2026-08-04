@@ -41,6 +41,14 @@ async function saveProject(tenantId, projectData = {}) {
     // them. copy_doc_id still means the promo doc and still keys idempotency.
     template_doc_id = null,
     template_doc_url = null,
+    // WHICH doc_templates row the template document was copied from, and the
+    // brief's own words. Both exist so the DRAFT path can find its way back:
+    // it is handed a document id and a tenant, and without these it can read
+    // neither the template's fields nor the campaign they belong to. See
+    // scripts/migrateAddProjectTemplateDraft.js.
+    doc_template_id = null,
+    brief_summary = null,
+    brief_writer_prompt = null,
   } = projectData;
 
   console.log(
@@ -80,16 +88,26 @@ async function saveProject(tenantId, projectData = {}) {
     // assumption, which is worth more than the assumption was.
     const CREATED_BY = { extra: ['created_by'], values: [created_by] };
     const TEMPLATE = { extra: ['template_doc_id', 'template_doc_url'], values: [template_doc_id, template_doc_url] };
+    const DRAFT_LINK = {
+      extra: ['doc_template_id', 'brief_summary', 'brief_writer_prompt'],
+      values: [doc_template_id, brief_summary, brief_writer_prompt],
+    };
     const combine = (...gs) => ({ extra: gs.flatMap((g) => g.extra), values: gs.flatMap((g) => g.values) });
-    const attempts = [
-      combine(CREATED_BY, TEMPLATE),
-      combine(CREATED_BY),
-      combine(TEMPLATE),
-      combine(),
-    ];
+    // THE POWER SET, widest first. Hand-enumerating it was fine for two groups
+    // and is the wrong shape for three: eight lines that all have to stay in
+    // agreement, where the interesting property is simply "try every subset,
+    // biggest first". Generated, so a fourth group is one array entry and not a
+    // doubling of hand-written combinations.
+    const GROUPS = [CREATED_BY, TEMPLATE, DRAFT_LINK];
+    const attempts = [];
+    for (let mask = (1 << GROUPS.length) - 1; mask >= 0; mask--) {
+      attempts.push({ mask, groups: GROUPS.filter((_, i) => mask & (1 << i)) });
+    }
+    attempts.sort((a, b) => b.groups.length - a.groups.length || b.mask - a.mask);
+    const ATTEMPTS = attempts.map((a) => combine(...a.groups));
     let res;
-    for (let i = 0; i < attempts.length; i++) {
-      const { extra, values } = attempts[i];
+    for (let i = 0; i < ATTEMPTS.length; i++) {
+      const { extra, values } = ATTEMPTS[i];
       const names = ['tenant_id', 'name', 'drive_folder_id', 'drive_folder_url', 'copy_doc_id', 'copy_doc_url', 'status', 'slack_channel_id', 'slack_thread_ts', ...extra];
       const params = [...cols, ...values];
       try {
@@ -102,7 +120,7 @@ async function saveProject(tenantId, projectData = {}) {
         );
         break;
       } catch (err) {
-        if (!isUndefinedColumn(err) || i === attempts.length - 1) throw err;
+        if (!isUndefinedColumn(err) || i === ATTEMPTS.length - 1) throw err;
         // Named by what the NEXT attempt gives up, so the log says which
         // migration is outstanding rather than restating the driver's error.
         warnMissingSchema(`projects (${names.join(', ')})`);
@@ -181,4 +199,34 @@ async function getProjectByDocId(tenantId, copyDocId) {
   }
 }
 
-module.exports = { saveProject, getProjects, getProject, getProjectByDocId, setProjectStatus };
+// A project by EITHER of its documents.
+//
+// getProjectByDocId matches copy_doc_id, which is the identity of a project and
+// what idempotency keys on. It cannot find a TEMPLATE-ONLY project, because that
+// one has no copy doc at all — and the draft button on such a brief can only
+// carry the template document's id, since that is the only document there is.
+//
+// Falls back rather than replacing: copy_doc_id is tried first and wins, so a
+// document that is somehow both stays the project it always was.
+async function getProjectByAnyDocId(tenantId, docId) {
+  const byCopy = await getProjectByDocId(tenantId, docId);
+  if (byCopy) return byCopy;
+  const pool = getPool();
+  if (!pool || !tenantId || !docId) return null;
+  try {
+    const res = await pool.query(
+      'SELECT * FROM projects WHERE tenant_id = $1 AND template_doc_id = $2 LIMIT 1',
+      [tenantId, docId]
+    );
+    return res.rows[0] || null;
+  } catch (err) {
+    if (isUndefinedColumn(err)) {
+      warnMissingSchema('projects.template_doc_id');
+      return null;
+    }
+    console.warn(`[db/projects] getProjectByAnyDocId failed for ${docId}: ${err.message}`);
+    return null;
+  }
+}
+
+module.exports = { saveProject, getProjects, getProject, getProjectByDocId, getProjectByAnyDocId, setProjectStatus };

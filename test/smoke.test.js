@@ -3844,15 +3844,25 @@ test('a project is still recorded when projects.created_by is missing', async ()
     assert.ok(saved, 'the project row is still persisted');
     assert.strictEqual(saved.id, 7);
   });
-  // THREE attempts now, not two. saveProject enumerates the combinations of
-  // optional columns rather than dropping them in a fixed order, so a database
-  // missing created_by but HAVING template_doc_* keeps the template columns
-  // instead of losing both. The first cut ordered them newest-first and lost
-  // the template document on exactly this database.
-  assert.strictEqual(inserts.length, 3, 'created_by+template, created_by, then template alone');
-  assert.ok(inserts[0].includes('created_by') && inserts[0].includes('template_doc_id'));
-  assert.ok(inserts[1].includes('created_by') && !inserts[1].includes('template_doc_id'));
-  assert.ok(!inserts[2].includes('created_by') && inserts[2].includes('template_doc_id'));
+  // saveProject tries EVERY SUBSET of its optional column groups, widest first,
+  // rather than dropping them in a fixed order — so a database missing created_by
+  // but HAVING template_doc_* keeps the template columns instead of losing both.
+  // Three groups now (created_by, the template pair, the draft link). Widest
+  // first, so attempt 1 names all three and is refused; attempt 2 is the widest
+  // subset WITHOUT created_by, which is template+link — so it lands on the
+  // second try and keeps everything the database can actually hold.
+  //
+  // Asserted by property rather than by index: every attempt before the last
+  // names the missing column, the last does not, and the last still carries the
+  // template columns. The old form pinned inserts[2] and would have to be
+  // rewritten every time a group is added, for no gain in what it proves.
+  assert.strictEqual(inserts.length, 2, 'refused once, then landed');
+  const landed = inserts[inserts.length - 1];
+  assert.ok(!/created_by/.test(landed), 'the attempt that landed does not name the missing column');
+  assert.ok(/template_doc_id/.test(landed), 'and it kept the template columns rather than losing both');
+  assert.ok(/brief_summary/.test(landed), 'and the draft link, so the matrix stays draftable');
+  assert.ok(inserts[0].includes('created_by') && inserts[0].includes('template_doc_id'), 'the widest was tried first');
+  assert.ok(inserts.every((q, i) => i === inserts.length - 1 || q.includes('created_by')));
 });
 
 test('the missing-schema catch is narrow — real errors still throw', async () => {
@@ -10029,7 +10039,13 @@ test('the attachment is INERT — the pipeline read cannot see it', () => {
     // it explains what a CONFIRMED template is; naming the new table in prose is
     // not reading the OLD asset attachment, which is what this guards.
     const other = fs.readFileSync(path.join(__dirname, '..', f), 'utf8').replace(/\/\/.*$/gm, '');
-    assert.ok(!/copy_fields\.template_marker|doc_template_id/.test(other), `${f} does not read the attachment`);
+    // asset_types.doc_template_id is the dead attachment. projects.doc_template_id
+    // is a DIFFERENT, live column — which template the matrix was copied from, so
+    // the draft path can read its markers. Same word, opposite meaning, so the
+    // guard names the asset-library reads rather than the bare column name.
+    assert.ok(!/copy_fields\.template_marker|asset_types\.doc_template_id|getAssetTemplateBindings/.test(other),
+      `${f} does not read the attachment`);
+    assert.ok(!/a\.doc_template_id|at\.doc_template_id/.test(other), `${f} reads no asset's attachment`);
   }
 });
 
@@ -10086,10 +10102,9 @@ test('nothing is sent to Docs when a template has no copy at all', async () => {
 test('the template documents are built BEFORE the copy doc', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
   const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function generateDraft'));
-  // buildTemplateDocument, not createFromTemplate: a named template goes through
-  // the proven step-two path (copy, draft, write by stored coordinate) rather
-  // than being copied here and filled from copy-doc content later.
-  const tplAt = build.indexOf('await buildTemplateDocument({');
+  // copyTemplateDocument, not buildTemplateDocument: at brief time the matrix is
+  // STRUCTURE, exactly as the copy doc is. The draft half runs on the button.
+  const tplAt = build.indexOf('await copyTemplateDocument({');
   const docAt = build.indexOf('createDocument({');
   assert.ok(tplAt > -1 && docAt > -1);
   // Set now so it does not have to be rearranged: the copy doc will carry a link
@@ -10142,11 +10157,25 @@ test('the project row records the template document without disturbing copy_doc_
   assert.match(src, /WHERE tenant_id = \$1 AND copy_doc_id = \$2 LIMIT 1/);
   assert.match(src, /template_doc_id = null,\n\s+template_doc_url = null,/);
   // EVERY COMBINATION of optional columns, not a priority order — a database
-  // with template_doc_* but no created_by must not lose both.
-  assert.match(src, /combine\(CREATED_BY, TEMPLATE\)/);
-  assert.match(src, /combine\(CREATED_BY\),/);
-  assert.match(src, /combine\(TEMPLATE\),/);
-  assert.match(src, /combine\(\),/);
+  // with template_doc_* but no created_by must not lose both. Generated rather
+  // than hand-written now that there are three groups: eight hand-kept lines
+  // that all have to stay in agreement is the wrong shape for "try every subset".
+  assert.match(src, /const GROUPS = \[CREATED_BY, TEMPLATE, DRAFT_LINK\]/);
+  assert.match(src, /for \(let mask = \(1 << GROUPS\.length\) - 1; mask >= 0; mask--\)/);
+  assert.match(src, /attempts\.sort\(\(a, b\) => b\.groups\.length - a\.groups\.length/, 'widest first');
+  // The generated set really does include the singletons and the empty one —
+  // asserted by running the generator, not by matching lines that no longer
+  // exist. Eight subsets of three groups, widest first, ending with none.
+  const GROUPS = ['CREATED_BY', 'TEMPLATE', 'DRAFT_LINK'];
+  const gen = [];
+  for (let mask = (1 << GROUPS.length) - 1; mask >= 0; mask--) {
+    gen.push({ mask, groups: GROUPS.filter((_, i) => mask & (1 << i)) });
+  }
+  gen.sort((a, b) => b.groups.length - a.groups.length || b.mask - a.mask);
+  assert.strictEqual(gen.length, 8);
+  assert.deepStrictEqual(gen[0].groups, GROUPS, 'widest first');
+  assert.deepStrictEqual(gen[7].groups, [], 'and the bare insert last');
+  for (const g of GROUPS) assert.ok(gen.some((a) => a.groups.length === 1 && a.groups[0] === g), `${g} alone is tried`);
   assert.match(src, /isUndefinedColumn\(err\)/);
 });
 
@@ -10697,29 +10726,39 @@ test('a marker with no coordinate is reported, not written somewhere', () => {
 
 test('the build path copies WITHOUT filling, so the markers survive to be located', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+  // TWO SLICES NOW: the halves run on different paths, and this property spans
+  // them — the copy must leave every marker standing so the draft, a whole
+  // button press later, can still find its cells.
+  const copyHalf = src.slice(src.indexOf('async function copyTemplateDocument'), src.indexOf('// HALF TWO, ON THE DRAFT PATH'));
+  const draftHalf = src.slice(src.indexOf('async function draftTemplateDocument'), src.indexOf('// BOTH HALVES, BACK TO BACK'));
 
   // createFromTemplate with NO values and NO markers copies and sends no
   // batchUpdate. Filling here would consume the {{markers}} via replaceAllText —
-  // the mechanism this rework replaced — and step 3 would find empty cells.
-  assert.match(build, /values: new Map\(\),\s*\n\s*markers: \[\],/);
-  assert.match(build, /getDestination\(\)\.createFromTemplate\(/);
-  assert.match(build, /getDestination\(\)\.writeTemplateCells\(/);
-  // The pipeline still reaches Google only through the destination.
-  assert.ok(!/files\.copy|documents\.batchUpdate|deleteContentRange/.test(build.replace(/\/\/.*$/gm, '')));
+  // the mechanism this rework replaced — and the draft half would find empty cells.
+  assert.match(copyHalf, /values: new Map\(\),\s*\n\s*markers: \[\],/);
+  assert.match(copyHalf, /getDestination\(\)\.createFromTemplate\(/);
+  assert.ok(!/writeTemplateCells|generateAssetDrafts/.test(copyHalf), 'the copy half writes nothing and drafts nothing');
 
+  assert.match(draftHalf, /getDestination\(\)\.writeTemplateCells\(/);
   // ONLY the copy markers are handed to the writer. A metadata marker is never
   // located and never written.
-  assert.match(build, /\{ markers: copyMarkers, values \}/);
-  // Refuses an unconfirmed template rather than falling back to a name match —
-  // the position IS the mapping now.
-  assert.match(build, /has no confirmed fields yet/);
-  assert.match(build, /has no markers ticked as copy/);
+  assert.match(draftHalf, /\{ markers: copyMarkers, values \}/);
+
+  // The pipeline still reaches Google only through the destination, in both.
+  for (const half of [copyHalf, draftHalf]) {
+    assert.ok(!/files\.copy|documents\.batchUpdate|deleteContentRange/.test(half.replace(/\/\/.*$/gm, '')));
+  }
+  // Refuses an unconfirmed template rather than falling back to a name match.
+  // Checked in the COPY half too, so a template nobody confirmed fails before a
+  // file exists in the tenant's Drive rather than after.
+  assert.match(copyHalf, /has no confirmed fields yet/);
+  assert.match(copyHalf, /has no markers ticked as copy/);
+  assert.match(draftHalf, /has no markers ticked as copy/);
 });
 
 test('the template drafts through the EXISTING batched call, not a new prompt', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+  const build = src.slice(src.indexOf('async function draftTemplateDocument'), src.indexOf('// BOTH HALVES, BACK TO BACK'));
   // generateAssetDrafts is the same call the copy doc's assets go through, so
   // the prompt, the character-limit enforcement and the craft/brand context are
   // all the existing ones.
@@ -10740,9 +10779,10 @@ test('parse reaches the build path now, and reaches it only through generateDoc'
   // deliberately opens it, so the guard is restated rather than deleted — what
   // is still true is that there is exactly ONE way in.
   const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
-  assert.match(pipe, /const built = await buildTemplateDocument\(\{/);
-  const build = pipe.slice(pipe.indexOf('async function generateDoc'), pipe.indexOf('// BUILD AND DRAFT A DOCUMENT TEMPLATE'));
-  assert.ok(build.includes('await buildTemplateDocument({'), 'generateDoc is the caller');
+  assert.match(pipe, /const built = await copyTemplateDocument\(\{/);
+  const build = pipe.slice(pipe.indexOf('async function generateDoc'), pipe.indexOf('// A DOCUMENT TEMPLATE IS BUILT IN TWO HALVES'));
+  assert.ok(build.includes('await copyTemplateDocument({'), 'generateDoc copies');
+  assert.ok(!build.includes('draftTemplateDocument'), "and does not draft — that is the button's job");
 
   // And still no OTHER caller: no route, no adapter, no surface reaches the
   // build path directly. They pass a template PLAN into generateDoc and that is
@@ -10763,7 +10803,7 @@ test('parse reaches the build path now, and reaches it only through generateDoc'
 
 test('one line accounts for every copy marker, in all three outcomes', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+  const build = src.slice(src.indexOf('async function draftTemplateDocument'), src.indexOf('// BOTH HALVES, BACK TO BACK'));
 
   // A copy marker ends up in exactly one of three states, and until this line
   // existed only the third was reported. A marker that was PLACED but drafted
@@ -10977,7 +11017,7 @@ test('a kept over-limit draft is flagged unenforced, not returned as a clean dra
 
 test('the build summary says when a drafted marker was never enforced', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  const build = src.slice(src.indexOf('async function buildTemplateDocument'), src.indexOf("// SYNC THE DRAFTED COPY"));
+  const build = src.slice(src.indexOf('async function draftTemplateDocument'), src.indexOf('// BOTH HALVES, BACK TO BACK'));
 
   // Collected only for markers that actually got copy — an unenforced flag on a
   // field whose copy was empty would be counted in a bucket it isn't in.
@@ -11922,9 +11962,13 @@ test('a template-only brief builds one document, and the card offers no draft bu
   // offering a control that acts on nothing.
   const sl = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
   assert.match(sl, /const templateOnly = !webViewLink;/);
-  // Returns the same { blocks } shape as the normal path — an early return of a
-  // bare array would have been a different type for the same function.
-  assert.match(sl, /if \(templateOnly\) return \{ blocks \};/);
+  // IT HAS BUTTONS AGAIN, carrying the matrix's id. It had none while the matrix
+  // drafted at brief time — both buttons act on a copy doc id, there was none,
+  // and there was nothing left to draft. Now the matrix arrives as structure, so
+  // a card with no buttons would be a document nobody could ever draft.
+  assert.match(sl, /const draftTarget = docId \|\| \(templateDocs \|\| \[\]\)\.map\(\(t\) => t && t\.id\)\.find\(Boolean\) \|\| null;/);
+  assert.match(sl, /if \(!draftTarget\) return \{ blocks \};/, 'and still the same { blocks } shape when there is nothing at all');
+  assert.strictEqual((sl.match(/value: draftTarget,/g) || []).length, 2, 'both buttons carry it');
   assert.match(sl, /if \(webViewLink\) links\.push\(/, 'the Copy doc link is conditional');
 });
 
@@ -12273,4 +12317,109 @@ test('a web brief naming no template sends an empty list, not undefined', async 
   const { parsed, spec } = await webBriefRoundTrip({ modelTemplates: [] });
   assert.deepStrictEqual(parsed.templates, [], 'an empty array, so the key is always present');
   assert.deepStrictEqual(spec.templates, [], 'and generateDoc sees a list rather than undefined');
+});
+
+// === The matrix builds as structure and drafts on the button ================
+//
+// Step two did copy-draft-write in one call, which was right for proving the
+// coordinate geometry and wrong as the shipped shape. The copy doc builds as
+// structure and drafts on a press; a matrix that drafted at brief time was
+// finished before the copy doc had started, and a regenerate with direction went
+// down the draft path, reached the copy doc, and could not reach the matrix.
+//
+// The fix is the seam, not a second call: the template's own work is split where
+// the copy doc's work is already split, so one press drafts both because they
+// are one path — NOT because one path calls the other. That distinction is what
+// syncTemplateDocuments got wrong and was deleted for.
+
+test('the two halves are on the two paths, and neither calls the other', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const strip = (t) => t.replace(/\/\/[^\n]*/g, '');
+  const generateDoc = strip(src.slice(src.indexOf('async function generateDoc'), src.indexOf('// A DOCUMENT TEMPLATE IS BUILT IN TWO HALVES')));
+  const generateDraft = strip(src.slice(src.indexOf('async function generateDraft('), src.indexOf('async function draftProjectTemplate')));
+
+  // Brief time copies and does not draft.
+  assert.ok(generateDoc.includes('await copyTemplateDocument({'), 'generateDoc copies');
+  assert.ok(!/draftTemplateDocument|generateAssetDrafts/.test(generateDoc), 'and drafts nothing');
+
+  // The button drafts, on the SAME function that drafts the copy doc.
+  assert.match(generateDraft, /await draftProjectTemplate\(\{ docId, tenantId, direction, clients \}\)/);
+  assert.match(generateDraft, /getDestination\(\)\.generateDraft\(/, 'the copy doc half is still here');
+
+  // NOT syncTemplateDocuments coming back: the template half must never read the
+  // copy doc. That read is what made the matrix a rendering of another document.
+  const draftHalf = strip(src.slice(src.indexOf('async function draftTemplateDocument'), src.indexOf('// BOTH HALVES, BACK TO BACK')));
+  for (const banned of ['getDocContent', 'parseDoc', 'copyDocSpecs', 'assetSpecs']) {
+    assert.ok(!draftHalf.includes(banned), `the template draft must not reach for ${banned}`);
+  }
+  // Comments stripped: the new code NAMES syncTemplateDocuments when it explains
+  // what it is deliberately not doing, and that explanation is the point.
+  assert.ok(!strip(src).includes('syncTemplateDocuments'), 'and the old sync is still gone');
+  assert.match(src, /NOT syncTemplateDocuments coming back/, 'while saying plainly why this is not that');
+});
+
+test('the write mechanism did not move', () => {
+  // The proven part. This change decides WHEN the draft half runs and nothing
+  // about what it does — so the two files that own the write are byte-identical
+  // to the commit that proved them.
+  const cells = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'templateCells.js'), 'utf8');
+  assert.match(cells, /writable\.sort\(\(a, b\) => b\.start - a\.start\)/, 'reverse document order');
+  assert.match(cells, /if \(c\.end - 1 > c\.start\) \{/, 'the delete stops one character short');
+  assert.match(cells, /endIndex: c\.end - 1/);
+  const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  assert.match(docs, /if \(requests\.length\) \{\n\s*await docs\.documents\.batchUpdate\(\{ documentId, requestBody: \{ requests \} \}\);/, 'one batchUpdate');
+  // is_copy=false cells are never even located.
+  const draftHalf = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.match(draftHalf, /const copyMarkers = \(markers \|\| \[\]\)\.filter\(\(m\) => m\.is_copy\)/);
+  assert.match(draftHalf, /writeTemplateCells\(docId, \{ markers: copyMarkers, values \}, clients\)/);
+});
+
+test('the draft path finds the template by EITHER document', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  // A template-only brief has no copy doc, so its button carries the matrix's
+  // id. getProjectByDocId matches copy_doc_id alone and returns null for that —
+  // silently, which is how the document ended up undraftable. Caught by running
+  // the harness, not by reading: the log said "drafting the matrix alone" and
+  // then nothing was written.
+  assert.match(src, /project = await getProjectByAnyDocId\(tenantId, docId\)/);
+  const projects = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'projects.js'), 'utf8');
+  assert.match(projects, /async function getProjectByAnyDocId\(tenantId, docId\)/);
+  assert.match(projects, /const byCopy = await getProjectByDocId\(tenantId, docId\);\n\s*if \(byCopy\) return byCopy;/,
+    'copy_doc_id is tried first and wins');
+  assert.match(projects, /WHERE tenant_id = \$1 AND template_doc_id = \$2 LIMIT 1/);
+});
+
+test('the project row carries what the draft path needs to find its way back', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  // WHICH template, so template_markers can be read; and the brief's own words,
+  // so drafting the matrix never reads the copy doc — the coupling that was
+  // deleted, and impossible anyway for a template-only brief.
+  assert.match(src, /doc_template_id: \(templateDocs\.find\(\(t\) => t\.id\) \|\| \{\}\)\.templateId \|\| null/);
+  assert.match(src, /brief_summary: spec\.summary \|\| null/);
+  assert.match(src, /brief_writer_prompt: spec\.writerPrompt \|\| null/);
+  assert.match(src, /spec: \{ summary: project\.brief_summary \|\| '', writerPrompt: project\.brief_writer_prompt \|\| '' \}/);
+
+  // A row that predates the migration says so ONCE, plainly, rather than
+  // leaving a matrix that silently never drafts.
+  assert.match(src, /has a template document but no doc_template_id/);
+  assert.match(src, /run scripts\/migrateAddProjectTemplateDraft\.js/);
+
+  const mig = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddProjectTemplateDraft.js'), 'utf8');
+  for (const col of ['doc_template_id', 'brief_summary', 'brief_writer_prompt']) {
+    assert.match(mig, new RegExp(`ADD COLUMN IF NOT EXISTS ${col}`), col);
+  }
+  assert.match(mig, /const COMMIT = process\.argv\.includes\('--commit'\)/, 'dry run by default');
+  assert.match(mig, /NOT to be confused with projects\.template_id/, 'the live column it must not collide with');
+});
+
+test('a template-only brief can reach the draft path at all', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  // The whole point of giving the card its buttons back. Without this branch,
+  // generateDraft would hand the matrix's id to the copy-doc parser.
+  assert.match(src, /async function templateOnlyProject\(docId, tenantId\)/);
+  assert.match(src, /if \(p && !p\.copy_doc_id && p\.template_doc_id === docId\) return p/);
+  assert.match(src, /is template-only — drafting the matrix alone/);
+  // And it returns the shape every caller of generateDraft already expects.
+  assert.match(src, /title: templateOnly\.name \|\| 'Template document'/);
+  assert.match(src, /fieldCount: \(out && out\.written && out\.written\.length\) \|\| 0/);
 });

@@ -24,7 +24,7 @@ const { instanceCounter } = require('../utils/instanceKey');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
 const { getAssetDirections, getTenantAssets } = require('../db/assets');
-const { saveProject } = require('../db/projects');
+const { saveProject, getProjectByDocId, getProjectByAnyDocId } = require('../db/projects');
 const { getDocTemplate, listDocTemplates } = require('../db/docTemplates');
 const { listTemplateMarkers } = require('../db/templateMarkers');
 const { postTemplateReview } = require('../services/templateReview');
@@ -1243,26 +1243,17 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   const templateDocs = [];
   for (const group of templateGroups) {
     try {
-      // THE PROVEN PATH, UNCHANGED. buildTemplateDocument (step two) copies the
-      // template, drafts every marker the tenant ticked as copy, and writes them
-      // by stored coordinate. This commit only decides WHEN it runs; not one
-      // line of the copy, draft or write mechanism moved.
-      //
-      // It drafts NOW rather than at "Generate First Draft". A matrix is a
-      // deliverable, not a workspace: its fields are its own, drafted into its
-      // own cells, so there is no copy-doc content to wait for. The copy doc
-      // still builds as structure and drafts on the button, exactly as before.
-      const built = await buildTemplateDocument({
+      // STRUCTURE ONLY. The copy doc is built as field labels with a blank line
+      // under each and gets its words on Generate First Draft; the matrix is now
+      // copied with every {{marker}} standing and gets its words on the same
+      // press. Same seam, one button, and a regenerate reaches both because they
+      // are one path rather than one calling the other.
+      const built = await copyTemplateDocument({
         tenantId,
         templateId: group.templateId,
         folderId: docFolderId,
         clients,
-        spec: {
-          // NAMING: "<Campaign> — <Template>", set inside buildTemplateDocument.
-          campaignTitle: spec.campaignTitle,
-          summary: spec.summary,
-          writerPrompt: spec.writerPrompt,
-        },
+        spec: { campaignTitle: spec.campaignTitle },
       });
       templateDocs.push({
         id: built.docId,
@@ -1337,6 +1328,15 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
       // happens when a brief produces more than one.
       template_doc_id: (templateDocs.find((t) => t.id) || {}).id || null,
       template_doc_url: (templateDocs.find((t) => t.id) || {}).url || null,
+      // WHICH template it came from, and the brief's own words — the two things
+      // the draft path needs and could not otherwise know. Without the first it
+      // cannot read template_markers; without the second it would have to read
+      // the campaign context out of the copy doc, which is the coupling
+      // syncTemplateDocuments was deleted for, and which a template-only brief
+      // has no copy doc to provide.
+      doc_template_id: (templateDocs.find((t) => t.id) || {}).templateId || null,
+      brief_summary: spec.summary || null,
+      brief_writer_prompt: spec.writerPrompt || null,
       status: 'not_started',
       slack_channel_id: projectMeta.slackChannelId || null,
       slack_thread_ts: projectMeta.slackThreadTs || null,
@@ -1357,42 +1357,50 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   return { doc, assetSpecs, copyDocSpecs, templateDocs, refusedTemplates, copyDocSkipped, projectFolderUrl, projectId };
 }
 
-// BUILD AND DRAFT A DOCUMENT TEMPLATE (document templates, rework step two).
+// A DOCUMENT TEMPLATE IS BUILT IN TWO HALVES, ON TWO DIFFERENT PATHS.
 //
-// The whole path from a CONFIRMED template: copy it into the campaign folder,
-// draft copy for every marker the tenant ticked as copy, and write that copy
-// into the cells whose coordinates were stored at confirm time.
+// Step two did both in one call, which was right for step two: it had to prove
+// the coordinate geometry end to end, and doing that in one function made the
+// proof readable. It is the wrong SHIPPED shape.
 //
-// REACHABLE ONLY FROM THE CONFIRMED-TEMPLATE FLOW. parseBrief does not know
-// templates exist yet (that is step four), so nothing routes here from a brief.
-// A caller has to hand over a template id it already has.
+// The copy doc builds as STRUCTURE at brief time and gets its words when
+// somebody presses Generate First Draft. A matrix that drafted at brief time was
+// therefore finished before the copy doc had started, and — the part that
+// actually hurt — a regenerate with direction went down the draft path, reached
+// the copy doc, and could not reach the matrix. The writer was told the draft
+// had been regenerated when half the deliverable had not been.
+//
+// The fix is NOT to make the draft path call the matrix as a second step. That
+// is what syncTemplateDocuments was, and it is deleted: it coupled the two
+// documents so that the matrix was a function of the copy doc's content. This
+// splits the template's OWN work along the same seam the copy doc's work is
+// already split along, so one button drafts both because they are one path, and
+// a regenerate reaches both for the same reason.
 //
 // A TEMPLATE IS CONFIRMED when it has template_markers rows. Without them there
-// are no coordinates and nothing can be placed, so this refuses rather than
-// falling back to a marker-name match — the whole point of the rework is that
-// the position IS the mapping.
+// are no coordinates and nothing can be placed, so both halves refuse rather
+// than falling back to a marker-name match — the whole point of the rework is
+// that the position IS the mapping.
+
+// HALF ONE, AT BRIEF TIME: copy it into the campaign folder and stop.
 //
-// THE THREE STEPS, and why each reuses what exists:
+// getDestination().createFromTemplate with no values and no markers is the same
+// drive.files.copy the template import uses; passing nothing to fill means it
+// copies and sends no batchUpdate, so every {{marker}} is still standing. That
+// is the structural equivalent of the copy doc's field labels with a blank line
+// under each: the shape is there, the words are not.
 //
-//   1. COPY — getDestination().createFromTemplate with no values and no markers.
-//      That is the same drive.files.copy the existing template import uses;
-//      passing nothing to fill means it copies and sends no batchUpdate, so the
-//      markers are still standing when step 3 goes looking for their cells.
-//   2. DRAFT — gemini.generateAssetDrafts, the same batched call the copy doc's
-//      assets go through. The template becomes one "asset" whose fields are its
-//      copy markers, so the prompt, the character-limit enforcement and the
-//      craft/brand context are all the existing ones. No new prompt.
-//   3. WRITE — getDestination().writeTemplateCells, one batchUpdate in reverse
-//      document order.
-//
-// Returns { docId, docUrl, title, drafted, written, skipped, healed, missing }.
-async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId = null, clients, direction }) {
-  if (!tenantId || !templateId) throw new Error('buildTemplateDocument: tenantId and templateId are required.');
+// Returns { docId, docUrl, title, templateName, markers, copyMarkers }.
+async function copyTemplateDocument({ tenantId, templateId, spec = {}, folderId = null, clients }) {
+  if (!tenantId || !templateId) throw new Error('copyTemplateDocument: tenantId and templateId are required.');
 
   const template = await getDocTemplate(tenantId, templateId);
   if (!template) throw new Error(`No template ${templateId} for this tenant.`);
   if (!template.source_doc_id) throw new Error(`Template "${template.name}" has no imported document to copy.`);
 
+  // The confirm state is checked HERE, not only at draft time, so a template
+  // nobody has confirmed fails before a file exists in the tenant's Drive
+  // rather than after.
   const markers = await listTemplateMarkers(tenantId, templateId);
   if (markers === null) {
     throw new Error('Template fields are not available — run scripts/migrateAddTemplateMarkers.js.');
@@ -1405,17 +1413,11 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
     throw new Error(`Template "${template.name}" has no markers ticked as copy, so there is nothing to draft.`);
   }
 
-  console.log(
-    `[pipeline] template "${template.name}": ${markers.length} marker(s), ` +
-      `${copyMarkers.length} to draft, ${markers.length - copyMarkers.length} left as metadata`
-  );
-
-  // --- 1. copy -------------------------------------------------------------
-  // No values, no markers: copy only. The {{markers}} stay in place so step 3
-  // can find their cells, and nothing is filled by replaceAllText — which would
-  // consume the marker and is the mechanism this rework replaced.
   const copied = await getDestination().createFromTemplate({
     sourceDocId: template.source_doc_id,
+    // NAMING: "<Campaign> — <Template>". The campaign first because the folder
+    // holds one project's documents and they sort together; the template name
+    // second because that is what the tenant called it.
     name: `${spec.campaignTitle || 'Untitled Campaign'} — ${template.name}`,
     folderId,
     values: new Map(),
@@ -1423,7 +1425,53 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
     clients,
   });
 
-  // --- 2. draft ------------------------------------------------------------
+  console.log(
+    `[pipeline] template "${template.name}" copied as structure — ${markers.length} marker(s), ` +
+      `${copyMarkers.length} to draft when the draft runs, ${markers.length - copyMarkers.length} left as metadata`
+  );
+
+  return {
+    docId: copied.id,
+    docUrl: copied.url,
+    title: copied.title,
+    templateName: template.name,
+    markers: markers.length,
+    copyMarkers: copyMarkers.length,
+  };
+}
+
+// HALF TWO, ON THE DRAFT PATH: draft the copy markers and write the cells.
+//
+// IT NEVER READS THE COPY DOC. That is the whole distinction from
+// syncTemplateDocuments, which read the copy doc's drafted content and pushed it
+// across — making the matrix a rendering of the other document. A template's
+// fields are its own: they come from template_markers, they are drafted by the
+// same batched Gemini call the copy doc's assets use, and they are written by
+// coordinate. The two documents share a campaign and a button, and nothing else.
+//
+// THE WRITE IS UNCHANGED AND MUST STAY SO: one batchUpdate, reverse document
+// order, delete range [cellStart, cellEnd - 1), coordinates from
+// template_markers, is_copy=false cells never located and never touched. Not a
+// line of writeTemplateCells or templateCells moved for this.
+//
+// Returns { docId, templateName, drafted, summary, accounted, ...writeResult }.
+async function draftTemplateDocument({ tenantId, templateId, docId, spec = {}, direction, clients }) {
+  if (!tenantId || !templateId || !docId) {
+    throw new Error('draftTemplateDocument: tenantId, templateId and docId are required.');
+  }
+
+  const template = await getDocTemplate(tenantId, templateId);
+  if (!template) throw new Error(`No template ${templateId} for this tenant.`);
+
+  const markers = await listTemplateMarkers(tenantId, templateId);
+  if (markers === null) {
+    throw new Error('Template fields are not available — run scripts/migrateAddTemplateMarkers.js.');
+  }
+  const copyMarkers = (markers || []).filter((m) => m.is_copy);
+  if (copyMarkers.length === 0) {
+    throw new Error(`Template "${template.name}" has no markers ticked as copy, so there is nothing to draft.`);
+  }
+
   let voiceGuide = null;
   try {
     voiceGuide = await getVoiceGuide(tenantId);
@@ -1458,11 +1506,8 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
   const byName = new Map(copyMarkers.map((m) => [String(m.marker_name).trim().toLowerCase(), m.marker_key]));
   const values = new Map();
   // A draft the drafter marked `unenforced` is copy whose limit was never
-  // enforced: the batch came back over, the single-field rescue that would have
-  // rewritten and trimmed it threw, and the over-limit text was kept so the rest
-  // of the asset could proceed. It IS written to its cell — it is real copy — so
-  // it counts as drafted, and that is exactly the problem: it looked identical
-  // to a clean draft in the summary. Named here so it does not.
+  // enforced. It IS written — it is real copy — so it counts as drafted, and
+  // that is exactly why it has to be named rather than left to look clean.
   const unenforced = [];
   for (const d of drafts || []) {
     const key = byName.get(String(d.fieldName || '').trim().toLowerCase());
@@ -1473,36 +1518,21 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
     }
   }
 
-  // --- 3. write ------------------------------------------------------------
   // Only the COPY markers are handed over. A metadata marker is never located
   // and never written — its cell is the tenant's, and leaving {{Form ID}}
   // standing is the correct outcome, not an omission.
-  const result = await getDestination().writeTemplateCells(
-    copied.id,
-    { markers: copyMarkers, values },
-    clients
-  );
+  const result = await getDestination().writeTemplateCells(docId, { markers: copyMarkers, values }, clients);
 
   // ONE LINE FOR ALL THREE OUTCOMES. A copy marker ends up in exactly one of
-  // them, and until now only the third was reported — a marker that was placed
-  // but drafted nothing kept its {{marker}} silently, which looks identical in
-  // the finished document to one that was never meant to be written. Saying all
-  // three together is what makes "17 of 18" a number somebody can act on.
-  //
-  // The unenforced count is a QUALIFIER on the first bucket, not a fourth one —
-  // those markers are drafted and written, they are counted in `written`, and
-  // the buckets still add up. It is appended only when it is non-zero, because a
-  // "0 over limit" on every normal run is noise that trains people to skip the
-  // line the one time it says 1.
+  // them, and a marker that was placed but drafted nothing keeps its {{marker}} —
+  // which in the finished document looks identical to one that was never meant
+  // to be written.
   const summary =
     `${copyMarkers.length} copy marker${copyMarkers.length === 1 ? '' : 's'}: ` +
     `${result.written.length} drafted, ${result.skipped.length} left as {{marker}}, ` +
     `${result.missing.length} unplaced` +
     (unenforced.length ? ` (${unenforced.length} of the drafted are OVER LIMIT — the rescue failed)` : '');
   console.log(`[pipeline] ${summary}`);
-  // The buckets are exhaustive by construction — every copy marker is either
-  // located-and-written, located-and-empty, or not located. If that ever stops
-  // being true the counts are lying, so say so rather than printing them.
   const accounted = result.written.length + result.skipped.length + result.missing.length;
   if (accounted !== copyMarkers.length) {
     console.warn(
@@ -1512,9 +1542,7 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
   }
 
   return {
-    docId: copied.id,
-    docUrl: copied.url,
-    title: copied.title,
+    docId,
     templateName: template.name,
     markers: markers.length,
     copyMarkers: copyMarkers.length,
@@ -1524,6 +1552,20 @@ async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId
     accounted: accounted === copyMarkers.length,
     ...result,
   };
+}
+
+// BOTH HALVES, BACK TO BACK — the shape step two shipped.
+//
+// Kept because scripts/buildTemplateDoc.js is the by-hand entry point for
+// building one template without a brief, and there is no reason for a person
+// running that to press two buttons. Nothing on the brief path calls this:
+// generateDoc copies, generateDraft drafts.
+async function buildTemplateDocument({ tenantId, templateId, spec = {}, folderId = null, clients, direction }) {
+  const copied = await copyTemplateDocument({ tenantId, templateId, spec, folderId, clients });
+  const drafted = await draftTemplateDocument({
+    tenantId, templateId, docId: copied.docId, spec, direction, clients,
+  });
+  return { ...copied, ...drafted, docId: copied.docId, docUrl: copied.docUrl, title: copied.title };
 }
 
 // --- Step three: read a built template back, revise a cell, review it --------
@@ -1724,7 +1766,40 @@ async function reviewTemplateDocument({ tenantId, templateId, docId, clients }) 
 // falling back to the repo voice.md when there's no DB / no saved guide, and
 // supplies the asset-level creative direction lookup for the drafter.
 // Returns { title, fieldCount, url }.
+// TEMPLATE-ONLY: the button carries the TEMPLATE document's id, because there is
+// no copy doc for it to carry. Returns the project when docId names a project's
+// template document AND that project has no copy doc — the one case where the
+// copy-doc half of this function has nothing to do.
+async function templateOnlyProject(docId, tenantId) {
+  if (!docId || !tenantId) return null;
+  try {
+    const p = await getProjectByAnyDocId(tenantId, docId);
+    if (p && !p.copy_doc_id && p.template_doc_id === docId) return p;
+  } catch (err) {
+    console.warn('[pipeline] template-only lookup failed:', err.message);
+  }
+  return null;
+}
+
 async function generateDraft(docId, direction, clients, tenantId, scopedFields, append) {
+  // A TEMPLATE-ONLY BRIEF REACHES THE DRAFT PATH THROUGH THE SAME DOOR. Its
+  // button carries the matrix's id, and there is no copy doc to parse — so the
+  // copy-doc half is skipped and the template half runs, rather than the whole
+  // press being unavailable. The alternative was a card with no buttons on a
+  // document that had never been drafted, which is what shipped before this.
+  const templateOnly = await templateOnlyProject(docId, tenantId);
+  if (templateOnly) {
+    console.log(`[pipeline] draft: project ${templateOnly.id} is template-only — drafting the matrix alone`);
+    const out = await draftProjectTemplate({ docId, tenantId, direction, clients });
+    return {
+      title: templateOnly.name || 'Template document',
+      fieldCount: (out && out.written && out.written.length) || 0,
+      url: templateOnly.template_doc_url || null,
+      templateDraft: out,
+      templateOnly: true,
+    };
+  }
+
   // Best-effort: a DB miss/error just falls back to the repo voice.md. Never
   // log the guide content — only whether one was found.
   let voiceGuide = null;
@@ -1744,12 +1819,81 @@ async function generateDraft(docId, direction, clients, tenantId, scopedFields, 
     docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append
   );
 
-  // NO TEMPLATE SYNC ANY MORE. syncTemplateDocuments used to run here after
-  // every draft, reading the copy doc back and pushing the words into the
-  // matrix. It is gone with the shape that needed it: a template's fields are
-  // its own now, drafted straight into its own cells at build time, so there is
-  // nothing in the copy doc for a matrix to be kept in step with.
-  return result;
+  // AND THE MATRIX, ON THIS SAME PATH.
+  //
+  // NOT syncTemplateDocuments coming back. That read the copy doc's drafted
+  // content and pushed it into the matrix, which made one document a rendering
+  // of the other; delete it and the coupling goes with it. This drafts the
+  // template's OWN fields — template_markers, the same batched Gemini call, the
+  // write by coordinate — and reads the copy doc never. The two documents share
+  // a campaign and this function, and nothing else.
+  //
+  // HOOKED HERE, and not in the adapters, because this is the ONE function both
+  // surfaces call for every kind of draft: a first draft, a scoped draft, a
+  // regeneration, a riff. `direction` is whatever the writer typed, so a
+  // regenerate reaches both documents for the only reason worth relying on —
+  // they are one path.
+  //
+  // BEST-EFFORT. A draft that succeeded must not fail because a matrix could
+  // not be written: the copy is in the copy doc, which is the writer's working
+  // surface. Failures are returned, never thrown.
+  const templateDraft = await draftProjectTemplate({ docId, tenantId, direction, clients });
+  return templateDraft ? { ...result, templateDraft } : result;
+}
+
+// Draft this project's template document, if it has one.
+//
+// Returns null when there is nothing to do — no DB, no project row, no template
+// document, or the columns the link needs are not there yet. That is the
+// overwhelmingly common case, so an ordinary brief pays one indexed lookup.
+//
+// SCOPED DRAFTS AND RIFFS STILL COME THROUGH. A scoped draft targets named
+// fields of the copy doc; the matrix has no such notion, and its fields have not
+// changed, so it is redrafted whole. Redrafting a matrix is one batched Gemini
+// call and one batchUpdate — cheaper than the machinery to decide it could be
+// skipped, and it keeps "the button drafts both" true without an exception.
+async function draftProjectTemplate({ docId, tenantId, direction, clients }) {
+  if (!docId || !tenantId) return null;
+
+  let project = null;
+  try {
+    // BY EITHER DOCUMENT. On a mixed brief `docId` is the copy doc; on a
+    // template-only brief the button carries the matrix's id, because that is
+    // the only document there is. getProjectByDocId matches copy_doc_id alone
+    // and would return null for the second — silently, which is exactly how a
+    // template-only brief ended up with a document nobody could draft.
+    project = await getProjectByAnyDocId(tenantId, docId);
+  } catch (err) {
+    console.warn('[pipeline] template draft: project lookup failed:', err.message);
+    return null;
+  }
+  if (!project || !project.template_doc_id) return null;
+  if (!project.doc_template_id) {
+    // The row predates scripts/migrateAddProjectTemplateDraft.js, or the column
+    // is not there yet. Said once, plainly: the matrix exists and cannot be
+    // drafted, which is a thing to fix rather than a thing to be silent about.
+    console.warn(
+      `[pipeline] project ${project.id} has a template document but no doc_template_id — ` +
+        'run scripts/migrateAddProjectTemplateDraft.js; the matrix cannot be drafted until then'
+    );
+    return { error: 'this project predates the template-draft link', templateDocId: project.template_doc_id };
+  }
+
+  try {
+    const out = await draftTemplateDocument({
+      tenantId,
+      templateId: String(project.doc_template_id),
+      docId: project.template_doc_id,
+      direction,
+      clients,
+      // The brief's own words, off the project row. The copy doc is not read.
+      spec: { summary: project.brief_summary || '', writerPrompt: project.brief_writer_prompt || '' },
+    });
+    return { templateDocId: project.template_doc_id, templateDocUrl: project.template_doc_url, ...out };
+  } catch (err) {
+    console.error('[pipeline] template draft failed (the copy doc draft is unaffected):', err.message);
+    return { templateDocId: project.template_doc_id, error: err.message };
+  }
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web
@@ -1854,6 +1998,11 @@ module.exports = {
   // caller that already has a template id — parseBrief does not know templates
   // exist yet.
   buildTemplateDocument,
+  // The two halves it is made of. generateDoc copies at brief time; generateDraft
+  // drafts on the button, so one press reaches both documents.
+  copyTemplateDocument,
+  draftTemplateDocument,
+  draftProjectTemplate,
   // Step three, same entry rule: a caller that already has a template id and a
   // built document. Read back by stored coordinate, revise one cell, review.
   readTemplateDocument,

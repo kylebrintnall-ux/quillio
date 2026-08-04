@@ -137,10 +137,16 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
     });
   }
 
-  // NO BUTTONS ON A TEMPLATE-ONLY CARD. Both act on the copy doc id, and the
-  // template document was already drafted when it was built — there is no second
-  // step to offer.
-  if (templateOnly) return { blocks };
+  // THE TEMPLATE-ONLY CARD GETS ITS BUTTONS BACK, carrying the MATRIX's id.
+  //
+  // It had none, and that was right while the matrix drafted at brief time:
+  // both buttons act on a copy doc id, there was no copy doc, and there was
+  // nothing left to draft anyway. Now the matrix arrives as structure with every
+  // {{marker}} standing, so a card with no buttons would be a document nobody
+  // could ever draft. pipeline.generateDraft recognises a template-only project
+  // by this id and runs the template half alone.
+  const draftTarget = docId || (templateDocs || []).map((t) => t && t.id).find(Boolean) || null;
+  if (!draftTarget) return { blocks };
 
   blocks.push({
     type: 'actions',
@@ -150,13 +156,13 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
         style: 'primary',
         text: { type: 'plain_text', text: 'Generate First Draft', emoji: true },
         action_id: 'generate_first_draft',
-        value: docId,
+        value: draftTarget,
       },
       {
         type: 'button',
         text: { type: 'plain_text', text: 'Skip for now', emoji: true },
         action_id: 'skip',
-        value: docId,
+        value: draftTarget,
       },
     ],
   });

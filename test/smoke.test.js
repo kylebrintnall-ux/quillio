@@ -8128,6 +8128,74 @@ test('the zero-row guard sits inside the transaction, before the audit row', () 
   assert.match(html, /throw new Error\(data\.error/, 'and api\(\) carries it through unaltered');
 });
 
+// --- Re-deriving affected_fields (scripts/rederiveAffectedFields.js) ---------
+// The repair for one stale watch entry. What is worth pinning here is not the
+// derivation — that needs a database — but the four things a reader of the script
+// is relying on: that it cannot be run unscoped, that it carries the is_active
+// divergence deliberately, that it refuses rather than writing an empty gate, and
+// that its Litmus refusal list still matches the rows it protects.
+
+test('rederive: scoped to one entry, with no --all', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  assert.match(src, /--only=<watch id> is required/);
+  assert.ok(!/'--all'|"--all"|argv\.includes\('--all'\)/.test(src), 'no --all is implemented');
+  // Dry run by default, like every other write script in scripts/.
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/);
+  assert.match(src, /ROLLED BACK \(dry run\)/);
+});
+
+test('rederive: the is_active divergence is deliberate, and says so', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  const derive = src.slice(src.indexOf('const DERIVE_SQL'), src.indexOf('function sslFor'));
+  assert.match(derive, /cf\.spec_source = \$1/, 'platform entries derive from the watch URL');
+  assert.match(derive, /AND at\.is_active/, 'and skip deactivated assets');
+
+  // The seed query it diverges from still does NOT carry the predicate — if that
+  // ever changes, this note becomes wrong and should be removed rather than left
+  // describing a difference that no longer exists.
+  const seed = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecTables.js'), 'utf8');
+  const fn = seed.slice(seed.indexOf('async function affectedFieldsWhere'), seed.indexOf('// Insert one watch entry'));
+  assert.ok(!/is_active/.test(fn), 'affectedFieldsWhere still has no is_active filter');
+  assert.match(src, /NOT in affectedFieldsWhere\(\)/, 'and the script names the divergence in its header');
+  assert.match(src, /b2e13f2/, 'and says which change made it necessary');
+});
+
+test('rederive: refuses an empty gate, the test row, and the note-derived rows', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  assert.match(src, /REFUSED: the derivation is EMPTY/);
+  assert.match(src, /REFUSED: this is the is_test entry/);
+  assert.match(src, /REFUSED: this entry is derived from spec_note text/);
+
+  // The Litmus URLs are a REFUSAL list, so they have to match the rows they are
+  // protecting. Read out of the migration rather than retyped, the same way the
+  // retired-name coverage test reads RETIRE out of its migration.
+  const seed = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecTables.js'), 'utf8');
+  const litmus = seed.slice(seed.indexOf('const LITMUS = ['), seed.indexOf('const TEST_ENTRY'));
+  const seedUrls = (litmus.match(/'(https:\/\/[^']+)'/g) || []).map((s) => s.slice(1, -1)).sort();
+  const scriptBlock = src.slice(src.indexOf('const NOTE_DERIVED_URLS'), src.indexOf('// The platform rule'));
+  const scriptUrls = (scriptBlock.match(/'(https:\/\/[^']+)'/g) || []).map((s) => s.slice(1, -1)).sort();
+  assert.strictEqual(seedUrls.length, 2, 'two note-derived entries in the seed');
+  assert.deepStrictEqual(scriptUrls, seedUrls, 'the refusal list matches the seed byte for byte');
+});
+
+test('rederive: the header says it re-freezes, and names what it does not repair', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  // Someone running this will reasonably assume it fixed the class. It fixes one
+  // instance, and the added-field case it does not repair has no detection
+  // anywhere — not the zero-row guard, not auditWatchList.
+  assert.match(src, /RE-FREEZES THE SNAPSHOT/);
+  assert.match(src, /DOES NOT REPAIR THE WORST CASE/);
+  assert.match(src, /field ADDED to a watched asset/);
+  assert.match(src, /auditWatchList\.js cannot see it either/);
+  assert.match(src, /fixes one instance of a class/);
+  // And the same two facts are in CLAUDE.md, next to the frozen-snapshot note.
+  const claude = fs.readFileSync(path.join(__dirname, '..', 'CLAUDE.md'), 'utf8');
+  assert.match(claude, /it does not fix the class/);
+  assert.match(claude, /### The durable fix is an open decision/);
+  assert.match(claude, /only as trustworthy as `spec_source`/);
+  assert.match(claude, /### Known gap: LinkedIn Carousel is watched by nobody/);
+});
+
 // --- Asset-library uniqueness (scripts/migrateAddAssetUniqueness.js) ---------
 // There is no UNIQUE constraint on asset_types (tenant_id, name) or copy_fields
 // (asset_type_id, field_name), and duplicates do not fail loudly — they resolve

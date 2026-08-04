@@ -627,8 +627,53 @@ code.
 
 **If you change the library in a way that touches a tiered field — adding one to
 a watched asset, retiring one — re-derive `affected_fields` for the affected
-watch rows.** There is no script for that yet; the query to copy is
-`affectedFieldsWhere()` in `scripts/migrateAddSpecTables.js`.
+watch rows.** `scripts/rederiveAffectedFields.js --only=<id>` does one entry
+(dry-run by default). It re-derives a **platform** entry from
+`cf.spec_source = source_url`, plus `AND at.is_active`, which
+`affectedFieldsWhere()` does not carry — that function predates `b2e13f2`, and
+without the predicate the script would write pairs `specReview` cannot reach.
+It refuses an empty derivation (that means the entry's URL is stale, not its pair
+list), the `is_test` row, and the two note-derived Litmus rows, whose rule is
+matched on `spec_note` text and is not implemented there.
+
+There is deliberately **no `--all`**. On the July 2026 data, re-deriving the
+LinkedIn entry would *lose* its six carousel pairs and the X entry would *gain*
+`Organic Social — Twitter/X / Post Copy`; both are decisions to take with
+dry-run numbers in hand, not side effects of a loop.
+
+**Re-deriving repairs one entry at one moment — it does not fix the class.** The
+snapshot re-freezes the instant it writes. And the worst case is not repaired at
+all: a field **added** to a watched asset after the snapshot is outside the gate,
+produces no error (nothing attempts a write, so the zero-row guard never fires),
+and is invisible to `scripts/auditWatchList.js`, which checks that every pair IN
+an entry resolves, not that every field that SHOULD be in one is there. Nothing
+in this codebase detects it.
+
+### The durable fix is an open decision — two options, both with a real cost
+
+Not chosen yet. Framed here so it is inherited rather than rediscovered.
+
+| | What it means | What it costs |
+| --- | --- | --- |
+| **Resolve by asset id** | `affected_fields` stores ids, not names, so a rename cannot orphan an entry | `affected_fields` is **global** (no `tenant_id`, deliberately — platform specs are universal) while `asset_types.id` is **per tenant**. There is no single id for an asset name, so this needs the watch list to go per-tenant, or id arrays, or a canonical asset registry — a schema change with its own migration. It also touches two documented invariants: the write's deliberate absence of a tenant predicate, and `db/assets.js`'s seeded/read-only rule, which is derived from the NAME precisely because the name is what LiveSpecs reaches by. |
+| **Derive the gate live** | `guardEdits` computes the allowed pairs at write time instead of reading stored JSONB | Kills all four staleness modes outright, including the added-field one nothing detects. But the gate stops being a stable, auditable list and becomes **only as trustworthy as `spec_source`** — editing a `spec_source` would silently widen what LiveSpecs may write, where today widening it takes a deliberate re-derive. |
+
+Whichever is chosen, `rederiveAffectedFields.js` becomes redundant rather than
+wrong; it is a repair for the state we are in, not a design.
+
+### Known gap: LinkedIn Carousel is watched by nobody
+
+`business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs` is
+cited by six **enforced** `copy_fields` rows (`migrateSpecIntegrityFixes.js`
+repointed them there, correctly — the single-image page does not carry the
+carousel's numbers) and it is on **no** `spec_watch_list` row. So a change to
+LinkedIn's carousel limits is never detected.
+
+Nothing is broken today: those six pairs are still inside the LinkedIn
+single-image entry's frozen `affected_fields`, so they resolve and can still be
+approved — through a flag raised by the wrong page. Re-deriving that entry would
+drop them and turn a wrong gate into no gate, which is why `--only` exists and
+why the carousel entry should be **added** before that entry is ever re-derived.
 
 ## Vision & roadmap
 

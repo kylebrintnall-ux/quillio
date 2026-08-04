@@ -162,34 +162,14 @@ const RAW = [
     ['Card 4 Headline', 0, 45],
     ['Card 5 Headline', 0, 45],
   ]],
-  ['LinkedIn Single Image Ad — Variant A', 'Paid Social', [
-    ['Intro Text', 0, 600],
-    ['Headline', 0, 70],
-    ['Graphic Headline', 0, 70, 'Graphic Copy'],
-    ['Subhead', 40, 90, 'Graphic Copy'],
-    ['CTA Button', 0, 20, 'Graphic Copy'],
-  ]],
-  ['LinkedIn Single Image Ad — Variant B', 'Paid Social', [
-    ['Intro Text', 0, 600],
-    ['Headline', 0, 70],
-    ['Graphic Headline', 0, 70, 'Graphic Copy'],
-    ['Subhead', 40, 90, 'Graphic Copy'],
-    ['CTA Button', 0, 20, 'Graphic Copy'],
-  ]],
-  ['LinkedIn Single Image Ad — Variant C', 'Paid Social', [
-    ['Intro Text', 0, 600],
-    ['Headline', 0, 70],
-    ['Graphic Headline', 0, 70, 'Graphic Copy'],
-    ['Subhead', 40, 90, 'Graphic Copy'],
-    ['CTA Button', 0, 20, 'Graphic Copy'],
-  ]],
-  ['LinkedIn Single Image Ad — Variant D', 'Paid Social', [
-    ['Intro Text', 0, 600],
-    ['Headline', 0, 70],
-    ['Graphic Headline', 0, 70, 'Graphic Copy'],
-    ['Subhead', 40, 90, 'Graphic Copy'],
-    ['CTA Button', 0, 20, 'Graphic Copy'],
-  ]],
+  // RETIRED — the four "— Variant A/B/C/D" copies of LinkedIn Single Image Ad.
+  // Four identical asset types existed so a brief could ask for four versions of
+  // one ad. Multi-instance made that a count: "4 LinkedIn ads" is one entry with
+  // count 4, and the doc numbers the instances itself. Keeping them cost more
+  // than the feature they stood in for — they were four of the thirty names the
+  // parse had to choose between, and near-duplicates are what a name match gets
+  // wrong. scripts/migrateRetireDeadAssets.js switches them off for tenants that
+  // already have them.
   ['Meta Single Image Ad', 'Paid Social', [
     ['Primary Text', 0, 125],
     ['Headline', 0, 40],
@@ -336,11 +316,11 @@ const RAW = [
     ['Meta Description', 150, 160],
     ['OG Title', 0, 60],
   ]],
-  ['Form Confirm Page', 'Web', [
-    ['Headline', 0, 60],
-    ['Subheadline / Body', 0, 200],
-    ['CTA', 0, 40],
-  ]],
+  // RETIRED — 'Form Confirm Page'. A form-and-confirmation page is a document a
+  // tenant NAMES: they upload their own, confirm its fields, and a brief asks for
+  // it by name. A three-field house approximation of the same artifact competed
+  // with that name at parse time and won, which is how a brief asking for a
+  // template came back with a copy-doc section instead.
   ['Organic Social — LinkedIn', 'Organic Social', [
     ['Post Copy', 0, 500],
     ['Hook (first 150 chars, before See more)', 0, 150],
@@ -406,14 +386,6 @@ const RAW = [
 const DIRECTIONS = {
   'LinkedIn Single Image Ad': 'Direct. Benefit-led. Lead with the outcome, not the feature.',
   'LinkedIn Carousel Ad': 'Each card earns the next. One idea per card, strong close.',
-  'LinkedIn Single Image Ad — Variant A':
-    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
-  'LinkedIn Single Image Ad — Variant B':
-    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
-  'LinkedIn Single Image Ad — Variant C':
-    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
-  'LinkedIn Single Image Ad — Variant D':
-    'One variable per variant. Change one element — headline, angle, or offer — not everything at once.',
   'Meta Single Image Ad': 'Lead with the insight or tension. Stop the scroll in the first line.',
   'Meta Carousel Ad': 'Each card standalone. Swipe tells a story. Last card closes.',
   'Twitter/X Ad': 'Punchy. Opinionated. One idea, no hedging.',
@@ -430,7 +402,6 @@ const DIRECTIONS = {
   'On-Site Signage — Session Title Card': 'Clear over clever. Speaker name prominent. No jargon in the title.',
   'On-Site Signage — Directional': 'Action word + destination. Nothing else.',
   'Campaign Landing Page': 'One message, one CTA. Everything else supports or gets cut.',
-  'Form Confirm Page': 'Confirm the action, set the expectation, suggest the next step.',
   'Organic Social — LinkedIn': 'Insight or opinion first. Professional but human. No corporate speak.',
   'Organic Social — Instagram': 'Visual does the work. Copy adds context or personality, not explanation.',
   'Organic Social — Twitter/X': 'One idea. Confident take. Under 240 and it still lands.',

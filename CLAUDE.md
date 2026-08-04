@@ -129,27 +129,38 @@ scripts/             One-off migrations, seeds, and query/debug utilities.
 test/smoke.test.js   The test suite (see "Running & checking").
 ```
 
-**One brief can produce more than one document.** An asset attached to a tenant
-template (`asset_types.doc_template_id`) is partitioned out of the copy doc at
-build time by `pipeline.partitionSpecsByTemplate`, and its group is built by
-copying the tenant's imported template into the campaign folder and filling its
-`{{markers}}` with `replaceAllText`. Template documents are built BEFORE the copy
-doc, deliberately — the copy doc will carry links to them. `projects.copy_doc_id`
-still means the copy doc and still keys idempotency; the template document is
-recorded in `projects.template_doc_id` / `template_doc_url`.
+**One brief can produce more than one document.** A brief can NAME a document
+template (`doc_templates.name`), and it is built alongside the copy doc in the
+same campaign folder. The two are different deliverables: the copy doc holds the
+copy assets; the template holds its own fields, confirmed on upload
+(`template_markers`) and drafted straight into its own cells by stored
+coordinate. Nothing about a template passes through the asset library.
 
-The partition is for **output, not content**: a template-attached asset renders
-in the copy doc like any other, so `generateDraft` drafts it and `copyReview`
-reviews it. The template document is a SECOND rendering of that same copy, filled
-by `pipeline.syncTemplateDocuments` — called from `generateDraft`, so every draft
-path (first, scoped, regenerate, riff) syncs.
+The build path is `pipeline.buildTemplateDocument` — copy the template with
+`drive.files.copy`, draft every marker ticked `is_copy` through the same batched
+Gemini call the copy doc's assets use, and write the results in ONE
+`batchUpdate` in reverse document order. Template documents are built BEFORE the
+copy doc, deliberately — the copy doc will carry links to them.
+`projects.copy_doc_id` still means the copy doc and still keys idempotency; the
+template document is recorded in `projects.template_doc_id` / `template_doc_url`.
 
-`replaceAllText` **consumes** what it matches, so after the first fill the marker
-is gone. Each sync therefore offers two replacements per marker — `{{Marker}}` and
-the copy written last time (remembered in `projects.template_fill`) — and
-whichever is present wins. A cell a writer hand-edited matches neither, so their
-edit survives; the matrix is then stale for that field until they change it in
-the copy doc.
+**A template can only be named once per brief.** `projects` carries one
+`template_doc_id`/`url` pair, so a second copy has nowhere to be recorded.
+`pipeline.resolveTemplatePlan` refuses by name with the count in the message
+rather than building something it cannot track. Two DIFFERENT templates in one
+brief both build and both appear on the surfaces, but only the first lands on
+the project row — that is when a join table stops being premature.
+
+**Names are unique per tenant across BOTH namespaces.**
+`scripts/migrateAddTemplateUniqueness.js` adds a unique index on
+`doc_templates (tenant_id, quillio_normalize_name(name))` — the same functional
+index, and the same `quillio_normalize_name`, that
+`migrateAddAssetUniqueness.js` defines (a smoke test asserts the two files
+define it character for character). No index can span two tables, so an asset
+name colliding with a template name is refused at parse time by
+`pipeline.assertNoNameCollision`, which names both and tells you to rename one.
+
+**The old attach/map path is gone** (see "Removed features").
 
 Data flow for `/quillio [brief]`:
 
@@ -158,12 +169,14 @@ Data flow for `/quillio [brief]`:
    - `resolveTenant(teamId, slackUserId)` → the tenant whose library, voice
      guide, folder, and Google OAuth user apply.
    - `pipeline.parseBrief` → campaign title, summary, writer prompt, assets,
-     folder id, reference links.
+     TEMPLATES (named document templates), folder id, reference links. Two
+     vocabularies, refused against each other before the model sees either.
    - `pipeline.fetchAllReferences` + `enrichWithReferences` → a second Gemini
      pass over the ingested reference material.
    - `pipeline.generateDoc` → `getTenantAssets(tenantId)` (Postgres, the sole
      spec source) → `tenantAssetsToSpecs` → create the project folder →
-     `getDestination().createDocument(...)` → save a project row.
+     `buildTemplateDocument` for each NAMED template → `createDocument(...)` for
+     the copy doc → save a project row.
    - `slack.postResult` → Block Kit message with buttons.
 3. "Generate First Draft" → `pipeline.generateDraft` →
    `getDestination().generateDraft(...)`, which re-reads the doc, drafts copy
@@ -200,7 +213,9 @@ returns data instead of posting messages.
   | `createDocument({ brief, campaignTitle, summary, writerPrompt, assetSpecs, folderId, referenceLinks, referenceInsights, headerSchema, namingPattern, clients })` → `{ id, url, title }` | `pipeline.generateDoc` |
   | `generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append)` → `{ title, fieldCount, url }` | `pipeline.generateDraft` |
   | `createFromTemplate({ sourceDocId, name, folderId, values, markers, clients })` → `{ id, url, title, filled, unfilled }` | `pipeline.generateDoc` (custom document types) |
-  | `fillTemplateMarkers(id, { values, previous, markers }, clients)` → `{ filled, skipped, unchanged, ambiguous, applied }` | `pipeline.syncTemplateDocuments` |
+  | `writeTemplateCells(id, { markers, values }, clients)` → `{ written, skipped, healed, missing }` | `pipeline.buildTemplateDocument`, `regenerateTemplateFields` |
+  | `readTemplateCells(id, { markers }, clients)` → `{ rows, missing, title }` | `pipeline.readTemplateDocument` |
+  | `addUnanchoredComment(docId, content, clients)` | `services/templateReview` |
   | `getDocContent(id, clients)` | `pipeline.getProjectContent`, `copyReview` |
   | `listReviewComments(docId, clients)` | `copyReview` |
   | `addReviewComment(docId, { quote, content }, clients)` | `copyReview` |
@@ -317,6 +332,30 @@ OAuth flow**:
 Leftovers that still exist but are **wired to nothing**: `config.FIGMA_CLIENT_ID`
 / `FIGMA_CLIENT_SECRET` / `FIGMA_REDIRECT_URI`, and `db.js`'s `saveFigmaTokens`
 / `getFigmaTokens`. Their presence is not evidence a Figma flow exists.
+
+The document-template rework (step four) deleted the **attach/map path**, which
+reached a template THROUGH an asset type:
+
+- `src/destinations/markerMatch.js` and `scripts/reportAutoMatch.js` — gone.
+- `POST /api/settings/library/asset/:id/template` (attach/detach) and
+  `POST /api/settings/library/asset/:id/markers` (field→marker mapping) — gone,
+  with the settings UI that drove them.
+- `db/assets.js` `setAssetTemplate` / `setAssetFieldMarkers` /
+  `getAssetTemplateBindings` — gone.
+- `pipeline.partitionSpecsByTemplate`, `templateValuesFor`,
+  `syncTemplateDocuments`; `googleDocs.fillTemplateMarkers` (the two-replacement
+  re-sync trick); `db/projects.setProjectTemplateFill` — gone.
+
+It was wrong in a specific way: an attached asset rendered in the copy doc AND
+filled the matrix, so form and confirmation copy came out of one brief in two
+documents. A brief names the template now.
+
+Leftovers that still exist but are **wired to nothing**: the columns
+`asset_types.doc_template_id`, `copy_fields.template_marker_key` /
+`template_marker_name`, and `projects.template_fill`. They are read by no code
+path. Dropping them is a separate irreversible migration and was deliberately
+not done in the commit that stopped using them — do not treat their presence as
+evidence the attach/map path exists.
 
 (Unrelated naming collision: `routes/admin.js`'s `approve-preview` /
 `approve-commit` and `services/specReview.js` are the **LiveSpecs** spec-approval

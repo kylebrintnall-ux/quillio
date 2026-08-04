@@ -35,7 +35,14 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
   //    config.ALLOWED_ASSETS when there's no library (demo / unseeded).
   const tenantIdForParse = (tenantContext.tenant && tenantContext.tenant.id) || null;
   const parsedBrief = await pipeline.parseBrief(briefText, tenantIdForParse);
-  const { campaignTitle, assets, unmatchedAssets, referenceLinks } = parsedBrief;
+  const { campaignTitle, assets, templates, referenceLinks } = parsedBrief;
+  // ONE MISS LIST. A name the brief asked for and did not get is the same news
+  // to a writer whichever vocabulary it failed against, and unmatchedTemplates
+  // reaching no surface at all would be worse than not collecting it.
+  const unmatchedAssets = [
+    ...(parsedBrief.unmatchedAssets || []),
+    ...(parsedBrief.unmatchedTemplates || []),
+  ];
   // Which vocabulary actually gated this parse — decides whether the unmatched
   // message can honestly say "your asset library".
   const vocabularySource = (parsedBrief.assetVocabulary && parsedBrief.assetVocabulary.source) || 'default';
@@ -46,7 +53,11 @@ async function runWebBriefParse(briefText, tenantContext = {}, fileRefs = []) {
   // than silently building the full set. (A vague brief with no assets at all
   // still falls through to "all assets".) Unchanged behavior — only the wording
   // moved to the shared builder.
-  if (assets.length === 0 && unmatchedAssets.length > 0) {
+  // A brief that named ONLY a template is a complete brief. The total-miss
+  // refusal is about a brief whose asks all failed to resolve — a resolved
+  // template is not a failure, so it is checked here rather than counted as
+  // zero assets.
+  if (assets.length === 0 && (templates || []).length === 0 && unmatchedAssets.length > 0) {
     throw new Error(totalMissMessage(unmatchedAssets, vocabularySource));
   }
 
@@ -132,6 +143,10 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
 
   const { briefText, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights } = parsed;
   const assets = Array.isArray(plan) ? plan : parsed.plan;
+  // NOT user-editable at the confirm step: the confirm screen adjusts asset
+  // counts, and a template has no count to adjust. It rides through from the
+  // parse so a confirm-then-build still gets the matrix the brief asked for.
+  const templates = Array.isArray(parsed.templates) ? parsed.templates : [];
   // Carried from the parse so the result screen can say what was left out —
   // including on the confirm-then-build path, where the notice was already shown
   // once on the confirmation screen and would otherwise vanish from the result.
@@ -150,7 +165,7 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
   let docResult;
   try {
     docResult = await pipeline.generateDoc(
-      { brief: briefText, campaignTitle, summary, writerPrompt, assets, referenceLinks, referenceInsights },
+      { brief: briefText, campaignTitle, summary, writerPrompt, assets, templates, referenceLinks, referenceInsights },
       effectiveFolderId,
       clients,
       tenantId,
@@ -188,10 +203,18 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
   // Project persistence now lives in the shared pipeline (generateDoc), so both
   // the web and Slack adapters record history identically — nothing to save here.
   const { doc, assetSpecs, projectFolderUrl, projectId, templateDocs = [] } = docResult;
+  // Null on a template-only brief — see pipeline.generateDoc. The result screen
+  // reads docId/docUrl null as "there is nothing to draft here".
+  const built = doc || (templateDocs || []).find((t) => t && t.id) || null;
+  if (!built) throw new Error('Nothing was built — the brief named no assets and no template could be built.');
 
   return {
     projectId,
-    docUrl: doc.url,
+    // Null on a template-only brief: there is no copy doc to open or draft.
+    docUrl: doc ? doc.url : null,
+    // The document the result screen should lead with, whichever it is.
+    primaryUrl: built.url,
+    templateOnly: !doc,
     folderUrl: projectFolderUrl,
     // The template documents this brief produced (custom document types, step
     // three). [] for every copy-doc-only brief. The copy doc stays primary —

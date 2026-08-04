@@ -23,9 +23,9 @@ const { normalize } = require('../utils/normalize');
 const { instanceCounter } = require('../utils/instanceKey');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
-const { getAssetDirections, getTenantAssets, getAssetTemplateBindings } = require('../db/assets');
-const { saveProject, getProjectByDocId, setProjectTemplateFill } = require('../db/projects');
-const { getDocTemplate } = require('../db/docTemplates');
+const { getAssetDirections, getTenantAssets } = require('../db/assets');
+const { saveProject } = require('../db/projects');
+const { getDocTemplate, listDocTemplates } = require('../db/docTemplates');
 const { listTemplateMarkers } = require('../db/templateMarkers');
 const { postTemplateReview } = require('../services/templateReview');
 
@@ -453,6 +453,87 @@ async function resolveAssetVocabulary(tenantId) {
   return { names, source: 'tenant' };
 }
 
+// The tenant's DOCUMENT TEMPLATE names — the second vocabulary a brief can draw
+// on (rework step four). A template is a first-class thing a brief names; there
+// is no asset type in the middle any more.
+//
+// Only templates with an imported document are offered. One without a
+// source_doc_id has nothing to copy, so naming it could only ever fail, and a
+// vocabulary that includes things that cannot be built teaches the model to
+// suggest them.
+//
+// A template with no CONFIRMED markers is still offered, deliberately. It can be
+// named, and buildTemplateDocument refuses it with "has no confirmed fields yet
+// — confirm them in Settings first", which is the sentence that tells somebody
+// what to do. Leaving it out of the vocabulary instead would produce "that is
+// not a template I know about" for a template sitting in their settings.
+//
+// THREE STATES, NOT TWO. This is the correction to a pattern copied from
+// resolveAssetVocabulary that does not transfer:
+//
+//   no DB / no doc_templates table  → listDocTemplates returns null → [] and
+//                                     SILENT. Correct: this tenant has no
+//                                     templates, and never did.
+//   a real library                  → the names.
+//   the read THREW                  → `unavailable: true`, and the caller stops.
+//
+// resolveAssetVocabulary can swallow its failure because it has somewhere to
+// fall back TO — config.ALLOWED_ASSETS, a real vocabulary. There is no fallback
+// for templates, so swallowing it produced an empty list indistinguishable from
+// "this tenant has no templates". A brief naming a template in that window was
+// then refused as an unknown ASSET — the exact failure this rework removes,
+// wearing a message that blames the user for a database outage and advises
+// adding an asset type that would collide with the template forever after.
+//
+// An infrastructure failure has to look like one.
+async function resolveTemplateVocabulary(tenantId) {
+  if (!tenantId) return { names: [], byNorm: new Map(), unavailable: false };
+  let rows = null;
+  try {
+    rows = await listDocTemplates(tenantId);
+  } catch (err) {
+    console.error('[pipeline] template vocabulary lookup FAILED:', err.message);
+    return { names: [], byNorm: new Map(), unavailable: true, error: err.message };
+  }
+  const usable = (rows || []).filter((t) => t && t.name && t.source_doc_id);
+  return {
+    names: usable.map((t) => t.name),
+    byNorm: new Map(usable.map((t) => [normalize(t.name), t])),
+    unavailable: false,
+  };
+}
+
+// REFUSE A NAME THAT IS IN BOTH VOCABULARIES.
+//
+// The two namespaces are matched by the same normalize(), so an asset called
+// "Form and Confirmation Page" and a template called "Form & Confirmation Page"
+// are one string as far as a brief is concerned. There is no right answer to
+// which one the brief meant — they are different deliverables — and picking one
+// silently is the failure mode this whole rework exists to remove: copy landing
+// in a document nobody asked for.
+//
+// So it refuses, naming BOTH, before the model is asked anything. Postgres
+// enforces uniqueness WITHIN each namespace (asset_types and doc_templates each
+// have a unique index folded through the same normalizer); this is the one check
+// that has to span them, because no index can.
+function assertNoNameCollision(assetNames, templateNames) {
+  const assets = new Map((assetNames || []).map((n) => [normalize(n), n]));
+  const clashes = [];
+  for (const t of templateNames || []) {
+    const hit = assets.get(normalize(t));
+    if (hit) clashes.push({ asset: hit, template: t });
+  }
+  if (clashes.length === 0) return;
+  const detail = clashes
+    .map((c) => `"${c.template}" (a document template) and "${c.asset}" (an asset type)`)
+    .join('; ');
+  throw new Error(
+    `Two things in this workspace answer to the same name: ${detail}. ` +
+      'A brief naming it could mean either, and they are different deliverables — ' +
+      'rename one of them in Settings, then run the brief again.'
+  );
+}
+
 // Parse a free-form brief into structured data (campaignTitle, summary,
 // writerPrompt, assets, unmatchedAssets, folderId, referenceLinks,
 // assetVocabulary).
@@ -462,12 +543,26 @@ async function resolveAssetVocabulary(tenantId) {
 // pre-tenant behavior exactly.
 async function parseBrief(briefText, tenantId) {
   const vocabulary = await resolveAssetVocabulary(tenantId);
+  const templateVocabulary = await resolveTemplateVocabulary(tenantId);
+  // STOP rather than parse a brief against a vocabulary we know is incomplete.
+  // Proceeding would refuse a named template as an unknown asset and tell the
+  // user to add it to their asset library — advice that is wrong now and would
+  // trip the collision check forever if followed.
+  if (templateVocabulary.unavailable) {
+    throw new Error(
+      "Couldn't read this workspace's document templates just now, so a brief naming one " +
+        'would be misread as asking for an asset that does not exist. Nothing was built — try again in a moment.'
+    );
+  }
+  // THE COLLISION CHECK, before either list reaches the model. See
+  // assertNoNameCollision — a name in both vocabularies has no right answer.
+  assertNoNameCollision(vocabulary.names, templateVocabulary.names);
   console.log(
     `[pipeline] parse vocabulary: ${vocabulary.names.length} asset name(s) from ${
       vocabulary.source === 'tenant' ? "the tenant's library" : 'the bundled default list'
-    }`
+    }` + (templateVocabulary.names.length ? `, plus ${templateVocabulary.names.length} document template(s)` : '')
   );
-  const parsed = await geminiParseBrief(briefText, vocabulary.names);
+  const parsed = await geminiParseBrief(briefText, vocabulary.names, templateVocabulary.names);
   // Carried out so the adapters can word the unmatched message correctly, and so
   // the pending record can carry it across the web's confirmation pause.
   parsed.assetVocabulary = { source: vocabulary.source, count: vocabulary.names.length };
@@ -865,7 +960,7 @@ function requestedInstanceTotal(assetsOrPlan) {
 // an all-unmatched filter fell through to the whole library, and a partially
 // matched one silently dropped the misses — both produced a plausible-looking doc
 // that answered a different question than the one asked.
-function tenantAssetsToSpecs(rows, assetsOrPlan = [], limits) {
+function tenantAssetsToSpecs(rows, assetsOrPlan = [], limits, opts = {}) {
   const { maxPerAsset, maxTotal, hint } = resolveAssetLimits(limits);
   const groups = (rows || [])
     .map(rowToSpecGroup)
@@ -878,6 +973,19 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = [], limits) {
   // through the name lookup below: asset_types has no UNIQUE (tenant_id, name),
   // so a double-seeded library has two rows with one name and both should still
   // render (they get ordinals 0 and 1 rather than colliding).
+  //
+  // UNLESS A TEMPLATE WAS NAMED. `assets: []` used to have exactly one meaning —
+  // "a vague brief, give me everything" — and both adapters deliberately let it
+  // through to the whole library. Since a brief can name a template it has two,
+  // and they want opposite things: "build the form and confirmation matrix" is
+  // not a vague brief, it is a precise one that asked for a single document. The
+  // fallback fired anyway and produced a copy doc holding every asset type the
+  // tenant owns, none of them requested.
+  //
+  // The caller passes wholeLibraryOnEmpty:false when the brief named a template,
+  // which is the only thing that can tell the two meanings apart.
+  const wholeLibraryOnEmpty = opts.wholeLibraryOnEmpty !== false;
+  if (plan.length === 0 && !wholeLibraryOnEmpty) return [];
   if (plan.length === 0) {
     const ordinal = instanceCounter();
     return groups.map((g) => ({ ...cloneSpecGroup(g), instance: ordinal(g.assetType), instanceLabel: null }));
@@ -942,97 +1050,56 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = [], limits) {
 // Postgres is mandatory, there is no Sheet fallback.
 // `assetLimits` (optional) is the CALLING SURFACE's instance ceiling — omit for
 // the defaults. A surface with no confirmation step should pass a tighter pair.
-// PARTITION SPEC GROUPS BY THE TEMPLATE THEY RENDER INTO (custom document
-// types, STEP THREE).
+// NAME A TEMPLATE, GET THE DOCUMENT (rework step four).
 //
-// One brief can produce more than one document. Assets with no attachment — every
-// asset today, and the default forever — go into the copy doc exactly as they
-// always have. Assets attached to a template are pulled out and grouped BY
-// TEMPLATE, not by asset: two assets attached to the same matrix fill one
-// document between them, which is what a "Form & Confirmation Matrix" holding
-// both pages means.
+// Resolve the template plan parseBrief produced into the rows the build path
+// needs, refusing by name rather than silently narrowing.
 //
-// Pure, and exported, so the partition is assertable without a Google client or
-// a database — this is the one piece of step three that decides what lands where.
+// THE OLD SHAPE IS GONE. partitionSpecsByTemplate used to sort the expanded
+// asset specs into "copy doc" and "template" piles using an asset->template
+// attachment, and templateValuesFor pulled the copy back out of those specs.
+// Both are deleted. They existed because a template was reached THROUGH an asset
+// type, which is what put form and confirmation copy in the copy doc AND the
+// matrix — one ask, two deliverables, neither of them what was wanted.
 //
-//   specs:      the expanded assetSpecs array (tenantAssetsToSpecs output)
-//   bindingFor: (assetName) => null | { templateId, templateName, sourceDocId,
-//                                       markers, fieldMarkers }
+// A template is now its own ask with its own fields (template_markers), drafted
+// directly into its own cells. Nothing about it passes through the asset library.
 //
-// Returns { copyDocSpecs, templateGroups } where templateGroups is
-//   [{ templateId, templateName, sourceDocId, markers, specs, fieldMarkers }]
-// in first-seen order, so document order follows brief order.
-function partitionSpecsByTemplate(specs, bindingFor) {
-  const copyDocSpecs = [];
-  const byTemplate = new Map();
-  const lookup = typeof bindingFor === 'function' ? bindingFor : () => null;
+// Returns { groups, refused } — refused entries carry a reason, and every one of
+// them is reported rather than dropped.
+function resolveTemplatePlan(templatePlan, byNorm) {
+  const groups = [];
+  const refused = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(templatePlan) ? templatePlan : []) {
+    const name = String((entry && (entry.template || entry.name)) || '').trim();
+    if (!name) continue;
+    const key = normalize(name);
+    const tpl = byNorm instanceof Map ? byNorm.get(key) : null;
+    if (!tpl) {
+      refused.push({ name, reason: 'this workspace has no document template with that name' });
+      continue;
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
 
-  for (const spec of specs || []) {
-    const binding = lookup(spec.assetType);
-    // EVERY SPEC GOES IN THE COPY DOC — including template-attached ones. This is
-    // a partition for OUTPUT, not for content.
-    //
-    // Step three diverted attached assets out of the copy doc, and that turned
-    // out to be the wrong cut: the copy doc is where drafting and review happen.
-    // generateDraft re-parses it, copyReview reads it, the web project view
-    // renders it. An asset that is not in it is an asset no writer can draft, no
-    // reviewer can comment on, and no surface can show — and the template
-    // document would arrive empty forever.
-    //
-    // So the asset renders in the copy doc like any other, and the template
-    // document is a SECOND RENDERING of the same copy in the tenant's own format.
-    // That is what a copy matrix is: the deliverable, not the workspace.
-    copyDocSpecs.push(spec);
-
-    // A binding with no source document to copy produces no second rendering.
-    // A template row whose imported Doc was deleted must not stop the asset
-    // reaching the copy doc — which, now, it cannot.
-    if (!binding || !binding.sourceDocId) continue;
-    if (!byTemplate.has(binding.templateId)) {
-      byTemplate.set(binding.templateId, {
-        templateId: binding.templateId,
-        templateName: binding.templateName,
-        sourceDocId: binding.sourceDocId,
-        markers: binding.markers || [],
-        specs: [],
-        // Merged across every asset in the group, keyed "asset|field" so two
-        // assets sharing a field name cannot collide on one marker.
-        fieldMarkers: new Map(),
+    // KNOWN LIMIT, REFUSED BY NAME RATHER THAN QUIETLY HONOURED. projects
+    // carries ONE template_doc_id/url pair, so a second copy of one template has
+    // nowhere to be recorded — it would be built, linked on the surfaces, and
+    // then vanish from the project row. That is when a join table stops being
+    // premature, and it is not this commit. Until then: say so.
+    const requested = Number(entry && entry.requestedCount) || 1;
+    if (requested > 1) {
+      refused.push({
+        name: tpl.name,
+        reason: `a document template can only be asked for once per brief (this brief asked for ${requested}). ` +
+          'A project row records one template document, so a second copy could be built but not tracked.',
       });
+      continue;
     }
-    const group = byTemplate.get(binding.templateId);
-    group.specs.push(spec);
-    for (const [fieldNorm, marker] of binding.fieldMarkers || new Map()) {
-      group.fieldMarkers.set(`${normalize(spec.assetType)}|${fieldNorm}`, marker);
-    }
+    groups.push({ templateId: String(tpl.id), templateName: tpl.name });
   }
-
-  return { copyDocSpecs, templateGroups: [...byTemplate.values()] };
-}
-
-// The copy each mapped marker should receive, keyed by marker key.
-//
-// AT BRIEF TIME THIS IS EMPTY, and that is not a bug in this function — it is a
-// fact about when copy exists. generateDoc builds STRUCTURE: field labels, limits
-// and hints, with a blank line under each for copy that has not been written yet.
-// The words arrive later, from generateDraft, which re-reads the copy doc. So a
-// template document built at brief time is correctly a copy of the tenant's
-// matrix with every marker still visible.
-//
-// The function takes the copy from wherever a caller has it (spec.fields[].copy),
-// so the day a drafting path reaches these assets, filling them is this call and
-// nothing else.
-function templateValuesFor(group) {
-  const values = new Map();
-  for (const spec of group.specs || []) {
-    for (const field of spec.fields || []) {
-      const marker = group.fieldMarkers.get(`${normalize(spec.assetType)}|${normalize(field.fieldName)}`);
-      if (!marker) continue; // unmapped field — nothing to place
-      const copy = field.copy || field.draft || null;
-      if (typeof copy === 'string' && copy.trim()) values.set(marker.key, copy);
-    }
-  }
-  return values;
+  return { groups, refused };
 }
 
 async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, assetLimits) {
@@ -1044,9 +1111,32 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
         'Ensure DATABASE_URL is set and the tenant has been seeded (asset_types/copy_fields).'
     );
   }
+  // TEMPLATES ARE RESOLVED FIRST, because whether one was named decides what an
+  // EMPTY asset plan means — see tenantAssetsToSpecs.
+  const templateVocab = await resolveTemplateVocabulary(tenantId);
+  const { groups: templateGroups, refused: refusedTemplates } = templateVocab.unavailable
+    // The parse already succeeded, so a template WAS resolvable a moment ago.
+    // Refusing by name here beats resolveTemplatePlan's "no template with that
+    // name", which would blame the brief for a database blip.
+    ? {
+      groups: [],
+      refused: (spec.templates || []).map((t) => ({
+        name: (t && (t.template || t.name)) || 'a document template',
+        reason: "this workspace's document templates could not be read just now — the copy doc was built, the template document was not",
+      })),
+    }
+    : resolveTemplatePlan(spec.templates, templateVocab.byNorm);
+  for (const r of refusedTemplates) console.warn(`[pipeline] not building template "${r.name}": ${r.reason}`);
+  if (templateGroups.length) {
+    console.log(`[pipeline] ${templateGroups.length} document template(s) named: ${templateGroups.map((g) => g.templateName).join(', ')}`);
+  }
+
   // `spec.assets` is an asset PLAN: a bare string[] (each name once) or entries of
   // { asset, count }. Expanded in request order; throws on an unmatched name.
-  const assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets, assetLimits);
+  const assetSpecs = tenantAssetsToSpecs(tenantAssets, spec.assets, assetLimits, {
+    // A brief that named a template and no assets asked for exactly one thing.
+    wholeLibraryOnEmpty: templateGroups.length === 0,
+  });
   console.log('[pipeline] asset specs source: postgres');
   console.log(
     '[workflow] asset specs read OK —',
@@ -1061,19 +1151,10 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   const lookupDirection = await getAssetDirections(tenantId);
   for (const a of assetSpecs) a.asset_direction = lookupDirection(a.assetType);
 
-  // WHICH OF THESE RENDER SOMEWHERE ELSE. A second, named read — getTenantAssets
-  // deliberately carries neither the attachment nor the markers, so the spec
-  // source is exactly what it always was. An empty lookup (no DB, no migration,
-  // no attachments) puts every asset in the copy doc, which is today's behaviour
-  // reached by today's code path.
-  const bindingFor = await getAssetTemplateBindings(tenantId);
-  const { copyDocSpecs, templateGroups } = partitionSpecsByTemplate(assetSpecs, bindingFor);
-  if (templateGroups.length) {
-    console.log(
-      `[pipeline] ${templateGroups.length} template document(s) to build: ` +
-        JSON.stringify(templateGroups.map((g) => `${g.templateName} <- ${g.specs.map((x) => x.assetType).join(', ')}`))
-    );
-  }
+  // EVERY ASSET GOES IN THE COPY DOC. There is no partition any more: the copy
+  // doc holds the copy assets, full stop. A document template is a separate ask
+  // with separate fields, resolved above from what the brief NAMED.
+  const copyDocSpecs = assetSpecs;
 
   // Create the project folder (named after the campaign) inside the target
   // folder, with an empty Assets subfolder. The copy doc then goes inside the
@@ -1162,34 +1243,63 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   const templateDocs = [];
   for (const group of templateGroups) {
     try {
-      const built = await getDestination().createFromTemplate({
-        sourceDocId: group.sourceDocId,
-        // NAMING: "<Campaign> — <Template>". The campaign first because the
-        // folder holds one project's documents and they sort together; the
-        // template name second because that is what the tenant called it and
-        // what they will look for. Deliberately NOT the asset name — two assets
-        // can share one template, and naming it after the first would be wrong
-        // half the time.
-        name: `${spec.campaignTitle || 'Untitled Campaign'} — ${group.templateName}`,
+      // THE PROVEN PATH, UNCHANGED. buildTemplateDocument (step two) copies the
+      // template, drafts every marker the tenant ticked as copy, and writes them
+      // by stored coordinate. This commit only decides WHEN it runs; not one
+      // line of the copy, draft or write mechanism moved.
+      //
+      // It drafts NOW rather than at "Generate First Draft". A matrix is a
+      // deliverable, not a workspace: its fields are its own, drafted into its
+      // own cells, so there is no copy-doc content to wait for. The copy doc
+      // still builds as structure and drafts on the button, exactly as before.
+      const built = await buildTemplateDocument({
+        tenantId,
+        templateId: group.templateId,
         folderId: docFolderId,
-        values: templateValuesFor(group),
-        markers: group.markers,
         clients,
+        spec: {
+          // NAMING: "<Campaign> — <Template>", set inside buildTemplateDocument.
+          campaignTitle: spec.campaignTitle,
+          summary: spec.summary,
+          writerPrompt: spec.writerPrompt,
+        },
       });
-      templateDocs.push({ ...built, templateId: group.templateId, templateName: group.templateName });
+      templateDocs.push({
+        id: built.docId,
+        url: built.docUrl,
+        title: built.title,
+        templateId: group.templateId,
+        templateName: group.templateName,
+        summary: built.summary,
+      });
     } catch (err) {
+      // BEST-EFFORT, as before. The copy doc is the project's primary artifact —
+      // idempotency keys on copy_doc_id, both surfaces link to it, review runs
+      // against it. A matrix that fails to build must not take the brief down.
       console.error(`[pipeline] template document "${group.templateName}" failed:`, err.message);
       templateDocs.push({ templateId: group.templateId, templateName: group.templateName, error: err.message });
     }
   }
+  for (const r of refusedTemplates) {
+    templateDocs.push({ templateName: r.name, error: r.reason, refused: true });
+  }
 
   // Build the doc in parallel with the Assets subfolder.
   //
-  // `copyDocSpecs` is every spec — a template-attached asset renders here too,
-  // so the existing drafter and reviewer reach it. It stays a distinct name
-  // because partitionSpecsByTemplate owns the decision, and a future rule that
-  // does hold something back should have one place to change.
-  const doc = await getDestination().createDocument({
+  // `copyDocSpecs` is every spec. It stays a distinct name from `assetSpecs` so
+  // a future rule that does hold something back has one place to change.
+  // NO ASSETS AND A TEMPLATE = ONE DOCUMENT. A copy doc with no asset groups is a
+  // header and nothing else — a second file in the folder that says nothing, with
+  // a "Generate First Draft" button that has no fields to draft. The brief asked
+  // for one thing; it gets one thing.
+  //
+  // Only when a template WAS built. An empty plan with no template still falls
+  // through to the whole library above, so a vague brief is untouched.
+  const copyDocSkipped = copyDocSpecs.length === 0 && templateDocs.some((t) => t.id);
+  if (copyDocSkipped) {
+    console.log('[pipeline] no assets were requested and a template was — skipping the copy doc');
+  }
+  const doc = copyDocSkipped ? null : await getDestination().createDocument({
     brief: spec.brief,
     campaignTitle: spec.campaignTitle,
     summary: spec.summary,
@@ -1218,8 +1328,10 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
       name: spec.campaignTitle || null,
       drive_folder_id: projectFolderUrl ? docFolderId : null,
       drive_folder_url: projectFolderUrl,
-      copy_doc_id: doc.id,
-      copy_doc_url: doc.url,
+      // Null on a template-only brief. saveProject skips its idempotency probe
+      // when there is no copy doc, so the row still lands.
+      copy_doc_id: doc ? doc.id : null,
+      copy_doc_url: doc ? doc.url : null,
       // The FIRST template document, if any. A named pair, not a join table —
       // see scripts/migrateAddProjectTemplateDoc.js for why, and for what
       // happens when a brief produces more than one.
@@ -1238,17 +1350,11 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
     console.error('[pipeline] saveProject skipped:', err.message);
   }
 
-  // THE COPY DOC ALWAYS HOLDS EVERY ASSET, so the "every requested asset is
-  // template-attached" case step three had to reason about no longer exists —
-  // the copy doc is never empty of assets. It remains the project's primary
-  // artifact: db/projects keys idempotency on copy_doc_id, both surfaces link to
-  // it, copy review runs against it, and drafting happens in it.
-  //
-  // The template documents built above are still UNFILLED at this point. There
-  // is no drafted copy at brief time — the copy doc is built as structure and
-  // the words arrive from generateDraft — so every marker is still visible.
-  // syncTemplateDocuments below fills them, after drafting.
-  return { doc, assetSpecs, copyDocSpecs, templateDocs, projectFolderUrl, projectId };
+  // The copy doc remains the project's primary artifact: db/projects keys
+  // idempotency on copy_doc_id, both surfaces link to it, copy review runs
+  // against it, and drafting happens in it. A template document is a second,
+  // independent deliverable — already drafted, because its fields are its own.
+  return { doc, assetSpecs, copyDocSpecs, templateDocs, refusedTemplates, copyDocSkipped, projectFolderUrl, projectId };
 }
 
 // BUILD AND DRAFT A DOCUMENT TEMPLATE (document templates, rework step two).
@@ -1611,96 +1717,6 @@ async function reviewTemplateDocument({ tenantId, templateId, docId, clients }) 
   return { ...result, templateName: read.templateName, rows: read.rows, missing: read.missing };
 }
 
-// SYNC THE DRAFTED COPY INTO THIS PROJECT'S TEMPLATE DOCUMENT(S).
-//
-// Runs after every draft. Reads the copy doc back — the same read the web
-// project view uses — maps each field to its marker, and pushes the text into
-// the template document.
-//
-// WHY A FULL RE-SYNC, EVEN FOR A SCOPED DRAFT. Regeneration and scoped drafts
-// target individual fields, so a scoped sync is possible: map scopedFields to
-// their markers and send only those. It is not worth it. getDocContent reads the
-// WHOLE document either way (there is no partial read), the marker set is a
-// couple of dozen strings, and fillTemplateMarkers sends nothing for a field
-// whose copy has not changed — so a full sync of an unchanged document is one
-// Docs read and zero write requests.
-//
-// What the full sync buys is the case a scoped one gets wrong: a writer who
-// regenerated field A after hand-editing field B in the copy doc. A scoped sync
-// carries A and silently leaves B's older copy in the matrix. The full sync
-// carries both, and the two documents agree.
-//
-// EVERYTHING HERE IS BEST-EFFORT. A draft that succeeded must not fail because a
-// template could not be updated — the copy is in the copy doc, which is the
-// writer's working surface. Failures are logged and returned, never thrown.
-//
-// Returns null when there is nothing to sync (the overwhelmingly common case:
-// no DB, no project row, or a project with no template document), so the cost
-// for an ordinary brief is one indexed lookup.
-async function syncTemplateDocuments(docId, clients, tenantId) {
-  if (!docId || !tenantId) return null;
-
-  let project = null;
-  try {
-    project = await getProjectByDocId(tenantId, docId);
-  } catch (err) {
-    console.warn('[pipeline] template sync: project lookup failed:', err.message);
-    return null;
-  }
-  if (!project || !project.template_doc_id) return null;
-
-  try {
-    const bindingFor = await getAssetTemplateBindings(tenantId);
-    // The drafted copy, read back out of the copy doc. This is why the asset has
-    // to render there: this read is the ONLY place the words exist.
-    const content = await getDestination().getDocContent(docId, clients);
-
-    // markerKey -> drafted copy, and the marker display names, gathered from the
-    // bindings of the assets that actually appear in the document.
-    const values = new Map();
-    const markers = new Map();
-    for (const asset of (content && content.assets) || []) {
-      const binding = bindingFor(asset.name);
-      if (!binding) continue;
-      for (const m of binding.markers || []) markers.set(m.key, m);
-      for (const field of asset.fields || []) {
-        const marker = binding.fieldMarkers.get(normalize(field.fieldName));
-        if (!marker) continue; // unmapped field — its marker stays visible
-        const copy = field.copy == null ? '' : String(field.copy);
-        // The LAST instance wins for a repeated asset. A matrix has one cell per
-        // marker, so multiple instances of one asset cannot all be placed; taking
-        // the last is arbitrary but stable, and the copy doc still holds them all.
-        if (copy.trim()) values.set(marker.key, copy.trim());
-      }
-    }
-
-    const result = await getDestination().fillTemplateMarkers(
-      project.template_doc_id,
-      {
-        values,
-        previous: (project.template_fill && typeof project.template_fill === 'object') ? project.template_fill : {},
-        markers: [...markers.values()],
-      },
-      clients
-    );
-
-    // Remember what was written, so the NEXT sync can find it — replaceAllText
-    // consumed the marker, so the copy itself is the only handle left.
-    await setProjectTemplateFill(tenantId, project.id, result.applied);
-
-    console.log(
-      `[pipeline] template sync for project ${project.id}: ` +
-        `${result.filled.length} updated, ${result.unchanged.length} unchanged, ${result.skipped.length} still showing a marker`
-    );
-    return { templateDocId: project.template_doc_id, templateDocUrl: project.template_doc_url, ...result };
-  } catch (err) {
-    // The draft SUCCEEDED. The copy is in the copy doc; the matrix is stale until
-    // the next draft. That is a far better outcome than failing the draft.
-    console.error('[pipeline] template sync failed (the draft is unaffected):', err.message);
-    return { error: err.message };
-  }
-}
-
 // Draft copy for every field of an existing doc. An optional `direction` string
 // is passed through as user revision feedback (the "Regenerate" path). Optional
 // `clients` runs the Docs read/write as a specific tenant's OAuth user. Optional
@@ -1728,18 +1744,12 @@ async function generateDraft(docId, direction, clients, tenantId, scopedFields, 
     docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append
   );
 
-  // HOOKED HERE, and not in the adapters, because this is the ONE function both
-  // of them call for every kind of draft: a first draft, a scoped draft, a
-  // regeneration, a riff. Putting it in slackWorkflow would have meant a second
-  // copy in web.js and a third the next time a surface appears — and a
-  // regeneration that skipped the sync is exactly the silent divergence this
-  // step exists to prevent.
-  //
-  // Awaited, so the completion card a caller posts next is telling the truth
-  // about both documents. Never throws — see syncTemplateDocuments.
-  const templateSync = await syncTemplateDocuments(docId, clients, tenantId);
-
-  return templateSync ? { ...result, templateSync } : result;
+  // NO TEMPLATE SYNC ANY MORE. syncTemplateDocuments used to run here after
+  // every draft, reading the copy doc back and pushing the words into the
+  // matrix. It is gone with the shape that needed it: a template's fields are
+  // its own now, drafted straight into its own cells at build time, so there is
+  // nothing in the copy doc for a matrix to be kept in step with.
+  return result;
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web
@@ -1835,13 +1845,11 @@ module.exports = {
   // Asset-plan expansion. Exported for unit tests (and so the ceilings are
   // assertable) — generateDoc is its only production caller.
   tenantAssetsToSpecs,
-  // The build-time partition — which specs go to the copy doc and which to a
-  // template. Pure, so what lands where is assertable with no Google client.
-  partitionSpecsByTemplate,
-  templateValuesFor,
-  // The after-drafting sync. Exported for tests; generateDraft is its only
-  // production caller.
-  syncTemplateDocuments,
+  // The named-template resolution (rework step four). Pure, so what a brief's
+  // template plan turns into is assertable with no Google client and no DB.
+  resolveTemplatePlan,
+  resolveTemplateVocabulary,
+  assertNoNameCollision,
   // The confirmed-template build path (rework step two). Reachable only from a
   // caller that already has a template id — parseBrief does not know templates
   // exist yet.

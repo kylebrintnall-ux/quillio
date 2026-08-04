@@ -461,8 +461,9 @@ test('settings router mounts and exposes its routes', () => {
     '/api/settings/library/active', // asset on/off (POST) — is_active only
     '/api/settings/library/asset', // create a tenant asset type (POST)
     '/api/settings/library/asset/:id', // edit a tenant asset type (POST)
-    '/api/settings/library/asset/:id/markers', // map fields to {{markers}} (POST)
-    '/api/settings/library/asset/:id/template', // attach/detach a template (POST)
+    // /library/asset/:id/template and /library/asset/:id/markers are GONE
+    // (rework step four). They attached an asset type to a template and mapped
+    // its fields to markers; a brief now names the template directly.
     '/api/settings/templates', // uploaded template documents (GET)
     '/api/settings/templates', // import a .docx template (POST)
     '/api/settings/templates/:id', // rename a template (POST)
@@ -5168,7 +5169,7 @@ test('surface ceilings: Slack builds under the DEFAULTS, and the mechanism remai
   // The MECHANISM is deliberately kept so a surface can be made stricter later:
   // core still takes a limits argument and still honours a tighter pair.
   const core = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  assert.ok(/function tenantAssetsToSpecs\(rows, assetsOrPlan = \[\], limits\)/.test(core), 'expansion still takes limits');
+  assert.ok(/function tenantAssetsToSpecs\(rows, assetsOrPlan = \[\], limits, opts = \{\}\)/.test(core), 'expansion still takes limits');
   assert.ok(/function resolveAssetLimits/.test(core), 'the resolver is still there');
   assert.ok(/projectMeta = \{\}, assetLimits\)/.test(core), 'generateDoc still takes assetLimits');
   // And core still names no surface.
@@ -5325,7 +5326,7 @@ test('surface ceilings: the per-asset clamp cannot launder an over-total ask', (
 
 // Run parseBrief against a canned model response. Returns { result, prompt } so
 // the prompt the model would have seen is assertable too.
-async function parseBriefWith(modelJson, briefText, allowedAssets) {
+async function parseBriefWith(modelJson, briefText, allowedAssets, allowedTemplates) {
   const configPath = require.resolve('../src/config');
   const cfg = require('../src/config');
   const hadKey = cfg.GEMINI_API_KEY;
@@ -5344,7 +5345,7 @@ async function parseBriefWith(modelJson, briefText, allowedAssets) {
   };
   try {
     const { parseBrief } = require('../src/services/gemini');
-    const result = await parseBrief(briefText || 'a brief', allowedAssets);
+    const result = await parseBrief(briefText || 'a brief', allowedAssets, allowedTemplates);
     return { result, prompt: sentPrompt };
   } finally {
     global.fetch = realFetch;
@@ -8296,23 +8297,26 @@ test('an EXISTING asset card is still read-only apart from its toggle', () => {
 
   // libRenderAsset draws a card for an asset the tenant ALREADY has. The card
   // BODY must stay read-only: one checkbox (the toggle) and nothing else. Edits
-  // happen in a form the Edit button opens, and the template mapping in a panel
-  // the Change button opens — both replace the body rather than sitting in it,
-  // so nothing on a card is editable in place.
+  // happen in a form the Edit button opens, which replaces the body rather than
+  // sitting in it, so nothing on a card is editable in place.
   //
-  // Sliced to libRenderAsset ALONE, not to the next section marker: the mapper
-  // (libTemplateSection / libOpenMapper) lives between them and DOES carry a
-  // select. Widening the slice would have silently retired this assertion.
-  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('function libTemplateSection'));
+  // The slice used to stop short of the field->marker mapper, which lived
+  // between this function and the next section and DID carry a select. That
+  // mapper is gone (rework step four) along with the template line on the card.
+  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('THE ATTACH/MAP UI IS GONE'));
   const inputs = card.match(/createElement\('input'\)/g) || [];
   assert.strictEqual(inputs.length, 1, 'exactly one input on a card: the toggle');
   assert.match(card, /input\.type = 'checkbox'/);
   for (const affordance of ["createElement('textarea')", "createElement('select')", 'contenteditable']) {
     assert.ok(!card.includes(affordance), `no ${affordance} on an existing asset card`);
   }
-  // The template line is appended to the body, and only for assets the tenant
-  // authored — a seeded asset's card is exactly what it was.
-  assert.match(card, /if \(a\.editable\) body\.appendChild\(libTemplateSection\(a, card\)\)/);
+  // And nothing sends an asset to a template from here any more. Checked against
+  // the code with comments stripped — the note left where the mapper was names
+  // both functions, and that note is the point rather than a leftover.
+  const js = html.replace(/\/\/[^\n]*/g, '');
+  for (const gone of ['function libTemplateSection', 'function libOpenMapper', 'a.mapping']) {
+    assert.ok(!js.includes(gone), `${gone} is gone from the page`);
+  }
 
   // house_default / null must render NO tier — same rule googleDocs specTypeLine
   // applies, so an unsourced field never looks authoritative.
@@ -8449,20 +8453,21 @@ test('the library screen reaches exactly three writes, and none claims a spec', 
   // own upload POST — the old anchor (--- Markdown render) now swallows it.
   const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Template documents'));
 
-  // FIVE, and only five, each one named. Was three until custom document types
-  // step two added attach and map; the count is asserted rather than relaxed so
-  // a sixth write cannot arrive unremarked.
+  // THREE, and only three, each one named. It was three, went to five when
+  // attach and map arrived, and is three again now that they are gone (rework
+  // step four) — the count is asserted rather than relaxed so a fourth write
+  // cannot arrive unremarked in either direction.
   //   1. flip an asset on/off      — the card toggle        -> /library/active
   //   2. Remove                    — the same /active write, said in the words
   //                                  the user is thinking in
   //   3. save the form             — create OR edit, one fetch, one ternary
-  //   4. attach/detach a template  -> /library/asset/:id/template
-  //   5. save a field->marker map  -> /library/asset/:id/markers
   const posts = libJs.match(/method: 'POST'/g) || [];
-  assert.strictEqual(posts.length, 5, 'five POSTs, no more');
+  assert.strictEqual(posts.length, 3, 'three POSTs, no more');
   assert.strictEqual((libJs.match(/'\/api\/settings\/library\/active'/g) || []).length, 2, 'toggle and Remove');
   assert.match(libJs, /'\/api\/settings\/library\/asset\/' \+ existing\.id : '\/api\/settings\/library\/asset'/);
-  assert.strictEqual((libJs.match(/encodeURIComponent\(a\.id\) \+ '\/(template|markers)'/g) || []).length, 2);
+  // The library screen no longer reaches a template route at all.
+  assert.ok(!/encodeURIComponent\(a\.id\) \+ '\/(template|markers)'/.test(libJs),
+    'no attach or map write survives on the library screen');
   // No hard delete from this screen — five tables reference asset_types(id) with
   // no ON DELETE, so removal is is_active and nothing else.
   assert.ok(!/method: 'DELETE'|method: 'PATCH'|method: 'PUT'/.test(libJs), 'no delete/patch/put from this screen');
@@ -9345,7 +9350,10 @@ test('in-progress states end in an ellipsis, terminal states in a period', () =>
   assert.match(rv, /Reviewing your copy…`/);
 
   // Terminal → a complete sentence with a period.
-  assert.match(wf, /Your doc is ready — \$\{doc\.title\}\.`/);
+  // The noun branches on whether there IS a copy doc — a template-only brief
+  // built a document, not a doc. The terminal period is what this test is about
+  // and is on both branches.
+  assert.match(wf, /Your \$\{doc \? 'doc' : 'document'\} is ready — \$\{primary\.title\}\.`/);
   assert.match(sl, /Saved to \$\{folderName\}\.`/);
   assert.match(pb, /These assets are not in your library: \$\{unknown\.join\(', '\)\}\.`/);
   assert.match(rv, /Review didn’t finish\.'/);
@@ -9355,13 +9363,16 @@ test('in-progress states end in an ellipsis, terminal states in a period', () =>
   // A HEADER BLOCK is a line of copy the reader takes as a sentence, so it is
   // punctuated as one. A BUTTON LABEL is a control, and a period on a button is
   // wrong. The two used to share a rule; they do not.
-  const headerBlocks = [...sl.matchAll(/type: 'header',?\s*\n?\s*text: \{ type: 'plain_text', text: (`[^`]+`|"[^"]+"|'[^']+')/g)]
+  // Whitespace-tolerant between the fields: the result card's header wraps onto
+  // three lines now that its noun branches on whether there is a copy doc. The
+  // claim is unchanged — every header block's text is a sentence.
+  const headerBlocks = [...sl.matchAll(/type: 'header',?\s*text: \{\s*type: 'plain_text',\s*text: (`[^`]+`|"[^"]+"|'[^']+')/g)]
     .map((m) => m[1]);
   assert.strictEqual(headerBlocks.length, 2, 'both header blocks found');
   for (const h of headerBlocks) {
     assert.ok(/\.(`|"|')$/.test(h), `a header block is a sentence: ${h}`);
   }
-  assert.ok(sl.includes("text: `${emoji('quillio-doc-done')} Your doc is ready.`"));
+  assert.ok(sl.includes("text: `${emoji('quillio-doc-done')} Your ${templateOnly ? 'document' : 'doc'} is ready.`"));
   assert.ok(sl.includes("text: \"Here's how I read that brief.\""));
 
   // Button labels stay bare — asserted by name, and then swept so a new one
@@ -9989,103 +10000,6 @@ test('no fidelity check is a floor without a stated reason', () => {
 
 // --- Custom document types, step two: attach a template, map its markers ------
 
-test('auto-match takes the confident pairs and refuses the coin flips', () => {
-  const { matchMarkersToFields } = require('../src/destinations/markerMatch');
-  const markers = [
-    { name: 'Hero Headline', key: 'hero headline' },
-    { name: 'Form Submit Button', key: 'form submit button' },
-    { name: 'Form Headline', key: 'form headline' },
-    { name: 'Confirmation Headline', key: 'confirmation headline' },
-    { name: 'Form ID', key: 'form id' },
-  ];
-  const fields = [
-    { id: '1', field_name: 'Hero Headline' },
-    { id: '2', field_name: 'Submit Button' },
-    { id: '3', field_name: 'Headline' },
-  ];
-  const r = matchMarkersToFields(markers, fields);
-
-  assert.deepEqual(
-    r.matched.map((m) => [m.markerName, m.fieldName, m.how]),
-    [['Hero Headline', 'Hero Headline', 'exact'], ['Form Submit Button', 'Submit Button', 'suffix']]
-  );
-  // THE CASE THAT FORCES THE CONSERVATISM. {{Form Headline}} and
-  // {{Confirmation Headline}} both fit "Headline". Matching either is a coin
-  // flip decided by document order, and a WRONG match is invisible — the mapping
-  // reads as complete and the confirmation copy lands in the form's cell.
-  assert.ok(!r.matched.some((m) => m.fieldName === 'Headline'), '"Headline" is left for a human');
-  const contest = r.contested.find((c) => c.field === 'Headline');
-  assert.deepEqual(contest.candidates.sort(), ['Confirmation Headline', 'Form Headline']);
-  // A marker no writer drafts is simply unmatched, not an error.
-  assert.ok(r.unmatchedMarkers.some((m) => m.name === 'Form ID'));
-});
-
-test('a near-miss is never guessed at, and contains is not a match', () => {
-  const { matchMarkersToFields, isSuffix, tokens } = require('../src/destinations/markerMatch');
-  // "Subhead" vs "Subheadline" is one letter apart and a different field. A
-  // matcher that stems or fuzzy-matches would join them; this one must not.
-  let r = matchMarkersToFields([{ name: 'Form Subhead', key: 'form subhead' }], [{ id: '1', field_name: 'Subheadline' }]);
-  assert.equal(r.counts.matched, 0);
-
-  // Suffix, not contains: the qualifier goes in FRONT. {{Benefit 1 Headline}}
-  // must not claim "Headline", or four benefit rows contest one field.
-  assert.ok(isSuffix(tokens('Form Headline'), tokens('Headline')));
-  assert.ok(!isSuffix(tokens('Benefit Headline 1'), tokens('Headline')));
-  r = matchMarkersToFields(
-    [{ name: 'Benefit 1 Headline', key: 'benefit 1 headline' }, { name: 'Benefit 2 Headline', key: 'benefit 2 headline' }],
-    [{ id: '1', field_name: 'Headline' }]
-  );
-  assert.equal(r.counts.matched, 0, 'two benefit markers do not fight over one Headline');
-
-  // Punctuation a matrix decorates with is separator, not content.
-  r = matchMarkersToFields([{ name: 'CTA / Ask', key: 'cta / ask' }], [{ id: '1', field_name: 'CTA Ask' }]);
-  assert.equal(r.counts.matched, 1);
-});
-
-test('an exact match cannot be re-contested by a looser one', () => {
-  const { matchMarkersToFields } = require('../src/destinations/markerMatch');
-  // Tier 2 sees only what tier 1 left. Without that, {{Form Headline}} would
-  // contest the "Headline" that {{Headline}} already matched exactly.
-  const r = matchMarkersToFields(
-    [{ name: 'Headline', key: 'headline' }, { name: 'Form Headline', key: 'form headline' }],
-    [{ id: '1', field_name: 'Headline' }]
-  );
-  assert.equal(r.counts.matched, 1);
-  assert.equal(r.matched[0].how, 'exact');
-  assert.equal(r.counts.contested, 0);
-});
-
-test('the hit rate counts fields, not markers', () => {
-  const { matchMarkersToFields } = require('../src/destinations/markerMatch');
-  const r = matchMarkersToFields(
-    [
-      { name: 'Headline', key: 'headline' },
-      { name: 'Form ID', key: 'form id' },
-      { name: 'Owner', key: 'owner' },
-      { name: 'Last Updated', key: 'last updated' },
-    ],
-    [{ id: '1', field_name: 'Headline' }]
-  );
-  // Every field a writer drafts is placed, so the hit rate is 100 — even though
-  // three quarters of the markers are unmatched. Counting markers in the
-  // denominator would make the matcher look worse the more metadata a tenant's
-  // template happens to carry, which is a fact about their document, not about
-  // the matcher.
-  assert.equal(r.counts.hitRate, 100);
-  assert.equal(r.counts.markerCoverage, 25);
-});
-
-test('the matcher is pure — it proposes, it does not write', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'markerMatch.js'), 'utf8');
-  const code = src.replace(/\/\/.*$/gm, '');
-  assert.ok(!/getPool|pool\.query|require\('\.\.\/db/.test(code), 'no database');
-  assert.ok(!/express|router/i.test(code), 'no HTTP');
-  // The only thing it requires is the shared fold, so "matches" here means what
-  // Postgres means by it everywhere else.
-  const reqs = code.match(/require\([^)]*\)/g) || [];
-  assert.deepEqual(reqs, ["require('../utils/normalize')"]);
-});
-
 test('the attachment is INERT — the pipeline read cannot see it', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
   // getTenantAssets is what the pipeline builds from. If it grew a
@@ -10116,220 +10030,7 @@ test('the attachment is INERT — the pipeline read cannot see it', () => {
   }
 });
 
-test('a seeded asset is refused a template by the SERVER, from the stored name', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
-  const attach = src.slice(src.indexOf('async function setAssetTemplate'), src.indexOf('// MAP an attached asset'));
-  const map = src.slice(src.indexOf('async function setAssetFieldMarkers'), src.indexOf('module.exports'));
-
-  for (const [what, region] of [['attach', attach], ['map', map]]) {
-    // Checked against the row it LOCKED, not against anything submitted — the
-    // same rule updateAssetType follows, and for the same reason: renaming a
-    // seeded asset in the same request would otherwise walk straight past it.
-    assert.match(region, /FOR UPDATE/, `${what} locks the row`);
-    assert.match(region, /isSeededAssetName\(cur\.rows\[0\]\.name\)/, `${what} checks the stored name`);
-    assert.match(region, /reason: 'seeded'/, `${what} refuses`);
-    assert.match(region, /tenant_id = \$2/, `${what} is tenant-scoped`);
-  }
-  // The template is re-checked against the tenant too: an asset id that is yours
-  // plus a template id that is not is exactly the shape of a cross-tenant write.
-  assert.match(attach, /FROM doc_templates WHERE id = \$1 AND tenant_id = \$2/);
-  assert.match(attach, /reason: 'no_template'/);
-});
-
-test('a marker is verified against the attached template before it is stored', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
-  const map = src.slice(src.indexOf('async function setAssetFieldMarkers'), src.indexOf('module.exports'));
-  // Without this a typo maps a field to a cell that does not exist, and step
-  // three finds out at build time, in front of a writer.
-  assert.match(map, /SELECT placeholders FROM doc_templates/);
-  assert.match(map, /reason: 'unknown_marker'/);
-  // Two fields into one cell is not a preference to resolve later.
-  assert.match(map, /reason: 'duplicate_marker'/);
-  assert.match(map, /err\.code === '23505'/, 'and the partial unique index is the backstop');
-  // Mapping requires an attachment — there is nothing to map against otherwise.
-  assert.match(map, /reason: 'not_attached'/);
-  // A field id that is not this asset's is skipped, never followed.
-  assert.match(map, /if \(!owned\.has\(fieldId\)\) continue/);
-});
-
-test('detaching clears the mapping, because a key means nothing without its template', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
-  const attach = src.slice(src.indexOf('async function setAssetTemplate'), src.indexOf('// MAP an attached asset'));
-  assert.match(attach, /if \(docTemplateId == null\) \{[\s\S]{0,300}template_marker_key = NULL/);
-  // Otherwise attaching a DIFFERENT template later inherits a mapping nobody made.
-  assert.match(attach, /inherit a mapping nobody made/);
-});
-
-test('the mapping routes are session-scoped and answer 404 across tenants', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  // Ends at the confirm-screen block, which the rework inserted just above the
-  // workspace route — the old anchor now swallows it and would count its
-  // requireAuth gates and tenant reads as this region's.
-  const region = src.slice(
-    src.indexOf("// POST /api/settings/templates/:id"),
-    src.indexOf('// --- The confirm screen (document templates')
-  );
-  for (const r of ['/api/settings/templates/:id', "asset/:id/template", "asset/:id/markers"]) {
-    assert.ok(region.includes(r), `${r} is here`);
-  }
-  // requireAuth on all three, the tenant off req.user, nothing off the body.
-  assert.equal((region.match(/requireAuth/g) || []).length, 3);
-  assert.equal((region.match(/req\.user && req\.user\.tenant_id/g) || []).length, 3);
-  assert.ok(!/req\.body\.tenantId/.test(region));
-  // Not-yours and not-there answer the same, so an id in someone else's account
-  // is never confirmed.
-  assert.ok(region.includes("error: 'Template not found.'"));
-  assert.ok(region.includes("error: 'Asset not found.'"));
-  // Built key by key — nothing off the body reaches a column unnamed here.
-  assert.match(region, /const clean = pairs\.map\(\(p\) => \(\{/);
-  assert.ok(!/\.\.\.p\b/.test(region), 'no spread of request input');
-});
-
-test('an auto-match is a proposal — the attach route stores none of it', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  const attach = src.slice(src.indexOf("// POST /api/settings/library/asset/:id/template"), src.indexOf('// POST /api/settings/library/asset/:id/markers'));
-  assert.match(attach, /suggestion,/);
-  // The ONLY writer it calls is setAssetTemplate. If it also called
-  // setAssetFieldMarkers, a guess would be indistinguishable from a human's
-  // decision the moment anyone reloaded the page.
-  assert.ok(!/setAssetFieldMarkers/.test(attach));
-  assert.match(attach, /not saved/);
-});
-
-test('mapping state is summarised for the panel, and completeness is about fields', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function mappingSummary'), src.indexOf("router.get('/api/settings/library'"));
-  // Unattached is null, not a mapping with zero of everything — otherwise every
-  // asset a tenant has gets an empty progress line under it.
-  assert.match(fn, /if \(!asset \|\| asset\.doc_template_id == null\) return null/);
-  // complete counts FIELDS. Requiring every marker would mark every real
-  // template permanently incomplete and train everyone to ignore the indicator.
-  assert.match(fn, /complete: fields\.length > 0 && mappedFields\.length === fields\.length/);
-  assert.match(fn, /templateMissing: !template/);
-  for (const k of ['mappedFields', 'unmappedFields', 'unmappedMarkers']) assert.ok(fn.includes(k + ':'));
-});
-
-test('the panel names a template, and says where copy goes at a glance', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
-  // NAME IT: prefilled from the filename, editable before upload and after.
-  assert.match(html, /id="tpl-name"/);
-  assert.match(html, /What should Quillio call this template\?/);
-  const tplJs = html.slice(html.indexOf('--- Template documents'), html.indexOf('--- Markdown render'));
-  assert.match(tplJs, /tplFile\.name\.replace\(\/\\\.docx\$\/i, ''\)/);
-  assert.match(tplJs, /if \(typed\) fd\.append\('name', typed\)/);
-  assert.match(tplJs, /'\/api\/settings\/templates\/' \+ encodeURIComponent\(t\.id\)/);
-
-  // ATTACH + MAP live on the asset card, and only for assets the tenant authored.
-  const libJs = html.slice(html.indexOf('function libTemplateSection'), html.indexOf('--- Create an asset type'));
-  assert.match(html, /if \(a\.editable\) body\.appendChild\(libTemplateSection\(a, card\)\)/);
-  assert.match(libJs, /Renders into the campaign copy doc/);
-  assert.match(libJs, /asset\/' \+ encodeURIComponent\(a\.id\) \+ '\/template'/);
-  assert.match(libJs, /asset\/' \+ encodeURIComponent\(a\.id\) \+ '\/markers'/);
-  // A field with nowhere to go is the warning; an unmapped marker is not.
-  assert.match(libJs, /'No marker for: '/);
-  assert.match(libJs, /left unmapped/);
-  assert.match(libJs, /A matrix carries cells nobody drafts/);
-  // Auto-matched rows are LABELLED, so a human can see what was guessed.
-  assert.match(libJs, /'auto-matched'/);
-});
-
 // --- Custom document types, step three: build the second document ------------
-
-test('the partition is for OUTPUT — every asset still renders in the copy doc', () => {
-  const { partitionSpecsByTemplate } = require('../src/core/pipeline');
-  const specs = [
-    { assetType: 'LinkedIn Single Image Ad', fields: [] },
-    { assetType: 'Form & Confirmation Page', fields: [] },
-    { assetType: 'Meta Single Image Ad', fields: [] },
-    { assetType: 'Thank You Page', fields: [] },
-  ];
-  const bind = (name) =>
-    name === 'Form & Confirmation Page' || name === 'Thank You Page'
-      ? { templateId: '7', templateName: 'Matrix', sourceDocId: 'SRC', markers: [], fieldMarkers: new Map() }
-      : null;
-  const { copyDocSpecs, templateGroups } = partitionSpecsByTemplate(specs, bind);
-
-  // STEP THREE DIVERTED ATTACHED ASSETS OUT OF THE COPY DOC. That was the wrong
-  // cut: the copy doc is where drafting and review happen, so an asset missing
-  // from it is one no writer can draft and no reviewer can comment on — and its
-  // template document would arrive empty forever. Every spec renders here now,
-  // and the template is a SECOND rendering of the same copy.
-  assert.deepEqual(copyDocSpecs.map((s) => s.assetType), specs.map((s) => s.assetType));
-
-  // GROUPED BY TEMPLATE, NOT BY ASSET. Two assets attached to one matrix fill
-  // ONE document between them — which is what a "Form & Confirmation Matrix"
-  // holding both pages means.
-  assert.equal(templateGroups.length, 1);
-  assert.deepEqual(templateGroups[0].specs.map((s) => s.assetType), ['Form & Confirmation Page', 'Thank You Page']);
-});
-
-test('no bindings at all means every spec goes to the copy doc, as today', () => {
-  const { partitionSpecsByTemplate } = require('../src/core/pipeline');
-  const specs = [{ assetType: 'A', fields: [] }, { assetType: 'B', fields: [] }];
-  // The three ways there are no bindings: no DB, no migration, no attachments.
-  // getAssetTemplateBindings returns a lookup for all three, so this is the path
-  // every brief takes today and the one it keeps taking after this ships.
-  for (const bind of [() => null, undefined, null]) {
-    const out = partitionSpecsByTemplate(specs, bind);
-    assert.equal(out.copyDocSpecs.length, 2);
-    assert.equal(out.templateGroups.length, 0);
-  }
-});
-
-test('a template whose source document is gone falls back to the copy doc', () => {
-  const { partitionSpecsByTemplate } = require('../src/core/pipeline');
-  // The attachment survives a deleted Drive file (the FK is ON DELETE SET NULL
-  // on the template row, not on the imported doc). Dropping the asset out of
-  // EVERY document would lose the writer's work silently; the copy doc renders
-  // it the way it did before it was ever attached.
-  const out = partitionSpecsByTemplate(
-    [{ assetType: 'A', fields: [] }],
-    () => ({ templateId: '7', templateName: 'Matrix', sourceDocId: null, markers: [], fieldMarkers: new Map() })
-  );
-  assert.equal(out.copyDocSpecs.length, 1);
-  assert.equal(out.templateGroups.length, 0);
-});
-
-test('two assets in one template cannot collide on a marker', () => {
-  const { partitionSpecsByTemplate, templateValuesFor } = require('../src/core/pipeline');
-  // Both assets have a field called "Headline" mapped to DIFFERENT markers. The
-  // merged map is keyed asset|field, so neither overwrites the other.
-  const bindA = { templateId: '7', templateName: 'M', sourceDocId: 'SRC', markers: [],
-    fieldMarkers: new Map([['headline', { key: 'form headline', name: 'Form Headline' }]]) };
-  const bindB = { templateId: '7', templateName: 'M', sourceDocId: 'SRC', markers: [],
-    fieldMarkers: new Map([['headline', { key: 'thanks headline', name: 'Thanks Headline' }]]) };
-  const specs = [
-    { assetType: 'Form Page', fields: [{ fieldName: 'Headline', copy: 'Book your seat' }] },
-    { assetType: 'Thanks Page', fields: [{ fieldName: 'Headline', copy: 'You are in' }] },
-  ];
-  const { templateGroups } = partitionSpecsByTemplate(specs, (n) => (n === 'Form Page' ? bindA : bindB));
-  const values = templateValuesFor(templateGroups[0]);
-  assert.equal(values.get('form headline'), 'Book your seat');
-  assert.equal(values.get('thanks headline'), 'You are in');
-});
-
-test('a marker is filled only by real copy — never blanked', () => {
-  const { partitionSpecsByTemplate, templateValuesFor } = require('../src/core/pipeline');
-  const bind = { templateId: '7', templateName: 'M', sourceDocId: 'SRC', markers: [],
-    fieldMarkers: new Map([
-      ['headline', { key: 'form headline', name: 'Form Headline' }],
-      ['subhead', { key: 'form subhead', name: 'Form Subhead' }],
-      ['legal line', { key: 'form legal', name: 'Form Legal' }],
-    ]) };
-  const { templateGroups } = partitionSpecsByTemplate(
-    [{ assetType: 'Form Page', fields: [
-      { fieldName: 'Headline', copy: 'Book your seat' },
-      { fieldName: 'Subhead', copy: '   ' },   // whitespace is not copy
-      { fieldName: 'Legal Line' },             // never drafted
-    ] }],
-    () => bind
-  );
-  const values = templateValuesFor(templateGroups[0]);
-  // Only the real one. The other two markers stay standing in the output, which
-  // is the correct failure mode: an empty cell reads as "nobody wrote this yet"
-  // and a visible {{Form Legal}} reads as "this one is not mine to write".
-  assert.deepEqual([...values.keys()], ['form headline']);
-});
 
 test('createFromTemplate copies, then fills, and leaves unmapped markers alone', async () => {
   const gdocs = require('../src/destinations/googleDocs');
@@ -10382,48 +10083,54 @@ test('nothing is sent to Docs when a template has no copy at all', async () => {
 test('the template documents are built BEFORE the copy doc', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
   const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function generateDraft'));
-  const tplAt = build.indexOf('createFromTemplate');
+  // buildTemplateDocument, not createFromTemplate: a named template goes through
+  // the proven step-two path (copy, draft, write by stored coordinate) rather
+  // than being copied here and filled from copy-doc content later.
+  const tplAt = build.indexOf('await buildTemplateDocument({');
   const docAt = build.indexOf('createDocument({');
   assert.ok(tplAt > -1 && docAt > -1);
   // Set now so it does not have to be rearranged: the copy doc will carry a link
   // to these, and a link cannot be written to a document that does not exist.
-  assert.ok(tplAt < docAt, 'createFromTemplate is called before createDocument');
-  // The copy doc gets the PARTITIONED specs, not the whole array.
+  assert.ok(tplAt < docAt, 'the template document is built before the copy doc');
+  // The copy doc gets every spec — there is no partition any more.
   assert.match(build, /assetSpecs: copyDocSpecs,/);
+  assert.match(build, /const copyDocSpecs = assetSpecs;/);
   // A template failure never takes the brief down — the copy doc is primary.
-  assert.match(build, /catch \(err\) \{[\s\S]{0,200}template document "\$\{group\.templateName\}" failed/);
+  assert.match(build, /template document "\$\{group\.templateName\}" failed/);
+  assert.match(build, /templateDocs\.push\(\{ templateId: group\.templateId, templateName: group\.templateName, error: err\.message \}\)/);
 });
 
 test('the pipeline reaches Google only through the destination', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  // BOTH build functions — generateDoc and buildTemplateDocument. The slice ends
-  // at syncTemplateDocuments, which is not a build path (it reads a doc back and
-  // fills a template that already exists) and whose comments name the Google
-  // APIs it routes around. Narrowing this to the first function would drop the
-  // newest code in the file from the guarantee, which is the coverage that
-  // matters most.
+  // BOTH build functions — generateDoc and buildTemplateDocument, which
+  // generateDoc now calls. The slice ends at the step-three read-back block,
+  // whose comments name the Google APIs it routes around.
   //
   // NOT the whole file, and that is not a loosening: pipeline.js DOES call Drive
   // directly outside the build path — reference ingestion (:64, :75, :83) and the
   // two best-effort metadata reads, countDocAssets (docs.documents.get) and
   // getFolderName (drive.files.get). CLAUDE.md's claim is about the DOCUMENT
   // BUILDING surface, which is what this slice covers.
-  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('async function syncTemplateDocuments'));
-  // files.copy and batchUpdate live in googleDocs.js, behind createFromTemplate —
-  // the same contract createDocument and generateDraft go through, so a second
-  // destination can implement it.
+  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('// --- Step three: read a built template back'));
+  // files.copy and batchUpdate live in googleDocs.js, behind createFromTemplate
+  // and writeTemplateCells — the same contract createDocument and generateDraft
+  // go through, so a second destination can implement it.
   //
   // Comments stripped: buildTemplateDocument's header sits inside this slice and
   // NAMES drive.files.copy when it explains which mechanism createFromTemplate
   // reuses. Naming an API in prose is the opposite of calling it.
   assert.ok(!/files\.copy|replaceAllText|batchUpdate/.test(build.replace(/\/\/.*$/gm, '')));
   assert.match(build, /getDestination\(\)\.createFromTemplate\(/);
+  assert.match(build, /getDestination\(\)\.writeTemplateCells\(/);
 
-  // The sync goes through the contract too — one more member, not a Google call.
-  const sync = src.slice(src.indexOf('async function syncTemplateDocuments'), src.indexOf('async function generateDraft'));
-  assert.ok(!/files\.copy|docs\.documents|batchUpdate\(/.test(sync.replace(/\/\/.*$/gm, '')));
-  assert.match(sync, /getDestination\(\)\.fillTemplateMarkers\(/);
-  assert.match(sync, /getDestination\(\)\.getDocContent\(/);
+  // AND fillTemplateMarkers IS GONE. It was the two-replacement re-sync trick:
+  // offer replaceAllText both the {{marker}} and the copy written last time, and
+  // whichever is present wins. It existed because a template was filled FROM the
+  // copy doc, after drafting, over and over. A template's fields are its own now
+  // and are written once by coordinate, so nothing needs a second handle.
+  assert.ok(!/fillTemplateMarkers/.test(src), 'the re-sync trick is not referenced anywhere in the pipeline');
+  const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  assert.ok(!/fillTemplateMarkers/.test(docs), 'and the destination no longer implements it');
 });
 
 test('the project row records the template document without disturbing copy_doc_id', () => {
@@ -10577,140 +10284,6 @@ test('every web screen opens the folder, and still offers the copy doc', () => {
 });
 
 // --- Custom document types, step four: sync drafted copy into the template ----
-
-test('a re-fill uses the OLD COPY as its handle, because the marker is gone', async () => {
-  const gdocs = require('../src/destinations/googleDocs');
-  const sent = [];
-  const clients = { docs: { documents: { batchUpdate: async (a) => { sent.push(a.requestBody.requests); return { data: {} }; } } } };
-
-  // FIRST sync: the marker is still standing, so it is the handle.
-  let out = await gdocs.fillTemplateMarkers('TPL', {
-    values: new Map([['form headline', 'Book your seat']]),
-    previous: {},
-    markers: [{ name: 'Form Headline', key: 'form headline' }],
-  }, clients);
-  assert.deepEqual(sent[0].map((r) => [r.replaceAllText.containsText.text, r.replaceAllText.replaceText]),
-    [['{{Form Headline}}', 'Book your seat']]);
-  assert.deepEqual(out.applied, { 'form headline': 'Book your seat' });
-
-  // SECOND sync: replaceAllText CONSUMED the marker on the first pass, so
-  // {{Form Headline}} is no longer in the document. Without the old copy as a
-  // second handle, a regenerated field would never reach the template.
-  out = await gdocs.fillTemplateMarkers('TPL', {
-    values: new Map([['form headline', 'Claim your seat']]),
-    previous: { 'form headline': 'Book your seat' },
-    markers: [{ name: 'Form Headline', key: 'form headline' }],
-  }, clients);
-  assert.deepEqual(sent[1].map((r) => [r.replaceAllText.containsText.text, r.replaceAllText.replaceText]), [
-    ['{{Form Headline}}', 'Claim your seat'],
-    ['Book your seat', 'Claim your seat'],
-  ]);
-  // The marker replacement is case-insensitive (a tenant may vary its casing);
-  // the old-copy replacement is not, because it is a literal from the document.
-  assert.equal(sent[1][0].replaceAllText.containsText.matchCase, false);
-  assert.equal(sent[1][1].replaceAllText.containsText.matchCase, true);
-});
-
-test('an unchanged field sends nothing, so a re-sync is free', async () => {
-  const gdocs = require('../src/destinations/googleDocs');
-  let calls = 0;
-  const clients = { docs: { documents: { batchUpdate: async () => { calls += 1; return { data: {} }; } } } };
-  const out = await gdocs.fillTemplateMarkers('TPL', {
-    values: new Map([['a', 'same'], ['b', 'also same']]),
-    previous: { a: 'same', b: 'also same' },
-    markers: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }],
-  }, clients);
-  assert.equal(calls, 0, 'no batchUpdate at all');
-  assert.equal(out.requests, 0);
-  assert.deepEqual(out.unchanged, ['A', 'B']);
-  // Still remembered, so the NEXT change still has its handle.
-  assert.deepEqual(out.applied, { a: 'same', b: 'also same' });
-});
-
-test('empty copy leaves the cell alone rather than blanking it', async () => {
-  const gdocs = require('../src/destinations/googleDocs');
-  const sent = [];
-  const clients = { docs: { documents: { batchUpdate: async (a) => { sent.push(...a.requestBody.requests); return { data: {} }; } } } };
-  const out = await gdocs.fillTemplateMarkers('TPL', {
-    values: new Map([['a', '   '], ['b', ''], ['c', 'real copy']]),
-    // `a` was filled on an earlier sync; its copy must SURVIVE rather than being
-    // wiped by a field that has since been emptied.
-    previous: { a: 'earlier copy' },
-    markers: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }, { name: 'C', key: 'c' }, { name: 'D', key: 'd' }],
-  }, clients);
-  assert.deepEqual(out.skipped, ['A', 'B', 'D']);
-  assert.deepEqual(out.filled, ['C']);
-  // The rule, as an assertion: nothing ever replaces anything with blank.
-  assert.ok(sent.every((r) => String(r.replaceAllText.replaceText).trim()));
-  // And what was already in A's cell is still remembered, not forgotten.
-  assert.equal(out.applied.a, 'earlier copy');
-});
-
-test('two markers that held identical copy are skipped, not guessed at', async () => {
-  const gdocs = require('../src/destinations/googleDocs');
-  const sent = [];
-  const clients = { docs: { documents: { batchUpdate: async (a) => { sent.push(...a.requestBody.requests); return { data: {} }; } } } };
-  const out = await gdocs.fillTemplateMarkers('TPL', {
-    values: new Map([['a', 'new A'], ['b', 'new B']]),
-    // Both cells hold "Register now". Replacing by old copy would hit BOTH of
-    // them and put A's new copy in B's cell — a wrong cell is worse than a stale
-    // one, because nobody re-reads a matrix cell before shipping it.
-    previous: { a: 'Register now', b: 'Register now' },
-    markers: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }],
-  }, clients);
-  assert.deepEqual(out.ambiguous, ['A', 'B']);
-  assert.ok(!sent.some((r) => r.replaceAllText.containsText.text === 'Register now'));
-  // The marker replacement is still sent — harmless if the marker is gone, and
-  // correct if this cell was never filled.
-  assert.equal(sent.length, 2);
-});
-
-test('the sync is hooked in generateDraft, so every draft path gets it', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  const draft = src.slice(src.indexOf('async function generateDraft'), src.indexOf('async function getProjectContent'));
-  // ONE hook, in the ONE function both adapters call for a first draft, a scoped
-  // draft, a regeneration and a riff. In an adapter it would need a second copy
-  // in web.js and a third for the next surface — and a regeneration that skipped
-  // the sync is exactly the silent divergence this step exists to prevent.
-  assert.match(draft, /const templateSync = await syncTemplateDocuments\(docId, clients, tenantId\)/);
-  assert.match(draft, /return templateSync \? \{ \.\.\.result, templateSync \} : result/);
-
-  const sw = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
-  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
-  for (const [name, a] of [['slackWorkflow', sw], ['web', web]]) {
-    assert.ok(!/syncTemplateDocuments|fillTemplateMarkers/.test(a), `${name} does not sync for itself`);
-  }
-});
-
-test('a scoped draft triggers a FULL re-sync, not a scoped one', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  const sync = src.slice(src.indexOf('async function syncTemplateDocuments'), src.indexOf('async function generateDraft'));
-  // syncTemplateDocuments takes no field scope at all — it reads the whole copy
-  // doc and offers every mapped marker. getDocContent has no partial read, so a
-  // scoped sync would cost the same and get one case wrong: a writer who
-  // regenerated A after hand-editing B would see only A reach the matrix.
-  assert.match(sync, /async function syncTemplateDocuments\(docId, clients, tenantId\)/);
-  assert.ok(!/scopedFields/.test(sync));
-  // Nothing to sync is the common case and must be cheap: one indexed lookup.
-  assert.match(sync, /if \(!project \|\| !project\.template_doc_id\) return null/);
-  // Best-effort throughout — a successful draft must never fail on a template.
-  assert.match(sync, /template sync failed \(the draft is unaffected\)/);
-  assert.ok(!/throw /.test(sync));
-});
-
-test('what was written is remembered on the project row', () => {
-  const projects = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'projects.js'), 'utf8');
-  assert.match(projects, /async function setProjectTemplateFill\(tenantId, projectId, fill\)/);
-  assert.match(projects, /UPDATE projects SET template_fill = \$1::jsonb WHERE tenant_id = \$2 AND id = \$3/);
-  // The column arrives in a migration and Railway deploys main on merge, so this
-  // runs without it first. A sync that worked in Drive but could not record
-  // itself is not worth failing a draft over.
-  assert.match(projects, /isUndefinedColumn\(err\)[\s\S]{0,120}template_fill/);
-  assert.ok(!/throw err/.test(projects.slice(projects.indexOf('async function setProjectTemplateFill'), projects.indexOf('module.exports'))));
-
-  const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
-  assert.match(pipe, /await setProjectTemplateFill\(tenantId, project\.id, result\.applied\)/);
-});
 
 // --- The table-cell comment anchor probe -------------------------------------
 
@@ -11156,24 +10729,34 @@ test('the template drafts through the EXISTING batched call, not a new prompt', 
   assert.ok(!/template_markers|buildTemplateDocument/.test(gemini), 'gemini is untouched');
 });
 
-test('step two touches neither parse nor the plan validators', () => {
+test('parse reaches the build path now, and reaches it only through generateDoc', () => {
   const root = path.join(__dirname, '..');
-  // Explicitly out of scope. A brief cannot reach the template build path yet;
-  // the only entry point is scripts/buildTemplateDoc.js, run by hand.
-  for (const f of ['src/services/gemini.js', 'src/pendingBriefs.js']) {
-    const src = fs.readFileSync(path.join(root, f), 'utf8');
-    assert.ok(!/buildTemplateDocument|writeTemplateCells|templateCells/.test(src), `${f} is untouched`);
-  }
+  // THIS TEST USED TO ASSERT THE OPPOSITE. Through steps two and three the rule
+  // was "a brief cannot reach the template build path; the only entry point is
+  // scripts/buildTemplateDoc.js, run by hand". Step four is the commit that
+  // deliberately opens it, so the guard is restated rather than deleted — what
+  // is still true is that there is exactly ONE way in.
   const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
-  const parse = pipe.slice(pipe.indexOf('async function resolveAssetVocabulary'), pipe.indexOf('async function fetchAllReferences'));
-  assert.ok(!/template/i.test(parse), 'the parse path does not mention templates');
-  // No route reaches it either.
-  for (const f of ['src/routes/app.js', 'src/routes/settings.js', 'src/adapters/slackWorkflow.js', 'src/adapters/web.js']) {
+  assert.match(pipe, /const built = await buildTemplateDocument\(\{/);
+  const build = pipe.slice(pipe.indexOf('async function generateDoc'), pipe.indexOf('// BUILD AND DRAFT A DOCUMENT TEMPLATE'));
+  assert.ok(build.includes('await buildTemplateDocument({'), 'generateDoc is the caller');
+
+  // And still no OTHER caller: no route, no adapter, no surface reaches the
+  // build path directly. They pass a template PLAN into generateDoc and that is
+  // the whole interface.
+  for (const f of ['src/routes/app.js', 'src/routes/settings.js', 'src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/server.js']) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
-    assert.ok(!/buildTemplateDocument/.test(src), `${f} has no entry point`);
+    assert.ok(!/buildTemplateDocument|writeTemplateCells|templateCells/.test(src), `${f} does not call the build path directly`);
   }
-  assert.ok(fs.existsSync(path.join(root, 'scripts', 'buildTemplateDoc.js')), 'the runner is the entry point');
+  // gemini resolves NAMES. It must never reach the machinery behind them.
+  const gem = fs.readFileSync(path.join(root, 'src', 'services', 'gemini.js'), 'utf8');
+  assert.ok(!/buildTemplateDocument|writeTemplateCells|templateCells|template_markers/.test(gem),
+    'gemini knows template NAMES and nothing about how one is built');
+  // The by-hand runner still works, and is still the way to build one template
+  // without a brief.
+  assert.ok(fs.existsSync(path.join(root, 'scripts', 'buildTemplateDoc.js')), 'the runner survives');
 });
+
 
 test('one line accounts for every copy marker, in all three outcomes', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
@@ -11865,20 +11448,17 @@ test('re-running the review does not double the queue, and respects a resolved n
   assert.match(src, /posting without dedupe/);
 });
 
-test('step three is runner-only: no Slack, no web, no parse', () => {
+test('read, regenerate and review are STILL runner-only after step four', () => {
   const root = path.join(__dirname, '..');
+  // Step four opened the BUILD path to a brief. It opened nothing else: reading
+  // a built document back, revising a cell and posting review comments are all
+  // still reached only by scripts/readTemplateDoc.js, run by hand.
   for (const f of ['src/routes/app.js', 'src/routes/settings.js', 'src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/adapters/slackReview.js', 'src/server.js']) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.ok(!/readTemplateDocument|regenerateTemplateFields|reviewTemplateDocument|templateReview/.test(src), `${f} has no entry point`);
   }
-  // The parse path still does not know templates exist.
-  const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
-  const parse = pipe.slice(pipe.indexOf('async function resolveAssetVocabulary'), pipe.indexOf('async function fetchAllReferences'));
-  assert.ok(!/template/i.test(parse), 'the parse path does not mention templates');
-  // gemini gained a revision block and nothing else — it still must not know
-  // about the template build path.
   const gem = fs.readFileSync(path.join(root, 'src', 'services', 'gemini.js'), 'utf8');
-  assert.ok(!/template_markers|readTemplateDocument|regenerateTemplateFields/.test(gem), 'gemini is untouched by the template path');
+  assert.ok(!/readTemplateDocument|regenerateTemplateFields|reviewTemplateDocument/.test(gem), 'gemini reaches none of them');
   assert.ok(fs.existsSync(path.join(root, 'scripts', 'readTemplateDoc.js')), 'the runner is the entry point');
 });
 
@@ -12057,4 +11637,396 @@ test('over and under are exclusive, and both come after the marker and empty che
   assert.match(notes[0].text, /still showing its \{\{marker\}\}/);
   assert.match(notes[1].text, /empty\./);
   assert.ok(!notes.some((n) => /minimum/.test(n.text)), 'neither is also called short');
+});
+
+// === STEP FOUR: a brief NAMES a document template ===========================
+//
+// The last step of the rework. Before it, a template was reached THROUGH an
+// asset type: attach the asset to the template, map its fields to markers. That
+// shape put form and confirmation copy in the copy doc AND the matrix — one ask,
+// two deliverables, neither of them what was wanted. A template is now its own
+// ask with its own fields, and nothing about it passes through the asset library.
+//
+// SIX GATES had to stop treating a template name as an unknown asset, not the
+// four the goal expected — and two of them are outside gemini.parseBrief:
+//
+//   1. pipeline.resolveAssetVocabulary   built the ONLY vocabulary, so a
+//                                        template name was never offered
+//   2. gemini.refusalRuleLine            told the model to refuse anything
+//                                        outside that one list
+//   3. gemini.parseBrief canonicalByNorm the defensive filter — a template name
+//                                        failed it and became unmatchedAssets
+//   4. pipeline.normalizeAssetPlan       coerced anything into an asset entry
+//   5. pipeline.tenantAssetsToSpecs      threw "not in this tenant's library"
+//   6. pendingBriefs.sanitizeAssetPlan   the USER-submitted plan, on BOTH
+//                                        surfaces — "not in your library"
+
+test('a template name is resolved, not called an unknown asset', async () => {
+  const { result } = await parseBriefWith(
+    { ...MODEL_BASE, assets: [{ asset: 'Nurture Email', count: 1 }], templates: [{ template: 'Form and Confirmation Page' }] },
+    'a brief',
+    ['Nurture Email'],
+    ['Form and Confirmation Page']
+  );
+  assert.deepStrictEqual(result.assets, [{ asset: 'Nurture Email', count: 1 }]);
+  assert.strictEqual(result.templates.length, 1);
+  assert.strictEqual(result.templates[0].template, 'Form and Confirmation Page');
+  assert.strictEqual(result.templates[0].count, 1);
+  assert.deepStrictEqual(result.unmatchedAssets, [], 'and it is NOT an unmatched asset');
+});
+
+test('a template name folded differently still resolves, and a real miss still misses', async () => {
+  // Same normalize() the asset side uses, so "form & confirmation page" reaches
+  // the template the tenant called "Form and Confirmation Page"... as long as
+  // the fold agrees. "&" and "and" do NOT fold together — that is a real miss,
+  // and it is reported rather than guessed at.
+  const spaced = await parseBriefWith(
+    { ...MODEL_BASE, templates: [{ template: 'form  and   confirmation page' }] },
+    'a brief', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.strictEqual(spaced.result.templates[0].template, 'Form and Confirmation Page', 'whitespace and case fold');
+
+  const miss = await parseBriefWith(
+    { ...MODEL_BASE, templates: [{ template: 'Rate Card' }] },
+    'a brief', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.deepStrictEqual(miss.result.templates, []);
+  assert.deepStrictEqual(miss.result.unmatchedTemplates, ['Rate Card'], 'reported, never forced');
+});
+
+test('a template the model puts in `assets` is rerouted, not refused', async () => {
+  // GATE 3, the one that actually produced the failure this step removes: the
+  // model puts the template in `assets`, the defensive filter cannot find it in
+  // the asset vocabulary, and it lands in unmatchedAssets — so the adapters
+  // refuse the brief with "not in your asset library", naming a document the
+  // tenant definitely has.
+  const { result } = await parseBriefWith(
+    { ...MODEL_BASE, assets: [{ asset: 'Form and Confirmation Page', count: 1 }] },
+    'a brief', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.deepStrictEqual(result.assets, [], 'not an asset');
+  assert.deepStrictEqual(result.unmatchedAssets, [], 'and not unknown either');
+  assert.strictEqual(result.templates[0].template, 'Form and Confirmation Page');
+});
+
+test('a tenant with no templates gets a byte-identical prompt', async () => {
+  const withNone = await parseBriefWith(MODEL_BASE, 'a brief', ['Nurture Email'], []);
+  const before = await parseBriefWith(MODEL_BASE, 'a brief', ['Nurture Email']);
+  assert.strictEqual(withNone.prompt, before.prompt, 'no template vocabulary, no template prompt');
+  assert.ok(!/DOCUMENT TEMPLATES/.test(before.prompt));
+  assert.deepStrictEqual(withNone.result.templates, []);
+
+  // And with one, the prompt says so and asks for the second field.
+  const withOne = await parseBriefWith(MODEL_BASE, 'a brief', ['Nurture Email'], ['Form and Confirmation Page']);
+  assert.match(withOne.prompt, /DOCUMENT TEMPLATES\. This tenant has their own documents/);
+  assert.match(withOne.prompt, /^ {2}- Form and Confirmation Page$/m);
+  assert.match(withOne.prompt, /"templates": \[\{"template": string, "count": number\}\]/);
+  assert.match(withOne.prompt, /NEVER map an asset request onto a template or the reverse/);
+});
+
+test('the template plan is capped at one, and an explicit two is carried so it can be refused', async () => {
+  const { result } = await parseBriefWith(
+    { ...MODEL_BASE, templates: [{ template: 'Form and Confirmation Page', count: 3 }] },
+    'a brief', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  // count is PINNED, not clamped: a project row records one template document,
+  // so two of one template is a thing the data model cannot hold.
+  assert.strictEqual(result.templates[0].count, 1);
+  // But what was asked for rides along, so the refusal can name the number.
+  assert.strictEqual(result.templates[0].requestedCount, 3);
+
+  // The model naming one template twice is one ask.
+  const twice = await parseBriefWith(
+    { ...MODEL_BASE, templates: [{ template: 'Form and Confirmation Page' }, { template: 'form and confirmation page' }] },
+    'a brief', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.strictEqual(twice.result.templates.length, 1);
+});
+
+test('resolveTemplatePlan refuses by name rather than narrowing', () => {
+  const { resolveTemplatePlan } = require('../src/core/pipeline');
+  const byNorm = new Map([['form and confirmation page', { id: 7, name: 'Form and Confirmation Page' }]]);
+
+  const ok = resolveTemplatePlan([{ template: 'Form and Confirmation Page', count: 1, requestedCount: 1 }], byNorm);
+  assert.deepStrictEqual(ok.groups, [{ templateId: '7', templateName: 'Form and Confirmation Page' }]);
+  assert.deepStrictEqual(ok.refused, []);
+
+  // THE KNOWN LIMIT, refused with the number in it. projects carries one
+  // template_doc_id/url pair, so a second copy could be built but not tracked.
+  const two = resolveTemplatePlan([{ template: 'Form and Confirmation Page', requestedCount: 2 }], byNorm);
+  assert.deepStrictEqual(two.groups, []);
+  assert.match(two.refused[0].reason, /only be asked for once per brief \(this brief asked for 2\)/);
+  assert.match(two.refused[0].reason, /records one template document/);
+
+  // A name with no template is reported, never guessed at.
+  const gone = resolveTemplatePlan([{ template: 'Rate Card' }], byNorm);
+  assert.deepStrictEqual(gone.groups, []);
+  assert.match(gone.refused[0].reason, /no document template with that name/);
+
+  assert.deepStrictEqual(resolveTemplatePlan([], byNorm).groups, []);
+  assert.deepStrictEqual(resolveTemplatePlan(null, null).groups, [], 'no plan, no map, no throw');
+});
+
+test('a name claimed by both an asset and a template refuses, naming both', () => {
+  const { assertNoNameCollision } = require('../src/core/pipeline');
+  // No index can span two tables, so this is the only place it can be caught.
+  assert.doesNotThrow(() => assertNoNameCollision(['Nurture Email'], ['Form and Confirmation Page']));
+  assert.doesNotThrow(() => assertNoNameCollision([], []));
+
+  let err = null;
+  try {
+    assertNoNameCollision(['Form and Confirmation Page'], ['form  and  confirmation  page']);
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err, 'it refuses');
+  // BOTH named. "That name is ambiguous" would leave somebody hunting for the
+  // other half of a pair they cannot see.
+  assert.match(err.message, /"form {2}and {2}confirmation {2}page" \(a document template\)/);
+  assert.match(err.message, /"Form and Confirmation Page" \(an asset type\)/);
+  assert.match(err.message, /rename one of them in Settings/);
+  // Folded through the same normalize the lookups use, so the check and the
+  // lookup cannot disagree about what "the same name" is.
+  assert.throws(() => assertNoNameCollision(['Copy — Matrix'], ['copy-matrix']),
+    'an em dash with spaces folds to the same hyphenated name');
+});
+
+test('a brief naming only a template is a complete brief on both surfaces', () => {
+  // The total-miss refusal counts a resolved template. Without this a brief that
+  // asked for nothing BUT the matrix is refused as "none of these are assets".
+  for (const f of ['src/adapters/web.js', 'src/adapters/slackWorkflow.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    assert.match(src, /assets\.length === 0 && \(templates \|\| \[\]\)\.length === 0 && unmatchedAssets\.length > 0/, `${f}`);
+    assert.match(src, /templates/, `${f} passes them on`);
+  }
+  // And both carry the plan across their confirmation pause — the confirm step
+  // edits asset COUNTS, and a template has no count to edit, so it would
+  // otherwise be silently dropped between "looks right" and "build it".
+  const slack = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  assert.match(slack, /templates: pending\.templates/, 'parked on the pending record and read back');
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  assert.match(web, /const templates = Array\.isArray\(parsed\.templates\) \? parsed\.templates : \[\]/);
+});
+
+test('the old attach/map path is gone, all of it', () => {
+  const root = path.join(__dirname, '..');
+  // The files.
+  assert.ok(!fs.existsSync(path.join(root, 'src', 'destinations', 'markerMatch.js')), 'the auto-matcher is deleted');
+  assert.ok(!fs.existsSync(path.join(root, 'scripts', 'reportAutoMatch.js')), 'and its report script');
+
+  // The DB writers. Nothing writes asset_types.doc_template_id or
+  // copy_fields.template_marker_* any more.
+  const assets = fs.readFileSync(path.join(root, 'src', 'db', 'assets.js'), 'utf8');
+  for (const gone of ['setAssetTemplate', 'setAssetFieldMarkers', 'getAssetTemplateBindings']) {
+    assert.ok(!assets.includes(gone), `${gone} is gone`);
+  }
+  // The columns themselves are deliberately STILL THERE and read by nothing.
+  // Dropping them is a separate irreversible migration, and doing it in the same
+  // commit that stops using them leaves no way back if this is wrong.
+  assert.match(assets, /doc_template_id/, 'the column is still selected by getTenantLibrary, harmlessly');
+
+  // The re-sync trick and its state.
+  const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
+  for (const gone of ['syncTemplateDocuments', 'partitionSpecsByTemplate', 'templateValuesFor', 'fillTemplateMarkers', 'setProjectTemplateFill']) {
+    assert.ok(!pipe.replace(/\/\/[^\n]*/g, '').includes(gone), `${gone} is gone from the pipeline`);
+  }
+  const projects = fs.readFileSync(path.join(root, 'src', 'db', 'projects.js'), 'utf8');
+  assert.ok(!projects.includes('setProjectTemplateFill'), 'template_fill has no writer');
+
+  // The routes and the UI.
+  const settings = fs.readFileSync(path.join(root, 'src', 'routes', 'settings.js'), 'utf8');
+  const code = settings.replace(/\/\/[^\n]*/g, '');
+  assert.ok(!/asset\/:id\/template|asset\/:id\/markers/.test(code), 'both attach/map routes are gone');
+  assert.ok(!code.includes('mappingSummary'), 'and the summary they fed');
+});
+
+test('the template uniqueness migration matches the asset one, character for character', () => {
+  // Two migrations that both CREATE OR REPLACE quillio_normalize_name must
+  // define it identically. Whichever ran last would otherwise silently redefine
+  // the function the other's index was built on — and a functional index whose
+  // function changed underneath it is corrupt without saying so.
+  const a = require('../scripts/migrateAddAssetUniqueness.js');
+  const t = require('../scripts/migrateAddTemplateUniqueness.js');
+  assert.strictEqual(t.WS, a.WS, 'the whitespace class');
+  assert.strictEqual(t.DASH, a.DASH, 'the dash class');
+  assert.strictEqual(t.NORMALIZE_SQL, a.NORMALIZE_SQL, 'the normalizer body');
+  assert.strictEqual(t.CREATE_FUNCTION_SQL, a.CREATE_FUNCTION_SQL, 'and the whole function definition');
+
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddTemplateUniqueness.js'), 'utf8');
+  // Dry run by default, one transaction, refuses rather than resolving.
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/);
+  assert.match(src, /CREATE UNIQUE INDEX IF NOT EXISTS doc_templates_tenant_name_norm_uniq/);
+  assert.match(src, /coalesce\(tenant_id, ''\), quillio_normalize_name\(name\)/, 'NULL tenant gets a sentinel');
+  assert.match(src, /REFUSING TO CREATE THE INDEX/);
+  assert.ok(!/DELETE FROM|UPDATE doc_templates/.test(src), 'it never resolves a conflict itself');
+  // The cross-namespace pairs are REPORTED but do not refuse — no index spans
+  // two tables, and the parse-time check already covers them safely.
+  assert.match(src, /CROSS-NAMESPACE/);
+  assert.match(src, /assertNoNameCollision/);
+});
+
+// === The three faults step four introduced, and their fixes =================
+//
+// None of these existed before this commit. All three are consequences of a
+// brief gaining a second vocabulary, and 1 and 3 compound: a misroute made the
+// asset plan empty, and an empty asset plan meant "build the whole library".
+
+test('an empty asset plan is only the whole library when NO template was named', () => {
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const rows = ['Nurture Email', 'Paid Social', 'Landing Page'].map((name, i) => ({
+    id: String(i + 1), name, group: 'G', is_active: true, sort_order: i,
+    fields: [{ field_name: 'Headline', char_min: 0, char_max: 60, field_type: 'text' }],
+  }));
+
+  // The long-standing behaviour, untouched: a VAGUE brief still gets everything.
+  assert.strictEqual(tenantAssetsToSpecs(rows, []).length, 3, 'a vague brief still means all assets');
+  assert.strictEqual(tenantAssetsToSpecs(rows, [], undefined, {}).length, 3, 'and the default is unchanged');
+  assert.strictEqual(tenantAssetsToSpecs(rows, [], undefined, { wholeLibraryOnEmpty: true }).length, 3);
+
+  // The new meaning: "build the form and confirmation matrix" is not a vague
+  // brief, it is a precise one that asked for a single document. Before this it
+  // produced a copy doc holding every asset type the tenant owns.
+  assert.deepStrictEqual(tenantAssetsToSpecs(rows, [], undefined, { wholeLibraryOnEmpty: false }), []);
+  // A NON-empty plan is unaffected by the flag either way.
+  assert.strictEqual(tenantAssetsToSpecs(rows, [{ asset: 'Paid Social', count: 1 }], undefined, { wholeLibraryOnEmpty: false }).length, 1);
+});
+
+test('a template-only brief builds one document, and the card offers no draft button', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const build = src.slice(src.indexOf('async function generateDoc'), src.indexOf('// BUILD AND DRAFT A DOCUMENT TEMPLATE'));
+  // Templates resolve BEFORE the asset expansion — that ordering is what lets
+  // the expansion know which of the two meanings an empty plan has.
+  assert.ok(build.indexOf('resolveTemplatePlan') < build.indexOf('tenantAssetsToSpecs('), 'templates resolve first');
+  assert.match(build, /wholeLibraryOnEmpty: templateGroups\.length === 0/);
+  // And with nothing to put in it, the copy doc is not created at all.
+  assert.match(build, /const copyDocSkipped = copyDocSpecs\.length === 0 && templateDocs\.some\(\(t\) => t\.id\)/);
+  assert.match(build, /const doc = copyDocSkipped \? null : await getDestination\(\)\.createDocument\(/);
+  assert.match(build, /copy_doc_id: doc \? doc\.id : null/, 'the project row records no copy doc');
+
+  // The Slack card reads a null link as "template only": no asset list, no
+  // buttons. Both buttons carry the copy doc id, so offering them would be
+  // offering a control that acts on nothing.
+  const sl = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
+  assert.match(sl, /const templateOnly = !webViewLink;/);
+  // Returns the same { blocks } shape as the normal path — an early return of a
+  // bare array would have been a different type for the same function.
+  assert.match(sl, /if \(templateOnly\) return \{ blocks \};/);
+  assert.match(sl, /if \(webViewLink\) links\.push\(/, 'the Copy doc link is conditional');
+});
+
+// pipeline.js destructures listDocTemplates at require time, so reassigning the
+// export does nothing to the binding it holds. Reload it against a stubbed
+// module instead — which also proves the production shape is untouched, since a
+// testability seam in pipeline.js would be a change to the thing under test.
+async function withDocTemplates(impl, fn) {
+  const tplPath = require.resolve('../src/db/docTemplates');
+  const pipePath = require.resolve('../src/core/pipeline');
+  const realTpl = require.cache[tplPath];
+  const realPipe = require.cache[pipePath];
+  require.cache[tplPath] = {
+    id: tplPath, filename: tplPath, loaded: true, exports: { ...realTpl.exports, listDocTemplates: impl },
+  };
+  delete require.cache[pipePath];
+  try {
+    return await fn(require('../src/core/pipeline'));
+  } finally {
+    require.cache[tplPath] = realTpl;
+    require.cache[pipePath] = realPipe;
+  }
+}
+
+test('an unreadable template vocabulary stops the brief instead of blaming the user', async () => {
+  // THE FAILURE THIS REPLACES: the catch swallowed the error, returned [], and a
+  // brief naming a template was refused as an unknown ASSET — telling the user
+  // to add it to their asset library, which would then collide with the template
+  // forever. resolveAssetVocabulary can swallow its failure because it falls
+  // back to a real list; this one has nothing to fall back to.
+  await withDocTemplates(
+    async () => { throw new Error('connection terminated unexpectedly'); },
+    async (pipeline) => {
+      const v = await pipeline.resolveTemplateVocabulary('T1');
+      assert.strictEqual(v.unavailable, true, 'a thrown read is unavailable, not empty');
+      assert.deepStrictEqual(v.names, []);
+      await assert.rejects(
+        () => pipeline.parseBrief('build the form and confirmation matrix', 'T1'),
+        /Couldn't read this workspace's document templates just now/,
+        'the parse stops rather than proceeding on a vocabulary it knows is incomplete'
+      );
+    }
+  );
+});
+
+test('a tenant with genuinely no templates is unaffected — proven, not claimed', async () => {
+  // THREE states, and only the third stops anything.
+  for (const [label, impl, expectNames] of [
+    // no DB / no doc_templates table — listDocTemplates returns null. This is a
+    // real tenant with no templates and must stay completely silent.
+    ['null (no DB or no table)', async () => null, []],
+    ['an empty table', async () => [], []],
+    // A template with no imported document cannot be copied, so it is not
+    // offered — naming it could only ever fail.
+    ['a template with no source_doc_id', async () => [{ id: 1, name: 'Half Uploaded', source_doc_id: null }], []],
+    ['a usable template', async () => [{ id: 1, name: 'Matrix', source_doc_id: 'SRC' }], ['Matrix']],
+  ]) {
+    await withDocTemplates(impl, async (pipeline) => {
+      const v = await pipeline.resolveTemplateVocabulary('T1');
+      assert.strictEqual(v.unavailable, false, `${label}: not an outage`);
+      assert.deepStrictEqual(v.names, expectNames, label);
+      // And the brief goes through — no throw, no refusal, for a tenant whose
+      // only difference from yesterday is that templates now exist as a concept.
+      const none = await pipeline.resolveTemplateVocabulary(null);
+      assert.strictEqual(none.unavailable, false, 'no tenant id is silent too');
+      assert.deepStrictEqual(none.names, []);
+    });
+  }
+});
+
+test('an asset name the model files under `templates` goes back into the asset plan', async () => {
+  // THE SILENT DIRECTION. Before this it failed the template lookup, landed in
+  // unmatchedTemplates — which nothing read — and vanished; the brief then had
+  // no assets, and an empty plan built the whole library.
+  const { result } = await parseBriefWith(
+    { ...MODEL_BASE, assets: [], templates: [{ template: 'Nurture Email', count: 3 }] },
+    'three nurture emails', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.deepStrictEqual(result.assets, [{ asset: 'Nurture Email', count: 3 }], 'recovered, count intact');
+  assert.deepStrictEqual(result.templates, []);
+  assert.deepStrictEqual(result.unmatchedTemplates, [], 'not reported as a miss — it was not one');
+
+  // Both directions at once, each recovered into the right plan.
+  const both = await parseBriefWith(
+    { ...MODEL_BASE, assets: [{ asset: 'Form and Confirmation Page', count: 1 }], templates: [{ template: 'Nurture Email', count: 1 }] },
+    'a brief', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.deepStrictEqual(both.result.assets, [{ asset: 'Nurture Email', count: 1 }]);
+  assert.strictEqual(both.result.templates[0].template, 'Form and Confirmation Page');
+  assert.deepStrictEqual(both.result.unmatchedAssets, []);
+  assert.deepStrictEqual(both.result.unmatchedTemplates, []);
+
+  // A recovered asset is clamped like any other — it goes through the same loop.
+  const huge = await parseBriefWith(
+    { ...MODEL_BASE, assets: [], templates: [{ template: 'Nurture Email', count: 9999 }] },
+    'a brief', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.ok(huge.result.assets[0].count <= 10, `clamped, got ${huge.result.assets[0].count}`);
+});
+
+test('unmatchedTemplates is reachable, so it reaches the same surface as a missed asset', async () => {
+  // After the reverse check, a name lands here only when it matches NEITHER
+  // vocabulary — a genuine miss, and the same news to a writer as a missed
+  // asset. A list nothing reads would be worse than not collecting it.
+  const { result } = await parseBriefWith(
+    { ...MODEL_BASE, assets: [], templates: [{ template: 'Rate Card' }] },
+    'build the rate card', ['Nurture Email'], ['Form and Confirmation Page']
+  );
+  assert.deepStrictEqual(result.unmatchedTemplates, ['Rate Card'], 'still reachable');
+
+  for (const f of ['src/adapters/web.js', 'src/adapters/slackWorkflow.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    assert.match(src, /\.\.\.\(parsedBrief\.unmatchedAssets \|\| \[\]\),\n\s*\.\.\.\(parsedBrief\.unmatchedTemplates \|\| \[\]\),/,
+      `${f} merges both miss lists`);
+    // Merged BEFORE the total-miss refusal, so a brief whose only ask was an
+    // unknown template is refused rather than silently building nothing.
+    assert.ok(src.indexOf('unmatchedTemplates') < src.indexOf('assets.length === 0 &&'), `${f} merges first`);
+  }
 });

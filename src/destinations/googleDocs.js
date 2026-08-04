@@ -656,7 +656,14 @@ async function createDocument({
     });
   }
 
-  return { id: docId, url: created.data.webViewLink, title };
+  // webViewLink is REQUESTED, not guaranteed. A files.create response that omits
+  // it used to end here as `url: undefined`, which generateDoc records as
+  // projects.copy_doc_url = null — an id pointing at a real document in Drive
+  // that the row cannot link to. createFromTemplate has always defended against
+  // this on the same API call; the copy doc had no reason to be the exception.
+  // The link is derivable from the id, so there is nothing to lose by deriving it.
+  const url = created.data.webViewLink || `https://docs.google.com/document/d/${docId}/edit`;
+  return { id: docId, url, title };
 }
 
 // --- Draft generation (stateless: re-parses the doc) ---

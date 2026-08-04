@@ -12695,3 +12695,87 @@ test('the web adapter targets the template document on all three functions', () 
   assert.match(web, /id: t\.id \|\| null/);
   assert.match(web, /refused: t\.refused === true/);
 });
+
+test('a created doc always comes back with a link, derived from the id when Drive omits one', async () => {
+  const { createDocument } = require('../src/destinations/googleDocs');
+
+  // The smallest client createDocument needs: one files.create and one
+  // batchUpdate. `webViewLink` is what the test varies.
+  const clientsReturning = (webViewLink) => ({
+    usingOAuth: true,
+    drive: { files: { create: async () => ({ data: { id: 'DOC123', ...(webViewLink ? { webViewLink } : {}) } }) } },
+    docs: { documents: { batchUpdate: async () => ({ data: {} }) } },
+  });
+  const run = (webViewLink) =>
+    createDocument({
+      brief: 'b', campaignTitle: 'Spring Launch', summary: 's', writerPrompt: 'w',
+      assetSpecs: [], folderId: null, clients: clientsReturning(webViewLink),
+    });
+
+  // Drive answered with a link → that link, verbatim. Nothing about the normal
+  // path changed.
+  const withLink = await run('https://docs.google.com/document/d/DOC123/edit?usp=drivesdk');
+  assert.strictEqual(withLink.id, 'DOC123');
+  assert.strictEqual(withLink.url, 'https://docs.google.com/document/d/DOC123/edit?usp=drivesdk');
+
+  // Drive answered WITHOUT one → derived from the id, never undefined.
+  // pipeline.generateDoc writes `copy_doc_url: doc ? doc.url : null` straight
+  // onto the project row, so undefined here becomes a NULL column: an id
+  // pointing at a real document that the row cannot link to, and a detail view
+  // that hides its "Open copy doc" button on a document that exists.
+  const noLink = await run(null);
+  assert.strictEqual(noLink.id, 'DOC123');
+  assert.strictEqual(noLink.url, 'https://docs.google.com/document/d/DOC123/edit');
+  assert.notStrictEqual(noLink.url, undefined);
+});
+
+test('both document adapters derive the same fallback link', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  // createFromTemplate has always guarded this; the copy doc was the exception
+  // on the same API call with the same `fields: 'id, webViewLink'` request. Two
+  // documents in one campaign folder must not disagree about what a link is.
+  const fallbacks = src.match(/webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{\w+\}\/edit`/g) || [];
+  assert.strictEqual(fallbacks.length, 2, 'createDocument and createFromTemplate both derive it');
+  // And nothing returns the raw field un-guarded any more.
+  assert.ok(!/url: created\.data\.webViewLink/.test(src), 'no un-guarded webViewLink in a return');
+});
+
+test('every Drive create/copy that yields a link guards it — the whole sweep, not one field', () => {
+  const root = path.join(__dirname, '..');
+  // THE INVENTORY. Four url columns are fed by a drive.files.create /
+  // files.copy response, plus one return value that reaches no column. Two of
+  // them were guarded from the start; the copy doc and the project FOLDER were
+  // not, and were found one at a time. This pins the whole set so a fifth site
+  // cannot be added un-guarded and discovered the same way.
+  const SITES = [
+    // [file, the guarded expression, what it feeds]
+    ['src/destinations/googleDocs.js', /created\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{docId\}\/edit`/, 'projects.copy_doc_url'],
+    ['src/destinations/googleDocs.js', /copied\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{id\}\/edit`/, 'projects.template_doc_url'],
+    ['src/destinations/docTemplateImport.js', /created\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{docId\}\/edit`/, 'doc_templates.source_doc_url'],
+    ['src/core/pipeline.js', /folder\.data\.webViewLink \|\| `https:\/\/drive\.google\.com\/drive\/folders\/\$\{docFolderId\}`/, 'projects.drive_folder_url'],
+    ['src/destinations/docHeaderSample.js', /created\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{docId\}\/edit`/, '(no column — by-hand scripts only)'],
+  ];
+  for (const [file, pattern, feeds] of SITES) {
+    const src = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.match(src, pattern, `${file} guards the link it records into ${feeds}`);
+  }
+
+  // A FOLDER IS NOT A DOCUMENT. Deriving /document/d/<id>/edit for a folder
+  // would produce a link that resolves to nothing — worse than null, because it
+  // looks like it works.
+  const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.ok(!/docFolderId\}\/edit`/.test(pipe), 'the folder fallback does not use the document URL shape');
+
+  // And no un-guarded read survives anywhere: every webViewLink that is read
+  // into a value is either followed by `||` on the same line, or is a `fields:`
+  // request string.
+  for (const file of ['src/destinations/googleDocs.js', 'src/destinations/docTemplateImport.js',
+    'src/destinations/docHeaderSample.js', 'src/core/pipeline.js']) {
+    const lines = fs.readFileSync(path.join(root, file), 'utf8').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!/\.data\.webViewLink/.test(l)) continue;
+      assert.ok(/\.data\.webViewLink \|\|/.test(l), `${file}:${i + 1} reads webViewLink without a fallback: ${l.trim()}`);
+    }
+  }
+});

@@ -8243,6 +8243,123 @@ test('the unmatched message names the gate that actually ran', () => {
   assert.strictEqual(partialMissNotice(['X'], 'nonsense'), partialMissNotice(['X'], 'default'));
 });
 
+// --- A retired asset name is told what replaced it ---------------------------
+// f3683f4 retired six asset types. "Add it to your asset library" is the wrong
+// instruction for any of them: following it rebuilds the near-duplicate the
+// prune removed. These assert the redirect fires, replaces (not supplements)
+// that advice, and never fires on an ordinary unknown name.
+
+test('retired names: a form/confirmation phrase is redirected to the template flow', () => {
+  const { totalMissMessage, partialMissNotice } = require('../src/utils/assetMatch');
+
+  const t = totalMissMessage(['confirm page'], 'tenant');
+  assert.match(t, /document template now/, 'says what replaced it');
+  assert.match(t, /import one in Settings/);
+  // The contradictory advice is GONE, not merely followed by a correction.
+  assert.ok(!/add .* to your asset library/i.test(t), 'the wrong instruction is replaced');
+  assert.match(t, /Nothing was built\./, 'still reads as the refusal it is');
+
+  // The phrase the brief actually used is what arrives — none of these is the
+  // retired canonical name, and all of them must land.
+  for (const phrase of ['confirm page', 'the confirmation page', 'Form Confirm Page',
+    'Form and Confirmation Copy', 'form  confirm  page']) {
+    assert.match(totalMissMessage([phrase], 'tenant'), /document template now/, phrase);
+  }
+
+  const p = partialMissNotice(['confirm page'], 'tenant');
+  assert.match(p, /document template now/);
+  assert.match(p, /everything else was built/, 'stays advisory, not a failure');
+  assert.ok(!/Add it to your asset library/i.test(p));
+});
+
+test('retired names: variant-letter phrasing is redirected to a count', () => {
+  const { totalMissMessage } = require('../src/utils/assetMatch');
+
+  const t = totalMissMessage(['variant B'], 'tenant');
+  assert.match(t, /is a count now/);
+  assert.ok(!/add .* to your asset library/i.test(t));
+  assert.match(totalMissMessage(['LinkedIn Single Image Ad — Variant A'], 'tenant'), /is a count now/);
+
+  // Unlike the template redirect, a count works with or without a library, so
+  // this one is true on the bundled-list path too.
+  assert.match(totalMissMessage(['variant C'], 'default'), /is a count now/);
+});
+
+test('retired names: the template redirect is withheld where it cannot be followed', () => {
+  const { totalMissMessage } = require('../src/utils/assetMatch');
+
+  // No tenant → no Settings to import a template into. Promising one would be
+  // the same class of lie the two wordings above exist to avoid.
+  const d = totalMissMessage(['confirm page'], 'default');
+  assert.ok(!/document template now/.test(d), 'not offered on the bundled-list path');
+  assert.match(d, /try different asset names/, 'falls back to the honest generic advice');
+});
+
+test('retired names: a mixed batch keeps both kinds of advice, correctly scoped', () => {
+  const { totalMissMessage, partialMissNotice } = require('../src/utils/assetMatch');
+
+  const t = totalMissMessage(['confirm page', 'TikTok Ad'], 'tenant');
+  assert.match(t, /document template now/, 'the retired one is redirected');
+  assert.match(t, /Add TikTok Ad to your asset library/, 'the unknown one still gets the real fix');
+  // Scoped BY NAME, so the library advice cannot be read as covering the
+  // retired name sitting in the same sentence list.
+  assert.ok(!/Add confirm page to your asset library/i.test(t));
+
+  const p = partialMissNotice(['variant B', 'TikTok Ad'], 'tenant');
+  assert.match(p, /is a count now/);
+  assert.match(p, /Add TikTok Ad to your asset library to include it next time\./);
+});
+
+test('retired names: an ordinary unknown name is untouched, byte for byte', () => {
+  const { totalMissMessage, partialMissNotice } = require('../src/utils/assetMatch');
+
+  // The guarantee that makes this change safe to land: when no retired name is
+  // present the output is exactly what it was before the table existed.
+  assert.strictEqual(
+    totalMissMessage(['TikTok Ad', 'Billboard'], 'tenant'),
+    "Couldn't match these to your asset library: TikTok Ad, Billboard. " +
+      'Nothing was built — add them to your asset library, or try different asset names.'
+  );
+  assert.strictEqual(
+    partialMissNotice(['TikTok Ad'], 'tenant'),
+    "Couldn't match these to your asset library: TikTok Ad. It was left out — " +
+      'everything else was built. Add it to your asset library to include it next time.'
+  );
+
+  // Words that share a stem with a trigger but mean something else. "landing
+  // page", "form" and a plural "variants" are ordinary brief vocabulary; a
+  // trigger loose enough to catch them would fire on half the misses there are.
+  for (const innocent of ['Landing Page', 'Registration Form', 'Confirmation Email',
+    '4 variants', 'Billboard']) {
+    const m = totalMissMessage([innocent], 'tenant');
+    assert.ok(!/document template now|is a count now/.test(m), `no redirect for "${innocent}"`);
+  }
+});
+
+test('retired names: the guidance table covers every name the migration retired', () => {
+  const { RETIRED_GUIDANCE } = require('../src/utils/assetMatch');
+  const { RETIRE } = require('../scripts/migrateRetireDeadAssets');
+  const { normalize } = require('../src/utils/normalize');
+
+  // Derived from the migration rather than hand-typed here, so retiring another
+  // asset without saying what replaced it fails at this line instead of showing
+  // a writer advice that rebuilds what was just removed.
+  assert.ok(Array.isArray(RETIRE) && RETIRE.length > 0, 'the migration still exports RETIRE');
+  for (const [name] of RETIRE) {
+    const hits = RETIRED_GUIDANCE.filter((g) => g.test(normalize(name)));
+    assert.strictEqual(hits.length, 1, `"${name}" is covered by exactly one entry (got ${hits.length})`);
+  }
+
+  // And every entry earns its place — an orphan is a rule for a name nothing
+  // can produce any more.
+  for (const g of RETIRED_GUIDANCE) {
+    assert.ok(
+      RETIRE.some(([name]) => g.test(normalize(name))),
+      `guidance "${g.key}" still speaks for a retired name`
+    );
+  }
+});
+
 // --- The asset-library EDITOR read (read-only) -------------------------------
 // getTenantAssets is built for the pipeline: it hides inactive rows and drops
 // copy_fields.id. An editor needs both. getTenantLibrary is a second reader

@@ -253,6 +253,29 @@ function markerStillShowing(text, markerKey) {
   return false;
 }
 
+// DOES THIS MARKER HAVE ROOM BELOW IT?
+//
+// A riff stacks numbered alternatives under a divider. That works where a field
+// is a labelled run of paragraphs with space beneath it, and it does not work in
+// a table cell: three headlines in the headline cell is what a client reads as
+// the headline. So the copy doc riffs and a matrix does not.
+//
+// WRITTEN AS A PROPERTY OF THE MARKER, NOT OF THE DOCUMENT TYPE. "Templates
+// never riff" would be the same answer today and the wrong rule: it encodes the
+// coincidence that every marker we have ever stored is in a table. A marker
+// positioned in a body PARAGRAPH has room below it exactly the way a copy-doc
+// field does, and when one exists the rule should already be in the right shape
+// rather than needing to be found and rewritten.
+//
+// So the question is asked of the coordinate: a marker inside a table has no
+// room; anything else does. Nothing here builds paragraph support — a marker
+// with no table_index is not something the confirm screen can produce today —
+// but the answer is derived rather than assumed.
+function hasRoomBelow(marker) {
+  if (!marker) return false;
+  return marker.table_index == null;
+}
+
 // READ BACK every stored coordinate against a BUILT document.
 //
 // The copy in the campaign folder, not the source template. The coordinate is
@@ -286,6 +309,10 @@ function readCells(doc, markers) {
       text: c.text,
       empty: !String(c.text || '').trim(),
       showingMarker: markerStillShowing(c.text, m.marker_key),
+      // Whether a riff could stack alternatives under this one — see
+      // hasRoomBelow. Carried on the ROW so every surface that renders a marker
+      // gets the same answer from the same place.
+      roomBelow: hasRoomBelow(m),
       healed: c.healed,
       healedReason: c.reason,
       start: c.start,
@@ -300,6 +327,7 @@ module.exports = {
   locateCells,
   readCells,
   markerStillShowing,
+  hasRoomBelow,
   buildCellWriteRequests,
   cellText,
   cellRange,

@@ -234,10 +234,15 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
     templateDocs: (templateDocs || []).map((t) => ({
       templateId: t.templateId,
       templateName: t.templateName,
+      // The BUILT document's id — null on a failure or a refusal, which is how
+      // the result screen tells "here is your second document" from "here is why
+      // there isn't one". Both used to look identical on the web (silent).
+      id: t.id || null,
       url: t.url || null,
       filled: t.filled ? t.filled.length : 0,
       unfilled: t.unfilled ? t.unfilled.length : 0,
       error: t.error || null,
+      refused: t.refused === true,
     })),
     campaignTitle,
     assets: assetSpecs.map((a) => a.assetType),
@@ -277,9 +282,40 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
 // `direction` is optional user revision feedback threaded into the prompt.
 // `scopedFields` (optional [{assetType, fieldName}]) scopes the draft to only
 // those fields (selective generate/regenerate); undefined → whole doc, as before.
-async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, append) {
+//
+// `docKind` (optional) names WHICH of a project's documents to act on. A brief
+// can produce two — the copy doc and a template document — and the web app shows
+// both, so the surface has to be able to say which one the press was on. 'copy'
+// (the default, and every call before this existed) is the copy doc, and drafting
+// it still carries the matrix along. 'template' targets the template document
+// alone, which is what its own screen means.
+async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, append, docKind) {
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
   const clients = await getClientsForTenant({ tenantId, userId: actingUserId(tenantContext) });
+
+  if (docKind === 'template') {
+    // Selected fields → the step-three regenerate path, per marker name. No
+    // selection → the whole document. `append` is not passed on: a riff stacks
+    // options below a field, and a cell has nowhere to stack them — one cell
+    // holds one answer.
+    const fieldNames = (scopedFields || []).map((f) => f && f.fieldName).filter(Boolean);
+    const out = await pipeline.draftProjectTemplate({
+      docId,
+      tenantId,
+      direction,
+      clients,
+      fieldNames: fieldNames.length ? fieldNames : undefined,
+    });
+    if (!out) throw new Error('There is no template document on this project.');
+    if (out.error) throw new Error(out.error);
+    // A whole-document draft reports `written`; a scoped regenerate reports
+    // `regenerated`. Both are "how many cells now hold new copy".
+    const fieldCount = fieldNames.length
+      ? (out.regenerated || []).length
+      : (out.written || []).length;
+    return { docId, title: out.templateName || 'Template document', fieldCount, url: out.templateDocUrl || null };
+  }
+
   const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, scopedFields, append);
   return { docId, title, fieldCount, url };
 }
@@ -287,20 +323,32 @@ async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, a
 // Read a project's doc into the structured, copy-bearing shape the project view
 // renders. The Docs read runs as the tenant's Google OAuth user when connected,
 // else the shared env path. Throws on read failure so the route shows a fallback.
-async function runWebProjectContent(docId, tenantContext = {}) {
-  const clients = await getClientsForTenant({
-    tenantId: tenantContext.tenant && tenantContext.tenant.id,
-    userId: actingUserId(tenantContext),
-  });
+//
+// `docKind: 'template'` reads the project's TEMPLATE document instead, through
+// the proven step-three read-back — same shape out, so the detail view is the
+// same renderer rather than a second one.
+async function runWebProjectContent(docId, tenantContext = {}, docKind) {
+  const tenantId = tenantContext.tenant && tenantContext.tenant.id;
+  const clients = await getClientsForTenant({ tenantId, userId: actingUserId(tenantContext) });
+  if (docKind === 'template') {
+    return pipeline.getProjectTemplateContent({ docId, tenantId, clients });
+  }
   return pipeline.getProjectContent(docId, clients);
 }
 
 // Run a copy review on a doc as the tenant's user. Returns the review result
 // ({ reviewed, flagged, clean, hadCopy, digest, status }). Throws on failure so
 // the route surfaces an error state (rather than a stuck review).
-async function runWebReview(docId, tenantContext = {}, scopedFields) {
+//
+// `docKind: 'template'` reviews the project's template document instead — the
+// unanchored-comment path, measurable notes only — reshaped to the same result
+// keys, so the review overlay needs no branch of its own.
+async function runWebReview(docId, tenantContext = {}, scopedFields, docKind) {
   const tenantId = tenantContext.tenant && tenantContext.tenant.id;
   const clients = await getClientsForTenant({ tenantId, userId: actingUserId(tenantContext) });
+  if (docKind === 'template') {
+    return pipeline.reviewProjectTemplate({ docId, tenantId, clients });
+  }
   const { runCopyReview } = require('../services/copyReview');
   return runCopyReview(docId, tenantId, clients, scopedFields);
 }

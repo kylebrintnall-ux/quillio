@@ -464,6 +464,36 @@
     .section-label { margin-bottom: 8px; }
     .assets-label { margin-bottom: 14px; }
     .section-body { font-size: 14px; line-height: 1.65; color: rgba(26,26,46,0.78); margin: 0 0 24px; white-space: pre-wrap; }
+    /* THE DOCUMENTS A RUN PRODUCED. One row per document, on the result screen;
+       tapping one opens that document's own detail view. A brief that made one
+       document renders one row — there is no slot for a second. */
+    .doc-row {
+      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      font-family: 'Encode Sans Semi Condensed', sans-serif; color: var(--ink);
+      transition: border-color 0.12s ease, background 0.12s ease;
+    }
+    .doc-row:active { background: rgba(201,168,76,0.10); border-color: rgba(201,168,76,0.55); }
+    .doc-row .doc-row-body { flex: 1; min-width: 0; }
+    .doc-row .doc-row-kind { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.42); margin-bottom: 3px; }
+    .doc-row .doc-row-name { display: block; font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+    .doc-row .doc-row-note { display: block; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.5); margin-top: 4px; line-height: 1.45; }
+    .doc-row .doc-row-go { font-size: 18px; color: rgba(26,26,46,0.35); flex-shrink: 0; }
+    /* A template that was refused or failed to build. Not tappable — there is no
+       document behind it — and it says which, instead of being silent. */
+    .doc-row.failed { cursor: default; border-color: rgba(192,57,43,0.35); background: rgba(192,57,43,0.05); }
+    .doc-row.failed .doc-row-note { color: #a5382a; font-style: normal; }
+    /* WHICH DOCUMENT the detail view is showing, when there is more than one. */
+    .doc-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 20px; }
+    .doc-switch-btn {
+      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; font-weight: 700;
+      color: rgba(26,26,46,0.6); background: rgba(255,255,255,0.5);
+      border: 1.5px solid rgba(255,255,255,0.8); border-radius: 100px; padding: 7px 15px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+    }
+    .doc-switch-btn.active { color: var(--ink); background: rgba(201,168,76,0.18); border-color: rgba(201,168,76,0.65); }
     .asset-card {
       background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px; padding: 18px 18px 12px; margin-bottom: 12px;
@@ -512,6 +542,11 @@
     .field-expand:active { background: rgba(201,168,76,0.22); }
     .field-expand .chev { display: inline-block; color: #8A6A15; font-weight: 700; transition: transform 0.15s ease; }
     .asset-field.expanded .field-expand .chev { transform: rotate(90deg); }
+    /* Why there is no Riff button on this field. Sits exactly where the button
+       would have been, and only on a field that could otherwise have had one —
+       see appendAssetCard: a marker with no room below it. */
+    .field-no-riff { display: none; align-self: flex-start; margin-top: 10px; font-size: 11.5px; font-style: italic; line-height: 1.5; color: rgba(26,26,46,0.45); }
+    .asset-field.selected .field-no-riff { display: block; }
     /* Riff button — the additive action inside a field's expanded panel. Star
        Crush, gold fill, ink text — matches the app's action buttons (not a slab):
        sized to content, centered. */
@@ -866,14 +901,27 @@
         <img class="header-gif" src="/assets/gifs/quillio-doc-done.gif" alt="">
       </div>
 
+      <!-- WHAT THIS RUN PRODUCED. A brief can name a document template as well as
+           assets, and then two documents come out of it — the copy doc and the
+           template document. Both are listed here, and tapping either opens that
+           document's own detail view, where it can be generated, regenerated and
+           reviewed. One document → one row: nothing is drawn for a document the
+           brief never asked for. -->
+      <div class="assets-label">Documents</div>
+      <p class="field-select-hint">Tap a document to generate, regenerate or review it.</p>
+      <div id="out-docs"></div>
+
       <div class="section-label">Campaign Summary</div>
       <p class="section-body" id="out-summary"></p>
 
       <div class="section-label">Writer Direction</div>
       <p class="section-body" id="out-direction"></p>
 
-      <div class="assets-label">Assets</div>
-      <p class="field-select-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
+      <!-- The copy doc's spec preview. Hidden on a brief that named only a
+           template: there are no assets, and an "Assets" heading over nothing
+           reads as a failure. -->
+      <div class="assets-label" id="out-assets-label">Assets</div>
+      <p class="field-select-hint" id="out-assets-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
       <div id="out-assets"></div>
       <div id="out-unmatched" class="notice hidden"></div>
       <div id="output-error" class="error hidden"></div>
@@ -945,6 +993,11 @@
         <span class="project-card-status" id="project-status"></span>
       </div>
 
+      <!-- WHICH DOCUMENT this screen is showing. Rendered only when the brief
+           produced more than one — a project with a single document has nothing
+           to switch between, and an empty switcher would imply a missing one. -->
+      <div id="project-docs" class="doc-switch hidden"></div>
+
       <div id="project-loading" class="loading hidden"><span class="dot"></span><span>Loading content…</span></div>
       <div id="project-content"></div>
       <div id="project-fallback" class="empty hidden">Content unavailable. You can still open the doc in Drive.</div>
@@ -955,7 +1008,10 @@
              Regenerate / Regenerate Selected (N). Routes by draft state × selection. -->
         <button class="cta-primary hidden" id="project-primary-btn">Generate First Draft</button>
         <button class="cta-secondary" id="project-open-btn">Campaign folder</button>
-        <button class="cta-secondary" id="project-doc-btn">Copy doc</button>
+        <!-- These open the document in DRIVE. The chips at the top of the screen
+             switch which document this view is showing — different verbs, so the
+             labels say "Open". -->
+        <button class="cta-secondary" id="project-doc-btn">Open copy doc</button>
         <!-- The second document, when this brief produced one (custom document
              types). Hidden for every copy-doc-only project, which is nearly all
              of them. "Campaign folder" holds this too — the direct button saves
@@ -1808,7 +1864,26 @@
           // show no riff affordance. Progressive disclosure: a chevron reveals the
           // count/distance controls + Riff button, which fires the append path for
           // THIS field and reloads the screen in place.
-          if (hasCopy && opts.riff) {
+          //
+          // A RIFF NEEDS ROOM BELOW THE FIELD. It appends a numbered batch under
+          // the existing copy, which works because a copy-doc field is a labelled
+          // run of paragraphs with space after it. A field whose copy lives in a
+          // table cell has no such room — three headlines stacked in the cell a
+          // reader takes as THE headline is not a set of options, it is a broken
+          // document.
+          //
+          // Asked of the FIELD, not of the document it is in. `roomBelow` is
+          // absent on a copy-doc field (there is nothing to ask) and explicitly
+          // true or false on a template marker, so only an explicit false
+          // suppresses — and a marker that does have room below it gets the riff
+          // without a line of this changing.
+          var roomBelow = f.roomBelow !== false;
+          if (hasCopy && opts.riff && !roomBelow) {
+            // NEVER SILENTLY. A missing button reads as a bug; the reason reads
+            // as a design.
+            fieldEl.appendChild(el('span', 'field-no-riff', 'No riffs here — one cell holds one answer.'));
+          }
+          if (hasCopy && opts.riff && roomBelow) {
             var onRiff = function (sf) { runRiff(opts.riff.docId, sf, opts.riff.reload); };
             var controls = buildVarControls(aName, aInst, fName, onRiff);
 
@@ -1871,9 +1946,16 @@
       // failBriefBar with a Back button — a dead end that says why beats a dead
       // end that looks like a result.
       if (data && data.needsConfirmation) throw new Error(STALE_MSG);
-      // No doc id means every action on this screen is inert (draft, open, riff),
-      // so an empty output screen is never the right outcome either.
-      if (!data || !data.docUrl) throw new Error('That run didn’t come back with a document. Please try again.');
+      // A run that produced NOTHING is still a dead end — every action on this
+      // screen would be inert. But "nothing" is not "no copy doc": a brief that
+      // names only a document template has no copy doc BY DESIGN (generateDoc
+      // skips it), and this used to reject that payload as a failed run and show
+      // "that run didn't come back with a document" over a document that had been
+      // built and was sitting in the campaign folder.
+      var builtTemplates = ((data && data.templateDocs) || []).filter(function (t) { return t && t.id; });
+      if (!data || (!data.docUrl && builtTemplates.length === 0)) {
+        throw new Error('That run didn’t come back with a document. Please try again.');
+      }
 
       state.docUrl = data.docUrl || null;
       // The campaign folder for this run. Null when folder creation failed, in
@@ -1887,6 +1969,10 @@
       document.getElementById('out-title').textContent = state.campaignTitle;
       document.getElementById('out-summary').textContent = data.summary || '—';
       document.getElementById('out-direction').textContent = data.writerDirection || '—';
+
+      // Both documents, before the copy doc's spec preview — the run made two
+      // things and the first question is which one you want.
+      renderOutputDocs(data);
 
       var blocks = data.assetBlocks || [];
       if (!blocks.length && data.assets) {
@@ -1914,11 +2000,87 @@
       // WAS built — this says what it doesn't contain, which used to be silent.
       renderNotice('out-unmatched', data.unmatchedNotice);
 
+      // THE COPY DOC'S AFFORDANCES, only when there is a copy doc. On a
+      // template-only brief this screen's spec preview has no assets to show and
+      // its two copy-doc buttons have nothing to open or draft; the template
+      // document's row above leads to a screen where all three functions work.
+      var hasCopyDoc = !!state.docId;
+      var assetsLabel = document.getElementById('out-assets-label');
+      var assetsHint = document.getElementById('out-assets-hint');
+      if (assetsLabel) assetsLabel.classList.toggle('hidden', !hasCopyDoc);
+      if (assetsHint) assetsHint.classList.toggle('hidden', !hasCopyDoc);
+      var docBtn = document.getElementById('open-doc-btn');
+      if (docBtn) docBtn.classList.toggle('hidden', !hasCopyDoc);
+
       var draftBtn = document.getElementById('draft-btn');
       draftBtn.disabled = false;
-      show(draftBtn);
+      if (hasCopyDoc) show(draftBtn); else hide(draftBtn);
       refreshOutputPrimary();
       clearError(document.getElementById('output-error'));
+    }
+
+    // --- The documents this run produced ------------------------------------
+    // One row per document. Tapping a built one opens ITS detail view, where
+    // generate / regenerate / review act on that document alone. A template that
+    // was refused or failed to build gets a row too, saying so — on the web that
+    // outcome used to be completely silent (Slack has always rendered it).
+    function renderOutputDocs(data) {
+      var wrap = document.getElementById('out-docs');
+      if (!wrap) return;
+      wrap.textContent = '';
+      var rows = [];
+      if (data.docUrl) {
+        rows.push({ kind: 'copy', label: 'Copy doc', name: state.campaignTitle, built: true });
+      }
+      (data.templateDocs || []).forEach(function (t) {
+        rows.push({
+          kind: 'template',
+          label: 'Template document',
+          name: (t && t.templateName) || 'Template document',
+          built: !!(t && t.id),
+          note: (t && t.error) || null,
+          refused: !!(t && t.refused),
+        });
+      });
+      rows.forEach(function (r) { wrap.appendChild(docRow(r)); });
+    }
+
+    function docRow(r) {
+      var row = el(r.built ? 'button' : 'div', 'doc-row' + (r.built ? '' : ' failed'));
+      if (r.built) row.type = 'button';
+      var body = el('div', 'doc-row-body');
+      body.appendChild(el('span', 'doc-row-kind', r.label));
+      body.appendChild(el('span', 'doc-row-name', r.name));
+      if (!r.built) {
+        body.appendChild(el('span', 'doc-row-note',
+          (r.refused ? 'Not built — ' : 'Couldn’t be built — ') + (r.note || 'no reason given.')));
+      }
+      row.appendChild(body);
+      if (r.built) {
+        row.appendChild(el('span', 'doc-row-go', '›'));
+        row.addEventListener('click', function () { openProjectDoc(state.projectId, r.kind); });
+      }
+      return row;
+    }
+
+    // Open one document's detail view from the result screen. The screen is
+    // driven by the project ROW (which document ids it carries), so it is
+    // fetched rather than reconstructed from the brief payload — the same row
+    // the Projects list would have handed over.
+    async function openProjectDoc(projectId, kind) {
+      if (projectId == null) {
+        showError(document.getElementById('output-error'), 'This run has no project to open yet.');
+        return;
+      }
+      try {
+        var res = await fetchWithTimeout('/api/projects/' + encodeURIComponent(projectId) +
+          '?workspaceId=' + encodeURIComponent(WORKSPACE_ID) + '&_=' + Date.now(), {}, 15000);
+        var data = await res.json();
+        if (!data || !data.success || !data.project) throw new Error('no project');
+        openProject(data.project, kind);
+      } catch (e) {
+        showError(document.getElementById('output-error'), 'Couldn’t open that document — it’s under Projects.');
+      }
     }
 
     // --- Confirm the interpretation before building ---------------------------
@@ -2228,6 +2390,11 @@
       var body = { docId: docId, workspaceId: WORKSPACE_ID, direction: direction || '' };
       if (scopedFields && scopedFields.length) body.scopedFields = scopedFields; // scoped generate/regen
       if (opts && opts.append) body.append = true; // Riff → append below existing copy
+      // WHICH document. Absent → the copy doc, which is what every call meant
+      // before a brief could produce two. 'template' targets the template
+      // document alone (its own screen's buttons); drafting the COPY doc still
+      // carries the matrix along, so nothing here changes that path.
+      if (opts && opts.doc === 'template') body.doc = 'template';
       return runJob('/api/draft', body, '/api/draft');
     }
 
@@ -2259,9 +2426,10 @@
     // Review job → resolves with { reviewed, flagged, clean, hadCopy, digest, status }.
     // scopedFields (optional) scopes the review to the selected fields, with asset
     // context; absent → whole-doc review.
-    function reviewFetch(docId, scopedFields) {
+    function reviewFetch(docId, scopedFields, docKind) {
       var body = { docId: docId, workspaceId: WORKSPACE_ID };
       if (scopedFields && scopedFields.length) body.scopedFields = scopedFields;
+      if (docKind === 'template') body.doc = 'template'; // review the template document, not the copy doc
       return runJob('/api/review', body, '/api/review');
     }
     function draftedLabel(n) {
@@ -2757,7 +2925,11 @@
     }
 
     // --- Screen 5: project view --------------------------------------------
-    var projectState = { project: null };
+    // docKind: which of the project's documents this screen is showing ('copy' |
+    // 'template'). templateName: the template document's own name, which only
+    // arrives with its content — the project row records WHICH document, not what
+    // it is called.
+    var projectState = { project: null, docKind: 'copy', templateName: null };
     var projectBlankFields = []; // [{assetType, instance, fieldName}] recomputed each openProject
     var projectContentEl = document.getElementById('project-content');
     var projectLoading = document.getElementById('project-loading');
@@ -2791,14 +2963,14 @@
     // Review Copy and Regenerate are gated ONLY on (hasCopy && copy_doc_id),
     // independent of any status pill, so they reliably appear when copy exists.
     function setDraftAffordance(hasCopy) {
-      var p = projectState.project;
-      var drafted = !!(hasCopy && p && p.copy_doc_id);
+      var docId = projectDocId();
+      var drafted = !!(hasCopy && docId);
       projectState.hasCopy = drafted; // remembered so selection changes can relabel the button
       // ONE primary button, shown whenever there's a doc to act on (its label +
       // click route switch on draft state below / in onProjectPrimary).
       if (projectPrimaryBtn) {
         projectPrimaryBtn.disabled = false;
-        if (p && p.copy_doc_id) show(projectPrimaryBtn);
+        if (docId) show(projectPrimaryBtn);
         else hide(projectPrimaryBtn);
       }
       // Review only once there's drafted copy. Null-guard so a missing element
@@ -2836,7 +3008,15 @@
         projectPrimaryBtn.textContent = 'Regenerate';
       }
       // Review button mirrors the primary: scoped when fields are selected.
-      if (projectReviewBtn) projectReviewBtn.textContent = n > 0 ? ('Review Selected (' + n + ')') : 'Review Copy';
+      //
+      // EXCEPT on a template document, where review reads every cell — the
+      // unanchored-comment path has no per-field scope — so "Review Selected (2)"
+      // would name something that does not happen. It reviews the document, and
+      // says so.
+      if (projectReviewBtn) {
+        projectReviewBtn.textContent =
+          (n > 0 && projectState.docKind !== 'template') ? ('Review Selected (' + n + ')') : 'Review Copy';
+      }
     }
 
     // ONE click handler routes by draft state: drafted → the Regenerate direction
@@ -2949,8 +3129,17 @@
       }
     }
 
-    async function openProject(p) {
+    // `kind` names which of the project's documents to show ('copy' | 'template').
+    // Absent — the Projects list, and every reload after a draft — keeps whatever
+    // is already on screen for this project, then falls back to the copy doc, then
+    // to the template document for a template-only project, which has no copy doc
+    // to fall back to.
+    async function openProject(p, kind) {
+      // A different project's template has a different name — forget the last
+      // one rather than labelling this switcher with it.
+      if (!projectState.project || projectState.project.id !== p.id) projectState.templateName = null;
       projectState.project = p;
+      projectState.docKind = resolveDocKind(p, kind);
       clearFieldSelection(); // fresh view → no stale selection
       projectBlankFields = []; // recomputed once content loads
       showScreen('project');
@@ -2959,11 +3148,15 @@
       var pkey = statusKey(p.status);
       badge.textContent = statusLabel(pkey);
       badge.className = 'project-card-status ' + (PILL_CLASS[pkey] || 'status-notstarted');
+      renderProjectDocSwitch();
 
       // The template document, if this brief produced one. The column rides in
       // on the project row (db/projects selects *), so nothing else is fetched.
       var tplBtn = document.getElementById('project-template-btn');
       tplBtn.classList.toggle('hidden', !p.template_doc_url);
+      // Same for the copy doc's own button: a template-only project has none, and
+      // a button that opens nothing is worse than one fewer button.
+      document.getElementById('project-doc-btn').classList.toggle('hidden', !p.copy_doc_url);
       // A project with no folder (creation failed, or one predating folders)
       // shows the copy doc alone rather than two buttons going to one place.
       document.getElementById('project-open-btn').classList.toggle('hidden', !p.drive_folder_url);
@@ -2983,7 +3176,10 @@
         // generated, so the refetch right after generation must not get a stale
         // (cached) "no copy" body from any edge/CDN — otherwise the Review Copy
         // button stays hidden until re-mount. A unique URL forces a fresh fetch.
-        var res = await fetchWithTimeout('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID) + '&_=' + Date.now(), {}, 20000);
+        // ?doc=template reads the project's template document instead of its copy
+        // doc — through the step-three read-back, which is the proven path.
+        var docParam = projectState.docKind === 'template' ? '&doc=template' : '';
+        var res = await fetchWithTimeout('/api/projects/' + encodeURIComponent(p.id) + '/content?workspaceId=' + encodeURIComponent(WORKSPACE_ID) + docParam + '&_=' + Date.now(), {}, 20000);
         var data = await res.json();
         hide(projectLoading);
         if (!data || !data.success) {
@@ -2993,6 +3189,13 @@
           return;
         }
         var content = data.content || {};
+        // The template's own name only arrives with its content (the project row
+        // records which document, not what it is called), so the switcher is
+        // relabelled once it does.
+        if (content.templateName) {
+          projectState.templateName = content.templateName;
+          renderProjectDocSwitch();
+        }
         projectBlankFields = computeBlankFields(content);
         renderProjectContent(content);
         setDraftAffordance(contentHasCopy(content));
@@ -3003,24 +3206,84 @@
       }
     }
 
+    // WHICH DOCUMENT the detail view is acting on. Every affordance on this
+    // screen — generate, regenerate, review, riff — targets the one being looked
+    // at, so they all read through here rather than reaching for copy_doc_id.
+    function resolveDocKind(p, kind) {
+      if (kind === 'template' && p && p.template_doc_id) return 'template';
+      if (kind === 'copy' && p && p.copy_doc_id) return 'copy';
+      if (p && p.copy_doc_id) return 'copy';
+      if (p && p.template_doc_id) return 'template';
+      return 'copy';
+    }
+    function projectDocId() {
+      var p = projectState.project;
+      if (!p) return null;
+      return projectState.docKind === 'template' ? (p.template_doc_id || null) : (p.copy_doc_id || null);
+    }
+    function projectDocUrl() {
+      var p = projectState.project;
+      if (!p) return null;
+      return projectState.docKind === 'template' ? (p.template_doc_url || null) : (p.copy_doc_url || null);
+    }
+    // Reload this screen on the SAME document — a draft or a riff must not switch
+    // which document you were looking at.
+    function reopenProjectDoc() {
+      return openProject(projectState.project, projectState.docKind);
+    }
+
+    // The document chips. Rendered only when this brief produced more than one;
+    // one document has nothing to switch between, and an empty second chip would
+    // imply a document that was never asked for.
+    function renderProjectDocSwitch() {
+      var wrap = document.getElementById('project-docs');
+      if (!wrap) return;
+      var p = projectState.project;
+      wrap.textContent = '';
+      var kinds = [];
+      if (p && p.copy_doc_id) kinds.push({ kind: 'copy', label: 'Copy doc' });
+      if (p && p.template_doc_id) kinds.push({ kind: 'template', label: projectState.templateName || 'Template document' });
+      wrap.classList.toggle('hidden', kinds.length < 2);
+      if (kinds.length < 2) return;
+      kinds.forEach(function (k) {
+        var b = el('button', 'doc-switch-btn' + (k.kind === projectState.docKind ? ' active' : ''), k.label);
+        b.type = 'button';
+        b.addEventListener('click', function () {
+          if (k.kind !== projectState.docKind) openProject(p, k.kind);
+        });
+        wrap.appendChild(b);
+      });
+    }
+
     function renderProjectContent(content) {
       projectContentEl.textContent = '';
 
-      projectContentEl.appendChild(el('div', 'section-label', 'Campaign Summary'));
-      projectContentEl.appendChild(el('div', 'section-body', content.summary || '—'));
+      // Campaign Summary and Writer Direction are HEADING_2 sections of the COPY
+      // DOC. A template document has neither — they belong to the brief, not to
+      // the matrix — so the labels are left out rather than drawn over two
+      // em-dashes, which would read as content that failed to load.
+      var isTemplate = content.kind === 'template';
+      if (!isTemplate) {
+        projectContentEl.appendChild(el('div', 'section-label', 'Campaign Summary'));
+        projectContentEl.appendChild(el('div', 'section-body', content.summary || '—'));
 
-      projectContentEl.appendChild(el('div', 'section-label', 'Writer Direction'));
-      projectContentEl.appendChild(el('div', 'section-body', content.writerDirection || '—'));
+        projectContentEl.appendChild(el('div', 'section-label', 'Writer Direction'));
+        projectContentEl.appendChild(el('div', 'section-body', content.writerDirection || '—'));
+      }
 
-      projectContentEl.appendChild(el('div', 'assets-label', 'Assets'));
+      projectContentEl.appendChild(el('div', 'assets-label', isTemplate ? 'Fields' : 'Assets'));
       var passets = content.assets || [];
-      projectContentEl.appendChild(fieldSelectHint({ hasCopy: assetsHaveCopy(passets), hasBlank: assetsHaveBlank(passets) }));
+      projectContentEl.appendChild(fieldSelectHint({
+        hasCopy: assetsHaveCopy(passets),
+        hasBlank: assetsHaveBlank(passets),
+        canRiff: assetsCanRiff(passets),
+      }));
       var assets = passets;
       var ptotals = instanceTotals(assets);
       assets.forEach(function (a) {
         appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary,
           instanceTotal: instanceTotalFor(ptotals, a),
-          riff: { docId: (projectState.project && projectState.project.copy_doc_id) || null, reload: function () { return openProject(projectState.project); } } });
+          riff: { docId: projectDocId(), reload: reopenProjectDoc } });
       });
     }
 
@@ -3028,17 +3291,35 @@
     // shared by the project view and Copy Done. Wording adapts to draft state so
     // it nudges the right action — generate blanks vs riff on existing copy.
     // Returns a fresh node per call.
+    // opts.canRiff — whether ANY drafted field here has room below it for a riff.
+    // Absent → true, which is every copy doc. False on a document whose fields
+    // are all cells: the hint must not offer an affordance the fields don't have,
+    // which is the same reason the button itself says why it's missing.
     function fieldSelectHint(opts) {
       opts = opts || {};
+      var canRiff = opts.canRiff !== false;
       var text;
       if (opts.hasCopy && opts.hasBlank) {
-        text = 'Tap a blank field to generate it, or a field with copy to riff on new variations.';
+        text = canRiff
+          ? 'Tap a blank field to generate it, or a field with copy to riff on new variations.'
+          : 'Tap a blank field to generate it, or select fields to regenerate them.';
       } else if (opts.hasCopy) {
-        text = 'Tap a field to riff on new variations — or select fields to regenerate.';
+        text = canRiff
+          ? 'Tap a field to riff on new variations — or select fields to regenerate.'
+          : 'Select fields to regenerate just those.';
       } else {
         text = 'Generate a whole first draft — or tap specific fields to generate just those.';
       }
       return el('p', 'field-select-hint', text);
+    }
+    // Does any drafted field in this content have room below it for a riff? Asked
+    // of the FIELDS, exactly as appendAssetCard asks it — not of the document.
+    function assetsCanRiff(assets) {
+      return (assets || []).some(function (a) {
+        return (a.fields || []).some(function (f) {
+          return f.roomBelow !== false && f.copy != null && String(f.copy).trim().length > 0;
+        });
+      });
     }
     function assetsHaveCopy(assets) {
       return (assets || []).some(function (a) {
@@ -3078,9 +3359,12 @@
     // Done screen. Reviews `docId`, surfacing progress + result in the overlay. It
     // opens with the in-progress GIF and updates in place to the result (or a
     // graceful error) — the GIF never spins forever.
-    async function runReviewIntoModal(docId, docUrl, btn, errEl) {
+    async function runReviewIntoModal(docId, docUrl, btn, errEl, docKind) {
       if (!docId) { if (errEl) showError(errEl, 'No document to review.'); return; }
-      var scopedFields = selectedScopedFields(); // scoped review when fields are selected
+      // A template document is reviewed whole — the unanchored-comment path has
+      // no per-field scope — so no selection is sent, which keeps the request
+      // honest about what runs.
+      var scopedFields = docKind === 'template' ? [] : selectedScopedFields();
       reviewModalDocUrl = docUrl || null;
       if (errEl) clearError(errEl);
       if (btn) { btn.disabled = true; btn.textContent = 'Reviewing…'; }
@@ -3096,7 +3380,7 @@
       hide(openBtn);
       openProjectReviewModal();
       try {
-        var result = await reviewFetch(docId, scopedFields);
+        var result = await reviewFetch(docId, scopedFields, docKind);
         if (result && result.hadCopy === false) {
           body.innerHTML = '<div class="review-note">Nothing to review yet — generate a draft first.</div>';
           hide(openBtn);
@@ -3120,17 +3404,17 @@
       }
     }
     function reviewProjectCopy() {
-      var p = projectState.project;
-      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to review.'); return; }
-      runReviewIntoModal(p.copy_doc_id, p.copy_doc_url, projectReviewBtn, projectError);
+      var docId = projectDocId();
+      if (!docId) { showError(projectError, 'No document to review.'); return; }
+      runReviewIntoModal(docId, projectDocUrl(), projectReviewBtn, projectError, projectState.docKind);
     }
     function reviewCopyDone() {
       runReviewIntoModal(state.docId, state.docUrl, document.getElementById('copydone-review-btn'), document.getElementById('copydone-error'));
     }
 
     async function generateProjectDraft(scopedFieldsArg) {
-      var p = projectState.project;
-      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
+      var docId = projectDocId();
+      if (!docId) { showError(projectError, 'No document to draft.'); return; }
       // Explicit list (e.g. "Generate Remaining" → the blank fields) wins; else
       // fall back to the current selection (empty = whole doc).
       var scopedFields = scopedFieldsArg || selectedScopedFields();
@@ -3140,11 +3424,11 @@
       showScreen('generating');
       startGenerating();
       try {
-        await draftFetch(p.copy_doc_id, '', scopedFields);
+        await draftFetch(docId, '', scopedFields, { doc: projectState.docKind });
         stopGenerating();
         // Reload the (now partly/fully) drafted copy into the view; openProject
         // returns to the project screen and re-renders field state + the button.
-        openProject(p);
+        reopenProjectDoc();
       } catch (e) {
         stopGenerating();
         showScreen('project');
@@ -3158,8 +3442,7 @@
     // Regenerate opens a modal for the direction (the input isn't shown until the
     // button is tapped); Submit closes it and runs the generating sequence.
     function openProjectRegenModal() {
-      var p = projectState.project;
-      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
+      if (!projectDocId()) { showError(projectError, 'No document to draft.'); return; }
       applyRegenModalCopy('project-regen-modal-title', 'project-regen-modal-input');
       document.getElementById('project-regen-modal').classList.add('open');
       setTimeout(function () { document.getElementById('project-regen-modal-input').focus(); }, 400);
@@ -3168,8 +3451,8 @@
       document.getElementById('project-regen-modal').classList.remove('open');
     }
     async function regenerateProjectDraft() {
-      var p = projectState.project;
-      if (!p || !p.copy_doc_id) { showError(projectError, 'No document to draft.'); return; }
+      var docId = projectDocId();
+      if (!docId) { showError(projectError, 'No document to draft.'); return; }
       var input = document.getElementById('project-regen-modal-input');
       var direction = input.value.trim();
       var scopedFields = selectedScopedFields(); // scoped regen when fields are selected
@@ -3180,12 +3463,12 @@
       showScreen('generating');
       startGenerating();
       try {
-        await draftFetch(p.copy_doc_id, direction, scopedFields);
+        await draftFetch(docId, direction, scopedFields, { doc: projectState.docKind });
         stopGenerating();
         input.value = '';
         // Reload the regenerated copy into the view; openProject returns to the
         // project screen and re-renders field state + the dynamic button.
-        openProject(p);
+        reopenProjectDoc();
       } catch (e) {
         stopGenerating();
         showScreen('project');

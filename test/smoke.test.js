@@ -2241,7 +2241,7 @@ test('selective regen (Phase 1): scopedFields threaded route -> adapter -> pipel
   const route = rd('src/routes/app.js');
   assert.ok(/body\.scopedFields/.test(route), 'route reads body.scopedFields');
   assert.ok(/runWebDraft\(docId, tenantContext, direction/.test(route), 'route passes scopedFields to runWebDraft');
-  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields(, append)?\)/.test(rd('src/adapters/web.js')), 'adapter accepts scopedFields');
+  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields(, append)?(, docKind)?\)/.test(rd('src/adapters/web.js')), 'adapter accepts scopedFields');
   assert.ok(/generateDraft\(docId, direction, clients, tenantId, scopedFields(, append)?\)/.test(rd('src/core/pipeline.js')), 'pipeline accepts scopedFields');
   const gd = rd('src/destinations/googleDocs.js');
   assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields(, append)?\)/.test(gd), 'destination accepts scopedFields');
@@ -2702,13 +2702,18 @@ test('scoped review: variant prompt adds sibling context + a flag axis; non-scop
 test('scoped review: threaded route -> adapter, sent from UI, dynamic Review button', () => {
   const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
   assert.ok(/api\/review[\s\S]*?body\.scopedFields/.test(route), 'review route reads scopedFields');
-  assert.ok(/runWebReview\(docId, tenantContext, scoped \? scopedFields : undefined\)/.test(route), 'route threads scopedFields');
+  assert.ok(/runWebReview\(docId, tenantContext, scoped \? scopedFields : undefined, docKind\)/.test(route), 'route threads scopedFields');
   const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
-  assert.ok(/runWebReview\(docId, tenantContext = \{\}, scopedFields\)/.test(web) && /runCopyReview\(docId, tenantId, clients, scopedFields\)/.test(web), 'adapter threads scopedFields');
+  assert.ok(/runWebReview\(docId, tenantContext = \{\}, scopedFields, docKind\)/.test(web) && /runCopyReview\(docId, tenantId, clients, scopedFields\)/.test(web), 'adapter threads scopedFields');
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  assert.ok(/function reviewFetch\(docId, scopedFields\)/.test(html) && /body\.scopedFields = scopedFields/.test(html), 'reviewFetch sends scopedFields');
-  assert.ok(/selectedScopedFields\(\); \/\/ scoped review/.test(html), 'review runner reads the selection');
+  assert.ok(/function reviewFetch\(docId, scopedFields, docKind\)/.test(html) && /body\.scopedFields = scopedFields/.test(html), 'reviewFetch sends scopedFields');
+  // The review runner reads the selection — for the COPY doc. A template
+  // document is reviewed whole (the unanchored-comment path has no per-field
+  // scope), so it sends no selection and its button never says "Selected".
+  assert.ok(/docKind === 'template' \? \[\] : selectedScopedFields\(\)/.test(html), 'review runner reads the selection');
   assert.ok(/Review Selected \(/.test(html), 'dynamic Review Selected (N) label');
+  assert.ok(/\(n > 0 && projectState\.docKind !== 'template'\) \? \('Review Selected \(/.test(html),
+    'the Selected label is suppressed on a template document, where it would name something that does not happen');
 });
 
 test('variations (P1 regression): count=1 + close routes to the unchanged per-field generator', () => {
@@ -2758,9 +2763,9 @@ test('append: additive write inserts below, never deletes (deleteEnd:null guaran
 test('append: threaded route -> adapter -> pipeline -> destination; scoped-only; default off', () => {
   const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
   assert.ok(/const append = body\.append === true && scoped;/.test(route), 'route reads body.append, scoped-only');
-  assert.ok(/runWebDraft\(docId, tenantContext, direction, scoped \? scopedFields : undefined, append\)/.test(route), 'route threads append');
+  assert.ok(/runWebDraft\(docId, tenantContext, direction, scoped \? scopedFields : undefined, append, docKind\)/.test(route), 'route threads append');
   const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
-  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields, append\)/.test(web), 'adapter takes append');
+  assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields, append, docKind\)/.test(web), 'adapter takes append');
   assert.ok(/pipeline\.generateDraft\(docId, direction, clients, tenantId, scopedFields, append\)/.test(web), 'adapter threads append');
   const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
   assert.ok(/async function generateDraft\(docId, direction, clients, tenantId, scopedFields, append\)/.test(pipe), 'pipeline takes append');
@@ -6736,8 +6741,10 @@ test('stale shell: the check is wired to the fetch funnel, not a hand-picked lis
 
   // The reads that used to be unguarded, all now funnelled: the job start + status
   // poll, doc content, the projects list, and the project view.
-  assert.strictEqual((html.match(/fetchWithTimeout\(/g) || []).length, 6,
-    'the definition plus five call sites');
+  // The sixth call site is openProjectDoc, which fetches the project row so the
+  // result screen can open one of the run's documents in the detail view.
+  assert.strictEqual((html.match(/fetchWithTimeout\(/g) || []).length, 7,
+    'the definition plus six call sites');
 
   // runBrief keeps its HARD block — the one place where proceeding is expensive
   // enough to be worth stopping for. Everywhere else the banner is the warning.
@@ -10284,13 +10291,17 @@ test('every web screen opens the folder, and still offers the copy doc', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
 
   // Three screens, each with a folder button and a copy-doc button beside it.
-  for (const [folderBtn, docBtn] of [
-    ['open-btn', 'open-doc-btn'],
-    ['copydone-open-btn', 'copydone-open-doc-btn'],
-    ['project-open-btn', 'project-doc-btn'],
+  // The project screen's says "Open copy doc": that screen now also carries CHIPS
+  // that switch which document it is showing, and a chip reading "Copy doc" next
+  // to a button reading "Copy doc" that goes to Drive is two different verbs
+  // under one word.
+  for (const [folderBtn, docBtn, docLabel] of [
+    ['open-btn', 'open-doc-btn', 'Copy doc'],
+    ['copydone-open-btn', 'copydone-open-doc-btn', 'Copy doc'],
+    ['project-open-btn', 'project-doc-btn', 'Open copy doc'],
   ]) {
     assert.match(html, new RegExp(`id="${folderBtn}">Campaign folder<`), `${folderBtn} opens the folder`);
-    assert.match(html, new RegExp(`id="${docBtn}">Copy doc<`), `${docBtn} kept`);
+    assert.match(html, new RegExp(`id="${docBtn}">${docLabel}<`), `${docBtn} kept`);
   }
   // "Open in Drive" is gone from those three, and remains ONLY on the review
   // modal — where the notes are anchored comments inside the doc, so a folder
@@ -11491,18 +11502,50 @@ test('re-running the review does not double the queue, and respects a resolved n
   assert.match(src, /posting without dedupe/);
 });
 
-test('read, regenerate and review are STILL runner-only after step four', () => {
+test('read, regenerate and review reach the web ONLY through the project wrappers', () => {
   const root = path.join(__dirname, '..');
-  // Step four opened the BUILD path to a brief. It opened nothing else: reading
-  // a built document back, revising a cell and posting review comments are all
-  // still reached only by scripts/readTemplateDoc.js, run by hand.
-  for (const f of ['src/routes/app.js', 'src/routes/settings.js', 'src/adapters/slackWorkflow.js', 'src/adapters/web.js', 'src/adapters/slackReview.js', 'src/server.js']) {
+  // THIS TEST USED TO ASSERT THE OPPOSITE, like the build-path guard above it.
+  // Through step three the rule was "the only entry point is
+  // scripts/readTemplateDoc.js, run by hand". Showing both documents in the web
+  // app is the commit that deliberately opens it, so the guard is restated
+  // rather than deleted — what is still true is that a surface never names a
+  // template id.
+  //
+  // A surface knows a DOCUMENT id and a tenant. resolveProjectTemplate is the
+  // one place that turns those into a template id, so read / draft / regenerate
+  // / review on a project's template document cannot disagree about which
+  // template it is. A surface calling readTemplateDocument itself would have had
+  // to resolve that link a second way.
+  const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.match(pipe, /async function resolveProjectTemplate\(docId, tenantId\)/);
+  for (const wrapper of ['getProjectTemplateContent', 'reviewProjectTemplate', 'draftProjectTemplate']) {
+    assert.match(pipe, new RegExp(`async function ${wrapper}\\(`), `${wrapper} exists`);
+    assert.match(
+      pipe.slice(pipe.indexOf(`async function ${wrapper}(`), pipe.indexOf(`async function ${wrapper}(`) + 900),
+      /await resolveProjectTemplate\(docId, tenantId\)/,
+      `${wrapper} resolves the link through the shared resolver`
+    );
+  }
+
+  // The web adapter reaches the three step-three functions through those
+  // wrappers and never names one directly.
+  const web = fs.readFileSync(path.join(root, 'src', 'adapters', 'web.js'), 'utf8');
+  assert.ok(!/readTemplateDocument|regenerateTemplateFields|reviewTemplateDocument|templateReview/.test(web),
+    'the web adapter names none of the template-id-level functions');
+  assert.match(web, /pipeline\.getProjectTemplateContent\(\{ docId, tenantId, clients \}\)/);
+  assert.match(web, /pipeline\.reviewProjectTemplate\(\{ docId, tenantId, clients \}\)/);
+  assert.match(web, /pipeline\.draftProjectTemplate\(\{/);
+
+  // And every OTHER surface still has no entry point at all — including the
+  // route layer, which passes a document KIND and never a template id.
+  for (const f of ['src/routes/app.js', 'src/routes/settings.js', 'src/adapters/slackWorkflow.js', 'src/adapters/slackReview.js', 'src/server.js']) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.ok(!/readTemplateDocument|regenerateTemplateFields|reviewTemplateDocument|templateReview/.test(src), `${f} has no entry point`);
+    assert.ok(!/templateId/.test(src), `${f} never names a template id`);
   }
   const gem = fs.readFileSync(path.join(root, 'src', 'services', 'gemini.js'), 'utf8');
   assert.ok(!/readTemplateDocument|regenerateTemplateFields|reviewTemplateDocument/.test(gem), 'gemini reaches none of them');
-  assert.ok(fs.existsSync(path.join(root, 'scripts', 'readTemplateDoc.js')), 'the runner is the entry point');
+  assert.ok(fs.existsSync(path.join(root, 'scripts', 'readTemplateDoc.js')), 'the by-hand runner survives');
 });
 
 test('the runner writes nothing without a flag, and reads the BUILT document', () => {
@@ -12422,4 +12465,233 @@ test('a template-only brief can reach the draft path at all', () => {
   // And it returns the shape every caller of generateDraft already expects.
   assert.match(src, /title: templateOnly\.name \|\| 'Template document'/);
   assert.match(src, /fieldCount: \(out && out\.written && out\.written\.length\) \|\| 0/);
+});
+
+// --- Both documents in the web app, with the same functions on each ---------
+//
+// A brief can produce two documents. Until this commit the web app showed one:
+// the result screen rendered the copy doc's assets and dropped templateDocs on
+// the floor, and the detail view read copy_doc_id in every affordance. The
+// template document existed in Drive and had no surface at all — and a brief
+// that named ONLY a template rendered as a failed run.
+
+test('a marker having room below it is a property of the MARKER, not of the document', () => {
+  const { hasRoomBelow } = require('../src/destinations/templateCells');
+  // A stored coordinate that names a table is a CELL: a riff would stack three
+  // headlines inside the one a reader takes as the headline.
+  assert.strictEqual(hasRoomBelow(cellMarker('Form Headline', { row: 0 })), false, 'a table cell has no room below it');
+  // A marker positioned in the body has paragraphs after it. Nothing writes one
+  // today — regenerateTemplateFields refuses a marker with no table coordinate —
+  // but the question is asked of the marker, so the day one exists the riff comes
+  // back with no line of the surface changing.
+  assert.strictEqual(hasRoomBelow({ ...cellMarker('Body', { row: 0 }), table_index: null }), true);
+  assert.strictEqual(hasRoomBelow(null), false, 'nothing to ask');
+});
+
+test('the read-back carries roomBelow on every row', () => {
+  const { readCells } = require('../src/destinations/templateCells');
+  const doc = builtDoc([['Form Headline', 'Book your spot'], ['Form ID', '{{Form ID}}']]);
+  const { rows } = readCells(doc, [
+    cellMarker('Form Headline', { row: 0 }),
+    cellMarker('Form ID', { row: 1, is_copy: false }),
+  ]);
+  assert.deepStrictEqual(rows.map((r) => r.roomBelow), [false, false]);
+});
+
+test('getTemplateContent converts the step-three read-back — it is not a second reader', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function getTemplateContent'), src.indexOf('// Count the assets in a doc'));
+  // ONE reader. Everything this returns comes out of readTemplateDocument.
+  assert.match(fn, /const read = await readTemplateDocument\(\{ tenantId, templateId, docId, clients \}\)/);
+  assert.ok(!/readTemplateCells|documents\.get|getDestination/.test(fn), 'it reaches no reader of its own');
+
+  // ONLY the copy markers. A metadata cell is the tenant's — it is in the
+  // document and visible when they open it, and it does not belong on a screen
+  // whose every affordance is "write this for me".
+  assert.match(fn, /\.filter\(\(r\) => r\.is_copy\)/);
+  // A cell still showing {{marker}} comes back BLANK, so the renderer draws its
+  // existing "Not yet drafted" rather than printing the marker as somebody's copy.
+  assert.match(fn, /copy: r\.showingMarker \? '' : r\.text/);
+  // The unit rides along, so the field's count is stated in words where the
+  // limit is in words.
+  assert.match(fn, /fieldType: r\.field_type === 'words' \? 'words' : 'text'/);
+  assert.match(fn, /roomBelow: r\.roomBelow === true/);
+  // The shape getDocContent returns, key for key — writerDirection, NOT
+  // writerPrompt, or the detail view renders an em-dash for a section it should
+  // not be drawing at all.
+  assert.match(fn, /writerDirection: ''/);
+  assert.match(fn, /kind: 'template'/);
+  assert.match(fn, /assets: \[\{ name: read\.templateName, fields \}\]/);
+});
+
+test('one resolver turns a document id into a template id, and the wrappers share it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const res = src.slice(src.indexOf('async function resolveProjectTemplate'), src.indexOf('// `fieldNames` (optional)'));
+  // BY EITHER DOCUMENT — the copy doc on a mixed brief, the matrix on a
+  // template-only one.
+  assert.match(res, /await getProjectByAnyDocId\(tenantId, docId\)/);
+  // Three answers, each distinct: nothing to resolve, a row that predates the
+  // link column, and the link.
+  assert.match(res, /if \(!project \|\| !project\.template_doc_id\) return null/);
+  assert.match(res, /unlinked: true/);
+  assert.match(res, /templateId: String\(project\.doc_template_id\)/);
+  // The brief's own words, off the project row — the copy doc is never read for
+  // context, which a template-only brief could not do anyway.
+  assert.match(res, /spec: \{ summary: project\.brief_summary \|\| '', writerPrompt: project\.brief_writer_prompt \|\| '' \}/);
+});
+
+test('a scoped draft on a template document goes through the regenerate path', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function draftProjectTemplate'), src.indexOf('// A PROJECT\'s template document, in the shape'));
+  // Named fields → regenerateTemplateFields (revise these cells, carrying their
+  // current copy). No selection → draftTemplateDocument (the whole document).
+  // Both write through writeTemplateCells; nothing about the write moved.
+  assert.match(fn, /const scoped = \(Array\.isArray\(fieldNames\) \? fieldNames : \[\]\)/);
+  assert.match(fn, /scoped\.length\s*\n?\s*\? await regenerateTemplateFields\(\{/);
+  assert.match(fn, /: await draftTemplateDocument\(\{/);
+  assert.match(fn, /fieldNames: scoped/);
+});
+
+test('a template review answers in the same keys the review overlay already speaks', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function reviewProjectTemplate'), src.indexOf('  return {\n    reviewed,'));
+  // Counted over MARKERS holding copy, not over notes — "3 fields: 2 clean, 1
+  // with a note" is the sentence copy review already writes.
+  assert.match(fn, /r\.is_copy && !r\.showingMarker && String\(r\.text \|\| ''\)\.trim\(\)/);
+  // A document whose cells still show their markers has nothing to review. That
+  // is hadCopy:false, so the overlay says "generate a draft first" rather than
+  // "all clean", which would be a lie about an undrafted document.
+  const full = src.slice(src.indexOf('async function reviewProjectTemplate'), src.indexOf('// Count the assets in a doc'));
+  assert.match(full, /hadCopy: reviewed > 0/);
+  assert.match(full, /status = 'Nothing to review yet\.'/);
+});
+
+test('the document kind is a closed set, and defaults to the copy doc', () => {
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  // Only the literal 'template' selects the template document. Failing open to
+  // the copy doc is the safe direction: the wrong document READ is recoverable,
+  // the wrong document written is not.
+  assert.match(route, /function docKindOf\(raw\) \{\s*\n\s*return raw === 'template' \? 'template' : 'copy';\s*\n\}/);
+  // Every one of the three calls names its target.
+  assert.match(route, /const docKind = docKindOf\(body\.doc\);/);
+  assert.match(route, /const docKind = docKindOf\(req\.query\.doc\);/);
+  // …and the content route reads the id for the kind it was asked for, rather
+  // than the copy doc always.
+  assert.match(route, /const readId = docKind === 'template' \? project\.template_doc_id : project\.copy_doc_id;/);
+  assert.match(route, /'No template document for this project'/);
+  assert.match(route, /runWebProjectContent\(readId, \{ tenant, user \}, docKind\)/);
+});
+
+test('the result screen shows every document the run produced, and one when there was one', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /<div id="out-docs"><\/div>/, 'the documents list exists in the markup');
+  assert.match(html, /renderOutputDocs\(data\);/, 'renderOutput fills it');
+
+  const fn = html.slice(html.indexOf('function renderOutputDocs(data)'), html.indexOf('function docRow(r)'));
+  // A row per document that EXISTS. No copy doc → no copy-doc row; no template →
+  // no template row. Nothing is drawn for a document the brief never asked for.
+  assert.match(fn, /if \(data\.docUrl\) \{/);
+  assert.match(fn, /\(data\.templateDocs \|\| \[\]\)\.forEach/);
+  assert.match(fn, /built: !!\(t && t\.id\)/);
+
+  const row = html.slice(html.indexOf('function docRow(r)'), html.indexOf('// Open one document\'s detail view'));
+  // A built document is tappable and opens ITS detail view; a refused or failed
+  // one is not tappable and says why. On the web that outcome used to be
+  // completely silent — Slack has always rendered it.
+  assert.match(row, /openProjectDoc\(state\.projectId, r\.kind\)/);
+  assert.match(row, /r\.refused \? 'Not built — ' : 'Couldn’t be built — '/);
+  assert.ok(/el\(r\.built \? 'button' : 'div'/.test(row), 'only a built document is a button');
+});
+
+test('a brief that named ONLY a template renders as a result, not as a failed run', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // WAS: `if (!data || !data.docUrl) throw` — and generateDoc skips the copy doc
+  // for a template-only brief BY DESIGN, so the screen said "that run didn't come
+  // back with a document" over a document sitting in the campaign folder.
+  assert.ok(!/if \(!data \|\| !data\.docUrl\) throw/.test(html), 'the copy-doc-only guard is gone');
+  assert.match(html, /var builtTemplates = \(\(data && data\.templateDocs\) \|\| \[\]\)\.filter\(function \(t\) \{ return t && t\.id; \}\);/);
+  assert.match(html, /if \(!data \|\| \(!data\.docUrl && builtTemplates\.length === 0\)\) \{/);
+  // And the copy doc's own affordances hide rather than sitting there inert.
+  assert.match(html, /var hasCopyDoc = !!state\.docId;/);
+  assert.match(html, /if \(hasCopyDoc\) show\(draftBtn\); else hide\(draftBtn\);/);
+  assert.match(html, /if \(assetsLabel\) assetsLabel\.classList\.toggle\('hidden', !hasCopyDoc\);/);
+});
+
+test('every affordance on the detail view targets the document being viewed', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /function projectDocId\(\)/);
+  assert.match(html, /return projectState\.docKind === 'template' \? \(p\.template_doc_id \|\| null\) : \(p\.copy_doc_id \|\| null\)/);
+
+  // The four actions and the content read, each on projectDocId() rather than
+  // on copy_doc_id. A brief with two documents made every one of these read the
+  // wrong one.
+  assert.match(html, /await draftFetch\(docId, '', scopedFields, \{ doc: projectState\.docKind \}\)/, 'generate');
+  assert.match(html, /await draftFetch\(docId, direction, scopedFields, \{ doc: projectState\.docKind \}\)/, 'regenerate');
+  assert.match(html, /runReviewIntoModal\(docId, projectDocUrl\(\), projectReviewBtn, projectError, projectState\.docKind\)/, 'review');
+  assert.match(html, /riff: \{ docId: projectDocId\(\), reload: reopenProjectDoc \}/, 'riff');
+  assert.match(html, /var docParam = projectState\.docKind === 'template' \? '&doc=template' : '';/, 'content read');
+  // A draft must not switch which document you were looking at.
+  assert.match(html, /function reopenProjectDoc\(\) \{\s*\n\s*return openProject\(projectState\.project, projectState\.docKind\);/);
+
+  // The switcher: only when there IS more than one document.
+  assert.match(html, /wrap\.classList\.toggle\('hidden', kinds\.length < 2\);/);
+  assert.match(html, /if \(kinds\.length < 2\) return;/);
+});
+
+test('a template document shows its fields, and not the copy doc’s campaign sections', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const fn = html.slice(html.indexOf('function renderProjectContent(content)'), html.indexOf('// opts.canRiff'));
+  // The SAME renderer — appendAssetCard — so the fields come up the way an
+  // asset's do rather than through a second card that will drift.
+  assert.match(fn, /appendAssetCard\(projectContentEl, a, \{/);
+  // Campaign Summary and Writer Direction are HEADING_2 sections of the COPY
+  // doc. Drawing them over two em-dashes would read as content that failed.
+  assert.match(fn, /var isTemplate = content\.kind === 'template';/);
+  assert.match(fn, /if \(!isTemplate\) \{/);
+  assert.match(fn, /isTemplate \? 'Fields' : 'Assets'/);
+});
+
+test('riff is absent on a marker with no room below it, and says why', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // A PROPERTY OF THE FIELD, not of the document type. `roomBelow` is absent on
+  // a copy-doc field, so only an explicit false suppresses — nothing here asks
+  // "is this a template".
+  assert.match(html, /var roomBelow = f\.roomBelow !== false;/);
+  assert.match(html, /if \(hasCopy && opts\.riff && roomBelow\) \{/);
+  const card = html.slice(html.indexOf('function appendAssetCard'), html.indexOf('// Re-render Screen 3'));
+  assert.ok(!/kind === 'template'|docKind|isTemplate/.test(card),
+    'the card never asks what kind of document it is in');
+
+  // NOT SILENTLY. A missing button reads as a bug; the reason reads as a design.
+  assert.match(html, /if \(hasCopy && opts\.riff && !roomBelow\) \{/);
+  assert.match(html, /'No riffs here — one cell holds one answer\.'/);
+  assert.match(html, /\.field-no-riff \{/, 'and it is styled where the button would have been');
+
+  // The affordance line above the cards must not promise it either.
+  assert.match(html, /var canRiff = opts\.canRiff !== false;/);
+  assert.match(html, /'Tap a blank field to generate it, or select fields to regenerate them\.'/);
+  assert.match(html, /function assetsCanRiff\(assets\) \{/);
+  assert.match(html, /return f\.roomBelow !== false && f\.copy != null/);
+});
+
+test('the web adapter targets the template document on all three functions', () => {
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  // Draft: a selection becomes marker NAMES; no selection drafts the whole
+  // document. `append` is deliberately not threaded — a riff has nowhere to
+  // stack in a cell.
+  const draft = web.slice(web.indexOf('async function runWebDraft'), web.indexOf('// Read a project\'s doc'));
+  assert.match(draft, /if \(docKind === 'template'\) \{/);
+  assert.match(draft, /const fieldNames = \(scopedFields \|\| \[\]\)\.map\(\(f\) => f && f\.fieldName\)\.filter\(Boolean\)/);
+  const tplBranch = draft
+    .slice(draft.indexOf("if (docKind === 'template')"), draft.indexOf('const { title, fieldCount, url }'))
+    .replace(/\/\/[^\n]*/g, ''); // the comment explains why append is absent; the CODE must not use it
+  assert.ok(!/append/.test(tplBranch), 'append is not passed to the template path');
+  // A whole-document draft reports `written`; a scoped regenerate reports
+  // `regenerated`. Both mean "cells that now hold new copy".
+  assert.match(draft, /\? \(out\.regenerated \|\| \[\]\)\.length\s*\n\s*: \(out\.written \|\| \[\]\)\.length/);
+
+  // And the brief result carries enough to tell a built template from a refused
+  // one, which the web surface could not do before.
+  assert.match(web, /id: t\.id \|\| null/);
+  assert.match(web, /refused: t\.refused === true/);
 });

@@ -468,6 +468,11 @@
     #screen-output { padding-bottom: 150px; }
     #screen-confirm { padding-bottom: 150px; }
     #screen-picker { padding-bottom: 150px; }
+    /* The picker's opening line is not a HINT, it is the explanation of why this
+       screen exists — so it is body text, not the muted italic aside
+       .field-select-hint gives a tappable-fields nudge. At 12.5px, half-opacity
+       and italic it was unreadable on the sky background on a real phone. */
+    .picker-lede { font-size: 14px; line-height: 1.6; color: var(--ink); margin: 0 0 22px; }
     /* THE ASSET PICKER. A library list, not a plan — see #screen-picker. */
     .picker-search {
       width: 100%; box-sizing: border-box; margin: 0 0 16px; padding: 14px 16px;
@@ -679,7 +684,23 @@
       box-shadow: 0 4px 16px rgba(201,168,76,0.35); transition: all 0.15s; -webkit-tap-highlight-color: transparent;
     }
     .cta-primary:active { transform: scale(0.98); }
-    .cta-primary:disabled { opacity: 0.6; cursor: default; }
+    /* A DISABLED PRIMARY MUST NOT BE TRANSLUCENT. This was `opacity: 0.6`, which
+       made the button see-through — and the CTA bar is position:fixed, so what
+       showed through it was whatever the page happened to be scrolled over. On
+       the asset picker, where the primary rests disabled until something is
+       ticked, a list row appeared straight through the button and read as the
+       button overlapping the list rather than sitting below it.
+       Muted SOLID instead: same shape and position, obviously inert, opaque. */
+    .cta-primary:disabled {
+      /* opacity:1 is the load-bearing line. There is a GLOBAL
+         `button:disabled { opacity: 0.55 }` near the top of this file, and
+         setting a solid background here does not defeat it — this rule never
+         declared opacity, so the global one still applied and the button stayed
+         see-through. Both had to go. */
+      opacity: 1;
+      background: #B7C2C6; color: rgba(26,26,46,0.45);
+      box-shadow: none; cursor: default;
+    }
 
     /* Regenerate (inline, output screen) */
     .regen { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -919,7 +940,7 @@
       <div class="output-header">
         <h2 class="output-title" id="picker-title">Campaign</h2>
       </div>
-      <p class="field-select-hint">This brief didn’t name any assets, so nothing has been chosen for you. Pick what you want — nothing has been created yet.</p>
+      <p class="picker-lede">This brief didn’t name any assets, so nothing has been chosen for you. Pick what you want — nothing has been created yet.</p>
 
       <div class="section-label">Campaign Summary</div>
       <p class="section-body" id="picker-summary"></p>

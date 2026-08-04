@@ -1187,7 +1187,17 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
       supportsAllDrives: true,
     });
     docFolderId = folder.data.id;
-    projectFolderUrl = folder.data.webViewLink;
+    // SAME GUARD AS THE TWO DOCUMENT PATHS, different URL shape — a folder is
+    // /drive/folders/<id>, not /document/d/<id>/edit.
+    //
+    // It matters MORE here than it does for a document. saveProject writes
+    // `drive_folder_id: projectFolderUrl ? docFolderId : null`, so a missing
+    // webViewLink discarded the folder's ID as well as its link: the folder
+    // existed, held the campaign's documents, and the project row recorded
+    // nothing about it — with no id left to reconstruct the link from. It was
+    // also indistinguishable in the data from a folder creation that genuinely
+    // threw, which lands both columns null too.
+    projectFolderUrl = folder.data.webViewLink || `https://drive.google.com/drive/folders/${docFolderId}`;
     console.log('[Quillio] project folder created:', docFolderId);
     // Empty Assets subfolder, ready for exports — fire-and-forget (not on the
     // doc's critical path). Failure is logged, never thrown.

@@ -12739,3 +12739,43 @@ test('both document adapters derive the same fallback link', () => {
   // And nothing returns the raw field un-guarded any more.
   assert.ok(!/url: created\.data\.webViewLink/.test(src), 'no un-guarded webViewLink in a return');
 });
+
+test('every Drive create/copy that yields a link guards it — the whole sweep, not one field', () => {
+  const root = path.join(__dirname, '..');
+  // THE INVENTORY. Four url columns are fed by a drive.files.create /
+  // files.copy response, plus one return value that reaches no column. Two of
+  // them were guarded from the start; the copy doc and the project FOLDER were
+  // not, and were found one at a time. This pins the whole set so a fifth site
+  // cannot be added un-guarded and discovered the same way.
+  const SITES = [
+    // [file, the guarded expression, what it feeds]
+    ['src/destinations/googleDocs.js', /created\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{docId\}\/edit`/, 'projects.copy_doc_url'],
+    ['src/destinations/googleDocs.js', /copied\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{id\}\/edit`/, 'projects.template_doc_url'],
+    ['src/destinations/docTemplateImport.js', /created\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{docId\}\/edit`/, 'doc_templates.source_doc_url'],
+    ['src/core/pipeline.js', /folder\.data\.webViewLink \|\| `https:\/\/drive\.google\.com\/drive\/folders\/\$\{docFolderId\}`/, 'projects.drive_folder_url'],
+    ['src/destinations/docHeaderSample.js', /created\.data\.webViewLink \|\| `https:\/\/docs\.google\.com\/document\/d\/\$\{docId\}\/edit`/, '(no column — by-hand scripts only)'],
+  ];
+  for (const [file, pattern, feeds] of SITES) {
+    const src = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.match(src, pattern, `${file} guards the link it records into ${feeds}`);
+  }
+
+  // A FOLDER IS NOT A DOCUMENT. Deriving /document/d/<id>/edit for a folder
+  // would produce a link that resolves to nothing — worse than null, because it
+  // looks like it works.
+  const pipe = fs.readFileSync(path.join(root, 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.ok(!/docFolderId\}\/edit`/.test(pipe), 'the folder fallback does not use the document URL shape');
+
+  // And no un-guarded read survives anywhere: every webViewLink that is read
+  // into a value is either followed by `||` on the same line, or is a `fields:`
+  // request string.
+  for (const file of ['src/destinations/googleDocs.js', 'src/destinations/docTemplateImport.js',
+    'src/destinations/docHeaderSample.js', 'src/core/pipeline.js']) {
+    const lines = fs.readFileSync(path.join(root, file), 'utf8').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!/\.data\.webViewLink/.test(l)) continue;
+      assert.ok(/\.data\.webViewLink \|\|/.test(l), `${file}:${i + 1} reads webViewLink without a fallback: ${l.trim()}`);
+    }
+  }
+});

@@ -127,7 +127,12 @@ async function generateHeaderSampleDoc({ headerSchema, folderId, clients, docNam
   }
 
   console.log(`[docHeaderSample] sample doc created: ${docId}`);
-  return { id: docId, url: created.data.webViewLink };
+  // The same guard, for completeness rather than for a bug. This url reaches no
+  // database column — the only callers are two by-hand scripts that print it —
+  // so an undefined here has never cost anything. It is guarded so the sweep
+  // that found the other three closes, and so wiring this to a route later
+  // cannot reintroduce the same fault a fourth time.
+  return { id: docId, url: created.data.webViewLink || `https://docs.google.com/document/d/${docId}/edit` };
 }
 
 module.exports = {

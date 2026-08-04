@@ -116,6 +116,21 @@ function scopedInstance(raw) {
   return Math.max(0, Math.min(MAX_TOTAL_INSTANCES - 1, n));
 }
 
+// WHICH of a project's documents a request is about. A brief can produce two —
+// the copy doc and a template document — and the app shows both, each with the
+// same generate / regenerate / review affordances, so every one of those calls
+// has to name its target.
+//
+// Client-supplied and closed: only the literal 'template' selects the template
+// document. Anything else — absent, misspelt, an object, a future value an older
+// server does not know — is the copy doc, which is exactly what every client
+// before this parameter existed meant. Failing open to the copy doc is the safe
+// direction: the wrong document read is recoverable, the wrong document WRITTEN
+// is not, and the copy doc is the one the caller already had to name by id.
+function docKindOf(raw) {
+  return raw === 'template' ? 'template' : 'copy';
+}
+
 // In-memory async job store (Week 12). Brief runs (~30-90s) and draft runs
 // (~1 min) both outlast Railway's edge proxy, which closes a connection held
 // open with no response bytes — so instead of one long-awaited POST we start a
@@ -432,13 +447,15 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
   // copy instead of replacing. Scoped-only; ignored on a whole-doc call.
   const append = body.append === true && scoped;
 
+  const docKind = docKindOf(body.doc);
+
   const mode = `${direction ? `regenerate (${direction.length} chars)` : 'first draft'}${scoped ? ` scoped ${scopedFields.length}` : ''}${append ? ' append' : ''}`;
-  const jobId = startJob(`draft doc=${docId} ${mode}`, sessionTenant, async () => {
+  const jobId = startJob(`draft ${docKind} doc=${docId} ${mode}`, sessionTenant, async () => {
     const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
-    const out = await runWebDraft(docId, tenantContext, direction, scoped ? scopedFields : undefined, append);
+    const out = await runWebDraft(docId, tenantContext, direction, scoped ? scopedFields : undefined, append, docKind);
     return { docId: out.docId, fieldCount: out.fieldCount };
   });
-  console.log(`[web] /api/draft start → job=${jobId} doc=${docId} tenant=${sessionTenant} mode=${mode}`);
+  console.log(`[web] /api/draft start → job=${jobId} ${docKind} doc=${docId} tenant=${sessionTenant} mode=${mode}`);
   return res.status(202).json({ success: true, jobId });
 });
 
@@ -470,12 +487,13 @@ router.post('/api/review', draftLimiter, requireAuth, (req, res) => {
         .slice(0, 200)
     : null;
   const scoped = scopedFields && scopedFields.length > 0;
+  const docKind = docKindOf(body.doc);
 
-  const jobId = startJob(`review doc=${docId}${scoped ? ` scoped ${scopedFields.length}` : ''}`, sessionTenant, async () => {
+  const jobId = startJob(`review ${docKind} doc=${docId}${scoped ? ` scoped ${scopedFields.length}` : ''}`, sessionTenant, async () => {
     const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
-    return runWebReview(docId, tenantContext, scoped ? scopedFields : undefined);
+    return runWebReview(docId, tenantContext, scoped ? scopedFields : undefined, docKind);
   });
-  console.log(`[web] /api/review start → job=${jobId} doc=${docId} tenant=${sessionTenant}${scoped ? ` scoped ${scopedFields.length}` : ''}`);
+  console.log(`[web] /api/review start → job=${jobId} ${docKind} doc=${docId} tenant=${sessionTenant}${scoped ? ` scoped ${scopedFields.length}` : ''}`);
   return res.status(202).json({ success: true, jobId });
 });
 
@@ -551,14 +569,23 @@ router.get('/api/projects/:id/content', requireAuth, async (req, res) => {
     const { tenant, user } = await resolveTenant(req.user && req.user.tenant_id, null, sessionUser(req));
     const project = await getProject(tenant && tenant.id, req.params.id);
     if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
-    if (!project.copy_doc_id) {
-      return res.status(200).json({ success: false, error: 'No document for this project' });
+
+    // ?doc=template reads the project's TEMPLATE document instead of its copy
+    // doc. A brief can produce both, and each has its own detail view — so the
+    // id read here follows the kind asked for, rather than the copy doc always.
+    const docKind = docKindOf(req.query.doc);
+    const readId = docKind === 'template' ? project.template_doc_id : project.copy_doc_id;
+    if (!readId) {
+      return res.status(200).json({
+        success: false,
+        error: docKind === 'template' ? 'No template document for this project' : 'No document for this project',
+      });
     }
     // Read the doc as this tenant's Google user — the doc lives in their own
     // Drive (created via their OAuth), so the service-account fallback can't see
     // it. Without passing { tenant }, the read fails and the UI drops to the
     // "Open in Drive" fallback instead of rendering the copy inline.
-    const content = await runWebProjectContent(project.copy_doc_id, { tenant, user });
+    const content = await runWebProjectContent(readId, { tenant, user }, docKind);
     return res.status(200).json({ success: true, content });
   } catch (err) {
     console.error('[web] /api/projects/:id/content failed:', err && err.stack ? err.stack : err);

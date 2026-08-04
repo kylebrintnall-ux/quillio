@@ -424,6 +424,34 @@ environment and is not the path these scripts expect. Use plain `node`.
 Most migrations are written to be idempotent (`CREATE TABLE IF NOT EXISTS`,
 guarded seeds), but read the script's header before re-running one.
 
+## The review overlay's wording lives in two places — keep them in step
+
+The web review overlay renders `{ hadCopy, status, digest }`. Two functions
+produce that shape for two different documents, and **they duplicate the
+wording rather than sharing it**:
+
+| | Produces the shape for | Lives in |
+| --- | --- | --- |
+| `qualitativeStatus` + `buildDigest` | the **copy doc** | `services/copyReview.js` |
+| `reviewProjectTemplate` | a **template document** | `core/pipeline.js` |
+
+Duplicated between them: the flagged/reviewed ratio thresholds **0.25 and 0.6**,
+and the four sentences they select — "Nothing to review yet." / "Looking strong.
+✨" / "A few things to tighten." / "Worth another pass." / "Some rework to do." —
+plus the digest's "Reviewed N fields: X clean, Y with a note" shape.
+
+**Changing one means changing the other.** Nothing enforces it: the two are
+reached by different code paths and neither test reads the other's strings, so a
+reworded copy-doc digest will silently leave the template document speaking the
+old language on the same overlay.
+
+It was left duplicated on purpose. Sharing it would mean either exporting two
+private helpers from `copyReview.js`, or having `core/pipeline.js` require
+`services/copyReview` — a dependency it does not have today — for four strings.
+**A third document type is the moment to extract them**, into something both
+sides import; until then the cost of the indirection is higher than the cost of
+this note.
+
 ## Gotchas
 
 - The service account is a separate Google identity — it can only access Drive

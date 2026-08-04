@@ -1841,18 +1841,15 @@ async function generateDraft(docId, direction, clients, tenantId, scopedFields, 
   return templateDraft ? { ...result, templateDraft } : result;
 }
 
-// Draft this project's template document, if it has one.
+// WHICH TEMPLATE a document id's project was built from, and the brief context
+// to draft it with. ONE resolver, because drafting, regenerating, reading back
+// and reviewing a project's template document all have to agree about it — and
+// each of them is handed a document id and a tenant and nothing else.
 //
-// Returns null when there is nothing to do — no DB, no project row, no template
-// document, or the columns the link needs are not there yet. That is the
-// overwhelmingly common case, so an ordinary brief pays one indexed lookup.
-//
-// SCOPED DRAFTS AND RIFFS STILL COME THROUGH. A scoped draft targets named
-// fields of the copy doc; the matrix has no such notion, and its fields have not
-// changed, so it is redrafted whole. Redrafting a matrix is one batched Gemini
-// call and one batchUpdate — cheaper than the machinery to decide it could be
-// skipped, and it keeps "the button drafts both" true without an exception.
-async function draftProjectTemplate({ docId, tenantId, direction, clients }) {
+// Returns null when there is nothing to resolve (no DB, no project row, no
+// template document), `{ unlinked: true }` when the row predates the link
+// column, else the template id + the brief's own words.
+async function resolveProjectTemplate(docId, tenantId) {
   if (!docId || !tenantId) return null;
 
   let project = null;
@@ -1864,7 +1861,7 @@ async function draftProjectTemplate({ docId, tenantId, direction, clients }) {
     // template-only brief ended up with a document nobody could draft.
     project = await getProjectByAnyDocId(tenantId, docId);
   } catch (err) {
-    console.warn('[pipeline] template draft: project lookup failed:', err.message);
+    console.warn('[pipeline] template lookup failed:', err.message);
     return null;
   }
   if (!project || !project.template_doc_id) return null;
@@ -1876,24 +1873,148 @@ async function draftProjectTemplate({ docId, tenantId, direction, clients }) {
       `[pipeline] project ${project.id} has a template document but no doc_template_id — ` +
         'run scripts/migrateAddProjectTemplateDraft.js; the matrix cannot be drafted until then'
     );
-    return { error: 'this project predates the template-draft link', templateDocId: project.template_doc_id };
+    return { project, unlinked: true, templateDocId: project.template_doc_id, templateDocUrl: project.template_doc_url || null };
   }
 
+  return {
+    project,
+    templateId: String(project.doc_template_id),
+    templateDocId: project.template_doc_id,
+    templateDocUrl: project.template_doc_url || null,
+    // The brief's own words, off the project row. The copy doc is not read.
+    spec: { summary: project.brief_summary || '', writerPrompt: project.brief_writer_prompt || '' },
+  };
+}
+
+// Draft this project's template document, if it has one.
+//
+// Returns null when there is nothing to do — no DB, no project row, no template
+// document, or the columns the link needs are not there yet. That is the
+// overwhelmingly common case, so an ordinary brief pays one indexed lookup.
+//
+// A SCOPED DRAFT OF THE COPY DOC STILL REDRAFTS THE MATRIX WHOLE. That call
+// targets named fields of the COPY doc; the matrix has no such notion of them,
+// and its own fields have not changed, so it is redrafted entire. One batched
+// Gemini call and one batchUpdate is cheaper than the machinery to decide it
+// could be skipped, and it keeps "the button drafts both" true without an
+// exception.
+//
+// `fieldNames` is the different thing: markers of THIS document, named by its
+// own screen, redrafted through the step-three regenerate path — the same door
+// the by-hand runner uses. Absent → the whole document. Nothing else differs;
+// both write through writeTemplateCells, in one batchUpdate, at the stored
+// coordinates.
+async function draftProjectTemplate({ docId, tenantId, direction, clients, fieldNames }) {
+  const link = await resolveProjectTemplate(docId, tenantId);
+  if (!link) return null;
+  if (link.unlinked) {
+    return { error: 'this project predates the template-draft link', templateDocId: link.templateDocId };
+  }
+
+  const scoped = (Array.isArray(fieldNames) ? fieldNames : []).filter((n) => String(n || '').trim());
   try {
-    const out = await draftTemplateDocument({
-      tenantId,
-      templateId: String(project.doc_template_id),
-      docId: project.template_doc_id,
-      direction,
-      clients,
-      // The brief's own words, off the project row. The copy doc is not read.
-      spec: { summary: project.brief_summary || '', writerPrompt: project.brief_writer_prompt || '' },
-    });
-    return { templateDocId: project.template_doc_id, templateDocUrl: project.template_doc_url, ...out };
+    const out = scoped.length
+      ? await regenerateTemplateFields({
+          tenantId,
+          templateId: link.templateId,
+          docId: link.templateDocId,
+          fieldNames: scoped,
+          direction,
+          clients,
+          spec: link.spec,
+        })
+      : await draftTemplateDocument({
+          tenantId,
+          templateId: link.templateId,
+          docId: link.templateDocId,
+          direction,
+          clients,
+          spec: link.spec,
+        });
+    return { templateDocId: link.templateDocId, templateDocUrl: link.templateDocUrl, ...out };
   } catch (err) {
     console.error('[pipeline] template draft failed (the copy doc draft is unaffected):', err.message);
-    return { templateDocId: project.template_doc_id, error: err.message };
+    return { templateDocId: link.templateDocId, error: err.message };
   }
+}
+
+// A PROJECT's template document, in the shape the detail view renders. The web
+// surface knows a document id and a tenant; it never learns a template id, so
+// the resolution lives here rather than in the adapter.
+async function getProjectTemplateContent({ docId, tenantId, clients }) {
+  const link = await resolveProjectTemplate(docId, tenantId);
+  if (!link) throw new Error('There is no template document on this project.');
+  if (link.unlinked) {
+    throw new Error(
+      'This project predates the template-draft link — run scripts/migrateAddProjectTemplateDraft.js.'
+    );
+  }
+  return getTemplateContent({
+    tenantId,
+    templateId: link.templateId,
+    docId: link.templateDocId,
+    clients,
+  });
+}
+
+// A PROJECT's template document, reviewed. Same resolution, then the step-three
+// unanchored-comment path — and the result reshaped into the { hadCopy, status,
+// digest } the review overlay already speaks, so the template document's Review
+// button behaves exactly like the copy doc's.
+//
+// The counts are of MARKERS, not of notes: "3 fields: 2 clean, 1 with a note"
+// reads the same way copy review's digest does. A cell that is still showing its
+// {{marker}} has nothing to review, which is `hadCopy: false` — the overlay then
+// says "generate a draft first" instead of "all clean", which would be a lie.
+async function reviewProjectTemplate({ docId, tenantId, clients }) {
+  const link = await resolveProjectTemplate(docId, tenantId);
+  if (!link) throw new Error('There is no template document on this project.');
+  if (link.unlinked) {
+    throw new Error(
+      'This project predates the template-draft link — run scripts/migrateAddProjectTemplateDraft.js.'
+    );
+  }
+  const out = await reviewTemplateDocument({
+    tenantId,
+    templateId: link.templateId,
+    docId: link.templateDocId,
+    clients,
+  });
+
+  const copyRows = (out.rows || []).filter((r) => r.is_copy && !r.showingMarker && String(r.text || '').trim());
+  const flaggedNames = new Set((out.notes || []).map((n) => n.marker_name));
+  const reviewed = copyRows.length;
+  const flagged = copyRows.filter((r) => flaggedNames.has(r.marker_name)).length;
+  const clean = reviewed - flagged;
+
+  let status;
+  let digest;
+  if (reviewed === 0) {
+    status = 'Nothing to review yet.';
+    digest = 'No drafted copy to review yet.';
+  } else if (flagged === 0) {
+    status = 'Looking strong. ✨';
+    digest = `Reviewed ${reviewed} field${reviewed === 1 ? '' : 's'} — all clean. Nothing to change.`;
+  } else {
+    const ratio = flagged / reviewed;
+    status = ratio <= 0.25 ? 'A few things to tighten.' : ratio <= 0.6 ? 'Worth another pass.' : 'Some rework to do.';
+    digest =
+      `Reviewed ${reviewed} field${reviewed === 1 ? '' : 's'}: ${clean} clean, ${flagged} with a note ` +
+      `on ${out.templateName}. Open the doc for the notes.`;
+  }
+
+  return {
+    reviewed,
+    flagged,
+    clean,
+    hadCopy: reviewed > 0,
+    status,
+    digest,
+    templateName: out.templateName,
+    templateDocUrl: link.templateDocUrl,
+    posted: (out.posted || []).length,
+    duplicates: (out.duplicates || []).length,
+  };
 }
 
 // Read an existing doc into a structured, copy-bearing shape for the web
@@ -1901,6 +2022,59 @@ async function draftProjectTemplate({ docId, tenantId, direction, clients }) {
 // Returns { title, summary, writerDirection, assets: [...] }.
 async function getProjectContent(docId, clients) {
   return getDestination().getDocContent(docId, clients);
+}
+
+// THE SAME SHAPE, FOR A TEMPLATE DOCUMENT.
+//
+// The web app renders a document as { title, summary, writerDirection, assets:
+// [{ name, fields: [{ fieldName, charMin, charMax, fieldType, copy }] }] } —
+// the shape getDocContent returns for the copy doc. A matrix has no assets and
+// no sections, but it has exactly one thing that maps: itself, as one "asset"
+// whose fields are its copy markers. Returning the shape the renderer already
+// speaks means the detail view is the SAME renderer rather than a second one
+// that will drift.
+//
+// READ THROUGH readTemplateDocument, which is the proven step-three path. There
+// is no second reader here: this converts what that returns and adds nothing.
+//
+// ONLY is_copy MARKERS. A metadata cell is the tenant's — {{Form ID}} is theirs
+// to fill and not Quillio's to offer as a drafting surface. It is in the
+// document, it is visible when they open it, and it does not belong on a screen
+// whose every affordance is "write this for me".
+//
+// A marker still showing its {{marker}} comes back with EMPTY copy, so the
+// renderer draws its existing "Not yet drafted" state rather than printing the
+// marker as though it were copy somebody wrote.
+async function getTemplateContent({ tenantId, templateId, docId, clients }) {
+  const read = await readTemplateDocument({ tenantId, templateId, docId, clients });
+  const fields = read.rows
+    .filter((r) => r.is_copy)
+    .map((r) => ({
+      fieldName: r.marker_name,
+      charMin: r.char_min || 0,
+      charMax: r.char_max || 0,
+      fieldType: r.field_type === 'words' ? 'words' : 'text',
+      copy: r.showingMarker ? '' : r.text,
+      // Whether a riff could stack alternatives here — see
+      // templateCells.hasRoomBelow. Carried per FIELD, so the surface asks the
+      // marker rather than asking what kind of document it is in.
+      roomBelow: r.roomBelow === true,
+    }));
+
+  return {
+    title: read.title || read.templateName,
+    // A matrix carries no campaign sections of its own — Campaign Summary and
+    // Writer Direction are HEADING_2 sections of the copy doc, and this document
+    // has neither. Empty rather than invented; `kind` lets the renderer leave
+    // the two labels out entirely instead of drawing two em-dashes.
+    summary: '',
+    writerDirection: '',
+    kind: 'template',
+    assets: [{ name: read.templateName, fields }],
+    // Carried so a caller can report what the read could not place.
+    missing: read.missing,
+    templateName: read.templateName,
+  };
 }
 
 // Count the assets in a doc (one HEADING_3 heading per asset). Best-effort:
@@ -1979,6 +2153,7 @@ module.exports = {
   generateDoc,
   generateDraft,
   getProjectContent,
+  getTemplateContent,
   countDocAssets,
   getFolderName,
   extractBriefFolderId,
@@ -2008,6 +2183,13 @@ module.exports = {
   readTemplateDocument,
   regenerateTemplateFields,
   reviewTemplateDocument,
+  // …and the PROJECT-level wrappers the web surface uses. A surface knows a
+  // document id and a tenant; resolveProjectTemplate is the one place that turns
+  // those into a template id, so read / draft / regenerate / review on a
+  // project's template document cannot disagree about which template it is.
+  resolveProjectTemplate,
+  getProjectTemplateContent,
+  reviewProjectTemplate,
   normalizeAssetPlan,
   resolveAssetLimits,
   // The DEFAULT (web) ceilings, and the absolute maximum a surface can ask for.

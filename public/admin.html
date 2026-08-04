@@ -132,20 +132,31 @@ async function loadHealth(){
   const watch = h.watch || [];
   const withErrors = watch.filter(w=>w.last_error).length;
   const pending = watch.reduce((a,w)=>a+(w.pending_count||0),0);
+  const unanchored = watch.filter(w=>!w.anchored).length;
   sum.appendChild(el('div',{},['Last detection run: '+(h.lastRun ? relTime(h.lastRun)+' ('+new Date(h.lastRun).toLocaleString()+')' : 'never')]));
   sum.appendChild(el('div',{},['Last run result: '+watch.length+' watched · '+withErrors+' with error(s) · '+pending+' pending flag(s)']));
+  // Unanchored entries are still checked, but nothing verifies the fetch read the
+  // right page — say so on the summary line rather than only in the table.
+  sum.appendChild(el('div',{},['Anchors: '+(watch.length-unanchored)+' of '+watch.length+' asserted'+(unanchored?' · '+unanchored+' unanchored':'')]));
   sum.appendChild(el('div',{class:'note'},['Next scheduled run: '+nextMondayCron()+' — Mondays 15:00 UTC (0 15 * * 1)']));
   const table=el('table');
   table.appendChild(el('tr',{},[
     el('th',{text:'Watch'}), el('th',{text:'Type'}), el('th',{text:'Last checked'}),
-    el('th',{text:'Baselined'}), el('th',{text:'Last error'}), el('th',{text:'Pending'}),
+    el('th',{text:'Baselined'}), el('th',{text:'Anchor'}), el('th',{text:'Last error'}), el('th',{text:'Pending'}),
   ]));
   for(const w of watch){
-    const tr = el('tr', w.last_error ? {class:'err-row'} : {});
+    const fails = w.consecutive_failures;
+    const tr = el('tr', (w.last_error || fails>1) ? {class:'err-row'} : {});
     tr.appendChild(el('td',{},[el('div',{class:'title',text:w.display_name||'(no name)'}), el('div',{class:'note',text:w.source_url})]));
     tr.appendChild(el('td',{},[el('span',{class:'badge '+(w.is_test?'test':'real'),text:w.is_test?'TEST':'REAL'})]));
     tr.appendChild(el('td',{text:relTime(w.last_checked_at)}));
     tr.appendChild(el('td',{text:w.baselined?'yes':'no'}));
+    tr.appendChild(el('td',{},[
+      el('div',{text:w.anchored?'yes':'none'}),
+      // A run of failures is the signal that an anchor is wrong rather than that
+      // the site had one bad morning, so it goes next to the anchor, not the error.
+      fails ? el('div',{class:'note',text:fails+' failed run'+(fails===1?'':'s')+' in a row'}) : null,
+    ].filter(Boolean)));
     tr.appendChild(el('td',{text:w.last_error?w.last_error:'—'}));
     tr.appendChild(el('td',{text:String(w.pending_count||0)}));
     table.appendChild(tr);

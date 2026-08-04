@@ -602,6 +602,48 @@ reasons, and the second is the one that bites:
 So: if the page states a limit the platform enforces, watch it. If the page reports
 what someone measured, cite it and leave it alone.
 
+### Every watch entry asserts an anchor before it compares hashes
+
+`fetchText` only throws on a non-2xx or a timeout, so a **200 that isn't the page**
+— a soft-404, an auth interstitial, a JS shell with nothing rendered server-side —
+used to flow straight down the success path. Its normalized text hashes to
+something stable and the entry reported "unchanged" every week, confidently and
+forever. On a *first* run it was worse: `sha256('')` became the legitimate
+baseline and every later run agreed with it.
+
+So `spec_watch_list` carries three columns
+(`scripts/migrateAddSpecAnchors.js` — **not yet run in production**):
+
+| Column | Means |
+| --- | --- |
+| `expected_content` | the string that must be present for the fetch to count as a read. NULL = unanchored |
+| `anchor_scope` | `normalized` (default) or `raw` — WHICH body to search |
+| `consecutive_failures` | reset to 0 by every successful read |
+
+`checkAnchor` runs **before any comparison branch**, and a miss is status
+`'failed'` — distinct from `'error'`, which means the page could not be reached.
+A failed read never advances `current_hash` and never flags. A source-order test
+guards the position, because moving the check below `if (!row.current_hash)`
+restores the empty-baseline bug while every behavioural test still passes.
+
+Scope is per row because both choices are wrong for some page: `normalize()`
+strips `<script>` **and its contents**, so an anchor living in a JSON island
+vanishes from a perfectly healthy page — and raw HTML carries every nav label, so
+a generic anchor survives on an error page sharing the site's chrome.
+
+**Unanchored is neither a pass nor a failure.** The entry is still fetched,
+hashed and compared; the run reports `anchored: false` per result and counts
+`summary.unanchored`, which is a separate axis from `status` (an entry can be
+unanchored *and* unchanged, and both facts matter). Every existing row is in that
+state until the migration seeds it.
+
+The seeded anchors are **candidates chosen without seeing the pages** — this
+repo's environment denies egress to those hosts. Run
+`node scripts/migrateAddSpecAnchors.js --verify` from somewhere with egress
+first: it fetches each URL and prints the status, normalized length and
+occurrence counts, and says whether the detector would PASS or FAIL. A candidate
+that is absent, or that occurs forty times, is the wrong string.
+
 ## Vision & roadmap
 
 `ROADMAP.md` and `docs/` hold product intent and historical build plans. They

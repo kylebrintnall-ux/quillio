@@ -6,20 +6,37 @@
 // is unset (reads return [] / null), matching the rest of db/. The detector's
 // hash/flag writes live in services/specDetector.js, not here.
 
-const { getPool } = require('../db');
+const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
+
+const WATCH_ORDER = 'ORDER BY is_test, display_name NULLS LAST, id';
+const WATCH_COLUMNS = `id, source_url, display_name, affected_fields, current_hash,
+            last_checked_at, last_error, is_test, created_at`;
 
 // All watch-list rows (the URLs being monitored). Ordered real-entries-first,
 // test entries last. Returns [] when there's no DB.
+//
+// expected_content / anchor_scope / consecutive_failures arrive with
+// scripts/migrateAddSpecAnchors.js. Until it runs we fall back to the columns
+// that have always existed, so a deploy that lands ahead of the migration still
+// runs detection instead of erroring out of every admin read. The detector tells
+// the two states apart by KEY PRESENCE — a fallback row has no
+// `consecutive_failures` key at all, where a migrated-but-unseeded row has the
+// key set to a value — so don't "tidy" this by defaulting the missing columns in.
 async function getWatchList() {
   const p = getPool();
   if (!p) return [];
-  const res = await p.query(
-    `SELECT id, source_url, display_name, affected_fields, current_hash,
-            last_checked_at, last_error, is_test, created_at
-       FROM spec_watch_list
-      ORDER BY is_test, display_name NULLS LAST, id`
-  );
-  return (res && res.rows) || [];
+  try {
+    const res = await p.query(
+      `SELECT ${WATCH_COLUMNS}, expected_content, anchor_scope, consecutive_failures
+         FROM spec_watch_list ${WATCH_ORDER}`
+    );
+    return (res && res.rows) || [];
+  } catch (err) {
+    if (!isUndefinedColumn(err)) throw err;
+    warnMissingSchema('spec_watch_list.expected_content', 'scripts/migrateAddSpecAnchors.js');
+    const res = await p.query(`SELECT ${WATCH_COLUMNS} FROM spec_watch_list ${WATCH_ORDER}`);
+    return (res && res.rows) || [];
+  }
 }
 
 // The editable test-page content (singleton row id=1). Returns the string, or
@@ -87,6 +104,14 @@ async function getDetectionHealth() {
     baselined: !!r.current_hash,
     last_error: r.last_error || null,
     pending_count: byWatch.get(String(r.id)) || 0,
+    // Anchor state, so "this entry isn't really being watched" is visible on the
+    // health page and not only in a run's output. `null` for consecutive_failures
+    // means the column isn't there yet (pre-migration), which is a different
+    // thing from 0 and is rendered differently.
+    anchored: !!(r.expected_content && String(r.expected_content).trim()),
+    consecutive_failures: Object.prototype.hasOwnProperty.call(r, 'consecutive_failures')
+      ? Number(r.consecutive_failures) || 0
+      : null,
   }));
 
   return { lastRun, watch };

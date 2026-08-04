@@ -27,6 +27,7 @@ const {
   putPending,
   getPending,
   planNeedsConfirmation,
+  planNeedsAssetPick,
   sanitizeAssetPlan,
 } = require('../pendingBriefs');
 const { requireAuth } = require('../middleware/auth');
@@ -129,6 +130,19 @@ function scopedInstance(raw) {
 // is not, and the copy doc is the one the caller already had to name by id.
 function docKindOf(raw) {
   return raw === 'template' ? 'template' : 'copy';
+}
+
+// The tenant's active asset types, as the picker needs them: name + group, in
+// library order. Nothing else — the picker offers a choice, not a spec sheet, and
+// shipping every field of every asset would be a payload the screen never reads.
+//
+// NO RELEVANCE ORDER, deliberately. Library order is the tenant's own
+// (asset_types.sort_order); sorting by anything inferred from the brief would put
+// the guess back, one screen later and harder to see.
+function assetPickerLibrary(rows) {
+  return (rows || [])
+    .filter((r) => r && r.name)
+    .map((r) => ({ name: r.name, group: r.group || 'Other' }));
 }
 
 // In-memory async job store (Week 12). Brief runs (~30-90s) and draft runs
@@ -292,9 +306,43 @@ router.post('/api/brief', briefLimiter, requireAuth, (req, res) => {
     const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
     const parsed = await runWebBriefParse(briefText, tenantContext, fileRefs);
 
+    // THE BRIEF NAMED NOTHING → ask, rather than choose for them. The parse
+    // returns an empty plan for a brief that describes a campaign without naming
+    // a deliverable; that used to reach the whole library, and before that the
+    // model was instructed to invent three. A named template counts as an answer
+    // and does not pause — see planNeedsAssetPick.
+    if (planNeedsAssetPick(parsed.plan, parsed.templates)) {
+      let library = [];
+      try {
+        library = assetPickerLibrary(await getTenantAssets(sessionTenant));
+      } catch (err) {
+        console.error('[web] brief: library read for the picker failed:', err.message);
+      }
+      // No library is not a question worth asking — there is nothing to pick
+      // from, and generateDoc would throw on it anyway. Let it through to the
+      // failure that names the real problem.
+      if (library.length > 0) {
+        const pendingId = putPending(sessionTenant, parsed);
+        console.log(
+          `[web] brief named no assets → picker, pending=${pendingId} tenant=${sessionTenant} ` +
+            `library=${library.length}`
+        );
+        return {
+          needsAssetPick: true,
+          pendingId,
+          library,
+          interpretation: {
+            campaignTitle: parsed.campaignTitle,
+            summary: parsed.summary,
+            writerDirection: parsed.writerPrompt,
+            unmatchedNotice: parsed.unmatchedNotice,
+          },
+        };
+      }
+    }
+
     // Nothing to correct → finish in THIS job. No second request, no extra click,
-    // no behavior change. This is the only path parseBrief can reach today, since
-    // it returns a deduped string[] (every count 1, no labels).
+    // no behavior change.
     if (!planNeedsConfirmation(parsed.plan)) {
       return runWebBriefGenerate(parsed, parsed.plan, tenantContext); // { docUrl, assetBlocks, … }
     }

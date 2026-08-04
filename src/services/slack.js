@@ -354,6 +354,132 @@ function buildPlanCardBlocks({ pendingId, campaignTitle, plan, unmatchedNotice }
   };
 }
 
+// THE ASSET PICKER CARD — shown when the brief named no assets at all.
+//
+// A CARD, NOT A MODAL, for the same reason the plan card is one: a modal needs a
+// trigger_id valid for ~3 seconds and parsing is a multi-second round trip, so by
+// the time we know the brief named nothing there is no live trigger_id left. A
+// card is posted, not opened, and needs none.
+//
+// CHECKBOXES, NOT A MULTI-SELECT. A multi_static_select hides the options behind a
+// tap and shows the tenant's library as a dropdown; checkboxes show what there is
+// to choose from, which is the entire point of the screen. Slack caps a checkboxes
+// block at 10 options, so the library is split into blocks of 10 — grouped by the
+// asset's own group where that fits, which is also the tenant's own ordering.
+//
+// NOTHING PRE-SELECTED. `initial_options` is deliberately never set: a pre-ticked
+// suggestion is the same anchor the inference was, one card later.
+//
+// The pendingId rides in the BUTTON's value, never the plan — a Slack action value
+// caps near 2000 characters, and 25 asset names would flirt with that. The
+// selection rides in the block state, which the submission carries for us.
+const SLACK_CHECKBOX_MAX = 10;
+
+function buildAssetPickerCardBlocks({ pendingId, campaignTitle, library, unmatchedNotice }) {
+  const assets = (library || []).filter((a) => a && a.name);
+  const title = String(campaignTitle || 'Your campaign');
+  const text = `${emoji('quillio-scroll')} That brief didn't name any assets — ${title}`;
+
+  // Grouped in first-appearance order (library order), then chunked to Slack's
+  // per-block option cap. A group larger than the cap becomes several blocks
+  // under one heading rather than being truncated.
+  const groups = [];
+  const byGroup = new Map();
+  for (const a of assets) {
+    const g = a.group || 'Other';
+    if (!byGroup.has(g)) { byGroup.set(g, []); groups.push(g); }
+    byGroup.get(g).push(a);
+  }
+  const optionBlocks = [];
+  for (const g of groups) {
+    const inGroup = byGroup.get(g);
+    for (let i = 0; i < inGroup.length; i += SLACK_CHECKBOX_MAX) {
+      const chunk = inGroup.slice(i, i + SLACK_CHECKBOX_MAX);
+      optionBlocks.push({
+        type: 'input',
+        optional: true,
+        block_id: `pick_${optionBlocks.length}`,
+        label: { type: 'plain_text', text: i === 0 ? g : `${g} (cont.)`, emoji: true },
+        element: {
+          type: 'checkboxes',
+          action_id: 'pick',
+          options: chunk.map((a) => ({
+            text: { type: 'plain_text', text: a.name.slice(0, 75), emoji: true },
+            value: a.name.slice(0, 75),
+          })),
+        },
+      });
+    }
+  }
+
+  return {
+    text,
+    blocks: [
+      { type: 'header', text: { type: 'plain_text', text: "That brief didn't name any assets.", emoji: true } },
+      { type: 'section', text: { type: 'mrkdwn', text: `*${title}*` } },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: "So nothing has been chosen for you. Pick what you want — nothing has been created yet." }],
+      },
+      ...optionBlocks,
+      ...(unmatchedNotice
+        ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: unmatchedNotice }] }]
+        : []),
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            style: 'primary',
+            text: { type: 'plain_text', text: 'Build these', emoji: true },
+            action_id: 'pick_build',
+            value: pendingId,
+          },
+          // Plain, not danger — nothing exists yet, so cancelling destroys
+          // nothing. Same reasoning as the plan card's.
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Cancel', emoji: true },
+            action_id: 'pick_cancel',
+            value: pendingId,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+// WHAT THE USER TICKED, out of a block_actions payload's state.
+//
+// Slack carries the state of every input block on the message with the click, so
+// the picker needs no store of its own between rendering and building — the
+// pendingId in the button value plus this is the whole submission.
+//
+// Reads only blocks whose id starts with `pick_` and whose action is `pick`, so
+// another input block on the same message could never contribute an asset. Order
+// is block order, which is library order. Deduped: Slack will not send the same
+// option twice, but two blocks of one group could in principle carry the same
+// name after a library edit mid-flight, and a doubled name is a doubled asset.
+//
+// Every name is validated against the tenant's real library afterwards by
+// sanitizeAssetPlan — this only reads the payload, it does not trust it.
+function selectedAssetsFromState(state) {
+  const values = (state && state.values) || {};
+  const seen = new Set();
+  const out = [];
+  for (const blockId of Object.keys(values)) {
+    if (!/^pick_/.test(blockId)) continue;
+    const action = values[blockId] && values[blockId].pick;
+    for (const opt of (action && action.selected_options) || []) {
+      const name = opt && typeof opt.value === 'string' ? opt.value.trim() : '';
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      out.push({ asset: name, count: 1 });
+    }
+  }
+  return out;
+}
+
 // The "Edit counts" modal: one text input per plan entry, pre-filled with the
 // parsed count. Opened from the Edit button's FRESH trigger_id — the slash command's
 // own trigger_id is long expired by the time parsing finishes, which is why the
@@ -720,7 +846,9 @@ module.exports = {
   copyCompleteBlocks,
   buildRegenerateModalView,
   buildPlanCardBlocks,
+  buildAssetPickerCardBlocks,
   buildPlanEditModalView,
+  selectedAssetsFromState,
   planLines,
   openModal,
 };

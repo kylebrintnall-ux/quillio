@@ -68,14 +68,45 @@ function dropPending(pendingId, owner) {
 }
 
 // Does this plan have anything a user could meaningfully correct? Only a repeated
-// asset or a label does. One instance of every asset — and the empty plan a vague
-// brief produces, which renders the whole library — goes straight to generation
+// asset or a label does. One instance of every asset goes straight to generation
 // with no extra card, no extra click, and no extra round trip. THE one-of-each
 // case is every brief anyone ran before instances existed, so it must not pause.
+//
+// An EMPTY plan is no longer this function's business. It used to fall through
+// here to the whole library; it now goes to planNeedsAssetPick below, which is a
+// different question with a different screen.
 function planNeedsConfirmation(plan) {
   return (Array.isArray(plan) ? plan : []).some(
     (e) => e && ((Number(e.count) || 1) > 1 || (Array.isArray(e.labels) && e.labels.some(Boolean)))
   );
+}
+
+// Did this brief ask for nothing at all? Then the writer picks, and the system
+// does not pick for them.
+//
+// THE SECOND PAUSE, AND A DIFFERENT QUESTION FROM THE FIRST. planNeedsConfirmation
+// asks "is this reading of your brief right?" and shows a plan to adjust.
+// This asks "what do you want?" and shows the library to choose from. They are
+// not the same screen because they cannot be: the confirm path can only ever
+// change counts — Slack's modal resolves positional block ids (count_0, count_1)
+// against the stored plan, so a submission there cannot introduce an asset — and
+// introducing assets is the whole job here.
+//
+// A NAMED TEMPLATE IS AN ANSWER. A brief that names one asked for exactly one
+// thing and got it; generateDoc already skips the copy doc for that case
+// (wholeLibraryOnEmpty: templateGroups.length === 0). Pausing to offer a library
+// would be asking a question the brief already answered.
+//
+// A PARTIALLY VAGUE BRIEF DOES NOT PAUSE. "A nurture email and some other bits"
+// returns a non-empty plan, so it builds the email and the vague remainder is
+// lost exactly as it is today. Deliberately unchanged: where a vague ask actually
+// lands — dropped, or in unmatchedAssets — varies by phrasing and nobody has
+// measured it, and a picker that opens on a guess about that would be the same
+// mistake one level up.
+function planNeedsAssetPick(plan, templates) {
+  const empty = !Array.isArray(plan) || plan.length === 0;
+  const namedTemplate = Array.isArray(templates) && templates.length > 0;
+  return empty && !namedTemplate;
 }
 
 // Validate + clamp a plan that came back from a USER — a browser POST body or a
@@ -125,6 +156,7 @@ module.exports = {
   getPending,
   dropPending,
   planNeedsConfirmation,
+  planNeedsAssetPick,
   sanitizeAssetPlan,
   slackOwner,
 };

@@ -467,6 +467,32 @@
        150px ≈ the bar's two buttons (17px padding each) plus its 14/28px padding. */
     #screen-output { padding-bottom: 150px; }
     #screen-confirm { padding-bottom: 150px; }
+    #screen-picker { padding-bottom: 150px; }
+    /* THE ASSET PICKER. A library list, not a plan — see #screen-picker. */
+    .picker-search {
+      width: 100%; box-sizing: border-box; margin: 0 0 16px; padding: 14px 16px;
+      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 15px; color: var(--ink);
+      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 14px; outline: none; -webkit-appearance: none;
+    }
+    .picker-search::placeholder { color: rgba(26,26,46,0.4); }
+    .picker-group { margin-bottom: 18px; }
+    .picker-group-label {
+      font-family: 'StarCrush', serif; font-size: 11px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--ink); opacity: 0.6; margin-bottom: 8px;
+    }
+    /* A row is a LABEL wrapping a real checkbox: the whole row is the hit target,
+       and the checkbox stays a checkbox for assistive tech and for the keyboard. */
+    .picker-row {
+      display: flex; align-items: center; gap: 12px; width: 100%;
+      padding: 13px 15px; margin-bottom: 8px; border-radius: 12px; cursor: pointer;
+      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.75);
+      -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, border-color 0.12s ease;
+    }
+    .picker-row:active { background: rgba(201,168,76,0.10); }
+    .picker-row input { width: 20px; height: 20px; flex: none; accent-color: var(--gold); margin: 0; }
+    .picker-row-name { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 14.5px; color: var(--ink); overflow-wrap: anywhere; }
+    .picker-row.checked { background: rgba(201,168,76,0.16); border-color: rgba(201,168,76,0.7); }
     .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
     .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--ink); letter-spacing: 0.02em; flex: 1; margin: 0; }
     .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
@@ -884,6 +910,32 @@
          something a user could correct (an asset asked for more than once, or a
          labelled instance). A plain one-of-each brief never reaches this screen —
          it goes straight from progress to output, exactly as it always has. -->
+    <!-- SCREEN 2b — ASSET PICKER. Shown when the brief named no assets at all.
+         A SEPARATE SCREEN FROM #screen-confirm, and not by preference: that one
+         renders the PLAN with a count input per row and can only adjust what is
+         already there. This one renders the LIBRARY. "Is this reading right?" and
+         "what do you want?" are different questions. -->
+    <section id="screen-picker" class="screen">
+      <div class="output-header">
+        <h2 class="output-title" id="picker-title">Campaign</h2>
+      </div>
+      <p class="field-select-hint">This brief didn’t name any assets, so nothing has been chosen for you. Pick what you want — nothing has been created yet.</p>
+
+      <div class="section-label">Campaign Summary</div>
+      <p class="section-body" id="picker-summary"></p>
+
+      <input type="search" id="picker-search" class="picker-search" placeholder="Search assets…" autocomplete="off">
+      <div id="picker-list"></div>
+      <div id="picker-empty" class="empty hidden">No asset matches that.</div>
+      <div id="picker-unmatched" class="notice hidden"></div>
+      <div id="picker-error" class="error hidden"></div>
+
+      <div class="output-ctas">
+        <button class="cta-primary" id="picker-build-btn" disabled>Select assets to build</button>
+        <button class="cta-secondary" id="picker-back-btn">← Back to brief</button>
+      </div>
+    </section>
+
     <section id="screen-confirm" class="screen">
       <div class="output-header">
         <h2 class="output-title" id="confirm-title">Campaign</h2>
@@ -1174,6 +1226,7 @@
       brief: document.getElementById('screen-brief'),
       progress: document.getElementById('screen-progress'),
       confirm: document.getElementById('screen-confirm'),
+      picker: document.getElementById('screen-picker'),
       output: document.getElementById('screen-output'),
       generating: document.getElementById('screen-generating'),
       copydone: document.getElementById('screen-copydone'),
@@ -1181,7 +1234,7 @@
       project: document.getElementById('screen-project')
     };
     // Which nav link is highlighted for each screen (cosmetic only).
-    var NAV_FOR_SCREEN = { brief: 'nav-new', progress: 'nav-new', confirm: 'nav-new', output: 'nav-new', generating: 'nav-new', copydone: 'nav-new', history: 'nav-history', project: 'nav-history' };
+    var NAV_FOR_SCREEN = { brief: 'nav-new', progress: 'nav-new', confirm: 'nav-new', picker: 'nav-new', output: 'nav-new', generating: 'nav-new', copydone: 'nav-new', history: 'nav-history', project: 'nav-history' };
     function setNavActive(name) {
       ['nav-new', 'nav-history', 'nav-settings'].forEach(function (id) {
         document.getElementById(id).classList.toggle('active', id === NAV_FOR_SCREEN[name]);
@@ -2145,6 +2198,109 @@
     var pendingBrief = { pendingId: null, plan: [] };
     var MAX_INSTANCES_PER_ASSET = 10; // mirrors the server clamp; the server re-clamps
 
+    // --- The asset picker (Screen 2b) ---------------------------------------
+    // Populated by renderPicker; read by the Build button. Nothing has been
+    // created at this point — the server holds the parse against this id, exactly
+    // as it does for the confirm pause.
+    var pickerState = { pendingId: null, library: [], chosen: null };
+
+    function renderPicker(data) {
+      pickerState = {
+        pendingId: data.pendingId,
+        library: Array.isArray(data.library) ? data.library.slice() : [],
+        // A Set of names. NOTHING PRE-CHECKED, deliberately: a pre-ticked
+        // suggestion is the same anchor the inference was, one screen later.
+        chosen: new Set(),
+      };
+      var interp = (data && data.interpretation) || {};
+      document.getElementById('picker-title').textContent = interp.campaignTitle || 'Campaign';
+      document.getElementById('picker-summary').textContent = interp.summary || '—';
+      renderNotice('picker-unmatched', interp.unmatchedNotice);
+      clearError(document.getElementById('picker-error'));
+      document.getElementById('picker-search').value = '';
+      renderPickerList('');
+      refreshPickerPrimary();
+    }
+
+    // The library, grouped, filtered by `q`. Rebuilt on every keystroke — 25-ish
+    // rows, so there is nothing to gain from patching in place and a rebuild
+    // cannot drift from the selection.
+    function renderPickerList(q) {
+      var host = document.getElementById('picker-list');
+      host.textContent = '';
+      var needle = String(q || '').trim().toLowerCase();
+      var shown = pickerState.library.filter(function (a) {
+        return !needle || a.name.toLowerCase().indexOf(needle) >= 0 || String(a.group || '').toLowerCase().indexOf(needle) >= 0;
+      });
+      document.getElementById('picker-empty').classList.toggle('hidden', shown.length > 0);
+
+      // Groups in first-appearance order — which is library order, which is the
+      // tenant's own sort_order. Not relevance, and not alphabetical.
+      var groups = [];
+      var byGroup = {};
+      shown.forEach(function (a) {
+        var g = a.group || 'Other';
+        if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
+        byGroup[g].push(a);
+      });
+
+      groups.forEach(function (g) {
+        var wrap = el('div', 'picker-group');
+        wrap.appendChild(el('div', 'picker-group-label', g));
+        byGroup[g].forEach(function (a) {
+          var row = document.createElement('label');
+          row.className = 'picker-row' + (pickerState.chosen.has(a.name) ? ' checked' : '');
+          var box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = pickerState.chosen.has(a.name);
+          box.addEventListener('change', function () {
+            if (box.checked) pickerState.chosen.add(a.name);
+            else pickerState.chosen.delete(a.name);
+            row.classList.toggle('checked', box.checked);
+            refreshPickerPrimary();
+          });
+          row.appendChild(box);
+          row.appendChild(el('span', 'picker-row-name', a.name));
+          wrap.appendChild(row);
+        });
+        host.appendChild(wrap);
+      });
+    }
+
+    // The primary says how many, and is disabled at zero — the picker cannot
+    // submit an empty plan, and the server refuses one too.
+    function refreshPickerPrimary() {
+      var b = document.getElementById('picker-build-btn');
+      if (!b) return;
+      var n = pickerState.chosen ? pickerState.chosen.size : 0;
+      b.disabled = n === 0;
+      b.textContent = n === 0 ? 'Select assets to build' : ('Build ' + n + ' asset' + (n === 1 ? '' : 's'));
+    }
+
+    // Submit to /api/brief/confirm — the SAME endpoint the confirm pause uses. It
+    // already validates a client-supplied plan against the tenant's real library
+    // (sanitizeAssetPlan) and already refuses an empty one, so the picker needs no
+    // route of its own.
+    async function buildFromPicker() {
+      if (!pickerState.pendingId || !pickerState.chosen || pickerState.chosen.size === 0) return;
+      var plan = Array.from(pickerState.chosen).map(function (name) { return { asset: name, count: 1 }; });
+      clearError(document.getElementById('picker-error'));
+      showScreen('progress');
+      startBriefBar(8 + plan.length * 4, false);
+      try {
+        var data = await runJob('/api/brief/confirm',
+          { pendingId: pickerState.pendingId, plan: plan, workspaceId: WORKSPACE_ID }, '/api/brief');
+        finishBriefBar();
+        renderOutput(data);
+        showScreen('output');
+        consumeBriefInput();
+      } catch (e) {
+        var msg = e.message || 'Network error — please try again.';
+        var mayHaveStarted = msg === NET_MSG || /taking longer than expected/i.test(msg);
+        failBriefBar(msg, mayHaveStarted);
+      }
+    }
+
     function renderConfirm(data) {
       var interp = (data && data.interpretation) || {};
       pendingBrief = { pendingId: data.pendingId, plan: (interp.plan || []).slice() };
@@ -2253,8 +2409,22 @@
         if (attachedFiles.length) { fileRefs = await uploadFiles(attachedFiles); }
         var data = await runJob('/api/brief', { briefText: briefText, workspaceId: WORKSPACE_ID, fileRefs: fileRefs }, '/api/brief');
         finishBriefBar();
-        // The server pauses ONLY when the plan has something to correct. Today it
-        // never does, so this branch is dormant and the flow below is unchanged.
+        // TWO PAUSES, AND NEITHER IS DORMANT. This comment used to say the
+        // confirmation branch "never" fires — that was written before counts
+        // shipped and has been wrong ever since: planNeedsConfirmation trips on
+        // any count > 1 or label, which "3 LinkedIn ads" and "an email for each
+        // region" both produce.
+        //
+        // The brief named nothing at all → pick, don't infer. Checked first: an
+        // empty plan can never also need count confirmation, but the order says
+        // which question is asked when a brief could arguably raise both.
+        if (data && data.needsAssetPick) {
+          renderPicker(data);
+          showScreen('picker');
+          clearAttachedFiles();
+          return;
+        }
+        // The brief named something with a count or a label worth checking.
         if (data && data.needsConfirmation) {
           renderConfirm(data);
           showScreen('confirm');
@@ -3540,6 +3710,13 @@
     document.getElementById('run-btn').addEventListener('click', runBrief);
     document.getElementById('confirm-build-btn').addEventListener('click', confirmBrief);
     document.getElementById('confirm-back-btn').addEventListener('click', function () { showScreen('brief'); });
+    document.getElementById('picker-build-btn').addEventListener('click', buildFromPicker);
+    // Back keeps the brief text — the box is only cleared once a run produces a
+    // document, and this run has not (see consumeBriefInput).
+    document.getElementById('picker-back-btn').addEventListener('click', function () { showScreen('brief'); });
+    document.getElementById('picker-search').addEventListener('input', function (e) {
+      renderPickerList(e.target.value);
+    });
     document.getElementById('attach-btn').addEventListener('click', function () { fileInput.click(); });
     fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
     document.getElementById('draft-btn').addEventListener('click', generateDraft);

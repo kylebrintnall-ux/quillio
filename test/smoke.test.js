@@ -9302,11 +9302,14 @@ test('every interactive handler that starts a run claims its delivery first', ()
 
   // Every action that kicks off a long fire-and-forget run is claimed, and every
   // claim is released in a finally (a run that throws is still a run that happened).
-  for (const kind of ['plan_build', 'generate_first_draft', 'regenerate_modal', 'plan_modal']) {
+  for (const kind of ['plan_build', 'pick_build', 'generate_first_draft', 'regenerate_modal', 'plan_modal']) {
     assert.match(src, new RegExp(`deliveryKey\\('${kind}'`), `${kind} is claimed`);
   }
-  assert.strictEqual((src.match(/claimDelivery\([^)]*isRetry\)/g) || []).length, 4, 'all four pass the retry flag');
-  assert.strictEqual((src.match(/\.finally\(\(\) => releaseDelivery\(/g) || []).length, 4, 'all four release');
+  // FIVE since the asset picker's build joined them — it is the same exposure:
+  // a slow fire-and-forget run, and a pending record that survives until it
+  // succeeds, so a redelivery would build a second doc.
+  assert.strictEqual((src.match(/claimDelivery\([^)]*isRetry\)/g) || []).length, 5, 'all five pass the retry flag');
+  assert.strictEqual((src.match(/\.finally\(\(\) => releaseDelivery\(/g) || []).length, 5, 'all five release');
 
   // The ack still goes out before any of this — Slack's 3s window is what forces
   // the async work that creates the retry in the first place.
@@ -9396,7 +9399,8 @@ test('in-progress states end in an ellipsis, terminal states in a period', () =>
   // claim is unchanged — every header block's text is a sentence.
   const headerBlocks = [...sl.matchAll(/type: 'header',?\s*text: \{\s*type: 'plain_text',\s*text: (`[^`]+`|"[^"]+"|'[^']+')/g)]
     .map((m) => m[1]);
-  assert.strictEqual(headerBlocks.length, 2, 'both header blocks found');
+  // Three since the asset picker card arrived with its own header.
+  assert.strictEqual(headerBlocks.length, 3, 'all three header blocks found');
   for (const h of headerBlocks) {
     assert.ok(/\.(`|"|')$/.test(h), `a header block is a sentence: ${h}`);
   }
@@ -12815,9 +12819,10 @@ test('a spent brief clears the input — and the three paths that must keep it d
   // brief just spent — an empty field the size of the last campaign.
   assert.match(html, /function consumeBriefInput\(\) \{\s*\n\s*briefEl\.value = '';[\s\S]{0,400}?autoGrowBrief\(\);\s*\n\s*clearAttachedFiles\(\);\s*\n\s*\}/);
 
-  // Called at the TWO success points — the direct run and the confirmed build —
-  // and nowhere else.
-  assert.strictEqual((html.match(/consumeBriefInput\(\);/g) || []).length, 2, 'exactly two call sites');
+  // Called at the THREE success points — the direct run, the confirmed build, and
+  // the build from the asset picker — and nowhere else. Each is a path that ends
+  // with a document; the picker was the third to arrive.
+  assert.strictEqual((html.match(/consumeBriefInput\(\);/g) || []).length, 3, 'exactly three call sites');
 
   // NOT on entry to the screen. Three paths arrive at the brief screen with text
   // that has to survive, and clearing there would break all three:
@@ -12957,4 +12962,149 @@ test('the retirement migration deactivates, reports its blast radius, and names 
   assert.match(src, /ROLLED BACK \(dry run\)/, 'and says so');
   assert.match(src, /WHERE is_active = true/, 'already-inactive rows are a no-op');
   assert.match(src, /NEVER `railway run`/);
+});
+
+// --- The asset picker: a brief that names nothing asks, it does not infer -----
+
+test('the prompt no longer licenses inferring assets, and says what to do instead', () => {
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  // THE LINE THAT CAUSED IT. "return the 3 most relevant for the campaign goal
+  // described, each with count 1" is why a brief naming one document template
+  // also built a copy doc holding three assets nobody asked for — the model
+  // obeyed it exactly, and the matching count is the proof.
+  assert.ok(!/3 most relevant/.test(gem), 'the inference instruction is gone');
+  assert.ok(!/most relevant for the campaign goal/.test(gem));
+  // Replaced IN PLACE rather than deleted, so the contradiction closes instead of
+  // moving: the two later rules that always said the opposite now agree with it.
+  assert.match(gem, /If the brief names no assets at all, return an empty list — do NOT choose assets for the writer\./);
+  assert.match(gem, /- Only include an asset when the intent is reasonably clear; do not invent assets that are not implied\./);
+  assert.match(gem, /A brief that names only a template returns assets: \[\]\./);
+});
+
+test('the picker opens on an empty plan, and a named template is an answer', () => {
+  const { planNeedsAssetPick, planNeedsConfirmation } = require('../src/pendingBriefs');
+
+  // The brief named nothing → ask.
+  assert.strictEqual(planNeedsAssetPick([], []), true);
+  assert.strictEqual(planNeedsAssetPick(undefined, undefined), true, 'a missing plan is an empty one');
+
+  // A NAMED TEMPLATE IS AN ANSWER, not a gap. generateDoc already skips the copy
+  // doc for this case; pausing would ask a question the brief answered.
+  assert.strictEqual(planNeedsAssetPick([], [{ template: 'Form and Confirmation Page', count: 1 }]), false);
+
+  // A brief that named assets never sees the picker — including the partially
+  // vague one, which keeps today's behaviour by decision, not by accident.
+  assert.strictEqual(planNeedsAssetPick([{ asset: 'Demand Gen Nurture Email', count: 1 }], []), false);
+
+  // The two pauses are disjoint on an empty plan: nothing to confirm when there
+  // is nothing in the plan, so the order of the checks cannot produce both.
+  assert.strictEqual(planNeedsConfirmation([]), false);
+});
+
+test('the picker reuses the pending store and the confirm endpoint, not a second one', () => {
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // Same store, same TTL, same ownership check as the confirm pause.
+  assert.match(route, /putPending\(sessionTenant, parsed\)/);
+  // NO NEW ROUTE. /api/brief/confirm already validates a client-supplied plan
+  // against the tenant's real library and already refuses an empty one, which is
+  // exactly what a picker submission needs.
+  assert.match(html, /runJob\('\/api\/brief\/confirm',\s*\n?\s*\{ pendingId: pickerState\.pendingId, plan: plan/);
+  assert.strictEqual((route.match(/router\.post\('\/api\/brief/g) || []).length, 2,
+    'still two brief routes — /api/brief and /api/brief/confirm');
+  assert.match(route, /'Pick at least one asset\.'/, 'and it refuses an empty selection');
+
+  // The library the picker offers is name + group only, in library order.
+  assert.match(route, /function assetPickerLibrary\(rows\)/);
+  assert.match(route, /\.map\(\(r\) => \(\{ name: r\.name, group: r\.group \|\| 'Other' \}\)\)/);
+  assert.ok(!/sort\(/.test(route.slice(route.indexOf('function assetPickerLibrary'), route.indexOf('function assetPickerLibrary') + 400)),
+    'no relevance sort — library order is the tenant\'s own');
+});
+
+test('nothing is pre-checked, on either surface', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const sl = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
+
+  // A pre-ticked suggestion is the same anchor the inference was, one screen
+  // later — which is the whole reason this change exists.
+  assert.match(html, /chosen: new Set\(\)/, 'the web starts with an empty selection');
+  // Comments stripped — the header explains WHY initial_options is never set, and
+  // the prose must not be what fails the assertion about the code.
+  assert.ok(!/initial_options/.test(sl.replace(/\/\/[^\n]*/g, '')), 'Slack never sets initial_options');
+  // Proven on the built card too, not only in the source.
+  const { buildAssetPickerCardBlocks } = require('../src/services/slack');
+  const built = buildAssetPickerCardBlocks({ pendingId: 'P', campaignTitle: 'C',
+    library: [{ name: 'LinkedIn Single Image Ad', group: 'Paid Social' }] });
+  for (const b of built.blocks.filter((x) => x.type === 'input')) {
+    assert.ok(!('initial_options' in b.element), `${b.block_id} ships nothing pre-ticked`);
+  }
+  // And the primary cannot submit nothing.
+  assert.match(html, /b\.disabled = n === 0;/);
+  assert.match(html, /if \(!pickerState\.pendingId \|\| !pickerState\.chosen \|\| pickerState\.chosen\.size === 0\) return;/);
+});
+
+test('the Slack picker card fits Block Kit, and reads only its own blocks', () => {
+  const { buildAssetPickerCardBlocks, selectedAssetsFromState } = require('../src/services/slack');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const library = DEFAULT_ASSETS.map((a) => ({ name: a.name, group: a.group }));
+
+  const card = buildAssetPickerCardBlocks({ pendingId: 'P1', campaignTitle: 'Spring Launch', library });
+  const inputs = card.blocks.filter((b) => b.type === 'input');
+  // Slack caps a checkboxes element at 10 options; a group larger than that
+  // becomes several blocks rather than being silently truncated.
+  assert.ok(inputs.length > 0, 'the library is offered');
+  for (const b of inputs) assert.ok(b.element.options.length <= 10, `${b.block_id} within Slack's cap`);
+  assert.strictEqual(
+    inputs.reduce((n, b) => n + b.element.options.length, 0),
+    library.length,
+    'every asset is offered — nothing is dropped by the chunking'
+  );
+  // A card, not a modal: it is posted, so it needs no trigger_id.
+  const actions = card.blocks.find((b) => b.type === 'actions');
+  assert.deepStrictEqual(actions.elements.map((e) => e.action_id), ['pick_build', 'pick_cancel']);
+  assert.strictEqual(actions.elements[0].value, 'P1', 'only the pendingId rides in the button');
+
+  // The submission reads ONLY pick_* blocks with the `pick` action, so another
+  // input block on the same message could never contribute an asset.
+  const picked = selectedAssetsFromState({ values: {
+    pick_0: { pick: { selected_options: [{ value: 'LinkedIn Single Image Ad' }] } },
+    other: { pick: { selected_options: [{ value: 'Not Mine' }] } },
+    pick_1: { notpick: { selected_options: [{ value: 'Also Not' }] } },
+  } });
+  assert.deepStrictEqual(picked, [{ asset: 'LinkedIn Single Image Ad', count: 1 }]);
+  assert.deepStrictEqual(selectedAssetsFromState(undefined), [], 'a missing state is an empty pick');
+});
+
+test('the Slack picker build is claimed, and never falls through to the whole library', () => {
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  const wf = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+
+  // The pending record for a picker pause holds an EMPTY plan by construction, so
+  // a build that ignored the selection would render every asset the tenant owns —
+  // the exact outcome the picker exists to prevent. resumeBriefWorkflow refuses an
+  // empty sanitized plan rather than falling through.
+  assert.match(srv, /const picked = selectedAssetsFromState\(payload\.state\);/);
+  assert.match(srv, /resumeBriefWorkflow\(action\.value, picked, \{/);
+  assert.match(wf, /That plan had no assets left in it/);
+  assert.match(wf, /plan: \[\],/, 'the picker parks an empty plan');
+});
+
+test('the whole-library fallback survives, and its comment no longer describes a live path', () => {
+  const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  // KEPT — deleting it would turn a future caller's mistake into an empty
+  // document instead of a full one.
+  assert.match(pipe, /if \(plan\.length === 0\) \{\s*\n\s*const ordinal = instanceCounter\(\);/);
+  // But no brief reaches it any more, and the comment says so. A false comment
+  // about a fallback is how the next reader concludes the picker is optional.
+  assert.match(pipe, /NO BRIEF REACHES THE WHOLE-LIBRARY BRANCH ANY MORE/);
+  assert.match(pipe, /Do not read its survival as evidence that the\s*\n\s*\/\/ picker is optional\./);
+
+  // And the two comments that used to describe the empty plan as "the whole
+  // library" are corrected rather than left to mislead.
+  const pending = fs.readFileSync(path.join(__dirname, '..', 'src', 'pendingBriefs.js'), 'utf8');
+  assert.match(pending, /An EMPTY plan is no longer this function's business\./);
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(!/this branch is dormant/.test(html), 'the stale "dormant" comment is gone');
+  assert.match(html, /TWO PAUSES, AND NEITHER IS DORMANT\./);
 });

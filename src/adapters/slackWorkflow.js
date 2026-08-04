@@ -15,6 +15,7 @@ const {
   buildFolderAccessBlocks,
   buildResultBlocks,
   buildPlanCardBlocks,
+  buildAssetPickerCardBlocks,
   copyCompleteBlocks,
   postLive,
   updateLive,
@@ -30,6 +31,7 @@ const {
   getPending,
   dropPending,
   planNeedsConfirmation,
+  planNeedsAssetPick,
   sanitizeAssetPlan,
   slackOwner,
 } = require('../pendingBriefs');
@@ -256,6 +258,45 @@ async function runBriefWorkflow(brief, responseUrl, opts = {}) {
       }
     } catch (err) {
       console.error('[Quillio] reference enrichment skipped:', err.message);
+    }
+
+    // 1a. PAUSE FOR A PICK when the brief named no assets at all. Same rule as the
+    //     web (pendingBriefs.planNeedsAssetPick): an empty plan and no template.
+    //     The model used to be told to invent three in this case; now it returns
+    //     [] and the writer chooses from their own library.
+    //
+    //     A card, not a modal, for the same reason the plan card below is one —
+    //     no live trigger_id survives a multi-second parse. Checkboxes rather
+    //     than a multi-select, and nothing pre-ticked: see
+    //     slack.buildAssetPickerCardBlocks.
+    if (planNeedsAssetPick(assets, templates)) {
+      let library = [];
+      try {
+        const rows = await getTenantAssets(tenantId);
+        library = (rows || []).filter((r) => r && r.name).map((r) => ({ name: r.name, group: r.group || 'Other' }));
+      } catch (err) {
+        console.error('[workflow] library read for the picker failed:', err.message);
+      }
+      // Nothing to pick from is not a question worth asking — fall through to the
+      // build, which fails with the message that names the real problem.
+      if (library.length > 0) {
+        const pendingId = putPending(slackOwner(opts.workspaceId), {
+          surface: 'slack',
+          brief, campaignTitle, summary, writerPrompt, referenceLinks, referenceInsights,
+          plan: [],
+          templates,
+          unmatchedAssets, vocabularySource, effectiveFolderId, folderFromBrief,
+          workspaceId: opts.workspaceId,
+          slackUserId: opts.slackUserId,
+          responseUrl, live,
+        });
+        console.log(`[workflow] brief named no assets → picker, pending=${pendingId} library=${library.length}`);
+        const card = buildAssetPickerCardBlocks({ pendingId, campaignTitle, library, unmatchedNotice });
+        await emit(card.text, card.blocks, () =>
+          updateMessage(card.text, responseUrl, { blocks: card.blocks, label: 'asset-pick' })
+        );
+        return;
+      }
     }
 
     // 1b. PAUSE FOR CONFIRMATION when the plan has something a human would want to

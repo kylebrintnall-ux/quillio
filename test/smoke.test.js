@@ -12786,7 +12786,10 @@ test('a spent brief clears the input — and the three paths that must keep it d
   // The attachments already cleared on success and the textarea did not, so a
   // second brief inherited the first one's words but not its files. One reset,
   // both halves.
-  assert.match(html, /function consumeBriefInput\(\) \{\s*\n\s*briefEl\.value = '';\s*\n\s*clearAttachedFiles\(\);\s*\n\s*\}/);
+  // Three statements, and the middle one earns its place: setting .value in
+  // script fires no input event, so without it the box keeps the height of the
+  // brief just spent — an empty field the size of the last campaign.
+  assert.match(html, /function consumeBriefInput\(\) \{\s*\n\s*briefEl\.value = '';[\s\S]{0,400}?autoGrowBrief\(\);\s*\n\s*clearAttachedFiles\(\);\s*\n\s*\}/);
 
   // Called at the TWO success points — the direct run and the confirmed build —
   // and nowhere else.
@@ -12820,4 +12823,37 @@ test('a spent brief clears the input — and the three paths that must keep it d
   const pause = html.slice(pauseAt, pauseEnd);
   assert.match(pause, /clearAttachedFiles\(\);/);
   assert.ok(!/consumeBriefInput/.test(pause), 'the pause does not spend the brief');
+});
+
+test('the brief box is whole line boxes, and grows with its content', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // THE ARITHMETIC IS THE FIX. 15px x 1.6 = 24px per line; 18 + 14 = 32px of
+  // padding. The old min-height of 172 gave 140px of content — 5.83 lines — so
+  // the sixth was cut 83% down, slicing glyphs horizontally above the Run Brief
+  // bar. Both bounds are now whole lines: 6*24+32 = 176, 16*24+32 = 416.
+  const css = html.slice(html.indexOf('.glass-textarea {'), html.indexOf('.glass-textarea:focus'));
+  assert.match(css, /min-height: 176px/);
+  assert.match(css, /max-height: 416px/);
+  assert.match(css, /line-height: 1\.6/);
+  assert.match(css, /font-size: 15px/);
+  assert.match(css, /padding: 18px 18px 14px/);
+  assert.ok(!/min-height: 172px/.test(css), 'the 5.83-line height is gone');
+  // Recompute rather than trust the numbers above: if someone changes the font
+  // size or the padding, these bounds stop being whole lines and this fails.
+  const px = (re) => Number(css.match(re)[1]);
+  const line = px(/font-size: (\d+)px/) * 1.6;
+  const padY = 18 + 14;
+  for (const bound of [/min-height: (\d+)px/, /max-height: (\d+)px/]) {
+    const lines = (px(bound) - padY) / line;
+    assert.ok(Number.isInteger(lines), `${px(bound)}px is ${lines} lines — not a whole number`);
+  }
+
+  // Growth: measure from scrollHeight, and reset to auto first or the box can
+  // only ever grow (scrollHeight of an over-tall element is its own height).
+  assert.match(html, /function autoGrowBrief\(\) \{\s*\n\s*briefEl\.style\.height = 'auto';\s*\n\s*briefEl\.style\.height = briefEl\.scrollHeight \+ 'px';\s*\n\s*\}/);
+  assert.match(html, /briefEl\.addEventListener\('input', autoGrowBrief\)/, 'typing, pasting, cutting and undo all fire input');
+  // Scrolling past the cap has to stay possible, or a long brief is unreachable.
+  assert.match(css, /overflow-y: auto/);
+  assert.match(css, /resize: none/);
 });

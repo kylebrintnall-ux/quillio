@@ -352,8 +352,21 @@
       border: 1.5px solid rgba(255,255,255,0.38); border-radius: 18px; overflow: hidden;
       box-shadow: 0 8px 32px rgba(26,26,46,0.1), inset 0 1px 0 rgba(255,255,255,0.45);
     }
+    /* HEIGHTS ARE WHOLE LINE BOXES, and the arithmetic is the point.
+       font-size 15 x line-height 1.6 = 24px per line; padding 18 top + 14 bottom
+       = 32px. The old min-height of 172px gave 140px of content — 5.83 lines —
+       so the sixth line was cut 83% of the way down, slicing the glyphs
+       horizontally right above the Run Brief bar. That happened at every length,
+       because the box height simply was not a multiple of the line height.
+         min-height  6 lines: 6*24 + 32 = 176
+         max-height 16 lines: 16*24 + 32 = 416
+       The box grows with its content between those two (see autoGrowBrief), so
+       an ordinary brief never scrolls at all; past 16 lines it does, and because
+       the cap is also whole lines the clip lands on a line boundary rather than
+       through one. */
     .glass-textarea {
-      width: 100%; min-height: 172px; border: none; outline: none; resize: none;
+      width: 100%; min-height: 176px; max-height: 416px; overflow-y: auto;
+      border: none; outline: none; resize: none;
       background: transparent; font-family: 'Encode Sans Semi Condensed', sans-serif;
       font-size: 15px; font-weight: 400; line-height: 1.6; color: var(--ink);
       padding: 18px 18px 14px; -webkit-appearance: none;
@@ -1218,6 +1231,25 @@
     var briefEl = document.getElementById('brief');
     var briefError = document.getElementById('brief-error');
 
+    // GROW THE BRIEF BOX TO ITS CONTENT, between the min and max in the CSS.
+    //
+    // scrollHeight is an EXACT fit for the text (padding included, box-sizing is
+    // border-box), so the height it produces is always a whole number of line
+    // boxes — which is what stops the last line being sliced through. `auto`
+    // first, or the box can only ever grow: scrollHeight of an over-tall element
+    // is its own height, so it would latch at the largest brief of the session.
+    //
+    // Past max-height the CSS clamps it and the textarea scrolls, and the cap is
+    // whole lines too, so even then the clip lands between lines.
+    function autoGrowBrief() {
+      briefEl.style.height = 'auto';
+      briefEl.style.height = briefEl.scrollHeight + 'px';
+    }
+    // Covers typing, pasting, cutting and undo alike — all of them fire input.
+    briefEl.addEventListener('input', autoGrowBrief);
+    // And once at load, in case the browser restored a value into the box.
+    autoGrowBrief();
+
     // --- File attachments (brief reference files) --------------------------
     var MAX_FILES = 3;
     var MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -1275,6 +1307,10 @@
     // SUCCESS reaches none of them.
     function consumeBriefInput() {
       briefEl.value = '';
+      // Setting .value in script fires no input event, so the box would keep the
+      // height of the brief that was just spent — an empty field the size of the
+      // last campaign.
+      autoGrowBrief();
       clearAttachedFiles();
     }
 

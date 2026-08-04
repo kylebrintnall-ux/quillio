@@ -602,6 +602,34 @@ reasons, and the second is the one that bites:
 So: if the page states a limit the platform enforces, watch it. If the page reports
 what someone measured, cite it and leave it alone.
 
+### `affected_fields` is a snapshot, and nothing refreshes it
+
+`spec_watch_list.affected_fields` was computed **once**, when
+`scripts/migrateAddSpecTables.js` ran — `affectedFieldsWhere()` took the DISTINCT
+`(asset, field)` pairs across all tenants whose `spec_source` is that platform
+URL, and stored them as JSONB. Nothing recomputes it. There is no code path that
+updates it when the asset library changes.
+
+It is also the **write gate**. `services/specReview.js` `guardEdits` refuses any
+edit whose `(asset, field)` pair is not in that array, so this frozen snapshot
+decides what LiveSpecs is allowed to touch. Two consequences, and neither
+announces itself:
+
+- A field **added** to a watched asset after that migration ran is outside the
+  gate. The detector still fires on the page, but the new field cannot be
+  approved through the queue — silently, with nothing naming it.
+- A field whose asset is later **retired** stays inside the gate.
+
+Neither is firing today. The six asset types retired in `f3683f4` are all
+`house_default` / `quillio_default`, so no field of theirs was ever in any watch
+entry's `affected_fields` — that is the shape of the data, not a guard in the
+code.
+
+**If you change the library in a way that touches a tiered field — adding one to
+a watched asset, retiring one — re-derive `affected_fields` for the affected
+watch rows.** There is no script for that yet; the query to copy is
+`affectedFieldsWhere()` in `scripts/migrateAddSpecTables.js`.
+
 ## Vision & roadmap
 
 `ROADMAP.md` and `docs/` hold product intent and historical build plans. They

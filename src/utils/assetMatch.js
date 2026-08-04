@@ -14,7 +14,7 @@
 //                      library" is literally what was checked, and "add it to
 //                      your library" is real, actionable advice: doing that
 //                      makes the same brief work next time.
-//   source 'default' — config.ALLOWED_ASSETS, the bundled 30. This is the
+//   source 'default' — config.ALLOWED_ASSETS, the bundled library. This is the
 //                      no-DB / demo / unseeded case. There is no library to add
 //                      to, so promising that adding one would help would be a
 //                      lie, and the message names the global list instead.

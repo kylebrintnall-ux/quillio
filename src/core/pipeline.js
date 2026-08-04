@@ -430,7 +430,7 @@ function isFolderAccessError(err, folderId) {
 // The tenant's own active asset_types names when they have a library, else
 // config.ALLOWED_ASSETS. The fallback is the no-DB / demo / unseeded case
 // (db/assets.js getTenantAssets returns null), where there is no library to read
-// and the bundled 30 are the only sensible vocabulary.
+// and the bundled library is the only sensible vocabulary.
 //
 // Active rows only, because that is what getTenantAssets returns and what
 // tenantAssetsToSpecs will expand against later — an asset the tenant switched
@@ -984,6 +984,19 @@ function tenantAssetsToSpecs(rows, assetsOrPlan = [], limits, opts = {}) {
   //
   // The caller passes wholeLibraryOnEmpty:false when the brief named a template,
   // which is the only thing that can tell the two meanings apart.
+  //
+  // NO BRIEF REACHES THE WHOLE-LIBRARY BRANCH ANY MORE, and the comment above
+  // describes how it used to be entered rather than how it is now. An empty plan
+  // with no template stops at the asset picker on both surfaces
+  // (pendingBriefs.planNeedsAssetPick), and a picker submission with nothing
+  // ticked is refused, so generateDoc is never handed an empty plan by the brief
+  // flow at all.
+  //
+  // KEPT ANYWAY, as a defensive default rather than a feature: it is the sane
+  // answer for any future caller that reaches generateDoc without going through a
+  // picker, and deleting it would turn that caller's mistake into an empty
+  // document instead of a full one. Do not read its survival as evidence that the
+  // picker is optional.
   const wholeLibraryOnEmpty = opts.wholeLibraryOnEmpty !== false;
   if (plan.length === 0 && !wholeLibraryOnEmpty) return [];
   if (plan.length === 0) {

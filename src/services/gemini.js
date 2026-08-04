@@ -593,7 +593,7 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
         : ''
     } \`asset\` MUST be an exact name from this list:\n\n${allowed.join(
       '\n'
-    )}\n\nReturn only names from this list. If no specific assets are mentioned, return the 3 most relevant for the campaign goal described, each with count 1.`,
+    )}\n\nReturn only names from this list. If the brief names no assets at all, return an empty list — do NOT choose assets for the writer. A brief that describes a campaign without naming what to build has not asked for anything yet, and the system will ask them. Inferring here produces three plausible assets that look like an answer rather than a guess.`,
     // The second container, named in the Return: list BESIDE assets rather than
     // only at the bottom. The DETAIL stays where it was — what was missing is
     // the mention, not the explanation.
@@ -742,7 +742,7 @@ async function parseBrief(brief, allowedAssets, allowedTemplates) {
   // This used a LOCAL normalizer that folded case and the three dash characters
   // but did NOT drop the spaces around a hyphen, so it disagreed with
   // utils/normalize (the one core/pipeline, googleDocs and pendingBriefs all
-  // use) on 14 of the 30 allowed names. Two functions deciding what "the same
+  // use) on most of the allowed names. Two functions deciding what "the same
   // asset name" means is one too many — especially now that a UNIQUE INDEX
   // enforces the same question in Postgres. Converged onto utils/normalize:
   // strictly more tolerant here (it additionally matches "Direct Mail—Box",

@@ -27,6 +27,7 @@ const {
   logBotIdentity,
   buildRegenerateModalView,
   buildPlanEditModalView,
+  selectedAssetsFromState,
   openModal,
 } = require('./services/slack');
 const { oauthLimiter, slackLimiter } = require('./middleware/rateLimit');
@@ -562,7 +563,42 @@ app.post('/slack/interactions', slackLimiter, (req, res) => {
         console.error('plan_edit openModal failed:', err)
       );
     }
-  } else if (action.action_id === 'plan_cancel') {
+  } else if (action.action_id === 'pick_build') {
+    // THE ASSET PICKER'S BUILD. The selection rides in the message state, which
+    // Slack sends with the click, so nothing had to be stored between rendering
+    // the card and this press — only the pendingId is in the button.
+    //
+    // The names are NOT trusted: resumeBriefWorkflow runs them through
+    // sanitizeAssetPlan against the tenant's real library, and refuses an empty
+    // result rather than falling through to the whole-library default. That
+    // matters more here than on the plan card: this pending record holds an
+    // EMPTY plan by construction, so a build that ignored the selection would
+    // render every asset the tenant owns — the exact outcome the picker exists
+    // to prevent.
+    const key = deliveryKey('pick_build', channelId, messageTs, action.value);
+    if (!claimDelivery(key, isRetry)) {
+      console.log('[interactions] pick_build: duplicate delivery ignored');
+      return;
+    }
+    const picked = selectedAssetsFromState(payload.state);
+    console.log(`[interactions] pick_build — ${picked.length} asset(s) selected`);
+    resumeBriefWorkflow(action.value, picked, {
+      workspaceId,
+      slackUserId,
+      channel: channelId,
+      messageTs,
+      responseUrl,
+    })
+      .catch(async (err) => {
+        console.error('pick_build failed:', err);
+        try {
+          await updateMessage(`⚠️ Quillio hit an error: ${err.message}`, responseUrl);
+        } catch (e) {
+          console.error('Failed to report pick_build error to Slack:', e);
+        }
+      })
+      .finally(() => releaseDelivery(key));
+  } else if (action.action_id === 'pick_cancel' || action.action_id === 'plan_cancel') {
     cancelBriefWorkflow(action.value, {
       workspaceId,
       channel: channelId,

@@ -11,6 +11,10 @@
 //   4. a two-step flow -- buildPreview() computes the diff and writes NOTHING;
 //      commitReview() re-validates and writes, only when the route calls it after
 //      the admin's explicit second confirm.
+//   5. a zero-row guard -- an UPDATE matching no live row throws, so the whole
+//      transaction rolls back rather than logging a change nobody received. The
+//      first four gates ask whether an edit is ALLOWED; this one asks whether it
+//      LANDED, which is a different question and the one that was going unasked.
 //
 // commitReview does the value write, the spec_verified_at stamp, the audit log,
 // and the flag status flip in ONE transaction across ALL tenant rows for each
@@ -19,6 +23,18 @@
 const { getPool } = require('../db');
 const { fetchText, normalize } = require('./specDetector');
 const { extractSpecValues } = require('./gemini');
+
+// A refusal this file raises on purpose, as opposed to anything Postgres or the
+// driver throws. commitReview's catch surfaces a refusal's own message to the
+// admin — it is written for them and names what to do — while every other error
+// keeps the generic wording, because a driver message is not something to put in
+// front of a user.
+class SpecWriteRefusal extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SpecWriteRefusal';
+  }
+}
 
 // A field name repeats across assets, so always match the (asset, field) PAIR.
 function pairKey(asset, field) {
@@ -412,6 +428,32 @@ async function commitReview(flagId, edits, changedBy) {
       );
       const tenantCount = upd.rowCount;
 
+      // ZERO ROWS IS A REFUSAL, NOT A RESULT.
+      //
+      // guardEdits has already agreed this pair is in the flag's affected_fields,
+      // so reaching here with no match means the pair names something that is not
+      // in the library any more. Every step after this point then does damage of a
+      // quiet kind: spec_change_log gets a row saying a spec was changed for zero
+      // tenants, the flag flips to 'reviewed' so the queue stops showing it, and
+      // the response says "Written." The admin is told a platform's new limit is
+      // in place. It is not, and nothing will say so again.
+      //
+      // Keyed on the WRITE's own rowCount rather than on `before` being empty:
+      // both carry `AND at.is_active` today and cannot disagree, but the write is
+      // the statement whose effect we are reporting, so it is the one that gets to
+      // say whether it had one.
+      if (tenantCount === 0) {
+        throw new SpecWriteRefusal(
+          `"${e.asset} / ${e.field}" matched no live copy_fields row, so NOTHING was written and ` +
+            `flag #${flag.id} is still pending. That pair is listed in this watch entry's ` +
+            'affected_fields, which was computed once when scripts/migrateAddSpecTables.js seeded ' +
+            'the watch list and is never recomputed — so since then the asset has been renamed, or ' +
+            'every row behind it has been deactivated. The library is not what is wrong here: ' +
+            're-derive affected_fields for this entry (the query is affectedFieldsWhere() in ' +
+            'seedWatchList, scripts/migrateAddSpecTables.js), then approve again.'
+        );
+      }
+
       // WHO JUST GOT OVERWRITTEN. The UPDATE above has no tenant predicate, so it
       // rewrote every tenant's row for this (asset, field) — including any tenant
       // holding a different value from the rest. `before` was captured inside the
@@ -496,6 +538,13 @@ async function commitReview(flagId, edits, changedBy) {
     };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    // A refusal is addressed to the admin and says what to do about it, so it is
+    // passed through verbatim. Anything else keeps the generic sentence: a driver
+    // or constraint message is not useful to them and not ours to expose.
+    if (err instanceof SpecWriteRefusal) {
+      console.warn(`[specReview] commit REFUSED flag=${flagId}, rolled back: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
     console.error('[specReview] commit failed, rolled back:', err.message);
     return { ok: false, error: 'write failed -- rolled back, nothing changed' };
   } finally {

@@ -7943,6 +7943,191 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
   assert.match(html, /\.msg\.warn\s*\{[^}]*--warn/);
 });
 
+// --- Silent failure 3: a write that lands on nothing reported success ---------
+// spec_watch_list.affected_fields is a snapshot taken once by
+// migrateAddSpecTables.js and never recomputed, and commitReview's UPDATE matches
+// copy_fields by asset NAME (and, since b2e13f2, only through an ACTIVE
+// asset_types row). So a pair whose asset has been renamed, or all of whose rows
+// have been deactivated, matches zero rows — and every step after the UPDATE used
+// to run regardless: a spec_change_log entry recording a limit change for 0
+// tenants, the flag flipped to 'reviewed' so the queue stopped showing it, and
+// "Written. 0 tenant row(s) updated." on screen. An admin was told a platform's
+// new limit was in place when nothing had been written.
+//
+// Live as of the 2026-07-31 audit: the Google watch entry's four pairs all name
+// 'Google DV360 / Responsive Display', which migrateSpecIntegrityFixes.js renamed
+// to 'Google Responsive Display Ad'.
+
+// A pg stub that RECORDS the statements in order and answers by SQL substring.
+// Same idiom as makeFakePool above, but scripted rather than stateful: what is
+// under test is not what the rows contain, it is WHICH statements were issued and
+// whether the transaction ended in COMMIT or ROLLBACK.
+//
+// `matched` is the rowCount the UPDATE reports. Zero is a renamed asset OR a
+// fully deactivated one — commitReview cannot tell those apart, because both are
+// invisible through the same `AND at.is_active` join, which is exactly why the
+// refusal message names both causes.
+function fakeSpecPool({ matched, before = [], pair }) {
+  const log = [];
+  const query = async (sql) => {
+    const flat = String(sql).replace(/\s+/g, ' ').trim();
+    log.push(flat);
+    const has = (...frags) => frags.every((f) => flat.includes(f));
+
+    if (has('FROM spec_review_queue q', 'JOIN spec_watch_list w')) {
+      return {
+        rows: [{
+          id: 7, watch_id: 3, source_url: 'https://support.google.com/google-ads/answer/17090561',
+          old_hash: 'a', new_hash: 'b', status: 'pending', is_test: false,
+          detected_at: new Date(), display_name: 'Google', affected_fields: [pair],
+        }],
+        rowCount: 1,
+      };
+    }
+    if (has('SELECT at.tenant_id')) return { rows: before, rowCount: before.length };
+    if (has('UPDATE copy_fields cf')) {
+      return { rows: Array.from({ length: matched }, (_, i) => ({ tenant_id: 'T' + i })), rowCount: matched };
+    }
+    if (has('INSERT INTO spec_change_log')) return { rows: [], rowCount: 1 };
+    if (has('UPDATE spec_review_queue SET status')) return { rows: [], rowCount: 1 };
+    if (flat === 'BEGIN' || flat === 'COMMIT' || flat === 'ROLLBACK') return { rows: [], rowCount: 0 };
+    throw new Error('fake spec pool: unhandled query → ' + flat);
+  };
+  return { pool: { query, connect: async () => ({ query, release() {} }) }, log };
+}
+
+// Stub `pg`, reload db.js and specReview against it, run fn, restore everything.
+// specReview destructures getPool at load, so it has to be reloaded AFTER db.js
+// is dropped from the cache or it keeps the real one.
+function withFakeSpecPool(opts, fn) {
+  const saved = new Map();
+  const remember = (p) => { if (!saved.has(p)) saved.set(p, require.cache[p]); };
+  const rel = (r) => require.resolve(path.join(__dirname, '..', r));
+  const savedUrl = process.env.DATABASE_URL;
+  const fake = fakeSpecPool(opts);
+
+  const pgPath = require.resolve('pg');
+  remember(pgPath);
+  require.cache[pgPath] = {
+    id: pgPath, filename: pgPath, path: path.dirname(pgPath), loaded: true,
+    exports: { Pool: function () { return fake.pool; } }, children: [], paths: [],
+  };
+  process.env.DATABASE_URL = 'postgres://fake/quillio';
+  for (const r of ['src/db', 'src/services/specReview']) {
+    const p = rel(r);
+    remember(p);
+    delete require.cache[p];
+  }
+  const spec = require(rel('src/services/specReview'));
+
+  return Promise.resolve(fn(spec, fake)).finally(() => {
+    for (const [p, mod] of saved) {
+      if (mod === undefined) delete require.cache[p];
+      else require.cache[p] = mod;
+    }
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  });
+}
+
+const LIVE_PAIR = { asset: 'LinkedIn Single Image Ad', field: 'Intro Text' };
+const RENAMED_PAIR = { asset: 'Google DV360 / Responsive Display', field: 'Short Headline' };
+const DEACTIVATED_PAIR = { asset: 'LinkedIn Single Image Ad — Variant A', field: 'Intro Text' };
+
+test('commitReview: a pair that resolves writes, logs and flips the flag', async () => {
+  await withFakeSpecPool(
+    { matched: 2, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150 }, { tenant_id: 'T2', char_max: 150 }] },
+    async (spec, fake) => {
+      const r = await spec.commitReview(7, [{ ...LIVE_PAIR, char_max: 200 }], 1);
+      assert.strictEqual(r.ok, true);
+      assert.strictEqual(r.flagStatus, 'reviewed');
+      assert.strictEqual(r.written[0].tenant_count, 2);
+      // The success line in admin.html sums tenant_count. With the guard in
+      // place a successful commit can no longer carry a zero.
+      assert.ok(r.written.every((w) => w.tenant_count > 0));
+
+      const joined = fake.log.join(' | ');
+      assert.match(joined, /INSERT INTO spec_change_log/, 'the audit row is written');
+      assert.match(joined, /UPDATE spec_review_queue SET status = 'reviewed'/, 'the flag is flipped');
+      assert.strictEqual(fake.log[fake.log.length - 1], 'COMMIT');
+      assert.ok(!fake.log.includes('ROLLBACK'));
+    }
+  );
+});
+
+// The two zero-row causes, asserted identically on purpose: the renamed asset is
+// the one that is live today, the deactivated one is the case b2e13f2 created and
+// that no watch entry is in yet. Both must refuse, and neither may leave a trace.
+for (const [label, pair] of [['a renamed asset', RENAMED_PAIR], ['a deactivated asset', DEACTIVATED_PAIR]]) {
+  test(`commitReview: ${label} refuses, rolls back, and writes nothing`, async () => {
+    // before is EMPTY for both: currentValues carries the same `AND at.is_active`
+    // join as the write, so a renamed asset and a fully deactivated one look the
+    // same to it. That is the honest shape, not a simplification.
+    await withFakeSpecPool({ matched: 0, pair, before: [] }, async (spec, fake) => {
+      const r = await spec.commitReview(7, [{ ...pair, char_max: 200 }], 1);
+
+      assert.strictEqual(r.ok, false, 'the write is refused, not reported as a 0-row success');
+      assert.ok(!('written' in r), 'and carries no written[] for a UI to sum to zero');
+
+      // The message names the pair, says nothing was written, says the flag is
+      // still pending, and points at the repair — which is re-deriving the watch
+      // entry, NOT editing the library.
+      assert.ok(r.error.includes(`${pair.asset} / ${pair.field}`), 'names the pair');
+      assert.match(r.error, /NOTHING was written/);
+      assert.match(r.error, /still pending/);
+      assert.match(r.error, /affected_fields/);
+      assert.match(r.error, /affectedFieldsWhere\(\) in seedWatchList/);
+      assert.match(r.error, /scripts\/migrateAddSpecTables\.js/);
+      assert.match(r.error, /renamed, or every row behind it has been deactivated/,
+        'names both causes, because this layer cannot tell them apart');
+      assert.match(r.error, /library is not what is wrong/, 'and does not send them to fix copy_fields');
+
+      // Nothing survived the transaction.
+      const joined = fake.log.join(' | ');
+      assert.ok(!joined.includes('INSERT INTO spec_change_log'), 'no audit row for a change nobody received');
+      assert.ok(!joined.includes('UPDATE spec_review_queue SET status'), 'the flag stays pending');
+      assert.strictEqual(fake.log[fake.log.length - 1], 'ROLLBACK');
+      assert.ok(!fake.log.includes('COMMIT'));
+    });
+  });
+}
+
+test('the zero-row guard sits inside the transaction, before the audit row', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+  const at = (needle) => {
+    const i = src.indexOf(needle);
+    assert.ok(i > 0, 'expected to find ' + needle);
+    return i;
+  };
+  // Ordering is what makes the rollback meaningful: BEGIN, the UPDATE, the guard,
+  // then the audit row and the flag flip. Moving the guard below either of the
+  // last two would put it after the writes it exists to prevent.
+  const begin = at("client.query('BEGIN')");
+  const update = at("'UPDATE copy_fields cf'");
+  const guard = at('if (tenantCount === 0)');
+  const audit = at('INSERT INTO spec_change_log');
+  const flip = at("UPDATE spec_review_queue SET status = 'reviewed'");
+  const commit = at("client.query('COMMIT')");
+  assert.ok(begin < update && update < guard, 'the guard reads the write it guards');
+  assert.ok(guard < audit && audit < flip && flip < commit, 'and precedes both writes and the COMMIT');
+
+  // It throws rather than returning, so the existing catch does the ROLLBACK —
+  // one rollback path, not two.
+  assert.match(src.slice(guard, audit), /throw new SpecWriteRefusal/);
+  assert.match(src, /if \(err instanceof SpecWriteRefusal\)/, 'and the catch surfaces its message');
+  // A driver error still gets the generic sentence: not every failure is ours to
+  // put in front of an admin.
+  assert.match(src, /write failed -- rolled back, nothing changed/);
+
+  // And the refusal reaches the screen. api() throws Error(data.error) on a
+  // non-2xx, the route answers 400 with result.error, and the commit button's
+  // catch renders that message — so the admin reads the named pair rather than
+  // "Written. 0 tenant row(s) updated."
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.match(html, /'Write failed: '\s*\+\s*e\.message/, 'the commit catch renders the server message');
+  assert.match(html, /throw new Error\(data\.error/, 'and api\(\) carries it through unaltered');
+});
+
 // --- Asset-library uniqueness (scripts/migrateAddAssetUniqueness.js) ---------
 // There is no UNIQUE constraint on asset_types (tenant_id, name) or copy_fields
 // (asset_type_id, field_name), and duplicates do not fail loudly — they resolve

@@ -969,11 +969,26 @@ test('fieldHint returns { text, links } and hyperlinks only the platform name (P
   assert.strictEqual(a2.text, 'Recommended. Not a hard limit — adjust for your brand and goal.');
   assert.strictEqual(a2.links.length, 0);
 
-  // 3. house_default → no tier line (null), or specNote-only (no link) when present.
-  assert.strictEqual(fieldHint({ specType: 'house_default', specSource: 'quillio_default' }), null);
+  // 3. house_default → the Settings line, and NEVER a link: the authority is the
+  //    tenant, so there is no source to cite. A specNote stacks in front of it.
+  const { HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET } = require('../src/destinations/googleDocs');
+  const a3a = fieldHint({ specType: 'house_default', specSource: 'quillio_default' });
+  assert.strictEqual(a3a.text, HOUSE_DEFAULT_LINE);
+  assert.strictEqual(a3a.links.length, 0);
   const a3 = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specNote: 'Keep it short.' });
-  assert.strictEqual(a3.text, 'Keep it short.');
+  assert.strictEqual(a3.text, `Keep it short. ${HOUSE_DEFAULT_LINE}`);
   assert.strictEqual(a3.links.length, 0);
+  // Once the tenant has set their own, the invitation stops being an invitation.
+  const a3b = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specOverridden: true });
+  assert.strictEqual(a3b.text, HOUSE_DEFAULT_LINE_SET);
+
+  // 3b. NULL tier → still NO line. This is the distinction the whole house-default
+  //     gate rests on: null is what every TENANT-AUTHORED field carries, and a
+  //     custom field has no house default to be told to go and set.
+  assert.strictEqual(fieldHint({ specType: null, specSource: null }), null);
+  const a3c = fieldHint({ specType: null, specSource: null, specNote: 'Keep it short.' });
+  assert.strictEqual(a3c.text, 'Keep it short.');
+  assert.strictEqual(a3c.links.length, 0);
 
   // 4. enforced + a REAL source → named form, with ONLY the name hyperlinked.
   const url = 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs';
@@ -1017,10 +1032,13 @@ test('fieldHint hyperlinks a note-embedded "(Litmus)" citation to the right page
   const SUBJECT_URL = 'https://www.litmus.com/blog/how-to-write-the-perfect-subject-line-infographic';
   const PREHEADER_URL = 'https://www.litmus.com/blog/the-ultimate-guide-to-preview-text-support';
 
-  // These are house_default fields (no tier line) → the ONLY link is the Litmus
-  // citation, and it lands on exactly the word "Litmus" (not the parens).
+  // These are house_default fields, so the line is the note followed by the
+  // house-default sentence. The ONLY link is still the Litmus citation, and it
+  // lands on exactly the word "Litmus" (not the parens) — the note is parts[0],
+  // so appending a tier line after it must not shift the offsets computed
+  // against it. That is the property this assertion is really protecting.
   const subj = fieldHint({ specType: 'house_default', specSource: 'quillio_default', specNote: SUBJECT_NOTE });
-  assert.strictEqual(subj.text, SUBJECT_NOTE, 'subject note text is verbatim');
+  assert.ok(subj.text.startsWith(SUBJECT_NOTE), 'subject note text is verbatim, and leads');
   assert.strictEqual(subj.links.length, 1, 'exactly one link (the citation)');
   assert.strictEqual(subj.text.substring(subj.links[0].start, subj.links[0].end), 'Litmus', 'links only "Litmus"');
   assert.strictEqual(subj.links[0].url, SUBJECT_URL, 'subject note → subject-line Litmus page');
@@ -1186,7 +1204,7 @@ test('both draft prompts build their guidance through fieldGuidanceFor', () => {
 test('the composed fallback changes no seeded field: none carries both a note and a built-in rule', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { builtInFieldGuidance, fieldGuidanceFor } = require('../src/services/gemini');
-  const { fieldHint } = require('../src/destinations/googleDocs');
+  const { fieldHint, stripHouseDefaultLine } = require('../src/destinations/googleDocs');
 
   const both = [];
   let builtIn = 0;
@@ -1194,14 +1212,19 @@ test('the composed fallback changes no seeded field: none carries both a note an
     for (const f of a.fields) {
       if (!builtInFieldGuidance(f.field_name)) continue;
       builtIn++;
-      // What parseDoc would recover for this field: fieldHint's composed line,
-      // or '' when it renders none.
+      // What parseDoc would recover for this field: fieldHint's composed line
+      // PUT THROUGH THE SAME STRIP parseDoc applies, or '' when it renders none.
+      // The strip is why this still holds — every one of these 20 fields now
+      // carries the house-default sentence in the DOC, and none of it reaches a
+      // prompt. Reading fieldHint alone here would assert the wrong thing and
+      // would have gone green on a build that shipped "set your own in Settings"
+      // to Gemini as 20 fields' entire creative guidance.
       const hint = fieldHint({
         specNote: f.spec_note,
         specType: f.spec_type,
         specSource: f.spec_source || a.spec_source,
       });
-      const notes = hint ? hint.text : '';
+      const notes = stripHouseDefaultLine(hint ? hint.text : '');
       if (notes) both.push(`${a.name} / ${f.field_name}`);
       // The composed value equals the old `||` result for every seeded field.
       assert.strictEqual(
@@ -6912,14 +6935,20 @@ test('spec integrity: the three tier sentences, rendered', () => {
   assert.strictEqual(rec.text.substring(rec.links[0].start, rec.links[0].end), 'Meta');
   assert.strictEqual(rec.links[0].url, 'https://www.facebook.com/business/ads-guide/update');
 
-  // HOUSE_DEFAULT with no note — renders NOTHING. An unsourced number must not
-  // claim any authority at all.
-  assert.strictEqual(hintOf('Event Landing Page', 'Hero Headline'), null);
+  // HOUSE_DEFAULT with no note — the Settings line, and NO link. It still claims
+  // no authority: it names no source and cites nothing, it says whose number it
+  // is. This is where a tenant finds out the number is theirs.
+  const { HOUSE_DEFAULT_LINE } = require('../src/destinations/googleDocs');
+  const house = hintOf('Event Landing Page', 'Hero Headline');
+  assert.strictEqual(house.text, HOUSE_DEFAULT_LINE);
+  assert.strictEqual(house.links.length, 0, 'a house default cites nobody');
 
-  // HOUSE_DEFAULT with a note — the note alone, no tier sentence appended.
+  // HOUSE_DEFAULT with a note — the note first, then the Settings line. Never a
+  // tier sentence claiming a platform or a study.
   const note = hintOf('Demand Gen Nurture Email', 'Subject Line 1');
-  assert.strictEqual(note.text, 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)');
-  assert.ok(!/Platform limit|Recommended by/.test(note.text), 'no tier sentence on a house default');
+  assert.strictEqual(note.text,
+    `Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus) ${HOUSE_DEFAULT_LINE}`);
+  assert.ok(!/Platform limit|Recommended by/.test(note.text), 'no authority sentence on a house default');
   assert.strictEqual(note.text.substring(note.links[0].start, note.links[0].end), 'Litmus',
     'the hand-written note credit is still hyperlinked');
 
@@ -8847,9 +8876,13 @@ test('an EXISTING asset card is still read-only apart from its toggle', () => {
     assert.ok(!js.includes(gone), `${gone} is gone from the page`);
   }
 
-  // house_default / null must render NO tier — same rule googleDocs specTypeLine
-  // applies, so an unsourced field never looks authoritative.
-  assert.match(html, /if \(f\.spec_type !== 'enforced' && f\.spec_type !== 'recommended'\) return null;/);
+  // The tier chip names the same three tiers googleDocs.specTypeLine renders a
+  // sentence for, and a NULL tier still renders NOTHING — that is a field the
+  // tenant authored, where "house default" would label a distinction that does
+  // not exist. house_default IS named now: it was blank while nothing could be
+  // done about it, and staying blank once something can is the wrong silence.
+  assert.match(html, /enforced: 'Platform limit', recommended: 'Recommended', house_default: 'House default'/);
+  assert.match(html, /if \(!label\) return null;/, 'an unrecognised or null tier renders no chip');
   // And the unit shown matches what the doc's bracket means.
   assert.match(html, /fieldType === 'words' \? 'words' : 'chars'/);
 });
@@ -8982,18 +9015,22 @@ test('the library screen reaches exactly three writes, and none claims a spec', 
   // own upload POST — the old anchor (--- Markdown render) now swallows it.
   const libJs = html.slice(html.indexOf('--- Asset library'), html.indexOf('--- Template documents'));
 
-  // THREE, and only three, each one named. It was three, went to five when
-  // attach and map arrived, and is three again now that they are gone (rework
-  // step four) — the count is asserted rather than relaxed so a fourth write
-  // cannot arrive unremarked in either direction.
+  // FOUR, and only four, each one named. It was three, went to five when attach
+  // and map arrived, back to three when they were removed (rework step four),
+  // and is four now that a bundled asset's house defaults can be set — the count
+  // is asserted rather than relaxed so a fifth cannot arrive unremarked.
   //   1. flip an asset on/off      — the card toggle        -> /library/active
   //   2. Remove                    — the same /active write, said in the words
   //                                  the user is thinking in
   //   3. save the form             — create OR edit, one fetch, one ternary
+  //   4. save house defaults       — the reduced form on a BUNDLED asset, which
+  //                                  posts to the SAME per-asset route; the
+  //                                  server picks the shape from the stored row
   const posts = libJs.match(/method: 'POST'/g) || [];
-  assert.strictEqual(posts.length, 3, 'three POSTs, no more');
+  assert.strictEqual(posts.length, 4, 'four POSTs, no more');
   assert.strictEqual((libJs.match(/'\/api\/settings\/library\/active'/g) || []).length, 2, 'toggle and Remove');
   assert.match(libJs, /'\/api\/settings\/library\/asset\/' \+ existing\.id : '\/api\/settings\/library\/asset'/);
+  assert.match(libJs, /'\/api\/settings\/library\/asset\/' \+ asset\.id/, 'the house-default save');
   // The library screen no longer reaches a template route at all.
   assert.ok(!/encodeURIComponent\(a\.id\) \+ '\/(template|markers)'/.test(libJs),
     'no attach or map write survives on the library screen');
@@ -10115,14 +10152,335 @@ test('a seeded asset is read-only apart from is_active, decided by NAME', () => 
   const db = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
   const fn = db.slice(db.indexOf('async function updateAssetType'), db.indexOf('// Asset toggles, BY ID'));
   assert.match(fn, /SELECT id, name FROM asset_types WHERE id = \$1 AND tenant_id = \$2 FOR UPDATE/);
-  assert.match(fn, /if \(isSeededAssetName\(cur\.rows\[0\]\.name\)\)/, 'checked against the stored name');
+  assert.match(fn, /const seeded = isSeededAssetName\(cur\.rows\[0\]\.name\)/, 'checked against the stored name');
   assert.ok(fn.indexOf('isSeededAssetName(cur.rows[0].name)') < fn.indexOf('UPDATE asset_types SET'),
     'refused BEFORE anything is written');
+  // The default mode still refuses outright. A seeded asset's STRUCTURE — name,
+  // field list, tiers — is what the cross-tenant write above reaches by, and
+  // that has not been relaxed at all: only 'houseDefaultsOnly' gets past here,
+  // and that path writes override columns and nothing else.
+  assert.match(fn, /if \(seeded && mode !== 'houseDefaultsOnly'\)/);
+  assert.match(fn, /return \{ ok: false, reason: 'seeded', name: cur\.rows\[0\]\.name \}/);
+  assert.strictEqual(/function updateAssetType\(tenantId, assetTypeId, asset, \{ mode = 'full' \} = \{\}\)/.test(fn), true,
+    "the default is 'full', so an existing caller that passes no mode still gets the refusal");
+  // And the inverse: the reduced mode against a TENANT asset is refused too,
+  // rather than silently dropping every rename and delete in the request.
+  assert.match(fn, /if \(!seeded && mode === 'houseDefaultsOnly'\)/);
+  assert.match(fn, /reason: 'not_seeded'/);
+
   // And the route reports it too, so the UI can say why — but the route is not
   // the guarantee.
   const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
   assert.match(route, /if \(isSeededAssetName\(current\.name\)\)/);
   assert.match(route, /result\.reason === 'seeded'/, 'and honours the db layer even so');
+});
+
+// THE SECOND HALF OF THE GATE. The name rule says which ASSETS are structurally
+// off-limits; this says which of a seeded asset's FIELDS a tenant may put their
+// own number on. Getting it wrong is silent in both directions — a locked
+// house_default is a feature that quietly does not work, an open enforced field
+// is a tenant publishing an invented number under "Platform limit (LinkedIn)".
+// THE DOC IS THE DISCOVERY PATH, deliberately instead of an onboarding step —
+// and the sentence that does it must not become drafting instructions.
+test('the house-default line reaches the doc and never reaches a prompt', () => {
+  const {
+    fieldHint, parseDoc, stripHouseDefaultLine, HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET,
+  } = require('../src/destinations/googleDocs');
+
+  // It is in the doc.
+  assert.strictEqual(fieldHint({ specType: 'house_default' }).text, HOUSE_DEFAULT_LINE);
+
+  // It is not in the prompt. `notes` is prompt input and nothing else — it
+  // becomes the field's `Field guidance:` (gemini.fieldGuidanceFor). "Set your
+  // own in Settings" is addressed to the TENANT, not the writer, and on 144
+  // seeded fields it would be the only guidance most of them carry.
+  assert.strictEqual(stripHouseDefaultLine(HOUSE_DEFAULT_LINE), '');
+  assert.strictEqual(stripHouseDefaultLine(HOUSE_DEFAULT_LINE_SET), '', 'both wordings');
+  // The tenant's own note IS writing guidance and must survive intact.
+  assert.strictEqual(
+    stripHouseDefaultLine(`Lead with the outcome. ${HOUSE_DEFAULT_LINE}`),
+    'Lead with the outcome.'
+  );
+  // A doc built before an override still strips after one — the wording changed
+  // under it and the old sentence is still on the page.
+  assert.strictEqual(
+    stripHouseDefaultLine(`Lead with the outcome. ${HOUSE_DEFAULT_LINE_SET}`),
+    'Lead with the outcome.'
+  );
+  // Position-independent: fieldHint always appends, but a doc is a document and
+  // somebody will reorder the line by hand.
+  assert.strictEqual(stripHouseDefaultLine(`${HOUSE_DEFAULT_LINE} Lead with it.`), 'Lead with it.');
+  // An authority line is NOT stripped — it is a real constraint on the writing.
+  const enf = 'Platform limit (LinkedIn). Stay within this count.';
+  assert.strictEqual(stripHouseDefaultLine(enf), enf);
+  assert.strictEqual(stripHouseDefaultLine(''), '');
+  assert.strictEqual(stripHouseDefaultLine(null), '');
+
+  // AND IT IS WIRED: parseDoc, the only producer of prompt-facing notes, applies
+  // it. Asserted through the parser rather than the helper, because a helper
+  // nothing calls is the failure this is guarding against.
+  const doc = {
+    body: { content: [
+      { paragraph: { paragraphStyle: { namedStyleType: 'HEADING_2' },
+        elements: [{ textRun: { content: 'Copy Assets\n' } }] } },
+      { paragraph: { paragraphStyle: { namedStyleType: 'HEADING_3' },
+        elements: [{ textRun: { content: 'Event Landing Page\n' } }] } },
+      { paragraph: { paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+        elements: [{ textRun: { content: 'Hero Headline [70]', textStyle: { bold: true } } }] } },
+      { paragraph: { paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+        elements: [{ textRun: {
+          content: `Lead with the outcome. ${HOUSE_DEFAULT_LINE}`, textStyle: { italic: true },
+        } }] } },
+    ] },
+  };
+  const parsed = parseDoc(doc);
+  const field = parsed.assets[0].fields[0];
+  assert.strictEqual(field.fieldName, 'Hero Headline');
+  assert.strictEqual(field.notes, 'Lead with the outcome.', 'the Settings sentence never leaves the doc');
+});
+
+// THE POINT OF THE OVERRIDE COLUMNS, stated against the two readers. If a
+// tenant's number lived in char_max, the next seed-alignment migration would
+// erase it — they match by asset NAME across every tenant with no tenant
+// predicate and no value guard.
+test('the reads take the override and leave the base column to the migrations', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+
+  // THE PIPELINE READ resolves in SQL, so there is one number and no chance of a
+  // caller forgetting which to prefer.
+  const pipeline = src.slice(src.indexOf('async function getTenantAssets'), src.indexOf('// THE EDITOR READ'));
+  assert.match(pipeline, /COALESCE\(char_min_override, char_min\) AS char_min/);
+  assert.match(pipeline, /COALESCE\(char_max_override, char_max\) AS char_max/);
+  assert.match(pipeline, /COALESCE\(spec_note_override, spec_note\) AS spec_note/);
+  // spec_overridden is a THREE-COLUMN OR, not "does the effective value differ
+  // from the seed". A tenant who deliberately re-typed Quillio's own number has
+  // overridden it, and a later seed change must not drag them along.
+  assert.match(pipeline, /char_min_override IS NOT NULL\s*\n\s*OR char_max_override IS NOT NULL\s*\n\s*OR spec_note_override IS NOT NULL\) AS spec_overridden/);
+
+  // THE EDITOR READ carries BOTH, because the form prefills from the effective
+  // value and the row has to be able to say what Quillio's was.
+  const editor = src.slice(src.indexOf('async function getTenantLibrary'), src.indexOf('async function createAssetType'));
+  assert.match(editor, /base_char_min: baseMin/);
+  assert.match(editor, /base_char_max: baseMax/);
+  assert.match(editor, /base_spec_note: baseNote/);
+  // Per VALUE as well as per field: a reset control that could not tell a limit
+  // from a note would throw away the half the tenant meant to keep.
+  assert.match(editor, /overridden: \{ char_min: hasMin, char_max: hasMax, spec_note: hasNote \}/);
+
+  // NEITHER READER WRITES. The protection is that the base column is left alone.
+  for (const reader of [pipeline, editor]) {
+    assert.ok(!/UPDATE |INSERT |DELETE /.test(reader), 'a read does not write');
+  }
+});
+
+// CLAUDE.md: either deploy order is safe. Railway auto-deploys `main` on merge,
+// so this code runs against a database without the override columns first.
+test('deploy-before-migration: both reads degrade to "nothing is overridden"', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+
+  // The pipeline read falls back to the EXACT pre-migration query and reports
+  // false — which is true, not a guess.
+  const pipeline = src.slice(src.indexOf('async function getTenantAssets'), src.indexOf('// THE EDITOR READ'));
+  assert.match(pipeline, /if \(!isUndefinedColumn\(err\)\) throw err;/,
+    'only 42703 — a permissions or connectivity failure still throws');
+  assert.match(pipeline, /warnMissingSchema\('copy_fields\.char_max_override', 'getTenantAssets', err\)/);
+  assert.match(pipeline, /false AS spec_overridden/);
+
+  // The editor read reads the overrides in their OWN query, so a missing column
+  // costs an empty map rather than a four-way fallback across two migrations.
+  const editor = src.slice(src.indexOf('async function getTenantLibrary'), src.indexOf('async function createAssetType'));
+  assert.match(editor, /const overrides = new Map\(\);/);
+  assert.match(editor, /warnMissingSchema\('copy_fields\.char_max_override', 'getTenantLibrary', err\)/);
+  assert.match(editor, /if \(!isUndefinedColumn\(err\)\) throw err;/);
+  // An empty map means every field reports its base value and nothing overridden
+  // — which is exactly the pre-migration behaviour.
+  assert.match(editor, /const ov = overrides\.get\(String\(row\.id\)\) \|\| \{\};/);
+});
+
+test('the two migrations: additive columns, and a backfill scoped by the app\'s own predicate', () => {
+  const { STATEMENTS } = require('../scripts/migrateAddHouseDefaultOverrides');
+
+  // Three nullable columns. NULL is load-bearing — it MEANS "no override" and is
+  // what COALESCE falls through — so a NOT NULL DEFAULT would break the read.
+  assert.strictEqual(STATEMENTS.length, 3);
+  for (const [label, sql] of STATEMENTS) {
+    assert.match(sql, /ADD COLUMN IF NOT EXISTS/, `${label} is idempotent`);
+    assert.ok(!/NOT NULL|DEFAULT/.test(sql), `${label} stays nullable with no default`);
+  }
+  assert.deepStrictEqual(STATEMENTS.map(([l]) => l), [
+    'copy_fields.char_min_override',
+    'copy_fields.char_max_override',
+    'copy_fields.spec_note_override',
+  ]);
+
+  const backfill = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateBackfillSeededSpecType.js'), 'utf8'
+  );
+  // SCOPED BY THE APP'S OWN PREDICATE, not a SQL name match: the script and
+  // updateAssetType's gate then cannot drift, and it does not depend on
+  // quillio_normalize_name() existing.
+  assert.match(backfill, /const \{ isSeededAssetName \} = require\('\.\.\/src\/db\/assets'\)/);
+  assert.match(backfill, /rows\.filter\(\(r\) => isSeededAssetName\(r\.asset_name\)\)/);
+  assert.match(backfill, /rows\.filter\(\(r\) => !isSeededAssetName\(r\.asset_name\)\)/);
+  // It writes ONLY the bundled rows, by id, guarded so a re-run is a no-op.
+  assert.match(backfill, /SET spec_type = 'house_default'\s*\n\s*WHERE id = ANY\(\$1::bigint\[\]\) AND spec_type IS NULL/);
+  // A tenant-authored field keeps its NULL. That is the whole reason for scoping:
+  // NULL is what a custom field carries, and a custom field has no house default.
+  // EVERY update in the script is id-scoped — comments stripped first, because
+  // the header quotes migrateAddCopyFieldSpecType's original blanket UPDATE and
+  // naming that statement is precisely what this script exists to narrow.
+  const code = backfill.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  const updates = code.match(/UPDATE copy_fields[\s\S]*?`/g) || [];
+  assert.strictEqual(updates.length, 1, 'exactly one write');
+  assert.match(updates[0], /WHERE id = ANY\(\$1::bigint\[\]\)/, 'and it is scoped to the ids it printed');
+
+  // Both are dry-run by default. A migration that writes on a bare invocation is
+  // one somebody runs to "see what it would do".
+  for (const s of [fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddHouseDefaultOverrides.js'), 'utf8'), backfill]) {
+    assert.match(s, /const COMMIT = process\.argv\.includes\('--commit'\)/);
+    assert.match(s, /if \(COMMIT\) \{\s*\n\s*await client\.query\('COMMIT'\)/);
+    assert.match(s, /await client\.query\('ROLLBACK'\);/);
+    // Requiring the module must not connect to a database — this test does.
+    assert.match(s, /if \(require\.main === module\)/);
+  }
+});
+
+// The reduced submission's allowlist. Smaller than the create/edit one, and the
+// smallness is the feature: there is no branch here that can express a rename,
+// an insert, a reorder or a tier.
+test('normalizeHouseDefaults accepts three values per field and cannot express anything else', () => {
+  const { normalizeHouseDefaults, MAX_SPEC_NOTE, MAX_CHAR_LIMIT } = require('../src/utils/assetInput');
+
+  const ok = normalizeHouseDefaults({
+    // Everything below `fields` is ignored: there is no branch that reads it.
+    name: 'Renamed', group: 'Web', asset_direction: 'do as I say',
+    fields: [{
+      id: '42', char_min: 10, char_max: 70, spec_note: 'Lead with the outcome.',
+      field_name: 'Renamed Field', field_type: 'words', sort_order: 99,
+      spec_type: 'enforced', spec_source: 'https://linkedin.com',
+    }],
+  });
+  assert.deepStrictEqual(ok.errors, []);
+  assert.deepStrictEqual(ok.fields, [
+    { id: '42', char_min: 10, char_max: 70, spec_note: 'Lead with the outcome.' },
+  ], 'exactly four keys, and three of them are values');
+
+  // EVERY ROW MUST CARRY AN ID — there is no insert on this path, so a row
+  // without one is refused rather than silently dropped. A form that appears to
+  // add a field and does not is worse than one that says it cannot.
+  assert.ok(normalizeHouseDefaults({ fields: [{ char_max: 70 }] }).errors.length > 0, 'no id');
+  assert.ok(normalizeHouseDefaults({ fields: [{ id: 'abc', char_max: 70 }] }).errors.length > 0, 'not an id we issued');
+  assert.ok(normalizeHouseDefaults({ fields: [{ id: '1' }, { id: '1' }] }).errors.length > 0, 'the same field twice');
+
+  // undefined is "not offered, leave it alone"; null is "clear this one back to
+  // Quillio's". They are different instructions and both survive as themselves.
+  const partial = normalizeHouseDefaults({ fields: [{ id: '7', char_max: 50 }] });
+  assert.deepStrictEqual(partial.fields[0], { id: '7', char_max: 50 }, 'char_min absent, not zeroed');
+  const cleared = normalizeHouseDefaults({ fields: [{ id: '7', char_max: null }] });
+  assert.strictEqual(cleared.fields[0].char_max, null, 'an explicit null reaches the write as null');
+
+  // '' is the tenant DELETING the note — distinct from leaving the seed's alone.
+  const emptied = normalizeHouseDefaults({ fields: [{ id: '7', spec_note: '' }] });
+  assert.strictEqual(emptied.fields[0].spec_note, '', "'' survives as '' and is not folded to null");
+
+  // reset is exclusive: nothing sent beside it is carried, because a request that
+  // both sets and resets has no coherent reading.
+  const reset = normalizeHouseDefaults({ fields: [{ id: '7', reset: true, char_max: 999 }] });
+  assert.deepStrictEqual(reset.fields, [{ id: '7', reset: true }]);
+
+  // The numeric rules, borrowed from the full path so the two agree.
+  assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_max: 'abc' }] }).errors.length > 0);
+  assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_max: -1 }] }).errors.length > 0);
+  assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_max: MAX_CHAR_LIMIT + 1 }] }).errors.length > 0);
+  assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_min: 80, char_max: 70 }] }).errors.length > 0,
+    'a floor above the ceiling');
+  // char_max 0 is "no limit" (fieldLabel renders no bracket), so a floor is only
+  // wrong when there IS a ceiling to be above.
+  assert.deepStrictEqual(normalizeHouseDefaults({ fields: [{ id: '7', char_min: 80, char_max: 0 }] }).errors, []);
+  assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', spec_note: 'x'.repeat(MAX_SPEC_NOTE + 1) }] }).errors.length > 0);
+
+  // Nothing at all is an error, not a silent success.
+  assert.ok(normalizeHouseDefaults({ fields: [] }).errors.length > 0);
+  assert.ok(normalizeHouseDefaults(null).errors.length > 0);
+});
+
+test('the tier gate: house_default and NULL are the tenant\'s, enforced and recommended are not', () => {
+  const { isTenantEditableTier } = require('../src/db/assets');
+
+  assert.ok(isTenantEditableTier('house_default'), 'the tier this whole change exists for');
+  // NULL is OPEN: it renders identically to house_default (specTypeLine), the
+  // seed gives the same field house_default, and EVERY tenant-authored field is
+  // NULL by construction — createAssetType never writes spec_type. Locking it
+  // would freeze custom assets, which have always been fully editable.
+  assert.ok(isTenantEditableTier(null), 'null — a tenant-authored field');
+  assert.ok(isTenantEditableTier(undefined), 'absent reads as null');
+  assert.ok(isTenantEditableTier(''), 'and so does empty');
+
+  assert.ok(!isTenantEditableTier('enforced'), 'the platform decides');
+  assert.ok(!isTenantEditableTier('recommended'), 'someone measured it');
+
+  // AN UNRECOGNISED TIER IS LOCKED. An allowlist, not a pair of !== checks: a
+  // fourth tier would only ever be added to carry some authority, so it must be
+  // refused by default and let in on purpose. Failing closed on the authority
+  // axis is the entire reason this gate exists.
+  for (const unknown of ['platform_enforced', 'observed_practice', 'HOUSE_DEFAULT', 'house default', 'anything']) {
+    assert.ok(!isTenantEditableTier(unknown), `${unknown} is locked until someone says otherwise`);
+  }
+
+  // The seeded library's three tiers are exactly the three this reasons about.
+  // A fourth appearing in the seed without a decision here fails right now.
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const tiers = new Set();
+  for (const a of DEFAULT_ASSETS) for (const f of a.fields) tiers.add(f.spec_type);
+  assert.deepStrictEqual([...tiers].sort(), ['enforced', 'house_default', 'recommended']);
+});
+
+// The write itself. Everything a seeded asset keeps, kept — asserted against the
+// source, because each of these is a way the structural rule could leak.
+test('the house-default write sets overrides only, on permitted tiers only, from the STORED row', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
+  const fn = src.slice(
+    src.indexOf('async function applyHouseDefaultOverrides'),
+    src.indexOf('// UPDATE one asset the tenant owns')
+  );
+  assert.ok(fn.length > 500, 'found the function');
+
+  // THE TIER COMES FROM POSTGRES, NEVER THE REQUEST. The client sends whatever
+  // it likes; a submitted spec_type must not be able to unlock a field.
+  assert.match(fn, /SELECT id, spec_type FROM copy_fields WHERE asset_type_id = \$1/);
+  assert.match(fn, /isTenantEditableTier\(tierById\.get\(id\)\)/);
+  assert.ok(!/field\.spec_type|submitted\.spec_type/.test(fn), 'the submission cannot name a tier');
+
+  // OVERRIDE COLUMNS ONLY. Not one base column is written — that is what keeps a
+  // seed-alignment migration and specReview correct without knowing this exists.
+  for (const base of ['char_min =', 'char_max =', 'spec_note =', 'field_name =', 'sort_order =', 'field_type =']) {
+    assert.ok(!fn.includes(base), `never writes the base column (${base})`);
+  }
+  assert.match(fn, /char_min_override/);
+  assert.match(fn, /char_max_override/);
+  assert.match(fn, /spec_note_override/);
+  // No authority column inside any UPDATE. spec_type appears in this function
+  // exactly once, in the SELECT that READS the gate — checking the whole body
+  // would be checking that, which is the opposite of what matters.
+  const updates = fn.match(/UPDATE copy_fields[\s\S]*?`/g) || [];
+  assert.ok(updates.length >= 2, 'found the reset and the value UPDATE');
+  for (const u of updates) {
+    assert.ok(!/spec_type|spec_source|spec_version/.test(u), 'no authority column in an UPDATE');
+  }
+
+  // NO INSERT, NO DELETE. A seeded asset's field LIST is part of what specReview
+  // reaches by name, so it cannot grow or shrink through this path.
+  assert.ok(!/INSERT INTO copy_fields/.test(fn), 'no insert');
+  assert.ok(!/DELETE FROM copy_fields/.test(fn), 'no delete');
+  // An unknown id names nothing here — it is skipped, NOT treated as a new field.
+  assert.match(fn, /if \(!id \|\| !tierById\.has\(id\)\) \{\s*\n\s*skipped\+\+;/);
+
+  // Reset is all three columns at once, so a half-reset row cannot exist.
+  const reset = fn.match(/if \(field\.reset === true\)[\s\S]*?continue;/)[0];
+  assert.match(reset, /char_min_override = NULL, char_max_override = NULL, spec_note_override = NULL/);
+
+  // Scoped to the asset as well as the id, like every other field write here.
+  assert.match(fn, /WHERE id = \$\$\{params\.length - 1\} AND asset_type_id = \$\$\{params\.length\}/);
 });
 
 test('the update writes six columns, by id, in one transaction', () => {
@@ -10166,16 +10524,27 @@ test('the update route is session-scoped and answers 404 across tenants', () => 
   // The only thing taken from the URL is the id, and it is digit-checked.
   assert.match(route, /req\.params\.id/);
   assert.match(route, /\/\^\\d\+\$\/\.test\(assetId\)/);
-  // req.body appears exactly once, as the argument to the allowlist.
-  assert.strictEqual((route.match(/req\.body/g) || []).length, 1);
+  // EVERY req.body reaches an allowlist and nothing else. Two now, because the
+  // route serves two shapes — the full edit for a tenant asset, the reduced
+  // house-default submission for a seeded one — and both are allowlisted. The
+  // count is asserted against the number of allowlist calls rather than a
+  // literal, so adding a third shape without a normalizer fails here.
+  const bodyUses = (route.match(/req\.body/g) || []).length;
+  const allowlisted = (route.match(/normalize(?:AssetEdit|HouseDefaults)\(req\.body/g) || []).length;
+  assert.strictEqual(bodyUses, allowlisted, 'every req.body use is an allowlist argument');
+  assert.strictEqual(bodyUses, 2, 'the full edit and the house-default submission');
   assert.match(route, /normalizeAssetEdit\(req\.body/);
+  assert.match(route, /normalizeHouseDefaults\(req\.body/);
   // Someone else's id is a 404, the same shape a missing one gets.
   assert.match(route, /status\(404\)/);
-  assert.match(route, /status\(403\)/, 'seeded is 403 — the asset exists, it is just not yours to change');
+  assert.match(route, /status\(403\)/, 'a seeded asset with no house default is 403 — it exists, it is just not yours to change');
   assert.match(route, /err\.code === '23505'/);
   assert.match(route, /status\(409\)/);
-  // Nothing else in the router updates an asset type.
-  assert.strictEqual((src.match(/updateAssetType\(/g) || []).length, 1);
+  // Nothing else in the router updates an asset type. Two CALLS now — the full
+  // edit and the house-default one — but both are inside this one route slice,
+  // which is what the assertion is actually about.
+  assert.strictEqual((src.match(/updateAssetType\(/g) || []).length, 2, 'two calls in the whole router');
+  assert.strictEqual((route.match(/updateAssetType\(/g) || []).length, 2, 'and both are in this route');
 });
 
 test('removing an asset is is_active, and the UI says what that means', () => {
@@ -10229,12 +10598,23 @@ test('the edit form warns before a rename, not after', () => {
   assert.match(form, /Anything you paste is ADDED below/);
 
   // The Edit button renders only where the SERVER said editable, and the server
-  // re-checks — the button is a convenience, never the rule.
-  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('--- Create an asset type'));
-  assert.match(card, /if \(a\.editable\) \{/);
-  assert.match(card, /libOpenForm\(a, editHost/);
+  // re-checks — the button is a convenience, never the rule. TWO flags now, and
+  // they open different forms: `editable` (a tenant asset) the full one,
+  // `houseEditable` (a bundled asset with a house_default field) the reduced one.
+  const card = html.slice(html.indexOf('function libRenderAsset'), html.indexOf('THE ATTACH/MAP UI IS GONE'));
+  assert.match(card, /if \(a\.editable \|\| a\.houseEditable\) \{/);
+  assert.match(card, /if \(a\.editable\) libOpenForm\(a, editHost, done\);/);
+  assert.match(card, /else libOpenHouseForm\(a, editHost, done\);/);
   const route2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
-  assert.match(route2, /editable: !isSeededAssetName\(a\.name\)/);
+  assert.match(route2, /const editable = !isSeededAssetName\(a\.name\)/);
+  // The per-field flag is the asset's OR the tier's — that disjunction is what
+  // keeps every field of a tenant asset editable while opening only the
+  // house_default ones on a bundled asset.
+  assert.match(route2, /editable: editable \|\| isTenantEditableTier\(f\.spec_type\)/);
+  // And `counts.editable` still means what it meant. A stale client reads it to
+  // mean "opens the full form"; the new state travels in its own count.
+  assert.match(route2, /editable: assets\.filter\(\(a\) => !isSeededAssetName\(a\.name\)\)\.length/);
+  assert.match(route2, /houseEditable: decorated\.filter\(\(a\) => a\.houseEditable\)\.length/);
 });
 
 // --- Custom document types, step one: bring a template and find its markers ---

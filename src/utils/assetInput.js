@@ -252,9 +252,120 @@ function normalizeAssetEdit(raw, { existingNames = [], selfName = null } = {}) {
   return { errors: [], asset: { ...shell, fields } };
 }
 
+// THE HOUSE-DEFAULT SUBMISSION — the reduced shape a tenant may post against a
+// SEEDED asset. A far smaller allowlist than the two above, and smaller on
+// purpose: the only things a tenant decides about a bundled asset are the three
+// values on a house_default field.
+//
+// NOT ON THIS LIST, and there is no branch that can set them: the asset's name,
+// group and creative direction; any field's name, field_type or sort_order; and
+// spec_type / spec_source / spec_version as everywhere else. A seeded asset's
+// STRUCTURE is what services/specReview.js reaches by, so it stays exactly as
+// read-only as it was — this only unlocks the numbers.
+//
+// EVERY ROW MUST CARRY AN ID. There is no insert here: a row without one names
+// nothing and is refused rather than silently dropped, because a form that
+// appears to add a field and does not is worse than one that says it cannot.
+// Whether a row's TIER permits the write is decided later, from the STORED
+// spec_type, inside db/assets.updateAssetType's row lock — never from here and
+// never from the request.
+//
+// char_min and char_max are validated AS A PAIR because the form always renders
+// both, so both always arrive. A submission carrying only one is accepted and
+// compared against nothing — it cannot be checked without the stored row, and
+// the database has no cross-column constraint to violate.
+//
+// `reset: true` means "put this field back on Quillio's default". It is
+// exclusive: any value sent alongside it is ignored, because a request that both
+// sets and resets a field has no coherent reading and picking one would be a
+// guess about which half the user meant.
+function normalizeHouseDefaults(raw) {
+  const errors = [];
+  const input = raw && typeof raw === 'object' ? raw : {};
+  const rawFields = Array.isArray(input.fields) ? input.fields : [];
+  if (rawFields.length === 0) errors.push('Nothing to save.');
+  if (rawFields.length > MAX_FIELDS_PER_ASSET) {
+    errors.push(`An asset type can have at most ${MAX_FIELDS_PER_ASSET} fields (this one has ${rawFields.length}).`);
+  }
+
+  const fields = [];
+  const seenIds = new Set();
+  rawFields.slice(0, MAX_FIELDS_PER_ASSET).forEach((rf, i) => {
+    const f = rf && typeof rf === 'object' ? rf : {};
+    const where = `Field ${i + 1}`;
+
+    const id = str(f.id);
+    if (!id || !FIELD_ID_RE.test(id)) {
+      errors.push(`${where}: this field can't be identified, so it wasn't saved.`);
+      return;
+    }
+    if (seenIds.has(id)) {
+      errors.push(`${where}: the same field appears twice.`);
+      return;
+    }
+    seenIds.add(id);
+
+    if (f.reset === true) {
+      fields.push({ id, reset: true });
+      return;
+    }
+
+    // Built key by key, and a key is present ONLY when the request carried it.
+    // `undefined` is "not offered, leave it alone"; an explicit null is the
+    // tenant clearing that one value back to the seed's.
+    const out = { id };
+
+    if (f.char_min !== undefined) {
+      const v = f.char_min === null ? null : intOrNull(f.char_min);
+      if (Number.isNaN(v) || (v !== null && (v < 0 || v > MAX_CHAR_LIMIT))) {
+        errors.push(`${where}: minimum must be a whole number between 0 and ${MAX_CHAR_LIMIT}.`);
+      } else {
+        out.char_min = v;
+      }
+    }
+    if (f.char_max !== undefined) {
+      const v = f.char_max === null ? null : intOrNull(f.char_max);
+      if (Number.isNaN(v) || (v !== null && (v < 0 || v > MAX_CHAR_LIMIT))) {
+        errors.push(`${where}: limit must be a whole number between 0 and ${MAX_CHAR_LIMIT}.`);
+      } else {
+        out.char_max = v;
+      }
+    }
+    // Only when BOTH arrived as real numbers. char_max 0 is "no limit" (fieldLabel
+    // renders no bracket), so a floor above it is only wrong when there is a
+    // ceiling to be above.
+    if (typeof out.char_min === 'number' && typeof out.char_max === 'number'
+        && out.char_min > 0 && out.char_max > 0 && out.char_min > out.char_max) {
+      errors.push(`${where}: minimum (${out.char_min}) is above the limit (${out.char_max}).`);
+    }
+
+    if (f.spec_note !== undefined) {
+      // '' survives as '' — it is the tenant DELETING the note, which is a
+      // different instruction from "leave the seed's note alone".
+      const note = f.spec_note === null ? null : str(f.spec_note);
+      if (note !== null && note.length > MAX_SPEC_NOTE) {
+        errors.push(`${where}: note must be ${MAX_SPEC_NOTE} characters or fewer.`);
+      } else {
+        out.spec_note = note;
+      }
+    }
+
+    // A row that named a field and offered nothing to change is not an error —
+    // the form posts every row it rendered — it simply has nothing to apply.
+    fields.push(out);
+  });
+
+  if (errors.length > 0) return { errors, fields: null };
+  return { errors: [], fields };
+}
+
 module.exports = {
   normalizeNewAsset,
   normalizeAssetEdit,
+  // The reduced shape for a SEEDED asset's house_default values. Shares nothing
+  // with the two above deliberately: they build a whole asset, this one builds
+  // three values per field and cannot express anything else.
+  normalizeHouseDefaults,
   MAX_FIELDS_PER_ASSET,
   MAX_ASSETS_PER_TENANT,
   MAX_CHAR_LIMIT,

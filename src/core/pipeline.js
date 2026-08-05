@@ -863,6 +863,11 @@ function rowToSpecGroup(a) {
       specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
       specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' → tier line under the field label
       specSource: f.spec_source || null, // provenance → platform name + citation link in the tier line
+      // Has the tenant set their OWN number on this house default? Changes the
+      // tier line's wording only — an untouched one invites them to Settings,
+      // one they have already set says it is theirs. getTenantAssets computes it
+      // from the three override columns; false everywhere the columns are absent.
+      specOverridden: f.spec_overridden === true,
       notes: '', // not stored in copy_fields (Sheet-only)
       funnelStage: '', // not stored in copy_fields (Sheet-only)
     })),

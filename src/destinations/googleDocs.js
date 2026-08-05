@@ -298,14 +298,53 @@ const NOTE_SOURCE_LINKS = [
   },
 ];
 
+// THE HOUSE-DEFAULT SENTENCES. This is where a tenant finds out the number is
+// theirs — deliberately here and not in an onboarding step. Onboarding is where
+// people are lost, and a wall of spec fields in front of someone who has not yet
+// seen the product work assumes they already have house numbers written down.
+// They meet this at the moment they disagree with a number, which is when a
+// setting actually gets adopted.
+//
+// Two forms, because the invitation is wrong once accepted: a tenant who has
+// already set their own number does not need to be told to go and set it.
+//
+// EXPORTED, AND STRIPPED BACK OUT BEFORE DRAFTING (see parseDoc). Both sentences
+// address the READER of the doc, not the writer of the copy — unlike the
+// enforced/recommended lines, which are genuine constraints. Left in, they would
+// reach Gemini as this field's `Field guidance:` on 144 seeded fields.
+const HOUSE_DEFAULT_LINE = 'House default — set your own in Settings.';
+const HOUSE_DEFAULT_LINE_SET = 'House default — yours, set in Settings.';
+const HOUSE_DEFAULT_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET];
+
+// Remove the house-default sentence from a recovered italic line, leaving the
+// tenant's own spec_note (which IS writing guidance and must survive).
+//
+// fieldHint space-joins note + tier, so the sentence is always a suffix — but
+// this matches it anywhere and tidies the join, because a doc is a document:
+// somebody will paste a note under it or reorder the line by hand, and a strip
+// that only worked in one position would quietly start shipping the sentence to
+// Gemini the first time that happened. Both wordings are matched, so a doc built
+// before an override still strips after one.
+function stripHouseDefaultLine(text) {
+  let out = String(text == null ? '' : text);
+  for (const line of HOUSE_DEFAULT_LINES) out = out.split(line).join(' ');
+  return out.replace(/\s+/g, ' ').trim();
+}
+
 // Compose the spec_type tier sentence as { text, nameStart, nameLen } — or null
-// for house_default / unset. nameStart/nameLen locate the platform-name sub-range
+// when there is no tier line. nameStart/nameLen locate the platform-name sub-range
 // WITHIN text (so Phase B can hyperlink just the name); nameStart is -1 when there
 // is no recognized source (the no-source form names nothing). The "(name)" /
 // "by name" clause only appears once a real spec_source resolves to a platform
 // name (see specSourceName); until then enforced/recommended render without naming
 // a source — so nothing bogus (e.g. 'quillio_default') is shown.
-function specTypeLine(specType, sourceName, detail) {
+//
+// house_default returns a line; NULL still returns none. That distinction is new
+// and it is the point: NULL is what every TENANT-AUTHORED field carries
+// (createAssetType never writes spec_type), and a custom field has no house
+// default to go and set. scripts/migrateBackfillSeededSpecType.js exists to stop
+// a long-lived tenant's bundled fields sitting on the wrong side of it.
+function specTypeLine(specType, sourceName, detail, overridden) {
   if (specType === 'enforced') {
     if (sourceName) {
       const prefix = 'Platform limit (';
@@ -338,7 +377,16 @@ function specTypeLine(specType, sourceName, detail) {
       nameLen: 0,
     };
   }
-  return null; // house_default or null → no tier line
+  if (specType === 'house_default') {
+    // No source is named and nothing is hyperlinked — the authority is the
+    // tenant, so nameStart stays -1 and fieldHint adds no link for this line.
+    return {
+      text: overridden ? HOUSE_DEFAULT_LINE_SET : HOUSE_DEFAULT_LINE,
+      nameStart: -1,
+      nameLen: 0,
+    };
+  }
+  return null; // no tier (a tenant-authored field) → no tier line
 }
 
 // The italic grey guidance line under a field label, returned as { text, links }
@@ -358,7 +406,12 @@ function specTypeLine(specType, sourceName, detail) {
 function fieldHint(field) {
   const note = field && field.specNote != null ? String(field.specNote).trim() : '';
   const tier = field
-    ? specTypeLine(field.specType, specSourceName(field.specSource), SPEC_SOURCE_DETAIL[field.specSource])
+    ? specTypeLine(
+      field.specType,
+      specSourceName(field.specSource),
+      SPEC_SOURCE_DETAIL[field.specSource],
+      field.specOverridden === true
+    )
     : null;
   const parts = [note, tier && tier.text].filter(Boolean);
   if (!parts.length) return null;
@@ -827,7 +880,18 @@ function parseDoc(doc) {
     // advance the insertion point past the notes line.
     if (current && currentField && currentField.deleteEnd == null && !notesSeen && italic && text) {
       notesSeen = true;
-      currentField.notes = text;
+      // STRIPPED, not stored raw. `notes` is prompt input and nothing else — it
+      // becomes this field's `Field guidance:` (services/gemini.js
+      // fieldGuidanceFor). The house-default sentence is the one part of the
+      // italic line addressed to the TENANT rather than to the writer: "set your
+      // own in Settings" is not a fact about how to write the copy, and on 144
+      // seeded fields it would be the only guidance most of them carry.
+      //
+      // Stripped HERE, in the same module that composes it, so there is no
+      // string shared across a module boundary and no import for gemini.js to
+      // grow (it is already required by this file — the other direction would be
+      // a cycle). The doc still shows the line; the drafter never sees it.
+      currentField.notes = stripHouseDefaultLine(text);
       currentField.insertIndex = item.endIndex;
       continue;
     }
@@ -1702,6 +1766,12 @@ module.exports = {
   fieldLabel,
   fieldHint,
   parseDoc,
+  // The house-default sentences and the strip that keeps them out of a prompt.
+  // Unit tests only, like the four around them — not part of the destination
+  // interface (see the table in CLAUDE.md).
+  HOUSE_DEFAULT_LINE,
+  HOUSE_DEFAULT_LINE_SET,
+  stripHouseDefaultLine,
   appendBody,
   buildVariantBlock,
   // The composite (asset, field, instance) lookup key — exposed so its DEFAULT

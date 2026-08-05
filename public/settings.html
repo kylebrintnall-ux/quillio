@@ -380,6 +380,28 @@
     .lib-tier { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11px; font-weight: 600; }
     .lib-tier.enforced { color: #8a4b00; }
     .lib-tier.recommended { color: #1E6F8E; }
+    /* The two tenant-side chips. Quieter than the authority ones on purpose:
+       "House default" is not a warning, it is an invitation, and "Yours" is a
+       statement of fact about a number the tenant already set. */
+    .lib-tier.house_default { color: rgba(26,26,46,0.5); }
+    .lib-tier.mine { color: #2f6b46; }
+
+    /* --- Reduced form: setting your own limits on a BUNDLED asset ---------- */
+    /* A locked row is dimmed rather than hidden. The bundled paid-social assets
+       are MIXED — house defaults beside platform limits — so a form showing only
+       the editable half would read as a truncated list. Dimmed-and-present says
+       "this field exists and is not yours"; absent says nothing at all. */
+    .lib-frow.locked { opacity: 0.55; }
+    .lib-frow.locked input, .lib-frow.locked textarea, .lib-frow.locked select { cursor: not-allowed; }
+    /* The field name as TEXT, where the full form has an input. Same size and
+       weight, so the two forms read as the same list with different powers. */
+    .lib-fname.static { font-size: 14px; font-weight: 600; padding: 6px 0; margin-right: 8px; }
+    .lib-reset:empty { display: none; }
+    .lib-reset { margin-top: 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .lib-basehint { font-size: 11.5px; color: rgba(26,26,46,0.6); }
+    .lib-resetbtn { background: none; border: none; padding: 0; cursor: pointer;
+      font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--sky-btm);
+      text-decoration: underline; text-underline-offset: 2px; }
     /* Sub-group heading ("Graphic Copy").
        The doc renders this as a HEADING_4 and then INDENTS the fields beneath it
        (googleDocs.js GROUP_INDENT_PT) — space above, no rule, and the nesting
@@ -993,10 +1015,16 @@
     // The tier a field's spec_type carries. Mirrors googleDocs specTypeLine:
     // house_default and null render NOTHING, so an unsourced field looks
     // unsourced rather than quietly authoritative.
+    // The chip that says where a number comes from. house_default is named now
+    // because it is the one a tenant can act on — leaving it blank was fine when
+    // nothing could be done about it, and is the wrong silence once something can.
+    // A NULL tier stays blank: that is a field the tenant authored, where "house
+    // default" would be a label for a distinction that does not exist.
     function libTierNode(f) {
-      if (f.spec_type !== 'enforced' && f.spec_type !== 'recommended') return null;
+      var label = { enforced: 'Platform limit', recommended: 'Recommended', house_default: 'House default' }[f.spec_type];
+      if (!label) return null;
       var wrap = el('span', 'lib-tier ' + f.spec_type);
-      wrap.textContent = f.spec_type === 'enforced' ? 'Platform limit' : 'Recommended';
+      wrap.textContent = label;
       return wrap;
     }
     // Counts shown in the summary line. Recomputed from libAssets, which is the
@@ -1102,13 +1130,21 @@
       // `editable` is the server's answer (db/assets.isSeededAssetName), not a
       // guess from the name here — and the update route re-checks it against the
       // stored row, so hiding this button is a convenience, never the rule.
-      if (a.editable) {
-        var editBtn = el('button', 'lib-editbtn', 'Edit');
+      // TWO BUTTONS, ONE SLOT. `editable` opens the full form. `houseEditable`
+      // is a BUNDLED asset that has at least one house_default field — its name,
+      // field list and tiers stay locked, but those fields' numbers are the
+      // tenant's to set, so it opens the reduced form instead. Both flags come
+      // from the server and both are re-decided there on save; the button is the
+      // affordance, never the rule.
+      if (a.editable || a.houseEditable) {
+        var editBtn = el('button', 'lib-editbtn', a.editable ? 'Edit' : 'Set limits');
         editBtn.type = 'button';
-        editBtn.setAttribute('aria-label', 'Edit ' + a.name);
+        editBtn.setAttribute('aria-label', (a.editable ? 'Edit ' : 'Set your own limits on ') + a.name);
         editBtn.addEventListener('click', function () {
           hide(editBtn); hide(body);
-          libOpenForm(a, editHost, function () { show(editBtn); show(body); });
+          var done = function () { show(editBtn); show(body); };
+          if (a.editable) libOpenForm(a, editHost, done);
+          else libOpenHouseForm(a, editHost, done);
         });
         head.insertBefore(editBtn, toggle);
       }
@@ -1132,10 +1168,18 @@
         top.appendChild(el('span', 'lib-limit', '[' + libLimitText(f) + ']'));
         li.appendChild(top);
         var tier = libTierNode(f);
-        if (tier || f.spec_note) {
+        // "Yours" is shown on a field whose number the tenant has set, so the
+        // library says which limits are theirs without opening the form. It sits
+        // where the tier chip sits because it answers the same question — where
+        // does this number come from — and on a house default nothing else does.
+        var mine = f.spec_overridden ? el('span', 'lib-tier mine', 'Yours') : null;
+        if (tier || mine || f.spec_note) {
           var sub = el('div', 'lib-sub');
-          if (tier) { sub.appendChild(tier); if (f.spec_note) sub.appendChild(document.createTextNode(' · ')); }
-          if (f.spec_note) sub.appendChild(document.createTextNode(f.spec_note));
+          var first = true;
+          var sep = function () { if (!first) sub.appendChild(document.createTextNode(' · ')); first = false; };
+          if (tier) { sep(); sub.appendChild(tier); }
+          if (mine) { sep(); sub.appendChild(mine); }
+          if (f.spec_note) { sep(); sub.appendChild(document.createTextNode(f.spec_note)); }
           li.appendChild(sub);
         }
         ul.appendChild(li);
@@ -1166,6 +1210,195 @@
       var list = $('lib-list');
       list.innerHTML = '';
       await libEnsureLoaded();
+    }
+
+    // --- Set your own limits on a BUNDLED asset ------------------------------
+    // The reduced form. A seeded asset stays read-only in every way it was: its
+    // name, its field list and its tiers are what services/specReview.js reaches
+    // by, so none of them appears here. What DOES appear is the one tier whose
+    // number was always meant to be the tenant's — house_default — as three
+    // values per field: minimum, limit, writing note.
+    //
+    // Not a new screen: it opens in the asset's own card, in the slot the full
+    // form uses, so the thing you are editing is where you were looking.
+    //
+    // WHY THE LOCKED ROWS ARE STILL DRAWN. A bundled paid-social asset is MIXED —
+    // three house defaults beside three platform limits — and a form that showed
+    // only half its fields would read as a broken list. They are rendered
+    // disabled, with the tier chip saying which authority holds them, so the
+    // answer to "why can't I change this one" is on screen next to the control.
+    //
+    // field_type is rendered DISABLED rather than omitted for the same reason and
+    // a sharper one: the server ignores it on this path, and a control that
+    // accepts input the server discards is the failure mode this whole panel
+    // keeps refusing. Disabled says "not yours to change"; absent would leave a
+    // tenant wondering where it went.
+    function libHouseRow(f) {
+      var editable = f.editable !== false;
+      var wrap = el('div', 'lib-frow' + (editable ? '' : ' locked'));
+
+      var head = el('div', 'lib-fhead');
+      head.appendChild(el('span', 'lib-fname static', f.field_name));
+      var tier = libTierNode(f);
+      if (tier) head.appendChild(tier);
+      wrap.appendChild(head);
+
+      var ctl = el('div', 'lib-fctl');
+      var min = document.createElement('input');
+      min.type = 'number'; min.min = '0'; min.value = f.char_min || ''; min.placeholder = 'min';
+      min.setAttribute('aria-label', 'Minimum for ' + f.field_name);
+      var max = document.createElement('input');
+      max.type = 'number'; max.min = '0'; max.value = f.char_max || ''; max.placeholder = 'max';
+      max.setAttribute('aria-label', 'Limit for ' + f.field_name);
+      var unitWrap = el('span', 'lib-funit');
+      var unit = document.createElement('select');
+      unit.setAttribute('aria-label', 'Counted in');
+      unit.disabled = true;                       // never editable on a bundled asset
+      unit.title = 'The unit is part of the built-in asset type.';
+      ['text', 'words'].forEach(function (u) {
+        var o = document.createElement('option'); o.value = u;
+        o.textContent = u === 'words' ? 'words' : 'chars';
+        if ((f.field_type || 'text') === u) o.selected = true;
+        unit.appendChild(o);
+      });
+      unitWrap.appendChild(unit);
+      ctl.appendChild(min);
+      ctl.appendChild(el('span', 'lib-sep', 'to'));
+      ctl.appendChild(max);
+      ctl.appendChild(unitWrap);
+      wrap.appendChild(ctl);
+
+      var note = document.createElement('textarea');
+      note.className = 'lib-fnote';
+      note.value = f.spec_note || '';
+      note.placeholder = 'Writing note — the drafter follows this';
+      note.setAttribute('aria-label', 'Writing note for ' + f.field_name);
+      var noteWrap = el('div', 'lib-fnotewrap');
+      noteWrap.appendChild(el('span', 'lib-fnotelab', 'Writing note — the drafter follows this'));
+      noteWrap.appendChild(note);
+      wrap.appendChild(noteWrap);
+      note.addEventListener('input', function () { libAutoGrow(note); });
+
+      if (!editable) {
+        [min, max, note].forEach(function (e) { e.disabled = true; });
+        wrap.appendChild(el('p', 'lib-hint',
+          f.spec_type === 'enforced'
+            ? 'The platform enforces this one — copy over it and it gets cut.'
+            : 'This limit comes from someone who measured it. Quillio keeps it in step with the source.'));
+        wrap.readRow = function () { return null; };
+        return wrap;
+      }
+
+      // WHAT QUILLIO'S NUMBER IS, and the way back to it. Shown only once the
+      // tenant has changed something, because on an untouched field the stored
+      // value IS Quillio's and saying so twice is noise.
+      var resetWrap = el('div', 'lib-reset');
+      var doReset = false;
+      var baseText = function () {
+        var lo = f.base_char_min || 0, hi = f.base_char_max || 0;
+        var u = (f.field_type === 'words') ? ' words' : '';
+        if (!hi) return 'no limit';
+        return (lo ? lo + '–' : 'up to ') + hi + u;
+      };
+      if (f.spec_overridden) {
+        resetWrap.appendChild(el('span', 'lib-basehint', 'Quillio\'s default: ' + baseText()));
+        var resetBtn = el('button', 'lib-resetbtn', 'Use Quillio\'s default');
+        resetBtn.type = 'button';
+        resetBtn.addEventListener('click', function () {
+          doReset = true;
+          min.value = f.base_char_min || '';
+          max.value = f.base_char_max || '';
+          note.value = f.base_spec_note || '';
+          libAutoGrow(note);
+          resetWrap.textContent = '';
+          resetWrap.appendChild(el('span', 'lib-basehint', 'Back to Quillio\'s default when you save.'));
+        });
+        resetWrap.appendChild(resetBtn);
+        // Typing after pressing reset means they changed their mind about the
+        // reset, not that they want both — the last thing they did wins.
+        [min, max, note].forEach(function (e) {
+          e.addEventListener('input', function () { doReset = false; });
+        });
+      }
+      wrap.appendChild(resetWrap);
+
+      // `reset` and values are mutually exclusive by construction, not by the
+      // server having to guess which half of a contradictory request to honour.
+      wrap.readRow = function () {
+        if (doReset) return { id: f.id, reset: true };
+        return {
+          id: f.id,
+          char_min: min.value === '' ? 0 : Number(min.value),
+          char_max: max.value === '' ? 0 : Number(max.value),
+          spec_note: note.value
+        };
+      };
+      return wrap;
+    }
+
+    function libOpenHouseForm(asset, host, onClose) {
+      if (host.firstChild) return;               // already open
+      var box = el('div', 'lib-new');
+      box.appendChild(el('h2', null, 'Set your own limits'));
+      box.appendChild(el('p', 'lib-hint',
+        '"' + asset.name + '" is one of Quillio\'s built-in asset types, so its name and its list of fields stay as they are. '
+        + 'The fields marked House default are yours — set the counts and the writing note to whatever your team works to. '
+        + 'Fields held to a platform limit can\'t be changed here.'));
+
+      var rows = el('div');
+      box.appendChild(rows);
+      (asset.fields || []).forEach(function (f) { rows.appendChild(libHouseRow(f)); });
+
+      var err = el('div', 'lib-newerr');
+      err.style.display = 'none';
+      box.appendChild(err);
+
+      var actions = el('div', 'btnrow');
+      actions.style.marginTop = '14px';
+      var save = el('button', 'btn primary', 'Save limits');
+      save.type = 'button';
+      var cancel = el('button', 'btn', 'Cancel');
+      cancel.type = 'button';
+      var close = function () { host.textContent = ''; if (onClose) onClose(); };
+      cancel.addEventListener('click', close);
+      actions.appendChild(save); actions.appendChild(cancel);
+      box.appendChild(actions);
+
+      save.addEventListener('click', async function () {
+        err.style.display = 'none'; err.textContent = '';
+        // Only the rows that HAVE a value to send. A locked row returns null and
+        // is never posted — the server would count and ignore it, and sending
+        // something to be ignored is how a client and a server drift apart about
+        // what was saved.
+        var fields = [];
+        Array.prototype.forEach.call(rows.children, function (r) {
+          if (!r.readRow) return;
+          var row = r.readRow();
+          if (row) fields.push(row);
+        });
+        if (fields.length === 0) { close(); return; }
+        save.disabled = true;
+        try {
+          var res = await fetch('/api/settings/library/asset/' + asset.id, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: fields })
+          });
+          var data = await res.json().catch(function () { return null; });
+          if (!res.ok || !data || !data.success) {
+            throw new Error((data && data.error) || 'Could not save those limits.');
+          }
+          close();
+          await libReload();
+        } catch (e) {
+          err.textContent = e.message || 'Network error.';
+          err.style.display = '';
+        } finally {
+          save.disabled = false;
+        }
+      });
+
+      host.appendChild(box);
     }
 
     // --- Create an asset type ------------------------------------------------

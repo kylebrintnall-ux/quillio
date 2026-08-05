@@ -116,13 +116,48 @@ async function getTenantAssets(tenantId) {
   if (typesRes.rows.length === 0) return null;
 
   const typeIds = typesRes.rows.map((t) => t.id);
-  const fieldsRes = await pool.query(
-    `SELECT asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note, spec_type
-       FROM copy_fields
-      WHERE asset_type_id = ANY($1::bigint[])
-      ORDER BY sort_order, id`,
-    [typeIds]
-  );
+  // THE EFFECTIVE VALUE IS THE OVERRIDE WHEN THERE IS ONE. COALESCE, not a JS
+  // merge, so the pipeline sees one number and cannot forget which to prefer.
+  //
+  // `spec_overridden` is carried alongside because the doc's tier line differs:
+  // an untouched house default invites the tenant to Settings, one they have
+  // already set does not. It is a THREE-column OR, not "does the effective value
+  // differ from the seed" — a tenant who deliberately re-typed the seed's own
+  // number has overridden it, and a later seed change must not drag them along.
+  //
+  // The columns arrive in scripts/migrateAddHouseDefaultOverrides.js, and Railway
+  // auto-deploys `main` on merge, so this runs against a database without them
+  // first (CLAUDE.md: either deploy order is safe). The fallback is the exact
+  // pre-migration query and reports nothing overridden — which is true.
+  let fieldsRes;
+  try {
+    fieldsRes = await pool.query(
+      `SELECT asset_type_id, field_name,
+              COALESCE(char_min_override, char_min) AS char_min,
+              COALESCE(char_max_override, char_max) AS char_max,
+              field_type, sort_order, spec_source, spec_version, group_label,
+              COALESCE(spec_note_override, spec_note) AS spec_note,
+              spec_type,
+              (char_min_override IS NOT NULL
+                OR char_max_override IS NOT NULL
+                OR spec_note_override IS NOT NULL) AS spec_overridden
+         FROM copy_fields
+        WHERE asset_type_id = ANY($1::bigint[])
+        ORDER BY sort_order, id`,
+      [typeIds]
+    );
+  } catch (err) {
+    if (!isUndefinedColumn(err)) throw err;
+    warnMissingSchema('copy_fields.char_max_override', 'getTenantAssets', err);
+    fieldsRes = await pool.query(
+      `SELECT asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note, spec_type,
+              false AS spec_overridden
+         FROM copy_fields
+        WHERE asset_type_id = ANY($1::bigint[])
+        ORDER BY sort_order, id`,
+      [typeIds]
+    );
+  }
 
   const fieldsByType = new Map();
   for (const row of fieldsRes.rows) {
@@ -136,8 +171,12 @@ async function getTenantAssets(tenantId) {
       spec_source: row.spec_source,
       spec_version: row.spec_version,
       group_label: row.group_label || null,
+      // An override of '' is the tenant DELETING the note, and COALESCE already
+      // returned it. `|| null` folds '' to null here exactly as it always has for
+      // an empty base note — the renderer treats both as "no note".
       spec_note: row.spec_note || null,
       spec_type: row.spec_type || null,
+      spec_overridden: row.spec_overridden === true,
     });
   }
 
@@ -233,20 +272,63 @@ async function getTenantLibrary(tenantId) {
     );
   }
 
+  // THE OVERRIDES, AS THEIR OWN QUERY. Deliberately not folded into the SELECT
+  // above: that one already has a template-column fallback, and a second optional
+  // column group inside it would need four variants to cover both migrations
+  // being absent independently. Separate query, separate catch, no combinatorics
+  // — and an empty map is exactly right when the columns are not there yet
+  // (scripts/migrateAddHouseDefaultOverrides.js; Railway auto-deploys `main` on
+  // merge, so this runs against a database without them first).
+  const overrides = new Map();
+  try {
+    const ovRes = await pool.query(
+      `SELECT id, char_min_override, char_max_override, spec_note_override
+         FROM copy_fields
+        WHERE asset_type_id = ANY($1::bigint[])`,
+      [typeIds]
+    );
+    for (const row of ovRes.rows) overrides.set(String(row.id), row);
+  } catch (err) {
+    if (!isUndefinedColumn(err)) throw err;
+    warnMissingSchema('copy_fields.char_max_override', 'getTenantLibrary', err);
+  }
+
   const fieldsByType = new Map();
   for (const row of fieldsRes.rows) {
     if (!fieldsByType.has(row.asset_type_id)) fieldsByType.set(row.asset_type_id, []);
+    const ov = overrides.get(String(row.id)) || {};
+    // BASE is the seed's value — the column every migration writes. EFFECTIVE is
+    // what is in force. The editor needs BOTH: the form prefills from effective,
+    // and the row says "Quillio's default is N" beside it so a tenant can see
+    // what they changed and put it back.
+    const baseMin = parseInt(row.char_min, 10) || 0;
+    const baseMax = parseInt(row.char_max, 10) || 0;
+    const baseNote = row.spec_note || null;
+    const hasMin = ov.char_min_override != null;
+    const hasMax = ov.char_max_override != null;
+    const hasNote = ov.spec_note_override != null;
     fieldsByType.get(row.asset_type_id).push({
       id: String(row.id),
       field_name: row.field_name,
-      char_min: parseInt(row.char_min, 10) || 0,
-      char_max: parseInt(row.char_max, 10) || 0,
+      char_min: hasMin ? parseInt(ov.char_min_override, 10) || 0 : baseMin,
+      char_max: hasMax ? parseInt(ov.char_max_override, 10) || 0 : baseMax,
       field_type: row.field_type || null,
       group_label: row.group_label || null,
       sort_order: row.sort_order,
       spec_type: row.spec_type || null,
       spec_source: row.spec_source || null,
-      spec_note: row.spec_note || null,
+      // An override of '' is the tenant having DELETED the note; folded to null
+      // the same way an empty base note always has been.
+      spec_note: hasNote ? ov.spec_note_override || null : baseNote,
+      // What the seed says, for the "Quillio's default" line and the reset.
+      base_char_min: baseMin,
+      base_char_max: baseMax,
+      base_spec_note: baseNote,
+      // Per VALUE, not just per field: a tenant may have set a limit and left the
+      // note alone, and a reset control that cannot tell them apart would throw
+      // away the half they meant to keep.
+      overridden: { char_min: hasMin, char_max: hasMax, spec_note: hasNote },
+      spec_overridden: hasMin || hasMax || hasNote,
       // Both null = unmapped, which is a valid state: a matrix carries markers
       // no writer drafts, and a field with nowhere to go is worth seeing.
       template_marker_key: row.template_marker_key || null,
@@ -380,6 +462,131 @@ function isSeededAssetName(name) {
   return SEEDED_NAME_SET.has(normalize(name));
 }
 
+// WHICH TIER A TENANT MAY SET THEIR OWN NUMBER ON. The three tiers are three
+// different relationships to the writer:
+//
+//   enforced       the platform decides    — not the tenant's call
+//   recommended    someone measured it     — the tenant may disagree knowingly
+//   house_default  THE TENANT DECIDES
+//
+// The name rule above exists to stop a tenant editing an enforced platform limit,
+// which is right; it caught house_default in the same net, which is the one tier
+// whose number is supposed to be theirs. This is the second half of the gate.
+//
+// NULL IS OPEN. It renders identically to house_default today (specTypeLine
+// returns null for both), the seed gives the same field house_default, and every
+// TENANT-AUTHORED field is NULL by construction (createAssetType never writes
+// spec_type). Locking NULL would freeze custom assets, which have always been
+// fully editable.
+//
+// AN UNRECOGNISED TIER IS LOCKED. An allowlist, not `!== 'enforced' && !==
+// 'recommended'`, so a fourth tier added later — which would only be added to
+// carry some authority — is refused by default and has to be let in on purpose.
+// Failing closed on the authority axis is the whole reason this gate exists.
+const TENANT_EDITABLE_TIERS = new Set([null, 'house_default']);
+
+function isTenantEditableTier(specType) {
+  return TENANT_EDITABLE_TIERS.has(specType == null || specType === '' ? null : specType);
+}
+
+// THE SEEDED-ASSET WRITE. Sets char_min / char_max / spec_note OVERRIDES on the
+// house_default fields of a bundled asset, and refuses everything else about it.
+//
+// Called only from updateAssetType, inside its transaction and after its row
+// lock, so every decision here is made against rows nobody else can move.
+//
+// FOUR THINGS IT WILL NOT DO, each a way the asset-level rule could have leaked:
+//   • no INSERT — a submitted field with no id is ignored, not added. A seeded
+//     asset's field LIST is part of what LiveSpecs reaches by name.
+//   • no DELETE — a stored field missing from the submission is left alone. The
+//     full path treats absence as removal; here absence means "not submitted",
+//     which is what a reduced form legitimately sends.
+//   • no rename, no field_type, no sort_order — a house number is not a licence
+//     to rename a bundled field or move it. field_type in particular is why the
+//     UI disables that control: silently ignoring input the user can still type
+//     is the failure this codebase keeps refusing.
+//   • no spec_type, spec_source or spec_version — as everywhere else.
+//
+// THE TIER IS READ FROM THE STORED ROW, NEVER THE SUBMISSION. The client sends
+// whatever it likes; the only spec_type that counts is the one in Postgres. A
+// field whose stored tier is enforced or recommended is counted in `locked` and
+// skipped — not an error, because the reduced form legitimately posts every row
+// it rendered and only some of them are the tenant's to set.
+//
+// A null override CLEARS. `undefined` on a submitted value means "not offered",
+// so it is left as it is; an explicit null is the reset control, putting the
+// field back on the seed's number for good — including future seed changes.
+async function applyHouseDefaultOverrides(client, assetTypeId, submitted) {
+  const stored = await client.query(
+    'SELECT id, spec_type FROM copy_fields WHERE asset_type_id = $1',
+    [assetTypeId]
+  );
+  const tierById = new Map(stored.rows.map((r) => [String(r.id), r.spec_type || null]));
+
+  let changed = 0;
+  let cleared = 0;
+  let locked = 0;
+  let skipped = 0;
+
+  for (const field of submitted) {
+    const id = field && field.id ? String(field.id) : null;
+    // No id, or an id this asset does not own: not an error to argue about, and
+    // NOT an insert. It simply names nothing here.
+    if (!id || !tierById.has(id)) {
+      skipped++;
+      continue;
+    }
+    if (!isTenantEditableTier(tierById.get(id))) {
+      locked++;
+      continue;
+    }
+
+    // `reset` is the explicit "put me back on Quillio's default" — all three
+    // overrides to NULL in one statement, so a half-reset row cannot exist.
+    if (field.reset === true) {
+      const r = await client.query(
+        `UPDATE copy_fields
+            SET char_min_override = NULL, char_max_override = NULL, spec_note_override = NULL
+          WHERE id = $1 AND asset_type_id = $2
+            AND (char_min_override IS NOT NULL
+                 OR char_max_override IS NOT NULL
+                 OR spec_note_override IS NOT NULL)`,
+        [id, assetTypeId]
+      );
+      cleared += r.rowCount;
+      continue;
+    }
+
+    // Only the values actually offered. `undefined` is absent from the form;
+    // null is the tenant clearing that one value back to the seed.
+    const sets = [];
+    const params = [];
+    const put = (col, value) => {
+      params.push(value);
+      sets.push(`${col} = $${params.length}`);
+    };
+    if (field.char_min !== undefined) put('char_min_override', field.char_min);
+    if (field.char_max !== undefined) put('char_max_override', field.char_max);
+    // '' is a real override meaning "I deleted the note", and is stored as ''
+    // rather than folded to NULL — NULL here means "no override", so folding
+    // would silently restore the seed's note the tenant just removed.
+    if (field.spec_note !== undefined) put('spec_note_override', field.spec_note);
+    if (sets.length === 0) {
+      skipped++;
+      continue;
+    }
+
+    params.push(id, assetTypeId);
+    const r = await client.query(
+      `UPDATE copy_fields SET ${sets.join(', ')} WHERE id = $${params.length - 1} AND asset_type_id = $${params.length}`,
+      params
+    );
+    changed += r.rowCount;
+  }
+
+  return { ok: true, changed, cleared, locked, skipped };
+}
+
 // UPDATE one asset the tenant owns: its name, group and creative direction, and
 // its full field list. ONE transaction — a half-applied edit would leave the
 // library in a shape the tenant never asked for.
@@ -388,10 +595,19 @@ function isSeededAssetName(name) {
 // so the route can answer 404 vs 403 vs 409 without parsing an error string:
 //   { ok: true, id }             — applied
 //   { ok: false, reason: 'not_found' }  — no such asset FOR THIS TENANT
-//   { ok: false, reason: 'seeded' }     — a bundled asset; read-only apart from is_active
+//   { ok: false, reason: 'seeded' }     — a bundled asset, in FULL-edit mode
 //
 // Cross-tenant is handled by 'not_found', not 'forbidden': answering differently
 // would confirm that an id exists in someone else's library.
+//
+// TWO MODES, AND THE ROW DECIDES WHICH. A tenant-authored asset gets the full
+// edit below. A SEEDED asset gets houseDefaultsOnly (see the branch), which
+// writes nothing but char_min/char_max/spec_note OVERRIDES, and only on fields
+// whose STORED spec_type is house_default or NULL. Everything else about a
+// seeded asset — its name, its field list, its tiers — stays exactly as
+// read-only as it was. `mode: 'full'` is required to touch a seeded asset's
+// structure, and no caller passes it, so the refusal is unchanged for every
+// existing path.
 //
 // FIELDS ARE RECONCILED BY ID. A submitted field carrying an id that belongs to
 // THIS asset is updated in place; one with no id is inserted; a stored field
@@ -400,7 +616,7 @@ function isSeededAssetName(name) {
 // nothing references copy_fields(id), so the delete is safe (asset_types(id), by
 // contrast, is referenced by five tables with no ON DELETE, which is why the
 // ASSET-level removal is is_active and not a DELETE).
-async function updateAssetType(tenantId, assetTypeId, asset) {
+async function updateAssetType(tenantId, assetTypeId, asset, { mode = 'full' } = {}) {
   const pool = getPool();
   if (!pool) {
     console.warn('[db/assets] DATABASE_URL not set — skipping updateAssetType');
@@ -426,9 +642,33 @@ async function updateAssetType(tenantId, assetTypeId, asset) {
     }
     // Checked against the STORED name, never the submitted one — otherwise
     // renaming a seeded asset in the same request would walk straight past this.
-    if (isSeededAssetName(cur.rows[0].name)) {
+    // Both branches read it: one to refuse, the other to pick its mode.
+    const seeded = isSeededAssetName(cur.rows[0].name);
+    if (seeded && mode !== 'houseDefaultsOnly') {
       await client.query('ROLLBACK');
       return { ok: false, reason: 'seeded', name: cur.rows[0].name };
+    }
+    // The inverse is refused too. houseDefaultsOnly against a TENANT asset would
+    // silently drop every rename, insert and delete in the request and report
+    // success — the caller has misread which asset it is holding, and answering
+    // "done" to that is worse than answering "no".
+    if (!seeded && mode === 'houseDefaultsOnly') {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_seeded', name: cur.rows[0].name };
+    }
+
+    if (seeded) {
+      const applied = await applyHouseDefaultOverrides(client, assetTypeId, asset.fields);
+      if (!applied.ok) {
+        await client.query('ROLLBACK');
+        return applied;
+      }
+      await client.query('COMMIT');
+      console.log(
+        `[db/assets] tenant ${tenantId} set house defaults on seeded asset ${assetTypeId} ` +
+          `"${cur.rows[0].name}" (${applied.changed} changed, ${applied.cleared} reset, ${applied.locked} locked field(s) left alone)`
+      );
+      return { ok: true, id: String(assetTypeId), houseDefaults: applied };
     }
 
     await client.query(
@@ -612,6 +852,10 @@ module.exports = {
   // above it for why the name and not a column. Exported for the route (which
   // reports it) and for tests.
   isSeededAssetName,
+  // The OTHER half of the gate: which TIER a tenant may set their own number on.
+  // A seeded asset is still read-only structurally; its house_default fields are
+  // not. Exported for the route (which reports per-field editability) and tests.
+  isTenantEditableTier,
   setActiveAssetIds,
   setActiveAssets,
   getAssetDirections,

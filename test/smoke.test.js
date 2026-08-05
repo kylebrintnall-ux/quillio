@@ -13144,3 +13144,344 @@ test('a disabled primary is opaque, and the picker lede is body text', () => {
   assert.ok(!/italic/.test(lede), 'not italic');
   assert.ok(!/rgba\(26,26,46,0\.\d/.test(lede), 'not a faded ink');
 });
+
+// --- LiveSpecs anchor assertion ------------------------------------------
+//
+// The detector's failure mode was silent and permanent: fetchText only throws on
+// a non-2xx or a timeout, so a 200 serving a soft-404, an auth wall or an empty
+// JS shell went down the SUCCESS path, hashed to something stable, and reported
+// "unchanged" forever. These tests are about the three branches that page must
+// no longer be able to reach — baseline, unchanged, changed — and about the
+// unanchored state every existing row is in the moment the column exists.
+
+// A pool stand-in that answers the detector's queries and records every one, so
+// a test can assert on what was WRITTEN rather than only on the returned status.
+// Deliberately dumb: it routes on the SQL text, because the SQL text is the thing
+// under test in half of these cases.
+function fakeSpecPool(rows) {
+  const queries = [];
+  const failures = new Map(); // id -> running consecutive_failures
+  const run = async (sql, params) => {
+    const flat = String(sql).replace(/\s+/g, ' ').trim();
+    queries.push({ sql: flat, params: params || [] });
+    if (/^SELECT/i.test(flat)) {
+      if (/spec_review_queue/.test(flat)) return { rows: [] };
+      if (/MAX\(last_checked_at\)/.test(flat)) return { rows: [{ last_run: null }] };
+      // Mirror the real 42703 fallback: a row that has no consecutive_failures
+      // KEY is how getWatchList reports a pre-migration table, so a SELECT naming
+      // the new columns must fail on exactly those rows.
+      if (/expected_content/.test(flat) && rows.some((r) => !('consecutive_failures' in r))) {
+        const e = new Error('column "expected_content" does not exist');
+        e.code = '42703';
+        throw e;
+      }
+      return { rows };
+    }
+    if (/consecutive_failures = COALESCE/.test(flat)) {
+      const id = params[1];
+      const n = (failures.get(id) || 0) + 1;
+      failures.set(id, n);
+      return { rows: [{ consecutive_failures: n }] };
+    }
+    if (/consecutive_failures = 0/.test(flat)) failures.set(params[params.length - 1], 0);
+    return { rows: [] };
+  };
+  return {
+    queries,
+    query: run,
+    connect: async () => ({ query: run, release() {} }),
+  };
+}
+
+// Load a FRESH detector bound to a fake pool. specDetector and db/specWatch both
+// destructure getPool at require time, so the patch has to happen before either
+// is loaded — hence the cache eviction rather than a simple assignment.
+async function runDetectorWith({ rows, fetchImpl }) {
+  const db = require('../src/db');
+  const realGetPool = db.getPool;
+  const realFetch = globalThis.fetch;
+  const detPath = require.resolve('../src/services/specDetector');
+  const wlPath = require.resolve('../src/db/specWatch');
+  const pool = fakeSpecPool(rows);
+  db.getPool = () => pool;
+  globalThis.fetch = fetchImpl;
+  delete require.cache[detPath];
+  delete require.cache[wlPath];
+  try {
+    const det = require(detPath);
+    const out = await det.runDetection();
+    return { out, queries: pool.queries };
+  } finally {
+    db.getPool = realGetPool;
+    globalThis.fetch = realFetch;
+    delete require.cache[detPath];
+    delete require.cache[wlPath];
+  }
+}
+
+const okResponse = (body) => async () => ({ ok: true, status: 200, text: async () => body });
+
+// A page carrying the anchor. The trailing filler keeps normalized text well
+// clear of any "suspiciously short" heuristic.
+const GOOD_PAGE = '<html><body><h1>Introductory text</h1><p>' + 'spec detail '.repeat(40) + '</p></body></html>';
+// A 200 that is not the page: the site's chrome with none of its content. This
+// is the exact shape the anchor exists to catch.
+const SOFT_404 = '<html><body><nav>LinkedIn</nav><p>Page not found</p></body></html>';
+
+function watchRow(over) {
+  return Object.assign(
+    {
+      id: 1,
+      source_url: 'https://example.test/specs',
+      display_name: 'Example',
+      current_hash: null,
+      is_test: false,
+      expected_content: 'Introductory text',
+      anchor_scope: 'normalized',
+      consecutive_failures: 0,
+    },
+    over || {}
+  );
+}
+
+test('checkAnchor: no anchor is neither a pass nor a failure', () => {
+  const { checkAnchor } = require('../src/services/specDetector');
+  for (const empty of [undefined, null, '', '   ']) {
+    const r = checkAnchor({ expected_content: empty }, 'raw', 'normalized');
+    assert.strictEqual(r.ok, true, 'an unanchored entry is not failed by the check');
+    assert.strictEqual(r.anchored, false, 'but it is reported as unanchored, not as anchored-and-passing');
+    assert.strictEqual(r.anchor, null);
+  }
+});
+
+test('checkAnchor: scope decides which body is searched', () => {
+  const { checkAnchor } = require('../src/services/specDetector');
+  const row = (scope) => ({ expected_content: 'og:ads-guide', anchor_scope: scope });
+
+  // In the raw HTML only — a <script>/<meta> string normalize() strips. The
+  // per-row scope exists precisely because this page is healthy and would fail a
+  // normalized check.
+  const raw = '<meta property="og:url" content="og:ads-guide"><body>rendered by js</body>';
+  const norm = require('../src/services/specDetector').normalize(raw);
+  assert.strictEqual(checkAnchor(row('raw'), raw, norm).ok, true, 'found in raw');
+  assert.strictEqual(checkAnchor(row('normalized'), raw, norm).ok, false, 'absent from normalized');
+
+  // An unrecognized scope must not silently become 'raw' — raw is the permissive
+  // side (it carries every nav label and meta tag), so a typo defaulting there
+  // would weaken every entry that had one.
+  assert.strictEqual(checkAnchor({ expected_content: 'x', anchor_scope: 'RAW' }, 'x', '').scope, 'normalized');
+  assert.strictEqual(checkAnchor({ expected_content: 'x', anchor_scope: undefined }, 'x', '').scope, 'normalized');
+});
+
+test('detector: a 200 that misses its anchor is FAILED, not unchanged', async () => {
+  const known = require('../src/services/specDetector').hashText(
+    require('../src/services/specDetector').normalize(SOFT_404)
+  );
+  // The entry is already baselined AGAINST THE SOFT-404's OWN HASH — the steady
+  // state a soft-404 reaches after one run of the old code, where it agrees with
+  // itself every week forever.
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: known })],
+    fetchImpl: okResponse(SOFT_404),
+  });
+
+  assert.strictEqual(out.results[0].status, 'failed');
+  assert.strictEqual(out.summary.failed, 1);
+  assert.strictEqual(out.summary.unchanged, 0, 'the hash matched, and it still is NOT unchanged');
+  assert.match(out.results[0].error, /anchor not found in normalized content: "Introductory text"/,
+    'the error names the string that missed, so a wrong anchor is diagnosable from the run alone');
+  assert.strictEqual(out.results[0].consecutive_failures, 1);
+
+  const writes = queries.filter((q) => /^UPDATE/i.test(q.sql));
+  assert.strictEqual(writes.length, 1);
+  assert.match(writes[0].sql, /consecutive_failures = COALESCE/);
+  assert.ok(!/current_hash/.test(writes[0].sql), 'a failed read never touches the baseline hash');
+  assert.strictEqual(queries.filter((q) => /INSERT INTO spec_review_queue/i.test(q.sql)).length, 0,
+    'and never flags');
+});
+
+test('detector: an empty page cannot become the baseline', async () => {
+  // The worst case, because it is self-confirming: with no current_hash, the old
+  // code stored sha256(normalize('')) as the legitimate truth and every later run
+  // agreed with it.
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: null })],
+    fetchImpl: okResponse('<html><body></body></html>'),
+  });
+  assert.strictEqual(out.results[0].status, 'failed');
+  assert.strictEqual(out.summary.baseline, 0);
+  assert.ok(!queries.some((q) => /SET current_hash/.test(q.sql)), 'nothing was baselined');
+});
+
+test('detector: a changed hash still needs its anchor before it can flag', async () => {
+  // The third branch. An anchor miss on an entry whose hash MOVED must not reach
+  // the confirm-and-flag path — otherwise a site-wide error page manufactures a
+  // spec change out of nothing and puts it in front of a human as real.
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: 'a'.repeat(64) })],
+    fetchImpl: okResponse(SOFT_404),
+  });
+  assert.strictEqual(out.results[0].status, 'failed');
+  assert.strictEqual(out.summary.changed, 0);
+  assert.ok(!queries.some((q) => /INSERT INTO spec_review_queue/i.test(q.sql)));
+});
+
+test('detector: a good read passes and clears the failure counter', async () => {
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: null, consecutive_failures: 3 })],
+    fetchImpl: okResponse(GOOD_PAGE),
+  });
+  assert.strictEqual(out.results[0].status, 'baseline');
+  assert.strictEqual(out.summary.failed, 0);
+  assert.strictEqual(out.results[0].anchored, true);
+  const write = queries.find((q) => /^UPDATE/i.test(q.sql));
+  assert.match(write.sql, /consecutive_failures = 0/,
+    'recovery resets the count — otherwise "failed 6 times" would outlive the failure');
+});
+
+test('detector: an unanchored entry is still watched, and still counted', async () => {
+  // Every existing row is in this state the moment the column exists. It must not
+  // mean unwatched, and it must not mean silently passing.
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ expected_content: null, current_hash: null })],
+    fetchImpl: okResponse(GOOD_PAGE),
+  });
+  assert.strictEqual(out.results[0].status, 'baseline', 'fetched, hashed and compared exactly as before');
+  assert.strictEqual(out.results[0].anchored, false);
+  assert.strictEqual(out.summary.unanchored, 1, 'and the gap is visible in the run summary');
+  assert.strictEqual(out.summary.failed, 0, 'no anchor is not a failure');
+  assert.ok(queries.some((q) => /SET current_hash/.test(q.sql)), 'it really did do the work');
+});
+
+test('detector: unanchored is an axis, not a status', async () => {
+  // An entry can be unanchored AND unchanged at once; the summary has to be able
+  // to say both, so unanchored must not be written into summary[status].
+  const hash = require('../src/services/specDetector').hashText(
+    require('../src/services/specDetector').normalize(GOOD_PAGE)
+  );
+  const { out } = await runDetectorWith({
+    rows: [watchRow({ expected_content: '  ', current_hash: hash })],
+    fetchImpl: okResponse(GOOD_PAGE),
+  });
+  assert.strictEqual(out.results[0].status, 'unchanged');
+  assert.strictEqual(out.summary.unchanged, 1);
+  assert.strictEqual(out.summary.unanchored, 1);
+  assert.strictEqual(out.summary.total, 1, 'one entry, two facts');
+});
+
+test('detector: an unreachable page counts toward consecutive failures too', async () => {
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: 'b'.repeat(64) })],
+    fetchImpl: async () => ({ ok: false, status: 503, text: async () => '' }),
+  });
+  assert.strictEqual(out.results[0].status, 'error', 'unreachable stays `error` — a different fact from a bad read');
+  assert.strictEqual(out.results[0].consecutive_failures, 1);
+  const write = queries.find((q) => /^UPDATE/i.test(q.sql));
+  assert.match(write.sql, /consecutive_failures = COALESCE/);
+  assert.ok(!/current_hash/.test(write.sql));
+});
+
+test('detector: deploy-before-migration leaves the new column out of every write', async () => {
+  // Railway auto-deploys main on merge, so this code runs against an unmigrated
+  // database first. getWatchList falls back to the old SELECT, and the row it
+  // returns has no consecutive_failures KEY — which is what the detector reads to
+  // decide whether the column can be written at all.
+  const legacyRow = {
+    id: 7,
+    source_url: 'https://example.test/specs',
+    display_name: 'Legacy',
+    current_hash: null,
+    is_test: false,
+  };
+  const { out, queries } = await runDetectorWith({ rows: [legacyRow], fetchImpl: okResponse(GOOD_PAGE) });
+  assert.strictEqual(out.results[0].status, 'baseline', 'detection still runs');
+  assert.strictEqual(out.results[0].consecutive_failures, null, 'and reports null rather than inventing a count');
+  const writes = queries.filter((q) => /^UPDATE/i.test(q.sql));
+  assert.ok(writes.length > 0);
+  for (const w of writes) {
+    assert.ok(!/consecutive_failures/.test(w.sql), `pre-migration write must not name the column: ${w.sql}`);
+  }
+  // And the fallback SELECT was actually exercised.
+  assert.ok(queries.some((q) => /^SELECT/i.test(q.sql) && !/expected_content/.test(q.sql)));
+});
+
+test('detector: pre-migration failures still record, without the counter', async () => {
+  const { out, queries } = await runDetectorWith({
+    rows: [{ id: 8, source_url: 'https://example.test/s', display_name: 'Legacy', current_hash: null, is_test: false }],
+    fetchImpl: async () => {
+      throw new Error('boom');
+    },
+  });
+  assert.strictEqual(out.results[0].status, 'error');
+  const write = queries.find((q) => /^UPDATE/i.test(q.sql));
+  assert.match(write.sql, /last_error = \$1/);
+  assert.ok(!/consecutive_failures/.test(write.sql));
+});
+
+test('the anchor check precedes every comparison branch', () => {
+  // A source-order guard, because the ordering IS the feature: moving the check
+  // below the `if (!row.current_hash)` would restore the empty-baseline bug while
+  // every other test above still passed on the rows they happen to use.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specDetector.js'), 'utf8');
+  const body = src.slice(src.indexOf('for (const row of rows)'));
+  const check = body.indexOf('checkAnchor(row, html, normalized)');
+  assert.ok(check > 0, 'the check runs inside the loop');
+  for (const branch of ['if (!row.current_hash)', 'row.current_hash === newHash']) {
+    assert.ok(body.indexOf(branch) > check, `${branch} must come after the anchor check`);
+  }
+});
+
+test('specWatch.getWatchList degrades to the pre-anchor columns', async () => {
+  const wlPath = require.resolve('../src/db/specWatch');
+  const db = require('../src/db');
+  const realGetPool = db.getPool;
+  const asked = [];
+  db.getPool = () => ({
+    query: async (sql) => {
+      asked.push(String(sql).replace(/\s+/g, ' ').trim());
+      if (/expected_content/.test(sql)) {
+        const e = new Error('column "expected_content" does not exist');
+        e.code = '42703';
+        throw e;
+      }
+      return { rows: [{ id: 1 }] };
+    },
+  });
+  delete require.cache[wlPath];
+  try {
+    const rows = await require(wlPath).getWatchList();
+    assert.strictEqual(rows.length, 1);
+    assert.ok(!('consecutive_failures' in rows[0]),
+      'the fallback must NOT default the columns in — key presence is the signal the detector reads');
+    assert.strictEqual(asked.length, 2, 'tried the new shape, then the old one');
+  } finally {
+    db.getPool = realGetPool;
+    delete require.cache[wlPath];
+  }
+});
+
+test('migrateAddSpecAnchors adds the three columns and seeds idempotently', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecAnchors.js'), 'utf8');
+  for (const col of ['expected_content', 'anchor_scope', 'consecutive_failures']) {
+    assert.ok(new RegExp(`ADD COLUMN IF NOT EXISTS ${col}`).test(src), `${col} is added if-not-exists`);
+  }
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/, 'dry run is the default');
+  const noCommit = src.slice(src.indexOf('    } else {', src.indexOf('if (COMMIT) {')));
+  assert.match(noCommit, /await client\.query\('ROLLBACK'\)/, 'and the no-commit path really rolls back');
+  assert.match(noCommit, /ROLLED BACK \(dry run\)/, 'and says so');
+  assert.match(src, /if \(row\.expected_content\)/, 'a hand-corrected anchor survives a re-run');
+  // Imported, not copied: a verify report that measured a stale normalize() would
+  // be measuring something the detector never sees.
+  assert.match(src, /require\('\.\.\/src\/services\/specDetector'\)/);
+  assert.ok(!/replace\(\/<script/.test(src), 'normalize() is not duplicated here');
+  assert.match(src, /node scripts\/migrateAddSpecAnchors\.js/, 'plain node, per CLAUDE.md');
+  assert.ok(!/railway run/.test(src.replace(/NEVER `railway run`/g, '')), 'and never railway run');
+});
+
+test('the admin health page shows anchor state and failure runs', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.match(html, /el\('th',\{text:'Anchor'\}\)/, 'the table has an anchor column');
+  assert.match(html, /w\.anchored\?'yes':'none'/);
+  assert.match(html, /failed run/, 'a run of failures is visible without reading the database');
+  assert.match(html, /unanchored/, 'and the summary line says how many entries are unanchored');
+});

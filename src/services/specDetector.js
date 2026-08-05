@@ -13,13 +13,23 @@
 // flag, and the baseline hash is left untouched so it never advances to a noisy
 // value.
 //
+// ANCHOR ASSERTION: before any hash comparison, an entry's expected_content (if
+// it has one) must be present in the fetched page. If it isn't, the entry's
+// status is 'failed' — a distinct status, not 'error' and emphatically not
+// 'unchanged' — and consecutive_failures increments. See checkAnchor below for
+// why a 200 response is not evidence that we read the right page.
+//
 // SAFETY: this NEVER writes to copy_fields or any spec/field data. It only
-//   - updates spec_watch_list (current_hash, last_checked_at, last_error), and
+//   - updates spec_watch_list (current_hash, last_checked_at, last_error,
+//     consecutive_failures), and
 //   - inserts spec_review_queue rows (flags) on a CONFIRMED change.
-// A fetch failure updates last_checked_at + last_error only — it never flags and
-// never overwrites a good current_hash, so a failed fetch can't look like a
-// change. is_test is inherited onto the flag row so test-page changes stay
-// structurally isolated from real specs.
+// A fetch failure or a missed anchor updates last_checked_at + last_error +
+// consecutive_failures only — it never flags and never overwrites a good
+// current_hash, so neither can look like a change. is_test is inherited onto the
+// flag row so test-page changes stay structurally isolated from real specs.
+//
+// Requires scripts/migrateAddSpecAnchors.js (expected_content, anchor_scope,
+// consecutive_failures).
 
 const crypto = require('crypto');
 const { getPool } = require('../db');
@@ -51,6 +61,36 @@ function hashText(text) {
   return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
 }
 
+// ANCHOR ASSERTION — did we actually read the page, or something standing where
+// it should be?
+//
+// fetchText only throws on a non-2xx or a timeout, so a 200 serving a soft-404,
+// an auth interstitial or a JS shell with no rendered content flows straight down
+// the success path. Its normalized text is empty or generic, it hashes to a
+// constant, and the entry reports "unchanged" every week — confidently, forever.
+// Worse on a first run: sha256('') gets stored as the legitimate baseline and
+// every later run agrees with it.
+//
+// So each row carries a string that must be present for the fetch to count as a
+// read. `raw` checks the response body, `normalized` (the default) checks the
+// text that is actually hashed. That choice is PER ROW because both are wrong for
+// some page: normalize() strips <script> and its contents, so an anchor living
+// only in a JSON island vanishes on a page that is perfectly healthy — and raw
+// HTML carries every nav label and meta tag, so a generic anchor survives on an
+// error page sharing the site's chrome.
+//
+// NO ANCHOR IS NOT A PASS AND NOT A FAILURE. { ok: true, anchored: false } — the
+// entry is fetched, hashed and compared exactly as before, so nothing stops being
+// watched, and the caller counts it as unanchored so the gap is visible in the
+// run rather than absent from it.
+function checkAnchor(row, raw, normalized) {
+  const anchor = row && typeof row.expected_content === 'string' ? row.expected_content.trim() : '';
+  if (!anchor) return { ok: true, anchored: false, anchor: null };
+  const scope = row.anchor_scope === 'raw' ? 'raw' : 'normalized';
+  const hay = scope === 'raw' ? String(raw || '') : String(normalized || '');
+  return { ok: hay.includes(anchor), anchored: true, anchor, scope };
+}
+
 // Fetch a URL as text with a hard timeout. Throws on timeout or non-2xx so the
 // caller routes it to the error branch.
 async function fetchText(url) {
@@ -68,6 +108,27 @@ async function fetchText(url) {
   }
 }
 
+// PRE-MIGRATION TOLERANCE (CLAUDE.md, "Either deploy order is safe"). Railway
+// auto-deploys main on merge, so this code runs against a database that has not
+// had migrateAddSpecAnchors.js applied yet. getWatchList falls back to a SELECT
+// without the three new columns in that case, so the row it returns LACKS THE
+// KEY — which is how we tell "column absent" from "column present and NULL" (an
+// unseeded anchor on a migrated database, which is a real and different state).
+//
+// With the columns absent we leave consecutive_failures out of the UPDATEs
+// entirely. Nothing is watched less carefully than it was: no anchor can be
+// configured on such a database, so every entry behaves exactly as it did
+// before this change until the migration runs.
+function hasAnchorColumns(row) {
+  return !!row && Object.prototype.hasOwnProperty.call(row, 'consecutive_failures');
+}
+
+// The trailing SET fragment that clears the failure counter on a success path —
+// or nothing at all, pre-migration.
+function resetFailures(row) {
+  return hasAnchorColumns(row) ? ', consecutive_failures = 0' : '';
+}
+
 // Record a detected change atomically: insert the flag, then advance the hash.
 // Wrapped in a transaction so we never insert a flag but fail to move the hash
 // (which would re-flag the same change on every subsequent run).
@@ -81,7 +142,7 @@ async function recordChange(pool, row, newHash) {
       [row.id, row.source_url, row.current_hash, newHash, row.is_test]
     );
     await client.query(
-      'UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL WHERE id = $2',
+      `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $2`,
       [newHash, row.id]
     );
     await client.query('COMMIT');
@@ -93,6 +154,38 @@ async function recordChange(pool, row, newHash) {
   }
 }
 
+// Record a read that failed its anchor assertion, or failed to fetch at all.
+// Writes last_error and INCREMENTS consecutive_failures; deliberately does NOT
+// touch current_hash, so the last good baseline survives however long the
+// failure lasts and a recovery compares against the right thing.
+//
+// The counter is the whole point. A wrongly-anchored entry stops being watched
+// and says nothing while it does — "failed once" (the site had a bad morning)
+// and "failed for six weeks" (the anchor is wrong, or the page is gone) look
+// identical in a single run's output, and only the second needs a human.
+// Every success path resets it to 0.
+async function bumpFailure(pool, row, error) {
+  if (!hasAnchorColumns(row)) {
+    // Pre-migration: the counter has nowhere to live. Record the error exactly
+    // as the detector always did and report null rather than a made-up count.
+    await pool.query(
+      'UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = $1 WHERE id = $2',
+      [error, row.id]
+    );
+    return null;
+  }
+  const res = await pool.query(
+    `UPDATE spec_watch_list
+        SET last_checked_at = NOW(),
+            last_error = $1,
+            consecutive_failures = COALESCE(consecutive_failures, 0) + 1
+      WHERE id = $2
+      RETURNING consecutive_failures`,
+    [error, row.id]
+  );
+  return (res && res.rows && res.rows[0] && res.rows[0].consecutive_failures) || null;
+}
+
 // Run the detector over every watch entry. Returns a per-URL summary so the
 // caller (the admin endpoint) can show what happened. Never throws for a single
 // bad URL — that row is reported as status:'error' and the run continues.
@@ -102,27 +195,53 @@ async function runDetection() {
 
   const rows = await getWatchList();
   const results = [];
-  const summary = { total: rows.length, baseline: 0, unchanged: 0, changed: 0, unconfirmed: 0, error: 0 };
+  // `failed` is pre-seeded like the rest so a clean run reports 0 rather than
+  // omitting the key — an absent count and a zero count read differently to
+  // whoever is scanning the summary, and this is the one worth noticing.
+  // `unanchored` is a SEPARATE axis, not a status: an entry can be unanchored and
+  // unchanged at the same time, and both facts matter.
+  const summary = { total: rows.length, baseline: 0, unchanged: 0, changed: 0, unconfirmed: 0, failed: 0, error: 0, unanchored: 0 };
 
   for (const row of rows) {
     const checkedAt = new Date().toISOString();
     let status;
     let error = null;
+    let failures = null;
+    // Read off the ROW, not off anchorInfo: an entry that never got as far as
+    // the anchor check (the fetch threw) is not thereby "unanchored". Whether an
+    // anchor is configured is a property of the entry and is true or false
+    // before the run starts.
+    const anchored = !!(row && typeof row.expected_content === 'string' && row.expected_content.trim());
+    if (!anchored) summary.unanchored += 1;
     try {
       const html = await fetchText(row.source_url);
-      const newHash = hashText(normalize(html));
+      const normalized = normalize(html);
+      const newHash = hashText(normalized);
 
-      if (!row.current_hash) {
+      // BEFORE ANY COMPARISON. A page that failed to read must not be able to
+      // reach the baseline branch (where an empty page becomes the truth), the
+      // unchanged branch (where it agrees with itself forever), or the changed
+      // branch (where it would flag a real spec edit into existence out of an
+      // error page).
+      const anchorInfo = checkAnchor(row, html, normalized);
+      if (!anchorInfo.ok) {
+        // Name the string that missed, verbatim and quoted. The two ways an
+        // anchor fails are "the page changed shape" and "the anchor was always
+        // wrong", and you cannot tell them apart from a bare "anchor not found".
+        error = `anchor not found in ${anchorInfo.scope} content: ${JSON.stringify(anchorInfo.anchor)}`;
+        failures = await bumpFailure(pool, row, error);
+        status = 'failed';
+      } else if (!row.current_hash) {
         // First ever check → record the baseline. Nothing to compare to, so no flag.
         await pool.query(
-          'UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL WHERE id = $2',
+          `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $2`,
           [newHash, row.id]
         );
         status = 'baseline';
       } else if (row.current_hash === newHash) {
         // Unchanged → just bump last_checked_at (and clear any stale error).
         await pool.query(
-          'UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL WHERE id = $1',
+          `UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $1`,
           [row.id]
         );
         status = 'unchanged';
@@ -147,7 +266,7 @@ async function runDetection() {
           // Did not reproduce → transient noise. DON'T flag, DON'T advance the
           // baseline hash (leave current_hash where it was); just bump the check.
           await pool.query(
-            'UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL WHERE id = $1',
+            `UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $1`,
             [row.id]
           );
           status = 'unconfirmed';
@@ -155,12 +274,12 @@ async function runDetection() {
       }
     } catch (err) {
       // Fetch/processing failure: record it, DON'T flag, DON'T touch current_hash.
+      // Counts toward consecutive_failures for the same reason an anchor miss
+      // does — a URL that has 404'd for six weeks is as unwatched as a wrongly
+      // anchored one, and the run says so either way.
       error = err.message || String(err);
       try {
-        await pool.query(
-          'UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = $1 WHERE id = $2',
-          [error, row.id]
-        );
+        failures = await bumpFailure(pool, row, error);
       } catch (e) {
         console.error(`[detector] could not record error for watch ${row.id}:`, e.message);
       }
@@ -176,11 +295,17 @@ async function runDetection() {
       status,
       last_checked_at: checkedAt,
       error,
+      anchored,
+      consecutive_failures: failures,
     });
-    console.log(`[detector] ${row.display_name}: ${status}${error ? ` (${error})` : ''}`);
+    console.log(
+      `[detector] ${row.display_name}: ${status}${anchored ? '' : ' (no anchor)'}` +
+        `${error ? ` (${error})` : ''}` +
+        `${failures > 1 ? ` [${failures} consecutive failures]` : ''}`
+    );
   }
 
   return { ran: true, summary, results };
 }
 
-module.exports = { runDetection, normalize, hashText, fetchText };
+module.exports = { runDetection, normalize, hashText, fetchText, checkAnchor };

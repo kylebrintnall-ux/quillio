@@ -537,6 +537,42 @@ pass CI and still be broken in the browser. For anything in `public/app.html`
 (2,800+ lines of inline markup, CSS, and vanilla JS), **the device is the test**:
 load the page and click through it.
 
+### The case that justifies that rule — not a hypothetical
+
+The house-default form (`libOpenHouseForm`, `settings.html`) shipped a defect
+that **passed 558 green tests** and was caught in the first minute of a browser
+pass. It posted every row it rendered, so changing ONE number wrote an override
+to every `house_default` field of the asset. Each override equalled the seed's
+own value, so nothing on screen looked wrong — the card grew three "Yours" chips
+instead of one — while all three fields silently detached from every future seed
+update. The server said `3 changed` for a one-field edit. That is the exact
+failure the override columns exist to prevent, arriving through the front door.
+
+Two more from the same pass: locked rows drawn as disabled inputs at 0.55
+opacity read as **enabled** on a phone, and the disabled unit `<select>` read as
+a dropdown failing to open.
+
+None of the three was reachable by a source scan, because none was a question
+about what the source SAYS:
+
+| The defect | What a string test can see | What it took |
+| --- | --- | --- |
+| posts every row | nothing — the bug is a missing condition | run the save and read the DB |
+| dimmed reads as enabled | the CSS rule is present and correct | look at it at 390px |
+| inert control reads as broken | the `disabled` attribute is set | look at it |
+
+So the rule is not "browsers catch more". It is that a source scan can only
+answer *is this line present*, and the three questions worth asking about a form
+are **what does it send**, **what does it look like**, and **what does the
+database hold afterwards**. Ask those three, in a browser, against a real
+Postgres. `git log` for the device-pass commit has the exact setup — the schema
+scripts, the seed, a `connect-pg-simple` session row and a signed cookie — which
+takes about five minutes to stand up and is worth it for anything that writes.
+
+A structural test added AFTER a browser finds something is a tripwire, not
+coverage. Label it as one where you write it, so the next reader does not mistake
+a green suite for a working page.
+
 ## Deploy
 
 Railway via Nixpacks; `npm start` is the start command (also in `railway.json`

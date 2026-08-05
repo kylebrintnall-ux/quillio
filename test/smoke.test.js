@@ -13875,6 +13875,86 @@ test('migrateAddSpecAnchors adds the three columns and seeds idempotently', () =
   assert.ok(!/railway run/.test(src.replace(/NEVER `railway run`/g, '')), 'and never railway run');
 });
 
+test('the anchor plan: three seeded, one pending, three unanchored by decision', () => {
+  const { CANDIDATES } = require('../scripts/migrateAddSpecAnchors');
+  const by = (d) => CANDIDATES.filter((c) => c.decision === d);
+  assert.strictEqual(CANDIDATES.length, 7, 'one entry per live watch row');
+  assert.strictEqual(by('seed').length, 3);
+  assert.strictEqual(by('verify').length, 1);
+  assert.strictEqual(by('unanchored').length, 3);
+
+  // The three that were measured against the live pages, verbatim. Pinned because
+  // a typo here is not a test failure anywhere else — it is a watch entry that
+  // fails every run from the day it is seeded.
+  assert.deepStrictEqual(
+    by('seed').map((c) => [c.anchor, c.scope]),
+    [
+      ['Introductory text', 'normalized'],
+      ['Responsive display ads', 'normalized'],
+      ['Quillio Test Spec', 'normalized'],
+    ]
+  );
+  for (const c of by('seed')) assert.ok(c.evidence, `${c.anchor} records what verify measured`);
+
+  // The X entry proposes two strings and commits to NEITHER. Its first candidate
+  // came from the URL slug rather than the page, which is the whole reason this
+  // decision state exists.
+  const x = by('verify')[0];
+  assert.match(x.match, /business\.x\.com/);
+  assert.strictEqual(x.anchor, undefined, 'a pending entry has no anchor to seed');
+  assert.strictEqual(x.options.length, 2);
+  assert.deepStrictEqual(x.options.map((o) => o.anchor), ['post copy:', 'Creative ad specs']);
+
+  // Meta and both Litmus rows are declined on the merits, and each says why on
+  // itself — the reason is what stops the next person re-proposing the same
+  // rejected anchor.
+  const declined = by('unanchored').map((c) => c.match);
+  assert.ok(declined.some((m) => /facebook\.com/.test(m)));
+  assert.strictEqual(declined.filter((m) => /litmus\.com/.test(m)).length, 2);
+  for (const c of by('unanchored')) assert.match(c.why, /DELIBERATELY UNANCHORED/);
+});
+
+test('only a decision of seed writes an anchor', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecAnchors.js'), 'utf8');
+  const loop = src.slice(src.indexOf('for (const row of rows) {', src.indexOf('let seeded = 0')));
+  const body = loop.slice(0, loop.indexOf('\n    }\n'));
+  // Both non-seeding decisions `continue` BEFORE the UPDATE. Asserted on order,
+  // because a decision that reached the UPDATE would seed `undefined` and turn a
+  // deliberate NULL into an anchor that can never match.
+  const update = body.indexOf('UPDATE spec_watch_list SET expected_content');
+  assert.ok(update > 0);
+  for (const d of ["cand.decision === 'unanchored'", "cand.decision === 'verify'"]) {
+    assert.ok(body.indexOf(d) > 0 && body.indexOf(d) < update, `${d} is handled before the write`);
+  }
+  // And the run's own arithmetic is printed, so "unanchored: N" is read off the
+  // migration rather than worked out afterwards.
+  assert.match(src, /the next detection run will report {2}unanchored: \$\{unanchored\}/);
+});
+
+test('the verify diagnostics catch the two ways a good anchor misses', () => {
+  const { occurrences, occurrencesLoose, occurrencesFlexible } = require('../scripts/migrateAddSpecAnchors');
+  const { normalize } = require('../src/services/specDetector');
+
+  // THE TAG BOUNDARY. This is not hypothetical — it is what X's spec page does,
+  // and the first version of this diagnostic reported "absent in every variant"
+  // on a page that plainly renders the label.
+  const page = normalize('<dl><dt><strong>Post copy</strong>:</dt><dd>280 characters</dd></dl>');
+  assert.strictEqual(page, 'Post copy : 280 characters', 'normalize() opens a gap before the colon');
+  assert.strictEqual(occurrences(page, 'post copy:'), 0, 'the detector would fail on it');
+  assert.strictEqual(occurrencesLoose(page, 'post copy:'), 0, 'and case is not the reason');
+  assert.strictEqual(occurrencesFlexible(page, 'post copy:'), 1, 'the whitespace variant names the reason');
+
+  // THE CAPITAL LETTER, the other silent miss. checkAnchor is a plain includes().
+  const heading = normalize('<h2>Creative Ad Specs</h2>');
+  assert.strictEqual(occurrences(heading, 'creative ad specs'), 0);
+  assert.strictEqual(occurrencesLoose(heading, 'creative ad specs'), 1);
+
+  // A string that is genuinely absent stays absent in every variant — the
+  // diagnostics must not be so permissive that nothing ever reads as missing.
+  assert.strictEqual(occurrencesFlexible(page, 'Introductory text'), 0);
+  assert.strictEqual(occurrencesLoose(page, 'Introductory text'), 0);
+});
+
 test('the admin health page shows anchor state and failure runs', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
   assert.match(html, /el\('th',\{text:'Anchor'\}\)/, 'the table has an anchor column');

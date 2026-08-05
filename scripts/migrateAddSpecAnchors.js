@@ -39,23 +39,29 @@
 //
 // --- ON THE ANCHORS THEMSELVES ---------------------------------------------
 //
-// These are CANDIDATES. They were chosen without being able to see the pages —
-// this repo's environment denies egress to every one of these hosts — and a
-// plausible anchor and a working one are indistinguishable by eye, which is the
-// whole reason the feature exists. So:
+// The first pass of this file carried seven CANDIDATES chosen without being able
+// to see the pages — this repo denies egress to every one of those hosts. They
+// have now been through --verify against the live pages, and the results are
+// folded in below. Three are seeded, one is waiting on a re-verify, three are
+// deliberately left unanchored. Each row says which and why, because "no anchor
+// because nobody got to it" and "no anchor because anchoring it is the wrong
+// answer" are different states and only one of them is a to-do.
 //
 //   node scripts/migrateAddSpecAnchors.js --verify
 //
 // fetches every watch URL from a box that HAS egress (the Railway console) and
-// prints, per entry: HTTP status, normalized length, and whether the candidate is
-// present in the raw body and in the normalized text, with occurrence counts.
-// Read that before committing. A candidate that is absent, or that occurs 40
-// times, is the wrong string.
+// prints, per entry: HTTP status, normalized length, and occurrence counts in the
+// raw body and the normalized text. It also reports two DIAGNOSTIC variants — a
+// case-insensitive count and a whitespace-flexible one — because the detector
+// does an exact substring match and the two ways a plausible anchor silently
+// misses are a capital letter and a tag boundary. `<strong>Post copy</strong>:`
+// normalizes to `Post copy :`, with a space before the colon, so `Post copy:`
+// is not a substring of a page that plainly contains it.
 //
 // Dry run by default: applies inside a transaction, prints the state, ROLLBACKs.
 // --commit writes. Idempotent — the DDL is IF NOT EXISTS and the seed only fills
 // a row whose anchor is still NULL, so re-running never overwrites a value you
-// corrected by hand.
+// corrected by hand, and never re-anchors a row deliberately left NULL.
 //
 // Run it in the Railway console as plain node — NEVER `railway run`:
 //   node scripts/migrateAddSpecAnchors.js --verify   # fetch + report, no writes
@@ -74,19 +80,29 @@ const STATEMENTS = [
   ['spec_watch_list.consecutive_failures', 'ALTER TABLE spec_watch_list ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0'],
 ];
 
+
 // Keyed by a distinctive fragment of source_url rather than the whole string, so
 // a query-string or trailing-slash difference between this file and the stored
 // row cannot silently skip a seed.
 //
-// `why` is printed by --verify next to the measurement, so the reasoning and the
-// evidence are read together. `confidence` is mine, stated plainly: `certain`
-// only where I can see the page's source in this repo.
+// `decision` is the whole point of this table:
+//
+//   'seed'       verified present, low occurrence, content rather than chrome.
+//                The seed writes it.
+//   'verify'     the first candidate was wrong and the replacements have not been
+//                measured yet. `options` are what --verify should measure. The
+//                seed writes NOTHING and says so — the row stays unanchored, and
+//                unanchored is a state the detector already handles.
+//   'unanchored' a decision, not a gap. The seed writes nothing and prints the
+//                reason, so the next person reads why rather than assuming the
+//                row was missed.
 const CANDIDATES = [
   {
     match: 'linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
+    decision: 'seed',
     anchor: 'Introductory text',
     scope: 'normalized',
-    confidence: 'medium',
+    evidence: 'verified against the live page: present 2x in normalized text',
     why:
       "LinkedIn's own label for the field whose limit we store, so it is content rather than chrome. " +
       'An auth wall or a 404 on this host still carries LinkedIn nav markup, which is why the anchor is a ' +
@@ -94,67 +110,94 @@ const CANDIDATES = [
   },
   {
     match: 'business.x.com/en/help/campaign-setup/creative-ad-specifications',
-    anchor: 'Creative ad specifications',
-    scope: 'normalized',
-    confidence: 'medium',
+    decision: 'verify',
     why:
-      "The page's own heading. Weaker than a spec label — a breadcrumb on a sibling help page could carry " +
-      'it — but X exposes fewer stable in-content strings and this at least cannot appear on a generic 404.',
+      'The first candidate, "Creative ad specifications", was WRONG — and wrong in an instructive way. It ' +
+      "came from the URL slug, not from the page: the page's heading is \"Creative ad specs\". A string that " +
+      'looks like it must be on the page because it is in the address is exactly the kind of plausible-but-' +
+      'absent anchor --verify exists to catch, and it would have failed this entry on its first real run.',
+    options: [
+      {
+        anchor: 'post copy:',
+        scope: 'normalized',
+        why:
+          'PREFERRED. The spec label attached to the limit we actually store — the direct analogue of ' +
+          "LinkedIn's \"Introductory text\". It appears wherever a character limit is stated and cannot " +
+          'appear on a 404 or an auth wall. A moderate occurrence count is FINE here and does not disqualify ' +
+          'it: what disqualifies a phrase is being site chrome that survives an error page, and a spec label ' +
+          'is the opposite of chrome. ' +
+          'TWO WAYS THIS EXACT STRING CAN MISS A PAGE THAT PLAINLY CONTAINS IT, both of which --verify now ' +
+          'reports: the match is CASE-SENSITIVE, so a rendered "Post copy:" is not this string; and ' +
+          'normalize() turns every tag into a space, so `<strong>Post copy</strong>:` becomes "Post copy :" ' +
+          'and the colon stops being adjacent. If the case-insensitive or whitespace-flexible count is ' +
+          'non-zero while the exact count is 0, seed the form the page actually renders — and if only the ' +
+          'colon is the problem, seed "Post copy" without it. Two words naming a spec field are still ' +
+          'content, not chrome.',
+      },
+      {
+        anchor: 'Creative ad specs',
+        scope: 'normalized',
+        why:
+          "FALLBACK. The page's own heading, now that we know what it actually says. Weaker than a spec " +
+          'label for the reason every page title is weaker: a breadcrumb or a related-links rail on a ' +
+          'sibling help page can carry it, so it can survive on something that is not this page. Use it only ' +
+          'if no form of "post copy" verifies.',
+      },
+    ],
   },
   {
     match: 'support.google.com/google-ads/answer/17090561',
+    decision: 'seed',
     anchor: 'Responsive display ads',
     scope: 'normalized',
-    confidence: 'medium',
+    evidence: 'verified against the live page: present 5x in normalized text',
     why:
-      "The help article's subject. Google's help 404 renders a distinct 'page not found' shell, so this " +
-      'should separate them — but Google help is heavily templated and the phrase may also sit in a related-links rail.',
+      "The help article's subject. Five occurrences on a page this size is a phrase used in the body, not a " +
+      "chrome string repeated in nav — and Google's help 404 renders a distinct shell that carries none of them.",
   },
   {
     match: 'facebook.com/business/ads-guide',
-    anchor: 'ads-guide',
-    scope: 'raw',
-    confidence: 'LOW — expect this one to fail verification',
+    decision: 'unanchored',
     why:
-      'THE HARD ONE, and the honest answer may be that this page cannot be watched this way. It is ' +
-      'JS-rendered, so the server HTML likely carries no spec text at all and no anchor drawn from the ' +
-      'visible page can work. This candidate is a raw-body check for the canonical/og URL fragment in the ' +
-      'head, which asserts only "this is the ads-guide document" and not "the content rendered". If ' +
-      "--verify shows the normalized text is near-empty, the anchor is not the fix for this row. Note also " +
-      "that Meta was RETIERED enforced -> recommended, and CLAUDE.md's rule is that pages reporting advice " +
-      'rather than enforced limits do not belong on the watch list — so removing this row may be more ' +
-      'correct than anchoring it.',
+      'DELIBERATELY UNANCHORED. The candidate was a raw-body check for the canonical URL fragment, and it was ' +
+      'rejected on the merits: it asserts that the DOCUMENT was served, not that the CONTENT rendered, so it ' +
+      'would pass on exactly the broken page this feature exists to catch. An anchor that cannot fail is ' +
+      'worse than no anchor, because it reports a guarantee it is not providing.\n' +
+      '       The row is NOT removed here either. It carries 10 (asset, field) pairs in affected_fields, and ' +
+      'affected_fields is the write gate — deleting the row leaves those fields gated by nothing, which is ' +
+      'the same trade as the LinkedIn Carousel gap and not one to make as a side effect of an anchor ' +
+      'migration. Whether this row belongs on the watch list at all is an open decision (Meta was retiered ' +
+      'enforced -> recommended, and the list is for pages publishing enforced limits) and it is logged as ' +
+      'such in CLAUDE.md.',
   },
   {
     match: 'litmus.com/blog/how-to-write-the-perfect-subject-line',
-    anchor: 'subject line',
-    scope: 'normalized',
-    confidence: 'low',
+    decision: 'unanchored',
     why:
-      "The article's own subject, but two words that a blog's related-posts rail and nav will also carry — " +
-      'so it may well survive on a Litmus error page and never fire. If --verify shows a high occurrence ' +
-      'count, that is the tell, and the replacement should be a phrase from the claim we actually cite ' +
-      "(the spec_note says 'Mobile inboxes cut around 40').",
+      'DELIBERATELY UNANCHORED, and NOT for want of a better phrase. A blog post does not change, it AGES — ' +
+      'so hash-diffing it measures the wrong variable, and a working anchor would only make that wrong ' +
+      'measurement fire reliably. Finding a good string here would be effort spent making a bad signal ' +
+      'louder. Blocked on the platform-enforced vs observed-practice split (a source_kind on the watch row), ' +
+      'which is agreed and unbuilt — not on finding a phrase.',
   },
   {
     match: 'litmus.com/blog/the-ultimate-guide-to-preview-text-support',
-    anchor: 'preview text',
-    scope: 'normalized',
-    confidence: 'low-medium',
+    decision: 'unanchored',
     why:
-      "The article's subject, and more distinctive than 'subject line' because preview text is a narrower " +
-      'topic — but the same related-posts risk applies.',
+      'DELIBERATELY UNANCHORED, same reasoning as the subject-line post. Blocked on source_kind, not on ' +
+      'finding a phrase.',
   },
   {
     match: '/admin/test-spec',
+    decision: 'seed',
     anchor: 'Quillio Test Spec',
     scope: 'normalized',
-    confidence: 'certain',
+    evidence: 'verified against the live page: present 1x in normalized text',
     why:
-      'The only one I can verify from source. routes/admin.js serves this page with a fixed ' +
-      '<title>Quillio Test Spec</title> shell around the editable <pre> body, so the anchor sits OUTSIDE ' +
-      'the content an admin edits to trigger a detection — editing the page to test the detector can never ' +
-      'break its own anchor. The title text survives normalize (it is not inside script/style).',
+      'routes/admin.js serves this page with a fixed <title>Quillio Test Spec</title> shell around the ' +
+      'editable <pre> body, so the anchor sits OUTSIDE the content an admin edits to trigger a detection — ' +
+      'editing the page to test the detector can never break its own anchor. One occurrence, exactly as the ' +
+      'source predicts.',
   },
 ];
 
@@ -186,8 +229,82 @@ function occurrences(haystack, needle) {
   }
 }
 
-// --verify: fetch every watched URL and measure the candidate against it. Reads
-// the DB, writes nothing, touches no transaction.
+// DIAGNOSTIC ONLY — the detector does a plain, case-sensitive `includes`. These
+// two exist because the two ways a well-chosen anchor silently misses a page that
+// plainly contains it are a capital letter and a tag boundary, and neither is
+// visible in a bare "present: NO".
+function occurrencesLoose(haystack, needle) {
+  return occurrences(haystack.toLowerCase(), needle.toLowerCase());
+}
+
+// The same characters with optional whitespace between ANY adjacent pair — not
+// merely between words. That distinction is the whole value of this check:
+// `<strong>Post copy</strong>:` normalizes to "Post copy :", where the gap opens
+// before ATTACHED PUNCTUATION, not between the two words. A word-level variant
+// reports "absent in every variant" on a page that plainly renders the label,
+// which is worse than not checking — it reads as proof the string isn't there.
+function occurrencesFlexible(haystack, needle) {
+  const chars = String(needle).replace(/\s+/g, '').split('');
+  if (!chars.length) return 0;
+  const re = new RegExp(chars.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*'), 'gi');
+  return (haystack.match(re) || []).length;
+}
+
+// Fetch a page once for the verify report. Returns null and prints the reason on
+// failure — an unreachable page is `error` to the detector, not `unanchored`, and
+// says nothing either way about the anchor.
+async function fetchForVerify(url) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Quillio-LiveSpecs/1.0 (spec-watch)' },
+    });
+    clearTimeout(timer);
+    const raw = await res.text();
+    console.log(`   HTTP ${res.status}  raw ${raw.length} chars`);
+    if (!res.ok) console.log('   ^ NON-2xx: the detector would already call this `error`, anchor or not.');
+    return raw;
+  } catch (err) {
+    console.log(`   FETCH FAILED: ${err.message}`);
+    console.log('   ^ the detector would call this `error` — unreachable, not unanchored.\n');
+    return null;
+  }
+}
+
+// Measure ONE candidate string against one fetched page.
+function measure(anchor, scope, raw, norm) {
+  const hay = scope === 'raw' ? raw : norm;
+  const exact = occurrences(hay, anchor);
+  const loose = occurrencesLoose(hay, anchor);
+  const flex = occurrencesFlexible(hay, anchor);
+  const other = scope === 'raw' ? occurrences(norm, anchor) : occurrences(raw, anchor);
+
+  console.log(`   ${JSON.stringify(anchor)}  scope=${scope}`);
+  console.log(`      exact (what the detector does): ${exact > 0 ? `yes (${exact}x)` : 'NO'}`);
+  console.log(`      => the detector would ${exact > 0 ? 'PASS' : 'FAIL'} on this string.`);
+  if (exact === 0) {
+    // The useful part of a failure: WHICH near-miss, so the fix is a known edit
+    // rather than another guess.
+    if (loose > 0) {
+      console.log(`      !! present ${loose}x ignoring case — seed the capitalisation the page renders.`);
+    }
+    if (flex > 0) {
+      console.log(`      !! present ${flex}x allowing whitespace anywhere inside it — a tag boundary is ` +
+        'splitting it. normalize() turns every tag into a space, so seed the form it produces, or drop the ' +
+        'punctuation that came adrift.');
+    }
+    if (other > 0) {
+      console.log(`      !! present ${other}x in the OTHER scope (${scope === 'raw' ? 'normalized' : 'raw'}).`);
+    }
+    if (!loose && !flex && !other) console.log('      (absent in every variant — this string is not on the page)');
+  }
+  return exact > 0;
+}
+
+// --verify: fetch every watched URL and measure whatever this file proposes for
+// it. Reads the DB, writes nothing, touches no transaction.
 async function verify(pool) {
   // --verify is meant to be run BEFORE the DDL, so it must work on a table that
   // has none of the three columns yet. 42703 = undefined_column.
@@ -201,57 +318,60 @@ async function verify(pool) {
     console.log(`${TAG} columns not added yet — measuring the candidates in this file.\n`);
     ({ rows } = await pool.query('SELECT id, display_name, source_url FROM spec_watch_list ORDER BY is_test, id'));
   }
-  console.log(`${TAG} verifying ${rows.length} watch entr${rows.length === 1 ? 'y' : 'ies'} against the live pages.\n`);
+  console.log(`${TAG} verifying ${rows.length} watch entr${rows.length === 1 ? 'y' : 'ies'} against the live pages.`);
+  console.log(`${TAG} the detector matches EXACTLY and case-sensitively; the extra counts are diagnostic.\n`);
 
   for (const row of rows) {
     const cand = candidateFor(row.source_url);
     const stored = row.expected_content;
-    const anchor = stored || (cand && cand.anchor) || null;
-    const scope = stored ? row.anchor_scope : (cand && cand.scope) || 'normalized';
-
     console.log(`#${row.id} ${row.display_name || '(unnamed)'}`);
     console.log(`   ${row.source_url}`);
-    if (!anchor) {
-      console.log('   NO CANDIDATE — this entry has no anchor and none is proposed here.\n');
-      continue;
-    }
-    console.log(`   anchor: ${JSON.stringify(anchor)}  scope=${scope}  ${stored ? '(stored)' : `(candidate, confidence: ${cand.confidence})`}`);
 
-    let raw;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(row.source_url, {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'Quillio-LiveSpecs/1.0 (spec-watch)' },
-      });
-      clearTimeout(timer);
-      raw = await res.text();
-      console.log(`   HTTP ${res.status}  raw ${raw.length} chars`);
-      if (!res.ok) console.log('   ^ NON-2xx: the detector would already call this `error`, anchor or not.');
-    } catch (err) {
-      console.log(`   FETCH FAILED: ${err.message}`);
-      console.log('   ^ the detector would call this `error` — unreachable, not unanchored.\n');
+    // A row already anchored in the database is measured as-is. That is the
+    // regression check: an anchor that verified in August and stops verifying in
+    // November is the page changing shape, which is the thing worth knowing.
+    if (stored) {
+      const raw = await fetchForVerify(row.source_url);
+      if (raw === null) continue;
+      const norm = normalize(raw);
+      console.log(`   normalized ${norm.length} chars   (stored anchor)`);
+      measure(stored, row.anchor_scope === 'raw' ? 'raw' : 'normalized', raw, norm);
+      console.log('');
       continue;
     }
 
+    if (!cand) {
+      console.log('   NO CANDIDATE — this URL is not in this file. Nothing is proposed for it.\n');
+      continue;
+    }
+    if (cand.decision === 'unanchored') {
+      // Not measured, on purpose. Fetching it would invite someone to seed the
+      // first string that happens to be present, which is the decision being
+      // declined.
+      console.log('   DELIBERATELY UNANCHORED — not measured.');
+      console.log(`   why: ${cand.why}\n`);
+      continue;
+    }
+
+    const options = cand.decision === 'verify' ? cand.options : [{ anchor: cand.anchor, scope: cand.scope, why: cand.why }];
+    const raw = await fetchForVerify(row.source_url);
+    if (raw === null) continue;
     const norm = normalize(raw);
-    const inRaw = occurrences(raw, anchor);
-    const inNorm = occurrences(norm, anchor);
     console.log(`   normalized ${norm.length} chars`);
-    console.log(`   present in RAW:        ${inRaw > 0 ? `yes (${inRaw}x)` : 'NO'}`);
-    console.log(`   present in NORMALIZED: ${inNorm > 0 ? `yes (${inNorm}x)` : 'NO'}`);
-
-    const wouldPass = scope === 'raw' ? inRaw > 0 : inNorm > 0;
-    console.log(`   => with scope=${scope}, the detector would ${wouldPass ? 'PASS' : 'FAIL'} this entry.`);
     if (norm.length < 200) {
       console.log(`   !! normalized text is only ${norm.length} chars — this page renders almost nothing ` +
         'server-side, which is exactly the failure the anchor exists to catch.');
     }
-    if (!wouldPass && (scope === 'raw' ? inNorm > 0 : inRaw > 0)) {
-      console.log(`   !! it IS present in the other scope — ${scope === 'raw' ? 'normalized' : 'raw'} may be the right one here.`);
+    if (cand.decision === 'verify') {
+      console.log(`   ${options.length} candidates to choose between. why: ${cand.why}`);
     }
-    if (cand && !stored) console.log(`   why: ${cand.why}`);
+    for (const opt of options) {
+      const passed = measure(opt.anchor, opt.scope === 'raw' ? 'raw' : 'normalized', raw, norm);
+      console.log(`      why: ${opt.why}`);
+      if (passed && cand.decision === 'verify') {
+        console.log('      ^ to adopt: set decision to \'seed\' with this anchor, then re-run without --verify.');
+      }
+    }
     console.log('');
   }
   console.log(`${TAG} verify complete — nothing was written.`);
@@ -286,23 +406,40 @@ async function main() {
     }
 
     // Seed ONLY where no anchor is stored, so a value corrected by hand survives
-    // a re-run. This is the whole idempotency story for the data half.
+    // a re-run — and only where the decision is 'seed'. A row left unanchored on
+    // purpose must stay that way through every re-run of this script.
     const { rows } = await client.query(
       'SELECT id, display_name, source_url, expected_content FROM spec_watch_list ORDER BY is_test, id'
     );
     console.log(`\n${TAG} ${rows.length} watch entr${rows.length === 1 ? 'y' : 'ies'}:`);
     let seeded = 0;
+    let pending = 0;
+    let declined = 0;
     let unmatched = 0;
+    const name = (row) => String(row.display_name || '').padEnd(24);
     for (const row of rows) {
       const cand = candidateFor(row.source_url);
       if (row.expected_content) {
-        console.log(`  #${row.id} ${String(row.display_name || '').padEnd(24)} already anchored ${JSON.stringify(row.expected_content)} — left alone`);
+        console.log(`  #${row.id} ${name(row)} already anchored ${JSON.stringify(row.expected_content)} — left alone`);
         continue;
       }
       if (!cand) {
         unmatched++;
-        console.log(`  #${row.id} ${String(row.display_name || '').padEnd(24)} NO CANDIDATE for ${row.source_url}`);
-        console.log('       ^ stays unanchored: still fetched, hashed and compared, and reported as unanchored.');
+        console.log(`  #${row.id} ${name(row)} NO CANDIDATE for ${row.source_url}`);
+        console.log('       ^ this URL is not in this file at all — nobody has looked at it.');
+        continue;
+      }
+      if (cand.decision === 'unanchored') {
+        declined++;
+        console.log(`  #${row.id} ${name(row)} UNANCHORED BY DECISION — not seeded`);
+        console.log(`       ${cand.why}`);
+        continue;
+      }
+      if (cand.decision === 'verify') {
+        pending++;
+        console.log(`  #${row.id} ${name(row)} AWAITING RE-VERIFY — not seeded`);
+        console.log(`       ${cand.why}`);
+        console.log(`       ${cand.options.length} candidates in this file; run --verify to measure them.`);
         continue;
       }
       await client.query('UPDATE spec_watch_list SET expected_content = $1, anchor_scope = $2 WHERE id = $3', [
@@ -311,15 +448,20 @@ async function main() {
         row.id,
       ]);
       seeded++;
-      console.log(`  #${row.id} ${String(row.display_name || '').padEnd(24)} -> ${JSON.stringify(cand.anchor)} scope=${cand.scope} (${cand.confidence})`);
+      console.log(`  #${row.id} ${name(row)} -> ${JSON.stringify(cand.anchor)} scope=${cand.scope}`);
+      console.log(`       ${cand.evidence}`);
     }
 
-    console.log(`\n${TAG} ${seeded} anchored, ${unmatched} left without a candidate.`);
-    if (unmatched > 0) {
+    const unanchored = pending + declined + unmatched;
+    console.log(`\n${TAG} ${seeded} anchored · ${pending} awaiting re-verify · ${declined} unanchored by ` +
+      `decision · ${unmatched} with no candidate at all.`);
+    console.log(`${TAG} the next detection run will report  unanchored: ${unanchored}  out of ${rows.length}.`);
+    if (unanchored > 0) {
       console.log(
         '  An unanchored entry is NOT unwatched and NOT silently passing: the detector still\n' +
           '  fetches, hashes and compares it, and the run counts it under `unanchored` so the gap\n' +
-          '  is visible in the summary rather than absent from it.'
+          '  is visible in the summary rather than absent from it. The three categories above are\n' +
+          '  deliberately separate — only `awaiting re-verify` and `no candidate at all` are to-dos.'
       );
     }
 
@@ -340,7 +482,14 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run only when invoked directly. Requiring this module (the smoke test does, to
+// check the plan and to unit-test the near-miss diagnostics) must NOT connect to
+// a database.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { CANDIDATES, occurrences, occurrencesLoose, occurrencesFlexible, candidateFor };

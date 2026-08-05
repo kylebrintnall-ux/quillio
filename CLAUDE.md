@@ -908,6 +908,22 @@ field that was already compliant. Worth holding in mind before adding a further
 instruction that pushes the same way: **uniformity is the default failure mode of
 an accumulating prompt**, and each individual rule looks free.
 
+**This is the same measurement as the cohesion run's "economy", read from the
+other side — and that is the thing to internalise.** Giving the rescue siblings
+shortened Offer Body 1 from 89 words to 69 and Offer Body 2 from 42 to 31, which
+was recorded above as a win: with the subject and preheader visible the bodies
+stop re-establishing the premise. Stating the Subhead's floor cut its range by
+two thirds, which is a loss. Both are the same event — more instruction or more
+context, less variance in the output — and the sign is decided entirely by
+**what the removed variance was made of**. Redundancy going is a gain; range
+going is a cost. Nothing in either measurement distinguishes them, and no
+in-band/out-of-band count ever will: the Subhead scored 5/5 before and after.
+Only reading the copy told us the best line was the one that disappeared.
+
+The practical consequence: **an A/B that reports compliance is not measuring the
+thing that matters.** When adding an instruction, look at the spread and at the
+extremes, not the hit rate — and read the line you lost.
+
 **Known gap — `generateFieldVariations` receives no per-field guidance at all.**
 Not the tenant's `spec_note`, not the built-in rule, not the tier line: `notes`
 is absent from its signature, from `buildVariationsPrompt`, and from the

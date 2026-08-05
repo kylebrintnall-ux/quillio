@@ -11,6 +11,10 @@
 //   4. a two-step flow -- buildPreview() computes the diff and writes NOTHING;
 //      commitReview() re-validates and writes, only when the route calls it after
 //      the admin's explicit second confirm.
+//   5. a zero-row guard -- an UPDATE matching no live row throws, so the whole
+//      transaction rolls back rather than logging a change nobody received. The
+//      first four gates ask whether an edit is ALLOWED; this one asks whether it
+//      LANDED, which is a different question and the one that was going unasked.
 //
 // commitReview does the value write, the spec_verified_at stamp, the audit log,
 // and the flag status flip in ONE transaction across ALL tenant rows for each
@@ -19,6 +23,18 @@
 const { getPool } = require('../db');
 const { fetchText, normalize } = require('./specDetector');
 const { extractSpecValues } = require('./gemini');
+
+// A refusal this file raises on purpose, as opposed to anything Postgres or the
+// driver throws. commitReview's catch surfaces a refusal's own message to the
+// admin — it is written for them and names what to do — while every other error
+// keeps the generic wording, because a driver message is not something to put in
+// front of a user.
+class SpecWriteRefusal extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SpecWriteRefusal';
+  }
+}
 
 // A field name repeats across assets, so always match the (asset, field) PAIR.
 function pairKey(asset, field) {
@@ -71,12 +87,31 @@ function validateEdit(edit) {
 
 // Current per-tenant values for a (asset, field) pair. Uses a supplied runner
 // (pool or transaction client).
+//
+// ACTIVE ROWS ONLY. Deactivating an asset type is how this schema removes one
+// (db/assets.js; there is no DELETE FROM asset_types anywhere), and an inactive
+// row is invisible to every doc — getTenantAssets filters on is_active, so its
+// values cannot reach a brief, a draft or a review. Counting it here would
+// inflate tenant_count and pad the divergence breakdown with tenants who are not
+// actually affected, and that breakdown exists precisely so an admin can see
+// whether tenants already disagree before deciding what to type. A number that
+// includes dead rows is a number that lies about the blast radius.
+//
+// This is the ONLY read in this file that joins asset_types, and all four
+// callers (getFlagForReview, buildPreview, commitReview's `before` capture, and
+// getSuggestions) go through it — which is why the filter belongs here and not
+// at each call site. The UPDATE in commitReview carries the same predicate.
+//
+// Inert today: nothing retired so far has a tiered field, so no pair reachable
+// through affected_fields has an inactive row behind it. This is the guard for
+// the next retirement, not a fix for a live miscount.
 async function currentValues(runner, asset, field) {
   const res = await runner.query(
     'SELECT at.tenant_id, cf.char_max, cf.spec_note' +
       '  FROM copy_fields cf' +
       '  JOIN asset_types at ON at.id = cf.asset_type_id' +
       ' WHERE at.name = $1 AND cf.field_name = $2' +
+      '   AND at.is_active' +
       ' ORDER BY at.tenant_id',
     [asset, field]
   );
@@ -374,6 +409,12 @@ async function commitReview(flagId, edits, changedBy) {
       params.push(e.field);
       const fieldIdx = params.length;
 
+      // `AND at.is_active` matches currentValues above, and the two must stay in
+      // step: `before` was captured through that helper, so a write reaching a
+      // row the capture skipped would report an overwrite nobody could have seen
+      // coming — and would log a spec_change_log entry for a row no doc reads.
+      // Deliberately still no TENANT predicate: one platform changing a limit
+      // for everyone at once is the designed behaviour, not an oversight.
       const upd = await client.query(
         'UPDATE copy_fields cf' +
           '   SET ' + sets.join(', ') +
@@ -381,10 +422,37 @@ async function commitReview(flagId, edits, changedBy) {
           ' WHERE cf.asset_type_id = at.id' +
           '   AND at.name = $' + assetIdx +
           '   AND cf.field_name = $' + fieldIdx +
+          '   AND at.is_active' +
           ' RETURNING at.tenant_id',
         params
       );
       const tenantCount = upd.rowCount;
+
+      // ZERO ROWS IS A REFUSAL, NOT A RESULT.
+      //
+      // guardEdits has already agreed this pair is in the flag's affected_fields,
+      // so reaching here with no match means the pair names something that is not
+      // in the library any more. Every step after this point then does damage of a
+      // quiet kind: spec_change_log gets a row saying a spec was changed for zero
+      // tenants, the flag flips to 'reviewed' so the queue stops showing it, and
+      // the response says "Written." The admin is told a platform's new limit is
+      // in place. It is not, and nothing will say so again.
+      //
+      // Keyed on the WRITE's own rowCount rather than on `before` being empty:
+      // both carry `AND at.is_active` today and cannot disagree, but the write is
+      // the statement whose effect we are reporting, so it is the one that gets to
+      // say whether it had one.
+      if (tenantCount === 0) {
+        throw new SpecWriteRefusal(
+          `"${e.asset} / ${e.field}" matched no live copy_fields row, so NOTHING was written and ` +
+            `flag #${flag.id} is still pending. That pair is listed in this watch entry's ` +
+            'affected_fields, which was computed once when scripts/migrateAddSpecTables.js seeded ' +
+            'the watch list and is never recomputed — so since then the asset has been renamed, or ' +
+            'every row behind it has been deactivated. The library is not what is wrong here: ' +
+            're-derive affected_fields for this entry (the query is affectedFieldsWhere() in ' +
+            'seedWatchList, scripts/migrateAddSpecTables.js), then approve again.'
+        );
+      }
 
       // WHO JUST GOT OVERWRITTEN. The UPDATE above has no tenant predicate, so it
       // rewrote every tenant's row for this (asset, field) — including any tenant
@@ -470,6 +538,13 @@ async function commitReview(flagId, edits, changedBy) {
     };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    // A refusal is addressed to the admin and says what to do about it, so it is
+    // passed through verbatim. Anything else keeps the generic sentence: a driver
+    // or constraint message is not useful to them and not ours to expose.
+    if (err instanceof SpecWriteRefusal) {
+      console.warn(`[specReview] commit REFUSED flag=${flagId}, rolled back: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
     console.error('[specReview] commit failed, rolled back:', err.message);
     return { ok: false, error: 'write failed -- rolled back, nothing changed' };
   } finally {

@@ -233,7 +233,16 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Guarded so this file can be REQUIRED without running the migration.
+// src/utils/assetMatch.js keeps a table of what replaced each of these names,
+// and a smoke test reads RETIRE below to assert the two cannot fall out of step.
+// Without the guard that test would run a migration (and exit(1) on no
+// DATABASE_URL). Same shape as scripts/migrateSpecIntegrityFixes.js.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { RETIRE };

@@ -7943,6 +7943,259 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
   assert.match(html, /\.msg\.warn\s*\{[^}]*--warn/);
 });
 
+// --- Silent failure 3: a write that lands on nothing reported success ---------
+// spec_watch_list.affected_fields is a snapshot taken once by
+// migrateAddSpecTables.js and never recomputed, and commitReview's UPDATE matches
+// copy_fields by asset NAME (and, since b2e13f2, only through an ACTIVE
+// asset_types row). So a pair whose asset has been renamed, or all of whose rows
+// have been deactivated, matches zero rows — and every step after the UPDATE used
+// to run regardless: a spec_change_log entry recording a limit change for 0
+// tenants, the flag flipped to 'reviewed' so the queue stopped showing it, and
+// "Written. 0 tenant row(s) updated." on screen. An admin was told a platform's
+// new limit was in place when nothing had been written.
+//
+// Live as of the 2026-07-31 audit: the Google watch entry's four pairs all name
+// 'Google DV360 / Responsive Display', which migrateSpecIntegrityFixes.js renamed
+// to 'Google Responsive Display Ad'.
+
+// A pg stub that RECORDS the statements in order and answers by SQL substring.
+// Same idiom as makeFakePool above, but scripted rather than stateful: what is
+// under test is not what the rows contain, it is WHICH statements were issued and
+// whether the transaction ended in COMMIT or ROLLBACK.
+//
+// `matched` is the rowCount the UPDATE reports. Zero is a renamed asset OR a
+// fully deactivated one — commitReview cannot tell those apart, because both are
+// invisible through the same `AND at.is_active` join, which is exactly why the
+// refusal message names both causes.
+function fakeSpecPool({ matched, before = [], pair }) {
+  const log = [];
+  const query = async (sql) => {
+    const flat = String(sql).replace(/\s+/g, ' ').trim();
+    log.push(flat);
+    const has = (...frags) => frags.every((f) => flat.includes(f));
+
+    if (has('FROM spec_review_queue q', 'JOIN spec_watch_list w')) {
+      return {
+        rows: [{
+          id: 7, watch_id: 3, source_url: 'https://support.google.com/google-ads/answer/17090561',
+          old_hash: 'a', new_hash: 'b', status: 'pending', is_test: false,
+          detected_at: new Date(), display_name: 'Google', affected_fields: [pair],
+        }],
+        rowCount: 1,
+      };
+    }
+    if (has('SELECT at.tenant_id')) return { rows: before, rowCount: before.length };
+    if (has('UPDATE copy_fields cf')) {
+      return { rows: Array.from({ length: matched }, (_, i) => ({ tenant_id: 'T' + i })), rowCount: matched };
+    }
+    if (has('INSERT INTO spec_change_log')) return { rows: [], rowCount: 1 };
+    if (has('UPDATE spec_review_queue SET status')) return { rows: [], rowCount: 1 };
+    if (flat === 'BEGIN' || flat === 'COMMIT' || flat === 'ROLLBACK') return { rows: [], rowCount: 0 };
+    throw new Error('fake spec pool: unhandled query → ' + flat);
+  };
+  return { pool: { query, connect: async () => ({ query, release() {} }) }, log };
+}
+
+// Stub `pg`, reload db.js and specReview against it, run fn, restore everything.
+// specReview destructures getPool at load, so it has to be reloaded AFTER db.js
+// is dropped from the cache or it keeps the real one.
+function withFakeSpecPool(opts, fn) {
+  const saved = new Map();
+  const remember = (p) => { if (!saved.has(p)) saved.set(p, require.cache[p]); };
+  const rel = (r) => require.resolve(path.join(__dirname, '..', r));
+  const savedUrl = process.env.DATABASE_URL;
+  const fake = fakeSpecPool(opts);
+
+  const pgPath = require.resolve('pg');
+  remember(pgPath);
+  require.cache[pgPath] = {
+    id: pgPath, filename: pgPath, path: path.dirname(pgPath), loaded: true,
+    exports: { Pool: function () { return fake.pool; } }, children: [], paths: [],
+  };
+  process.env.DATABASE_URL = 'postgres://fake/quillio';
+  for (const r of ['src/db', 'src/services/specReview']) {
+    const p = rel(r);
+    remember(p);
+    delete require.cache[p];
+  }
+  const spec = require(rel('src/services/specReview'));
+
+  return Promise.resolve(fn(spec, fake)).finally(() => {
+    for (const [p, mod] of saved) {
+      if (mod === undefined) delete require.cache[p];
+      else require.cache[p] = mod;
+    }
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  });
+}
+
+const LIVE_PAIR = { asset: 'LinkedIn Single Image Ad', field: 'Intro Text' };
+const RENAMED_PAIR = { asset: 'Google DV360 / Responsive Display', field: 'Short Headline' };
+const DEACTIVATED_PAIR = { asset: 'LinkedIn Single Image Ad — Variant A', field: 'Intro Text' };
+
+test('commitReview: a pair that resolves writes, logs and flips the flag', async () => {
+  await withFakeSpecPool(
+    { matched: 2, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150 }, { tenant_id: 'T2', char_max: 150 }] },
+    async (spec, fake) => {
+      const r = await spec.commitReview(7, [{ ...LIVE_PAIR, char_max: 200 }], 1);
+      assert.strictEqual(r.ok, true);
+      assert.strictEqual(r.flagStatus, 'reviewed');
+      assert.strictEqual(r.written[0].tenant_count, 2);
+      // The success line in admin.html sums tenant_count. With the guard in
+      // place a successful commit can no longer carry a zero.
+      assert.ok(r.written.every((w) => w.tenant_count > 0));
+
+      const joined = fake.log.join(' | ');
+      assert.match(joined, /INSERT INTO spec_change_log/, 'the audit row is written');
+      assert.match(joined, /UPDATE spec_review_queue SET status = 'reviewed'/, 'the flag is flipped');
+      assert.strictEqual(fake.log[fake.log.length - 1], 'COMMIT');
+      assert.ok(!fake.log.includes('ROLLBACK'));
+    }
+  );
+});
+
+// The two zero-row causes, asserted identically on purpose: the renamed asset is
+// the one that is live today, the deactivated one is the case b2e13f2 created and
+// that no watch entry is in yet. Both must refuse, and neither may leave a trace.
+for (const [label, pair] of [['a renamed asset', RENAMED_PAIR], ['a deactivated asset', DEACTIVATED_PAIR]]) {
+  test(`commitReview: ${label} refuses, rolls back, and writes nothing`, async () => {
+    // before is EMPTY for both: currentValues carries the same `AND at.is_active`
+    // join as the write, so a renamed asset and a fully deactivated one look the
+    // same to it. That is the honest shape, not a simplification.
+    await withFakeSpecPool({ matched: 0, pair, before: [] }, async (spec, fake) => {
+      const r = await spec.commitReview(7, [{ ...pair, char_max: 200 }], 1);
+
+      assert.strictEqual(r.ok, false, 'the write is refused, not reported as a 0-row success');
+      assert.ok(!('written' in r), 'and carries no written[] for a UI to sum to zero');
+
+      // The message names the pair, says nothing was written, says the flag is
+      // still pending, and points at the repair — which is re-deriving the watch
+      // entry, NOT editing the library.
+      assert.ok(r.error.includes(`${pair.asset} / ${pair.field}`), 'names the pair');
+      assert.match(r.error, /NOTHING was written/);
+      assert.match(r.error, /still pending/);
+      assert.match(r.error, /affected_fields/);
+      assert.match(r.error, /affectedFieldsWhere\(\) in seedWatchList/);
+      assert.match(r.error, /scripts\/migrateAddSpecTables\.js/);
+      assert.match(r.error, /renamed, or every row behind it has been deactivated/,
+        'names both causes, because this layer cannot tell them apart');
+      assert.match(r.error, /library is not what is wrong/, 'and does not send them to fix copy_fields');
+
+      // Nothing survived the transaction.
+      const joined = fake.log.join(' | ');
+      assert.ok(!joined.includes('INSERT INTO spec_change_log'), 'no audit row for a change nobody received');
+      assert.ok(!joined.includes('UPDATE spec_review_queue SET status'), 'the flag stays pending');
+      assert.strictEqual(fake.log[fake.log.length - 1], 'ROLLBACK');
+      assert.ok(!fake.log.includes('COMMIT'));
+    });
+  });
+}
+
+test('the zero-row guard sits inside the transaction, before the audit row', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+  const at = (needle) => {
+    const i = src.indexOf(needle);
+    assert.ok(i > 0, 'expected to find ' + needle);
+    return i;
+  };
+  // Ordering is what makes the rollback meaningful: BEGIN, the UPDATE, the guard,
+  // then the audit row and the flag flip. Moving the guard below either of the
+  // last two would put it after the writes it exists to prevent.
+  const begin = at("client.query('BEGIN')");
+  const update = at("'UPDATE copy_fields cf'");
+  const guard = at('if (tenantCount === 0)');
+  const audit = at('INSERT INTO spec_change_log');
+  const flip = at("UPDATE spec_review_queue SET status = 'reviewed'");
+  const commit = at("client.query('COMMIT')");
+  assert.ok(begin < update && update < guard, 'the guard reads the write it guards');
+  assert.ok(guard < audit && audit < flip && flip < commit, 'and precedes both writes and the COMMIT');
+
+  // It throws rather than returning, so the existing catch does the ROLLBACK —
+  // one rollback path, not two.
+  assert.match(src.slice(guard, audit), /throw new SpecWriteRefusal/);
+  assert.match(src, /if \(err instanceof SpecWriteRefusal\)/, 'and the catch surfaces its message');
+  // A driver error still gets the generic sentence: not every failure is ours to
+  // put in front of an admin.
+  assert.match(src, /write failed -- rolled back, nothing changed/);
+
+  // And the refusal reaches the screen. api() throws Error(data.error) on a
+  // non-2xx, the route answers 400 with result.error, and the commit button's
+  // catch renders that message — so the admin reads the named pair rather than
+  // "Written. 0 tenant row(s) updated."
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.match(html, /'Write failed: '\s*\+\s*e\.message/, 'the commit catch renders the server message');
+  assert.match(html, /throw new Error\(data\.error/, 'and api\(\) carries it through unaltered');
+});
+
+// --- Re-deriving affected_fields (scripts/rederiveAffectedFields.js) ---------
+// The repair for one stale watch entry. What is worth pinning here is not the
+// derivation — that needs a database — but the four things a reader of the script
+// is relying on: that it cannot be run unscoped, that it carries the is_active
+// divergence deliberately, that it refuses rather than writing an empty gate, and
+// that its Litmus refusal list still matches the rows it protects.
+
+test('rederive: scoped to one entry, with no --all', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  assert.match(src, /--only=<watch id> is required/);
+  assert.ok(!/'--all'|"--all"|argv\.includes\('--all'\)/.test(src), 'no --all is implemented');
+  // Dry run by default, like every other write script in scripts/.
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/);
+  assert.match(src, /ROLLED BACK \(dry run\)/);
+});
+
+test('rederive: the is_active divergence is deliberate, and says so', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  const derive = src.slice(src.indexOf('const DERIVE_SQL'), src.indexOf('function sslFor'));
+  assert.match(derive, /cf\.spec_source = \$1/, 'platform entries derive from the watch URL');
+  assert.match(derive, /AND at\.is_active/, 'and skip deactivated assets');
+
+  // The seed query it diverges from still does NOT carry the predicate — if that
+  // ever changes, this note becomes wrong and should be removed rather than left
+  // describing a difference that no longer exists.
+  const seed = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecTables.js'), 'utf8');
+  const fn = seed.slice(seed.indexOf('async function affectedFieldsWhere'), seed.indexOf('// Insert one watch entry'));
+  assert.ok(!/is_active/.test(fn), 'affectedFieldsWhere still has no is_active filter');
+  assert.match(src, /NOT in affectedFieldsWhere\(\)/, 'and the script names the divergence in its header');
+  assert.match(src, /b2e13f2/, 'and says which change made it necessary');
+});
+
+test('rederive: refuses an empty gate, the test row, and the note-derived rows', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  assert.match(src, /REFUSED: the derivation is EMPTY/);
+  assert.match(src, /REFUSED: this is the is_test entry/);
+  assert.match(src, /REFUSED: this entry is derived from spec_note text/);
+
+  // The Litmus URLs are a REFUSAL list, so they have to match the rows they are
+  // protecting. Read out of the migration rather than retyped, the same way the
+  // retired-name coverage test reads RETIRE out of its migration.
+  const seed = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecTables.js'), 'utf8');
+  const litmus = seed.slice(seed.indexOf('const LITMUS = ['), seed.indexOf('const TEST_ENTRY'));
+  const seedUrls = (litmus.match(/'(https:\/\/[^']+)'/g) || []).map((s) => s.slice(1, -1)).sort();
+  const scriptBlock = src.slice(src.indexOf('const NOTE_DERIVED_URLS'), src.indexOf('// The platform rule'));
+  const scriptUrls = (scriptBlock.match(/'(https:\/\/[^']+)'/g) || []).map((s) => s.slice(1, -1)).sort();
+  assert.strictEqual(seedUrls.length, 2, 'two note-derived entries in the seed');
+  assert.deepStrictEqual(scriptUrls, seedUrls, 'the refusal list matches the seed byte for byte');
+});
+
+test('rederive: the header says it re-freezes, and names what it does not repair', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'rederiveAffectedFields.js'), 'utf8');
+  // Someone running this will reasonably assume it fixed the class. It fixes one
+  // instance, and the added-field case it does not repair has no detection
+  // anywhere — not the zero-row guard, not auditWatchList.
+  assert.match(src, /RE-FREEZES THE SNAPSHOT/);
+  assert.match(src, /DOES NOT REPAIR THE WORST CASE/);
+  assert.match(src, /field ADDED to a watched asset/);
+  assert.match(src, /auditWatchList\.js cannot see it either/);
+  assert.match(src, /fixes one instance of a class/);
+  // And the same two facts are in CLAUDE.md, next to the frozen-snapshot note.
+  const claude = fs.readFileSync(path.join(__dirname, '..', 'CLAUDE.md'), 'utf8');
+  assert.match(claude, /it does not fix the class/);
+  assert.match(claude, /### The durable fix is an open decision/);
+  assert.match(claude, /only as trustworthy as `spec_source`/);
+  assert.match(claude, /### Known gap: LinkedIn Carousel is watched by nobody/);
+});
+
 // --- Asset-library uniqueness (scripts/migrateAddAssetUniqueness.js) ---------
 // There is no UNIQUE constraint on asset_types (tenant_id, name) or copy_fields
 // (asset_type_id, field_name), and duplicates do not fail loudly — they resolve
@@ -8241,6 +8494,146 @@ test('the unmatched message names the gate that actually ran', () => {
   // An absent/unknown source degrades to the weaker but never-false claim.
   assert.strictEqual(totalMissMessage(['X']), totalMissMessage(['X'], 'default'));
   assert.strictEqual(partialMissNotice(['X'], 'nonsense'), partialMissNotice(['X'], 'default'));
+});
+
+test('LiveSpecs reads and writes both skip deactivated asset rows', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+
+  // currentValues is the ONLY read in the file that joins asset_types, and all
+  // four callers go through it — so one predicate here covers the review form,
+  // the preview, the pre-commit capture and the Gemini suggestion pass.
+  const read = src.slice(src.indexOf('async function currentValues'), src.indexOf('// Distinct current value'));
+  assert.match(read, /JOIN asset_types at ON at\.id = cf\.asset_type_id/);
+  assert.match(read, /AND at\.is_active/, 'the shared read filters inactive assets');
+  assert.strictEqual(
+    (src.match(/JOIN asset_types at ON at\.id = cf\.asset_type_id/g) || []).length,
+    1,
+    'still exactly one asset_types read — a second would need its own filter'
+  );
+
+  // The write must agree with the read: `before` is captured through
+  // currentValues, so a row the capture skipped must not then be written.
+  const write = src.slice(src.indexOf("'UPDATE copy_fields cf'"), src.indexOf('RETURNING at.tenant_id'));
+  assert.match(write, /AND at\.is_active/, 'and so does the write');
+});
+
+// --- A retired asset name is told what replaced it ---------------------------
+// f3683f4 retired six asset types. "Add it to your asset library" is the wrong
+// instruction for any of them: following it rebuilds the near-duplicate the
+// prune removed. These assert the redirect fires, replaces (not supplements)
+// that advice, and never fires on an ordinary unknown name.
+
+test('retired names: a form/confirmation phrase is redirected to the template flow', () => {
+  const { totalMissMessage, partialMissNotice } = require('../src/utils/assetMatch');
+
+  const t = totalMissMessage(['confirm page'], 'tenant');
+  assert.match(t, /document template now/, 'says what replaced it');
+  assert.match(t, /import one in Settings/);
+  // The contradictory advice is GONE, not merely followed by a correction.
+  assert.ok(!/add .* to your asset library/i.test(t), 'the wrong instruction is replaced');
+  assert.match(t, /Nothing was built\./, 'still reads as the refusal it is');
+
+  // The phrase the brief actually used is what arrives — none of these is the
+  // retired canonical name, and all of them must land.
+  for (const phrase of ['confirm page', 'the confirmation page', 'Form Confirm Page',
+    'Form and Confirmation Copy', 'form  confirm  page']) {
+    assert.match(totalMissMessage([phrase], 'tenant'), /document template now/, phrase);
+  }
+
+  const p = partialMissNotice(['confirm page'], 'tenant');
+  assert.match(p, /document template now/);
+  assert.match(p, /everything else was built/, 'stays advisory, not a failure');
+  assert.ok(!/Add it to your asset library/i.test(p));
+});
+
+test('retired names: variant-letter phrasing is redirected to a count', () => {
+  const { totalMissMessage } = require('../src/utils/assetMatch');
+
+  const t = totalMissMessage(['variant B'], 'tenant');
+  assert.match(t, /is a count now/);
+  assert.ok(!/add .* to your asset library/i.test(t));
+  assert.match(totalMissMessage(['LinkedIn Single Image Ad — Variant A'], 'tenant'), /is a count now/);
+
+  // Unlike the template redirect, a count works with or without a library, so
+  // this one is true on the bundled-list path too.
+  assert.match(totalMissMessage(['variant C'], 'default'), /is a count now/);
+});
+
+test('retired names: the template redirect is withheld where it cannot be followed', () => {
+  const { totalMissMessage } = require('../src/utils/assetMatch');
+
+  // No tenant → no Settings to import a template into. Promising one would be
+  // the same class of lie the two wordings above exist to avoid.
+  const d = totalMissMessage(['confirm page'], 'default');
+  assert.ok(!/document template now/.test(d), 'not offered on the bundled-list path');
+  assert.match(d, /try different asset names/, 'falls back to the honest generic advice');
+});
+
+test('retired names: a mixed batch keeps both kinds of advice, correctly scoped', () => {
+  const { totalMissMessage, partialMissNotice } = require('../src/utils/assetMatch');
+
+  const t = totalMissMessage(['confirm page', 'TikTok Ad'], 'tenant');
+  assert.match(t, /document template now/, 'the retired one is redirected');
+  assert.match(t, /Add TikTok Ad to your asset library/, 'the unknown one still gets the real fix');
+  // Scoped BY NAME, so the library advice cannot be read as covering the
+  // retired name sitting in the same sentence list.
+  assert.ok(!/Add confirm page to your asset library/i.test(t));
+
+  const p = partialMissNotice(['variant B', 'TikTok Ad'], 'tenant');
+  assert.match(p, /is a count now/);
+  assert.match(p, /Add TikTok Ad to your asset library to include it next time\./);
+});
+
+test('retired names: an ordinary unknown name is untouched, byte for byte', () => {
+  const { totalMissMessage, partialMissNotice } = require('../src/utils/assetMatch');
+
+  // The guarantee that makes this change safe to land: when no retired name is
+  // present the output is exactly what it was before the table existed.
+  assert.strictEqual(
+    totalMissMessage(['TikTok Ad', 'Billboard'], 'tenant'),
+    "Couldn't match these to your asset library: TikTok Ad, Billboard. " +
+      'Nothing was built — add them to your asset library, or try different asset names.'
+  );
+  assert.strictEqual(
+    partialMissNotice(['TikTok Ad'], 'tenant'),
+    "Couldn't match these to your asset library: TikTok Ad. It was left out — " +
+      'everything else was built. Add it to your asset library to include it next time.'
+  );
+
+  // Words that share a stem with a trigger but mean something else. "landing
+  // page", "form" and a plural "variants" are ordinary brief vocabulary; a
+  // trigger loose enough to catch them would fire on half the misses there are.
+  for (const innocent of ['Landing Page', 'Registration Form', 'Confirmation Email',
+    '4 variants', 'Billboard']) {
+    const m = totalMissMessage([innocent], 'tenant');
+    assert.ok(!/document template now|is a count now/.test(m), `no redirect for "${innocent}"`);
+  }
+});
+
+test('retired names: the guidance table covers every name the migration retired', () => {
+  const { RETIRED_GUIDANCE } = require('../src/utils/assetMatch');
+  const { RETIRE } = require('../scripts/migrateRetireDeadAssets');
+  const { normalize } = require('../src/utils/normalize');
+
+  // Derived from the migration rather than hand-typed here, so retiring another
+  // asset without saying what replaced it fails at this line instead of showing
+  // a writer advice that rebuilds what was just removed.
+  assert.ok(Array.isArray(RETIRE) && RETIRE.length > 0, 'the migration still exports RETIRE');
+  for (const [name] of RETIRE) {
+    const hits = RETIRED_GUIDANCE.filter((g) => g.test(normalize(name)));
+    assert.strictEqual(hits.length, 1, `"${name}" is covered by exactly one entry (got ${hits.length})`);
+  }
+
+  // And every entry earns its place — an orphan is a rule for a name nothing
+  // can produce any more.
+  for (const g of RETIRED_GUIDANCE) {
+    assert.ok(
+      RETIRE.some(([name]) => g.test(normalize(name))),
+      `guidance "${g.key}" still speaks for a retired name`
+    );
+  }
 });
 
 // --- The asset-library EDITOR read (read-only) -------------------------------
@@ -9604,6 +9997,10 @@ test('a seeded asset is read-only apart from is_active, decided by NAME', () => 
   // that is the opposite of filtering by it.)
   assert.ok(!/WHERE[\s\S]*tenant_id|AND\s+\S*tenant_id/.test(sql),
     'and still has no tenant filter — which is the whole reason for this rule');
+  // It DOES filter on is_active, which is a different axis: no tenant predicate
+  // (every tenant's row is rewritten) but no dead rows either (a retired asset
+  // is invisible to every doc, so writing to it only pollutes the audit log).
+  assert.match(sql, /AND at\.is_active/, 'and skips deactivated asset rows');
 
   // Enforced in the DB layer against the STORED row, not just the request: a
   // rename in the same call cannot walk past the check.
@@ -13158,7 +13555,7 @@ test('a disabled primary is opaque, and the picker lede is body text', () => {
 // a test can assert on what was WRITTEN rather than only on the returned status.
 // Deliberately dumb: it routes on the SQL text, because the SQL text is the thing
 // under test in half of these cases.
-function fakeSpecPool(rows) {
+function fakeDetectorPool(rows) {
   const queries = [];
   const failures = new Map(); // id -> running consecutive_failures
   const run = async (sql, params) => {
@@ -13202,7 +13599,7 @@ async function runDetectorWith({ rows, fetchImpl }) {
   const realFetch = globalThis.fetch;
   const detPath = require.resolve('../src/services/specDetector');
   const wlPath = require.resolve('../src/db/specWatch');
-  const pool = fakeSpecPool(rows);
+  const pool = fakeDetectorPool(rows);
   db.getPool = () => pool;
   globalThis.fetch = fetchImpl;
   delete require.cache[detPath];

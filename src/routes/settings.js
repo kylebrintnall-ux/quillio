@@ -33,10 +33,12 @@ const {
   createAssetType,
   updateAssetType,
   isSeededAssetName,
+  isTenantEditableTier,
 } = require('../db/assets');
 const {
   normalizeNewAsset,
   normalizeAssetEdit,
+  normalizeHouseDefaults,
   MAX_FIELDS_PER_ASSET,
   MAX_ASSETS_PER_TENANT,
 } = require('../utils/assetInput');
@@ -171,10 +173,30 @@ router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req
     // sent so the UI can show the right affordance, and it is ALSO enforced
     // server-side in updateAssetType against the stored row, because a flag in a
     // response the client can ignore is a hint, not a rule.
-    const decorated = assets.map((a) => ({
-      ...a,
-      editable: !isSeededAssetName(a.name),
-    }));
+    //
+    // TWO AXES NOW, because a seeded asset is no longer uniformly read-only:
+    //   editable        — the whole asset: name, field list, tiers. Tenant-authored only.
+    //   fields[].editable — this FIELD's char_min/char_max/spec_note. True on every
+    //                     field of a tenant asset, and on the house_default fields
+    //                     of a seeded one, which is the change.
+    //   houseEditable   — does this seeded asset have any such field? Drives whether
+    //                     the card offers an Edit button at all; a bundled asset
+    //                     that is all enforced has nothing for a tenant to set.
+    // Per field rather than per asset because the seeded assets are MIXED — the
+    // paid-social ones carry three house defaults beside their platform limits.
+    const decorated = assets.map((a) => {
+      const editable = !isSeededAssetName(a.name);
+      const fields = a.fields.map((f) => ({
+        ...f,
+        editable: editable || isTenantEditableTier(f.spec_type),
+      }));
+      return {
+        ...a,
+        editable,
+        fields,
+        houseEditable: !editable && fields.some((f) => f.editable),
+      };
+    });
     return res.status(200).json({
       success: true,
       available: true,
@@ -184,7 +206,14 @@ router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req
         assets: assets.length,
         active: assets.filter((a) => a.is_active).length,
         fields: assets.reduce((n, a) => n + a.fields.length, 0),
+        // UNCHANGED MEANING: assets the tenant can edit outright. A second count
+        // carries the new state rather than this one widening — a client holding
+        // the old script reads `editable` to mean "has an Edit button that opens
+        // the full form", and quietly making it mean something adjacent is how a
+        // stale tab shows a number that is wrong in a way nobody can see.
         editable: assets.filter((a) => !isSeededAssetName(a.name)).length,
+        // Bundled assets with at least one house_default field — reduced mode.
+        houseEditable: decorated.filter((a) => a.houseEditable).length,
         attached: decorated.filter((a) => a.mapping).length,
         incomplete: decorated.filter((a) => a.mapping && !a.mapping.complete).length,
       },
@@ -328,16 +357,29 @@ router.post('/api/settings/library/asset', settingsWriteLimiter, requireAuth, as
 // BY ID — the ids getTenantLibrary has been returning since the editor read
 // shipped — so a rename is applied to a row rather than inferred from a name.
 //
+// ONE ROUTE, TWO SHAPES, chosen from the STORED row. A tenant-authored asset
+// takes the full edit described above. A SEEDED asset takes the reduced
+// house-default submission — { fields: [{ id, char_min?, char_max?, spec_note?,
+// reset? }] } — and nothing else about it can be touched. Same endpoint because
+// it is the same act from the tenant's side (open the card, change a number,
+// save); a second route would mean a second Save button for a difference that is
+// the server's business, not theirs.
+//
 // Three refusals, all decided from the STORED row rather than the request:
 //   • not this tenant's asset → 404 (never 403; a 403 would confirm the id exists)
-//   • a SEEDED asset          → 403, with the reason said out loud
+//   • a SEEDED asset with no house_default field → 403, with the reason said out loud
 //   • a name another asset already holds → 409 from the unique index
 //
-// The seeded refusal is the one that matters. services/specReview.js updates
-// copy_fields by asset NAME with no tenant filter, so a renamed seeded asset
-// silently stops receiving platform-limit updates while its doc keeps rendering
-// "Platform limit (LinkedIn)" beside a stale number with a live citation link.
-// Hiding the UI is not enough — this route is what makes it true.
+// The seeded restriction is the one that matters, and it is NARROWED here, not
+// removed. services/specReview.js updates copy_fields by asset NAME with no
+// tenant filter, so a renamed seeded asset silently stops receiving
+// platform-limit updates while its doc keeps rendering "Platform limit
+// (LinkedIn)" beside a stale number with a live citation link. That is a fact
+// about the asset's NAME and its FIELD LIST, which is why those stay locked —
+// and it says nothing about a house_default number, which no platform publishes
+// and LiveSpecs has no business writing. The tenant's value also lands in an
+// OVERRIDE column, so the cross-tenant writer keeps its base row and cannot
+// collide with them either way.
 //
 // The body goes through utils/assetInput normalizeAssetEdit, which shares its
 // field allowlist with the create path (literally the same function), so
@@ -358,12 +400,63 @@ router.post('/api/settings/library/asset/:id', settingsWriteLimiter, requireAuth
     if (!current) {
       return res.status(404).json({ success: false, error: 'Asset not found.' });
     }
-    // Reported early so the UI can say why before the user types; the authority
-    // is still updateAssetType, which re-checks against the row it locks.
+    // THE SEEDED BRANCH. Decided here from the stored row so the message can name
+    // the asset; updateAssetType re-decides it from the row it LOCKS, which is
+    // the authority — this read and that write are separate moments.
     if (isSeededAssetName(current.name)) {
-      return res.status(403).json({
-        success: false,
-        error: `"${current.name}" is one of Quillio's built-in asset types. Its fields track platform limits, so it can only be switched on or off — copy it into an asset type of your own to change it.`,
+      const settable = current.fields.filter((f) => isTenantEditableTier(f.spec_type));
+      // A bundled asset whose every field is a platform limit has nothing here
+      // for a tenant to set, and the old refusal is still exactly right for it.
+      if (settable.length === 0) {
+        return res.status(403).json({
+          success: false,
+          error: `"${current.name}" is one of Quillio's built-in asset types, and every one of its fields tracks a platform limit — so it can only be switched on or off. Copy it into an asset type of your own to change it.`,
+        });
+      }
+
+      const house = normalizeHouseDefaults(req.body);
+      if (house.errors.length > 0) {
+        return res.status(400).json({ success: false, error: house.errors[0], errors: house.errors });
+      }
+
+      const hResult = await updateAssetType(tenantId, assetId, { fields: house.fields }, {
+        mode: 'houseDefaultsOnly',
+      });
+      if (!hResult.ok && hResult.reason === 'not_seeded') {
+        // The stored row changed between the read above and the lock — somebody
+        // renamed the asset out of the bundled set mid-request. Not an error to
+        // explain in product terms; ask for the save again against what is there
+        // now, rather than applying a reduced edit to an asset that is no longer
+        // the one the form was built from.
+        return res.status(409).json({
+          success: false,
+          error: 'This asset type changed while you were editing it. Reload and try again.',
+        });
+      }
+      if (!hResult.ok) {
+        return res.status(404).json({ success: false, error: 'Asset not found.' });
+      }
+
+      const afterH = (await getTenantLibrary(tenantId)) || [];
+      const h = hResult.houseDefaults || {};
+      console.log(
+        `[settings] tenant ${tenantId} set house defaults on seeded asset ${assetId} ` +
+          `(${h.changed || 0} changed, ${h.cleared || 0} reset, ${h.locked || 0} locked)`
+      );
+      return res.status(200).json({
+        success: true,
+        id: assetId,
+        mode: 'houseDefaults',
+        // Said back because the form posts every row it rendered, including the
+        // enforced ones it disabled. A count of what was NOT applied is how the
+        // client can tell "saved" from "saved, and quietly ignored half of it".
+        applied: { changed: h.changed || 0, reset: h.cleared || 0, locked: h.locked || 0 },
+        counts: {
+          assets: afterH.length,
+          active: afterH.filter((a) => a.is_active).length,
+          fields: afterH.reduce((n, a) => n + a.fields.length, 0),
+        },
+        limits: { fieldsPerAsset: MAX_FIELDS_PER_ASSET, assetsPerTenant: MAX_ASSETS_PER_TENANT },
       });
     }
 

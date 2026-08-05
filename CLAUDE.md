@@ -249,10 +249,19 @@ returns data instead of posting messages.
 `copy_fields.spec_type` and `copy_fields.spec_source` are **rendered in the
 generated doc**, not inert columns. In `destinations/googleDocs.js`:
 
-- `specTypeLine(specType, sourceName)` turns `spec_type` into the italic tier
-  sentence under a field label — "Platform limit (LinkedIn). Stay within this
-  count." for `enforced`, "Recommended by …" for `recommended`, and nothing for
-  `house_default`/null.
+- `specTypeLine(specType, sourceName, detail, overridden)` turns `spec_type` into
+  the italic tier sentence under a field label — "Platform limit (LinkedIn). Stay
+  within this count." for `enforced`, "Recommended by …" for `recommended`,
+  "House default — set your own in Settings." for `house_default` (or
+  "House default — yours, set in Settings." once the tenant has), and **nothing
+  for null**.
+- **`house_default` and null are no longer the same thing.** They rendered
+  identically for as long as neither could be acted on; the house-default editing
+  work made the difference load-bearing, because null is what every
+  tenant-authored field carries (`createAssetType` never writes `spec_type`) and a
+  custom field has no house default to be told to go and set.
+  `scripts/migrateBackfillSeededSpecType.js` exists to stop a long-lived tenant's
+  bundled fields sitting on the wrong side of it — see "House defaults" below.
 - `specSourceName(specSource)` maps `spec_source` to a display platform name.
   `quillio_default` and anything unrecognized return `null` — the raw
   `spec_source` string is **never** printed.
@@ -263,6 +272,133 @@ generated doc**, not inert columns. In `destinations/googleDocs.js`:
 
 So changing `spec_type` or `spec_source` changes what writers see in the doc.
 Treat both as user-visible.
+
+**The house-default sentence is stripped before drafting.** `parseDoc` recovers
+the italic line into `field.notes`, which is prompt input and nothing else — it
+becomes the field's `Field guidance:`. "Set your own in Settings" addresses the
+tenant, not the writer, and on 144 seeded fields it would be the only guidance
+most of them carry. `stripHouseDefaultLine` removes both wordings at the point of
+recovery, in the same module that composes them, so the doc shows the line and no
+prompt ever contains it. The enforced/recommended lines are **not** stripped:
+those are real constraints on the writing.
+
+## House defaults are the tenant's — what that unlocked, and what it did not
+
+`db/assets.isSeededAssetName` says which **assets** are structurally off-limits;
+`isTenantEditableTier` says which of their **fields** a tenant may put their own
+number on. Both are needed, and they answer different questions:
+
+| | Bundled (seeded) asset | Tenant-authored asset |
+| --- | --- | --- |
+| name, group, creative direction | locked | editable |
+| field list (add / remove / rename / reorder) | locked | editable |
+| `field_type` (chars vs words) | locked | editable |
+| `spec_type` / `spec_source` / `spec_version` | locked | never settable by anyone |
+| `char_min` / `char_max` / `spec_note` on an **`enforced`** or **`recommended`** field | locked | n/a |
+| `char_min` / `char_max` / `spec_note` on a **`house_default`** or **null-tier** field | **the tenant's** | editable |
+
+The structural half stays locked for the reason it always was:
+`services/specReview.js` updates `copy_fields` by asset NAME with no tenant
+filter, so a renamed seeded asset silently stops receiving platform-limit updates
+while its doc keeps rendering "Platform limit (LinkedIn)" beside a stale number
+with a live citation link. That is a fact about the NAME and the FIELD LIST. It
+says nothing about a house-default number, which no platform publishes.
+
+**The tier gate is an allowlist — `{ null, 'house_default' }` — not two `!==`
+checks.** An unrecognised tier is locked, because a fourth tier would only ever
+be added to carry some authority. Failing closed on the authority axis is the
+point. It is decided from the **stored** `spec_type` inside `updateAssetType`'s
+`FOR UPDATE` lock, never from the submission.
+
+`updateAssetType(tenantId, id, asset, { mode })` takes `'full'` (the default —
+unchanged refusal for a seeded asset) or `'houseDefaultsOnly'`. The reduced mode
+against a tenant-authored asset is **also** refused (`reason: 'not_seeded'`):
+silently dropping every rename and delete in the request and reporting success is
+worse than saying no.
+
+### The tenant's value lives in an OVERRIDE column, and this is the load-bearing part
+
+`copy_fields.char_min_override` / `char_max_override` / `spec_note_override`
+(`scripts/migrateAddHouseDefaultOverrides.js`). The **base** columns keep holding
+the seed's value; the reads resolve `COALESCE(<col>_override, <col>)`.
+
+This exists because a tenant's edit written in place would be erased by the next
+seed-alignment migration. They match by asset name across every tenant with **no
+tenant predicate and no value guard** — `migrateAssetSpecFixes.js:251`,
+`migrateOrganicAndGraphicHeadlineSpecs.js:67`. The three carrying
+`IS DISTINCT FROM` guards are no protection: that is an *idempotency* guard, so it
+skips rows already holding the target value and rewrites precisely the rows whose
+value differs — which is every row a tenant edited. `specReview.commitReview` is
+the same story with a live trigger, and the two Litmus watch rows'
+`affected_fields` already cover 15 `house_default` fields.
+
+With overrides, **every past and future writer stays correct without knowing this
+feature exists.** The alternative considered was a `spec_overridden_at` stamp plus
+`AND cf.spec_overridden_at IS NULL` in every future value migration; that puts the
+protection in a WHERE clause somebody has to remember to write, which is the same
+class of silent failure as `affected_fields` going stale.
+
+Three values that are **not** null and must stay that way: `char_min_override = 0`
+means "no minimum", `spec_note_override = ''` means "the tenant deleted the note",
+and `NULL` on any of them means "no override". Folding `''` to NULL would silently
+restore a note the tenant removed.
+
+`spec_overridden` is a three-column OR, **not** "does the effective value differ
+from the seed" — a tenant who deliberately re-typed Quillio's own number has
+overridden it, and a later seed change must not drag them along.
+
+**`specReview.currentValues` reads the BASE column, and that is correct** — the
+LiveSpecs preview is about the spec `commitReview` is going to write, which is the
+base row. The consequence to know: for a tenant who has overridden a field, the
+admin's before/after and its `tenantValueBreakdown` describe a number that tenant's
+docs are not rendering. Nearly moot today (LiveSpecs only ever flags
+`enforced`/`recommended` rows in practice), and left alone rather than "fixed":
+making the preview show effective values would misdescribe the write.
+
+### House rule for any future migration that writes a spec VALUE
+
+Guard on the value you expect to replace, the way
+`scripts/migrateFixLinkedInIntroText.js:48` does:
+
+```sql
+AND cf.char_max = 600
+AND cf.spec_note IS NULL
+```
+
+It touches only rows still holding the exact old value. The override columns
+already make this unnecessary for a tenant's own numbers — that is the point of
+them — so this is belt and braces, and it costs one clause. It also protects the
+case overrides do not: a row some *other* migration moved, which a blind rewrite
+would silently take back.
+
+### Where it surfaces
+
+- **The doc.** The italic line under a `house_default` field says so. Deliberately
+  not an onboarding step: onboarding is where people are lost, and a wall of spec
+  fields in front of someone who has not seen the product work assumes they have
+  house numbers written down. They meet it at the moment they disagree with a
+  number, which is when a setting actually gets adopted.
+- **Settings → Asset library.** A bundled asset with at least one house_default
+  field gets a **Set limits** button (`houseEditable` from the server) opening the
+  reduced form in its own card. Locked rows are **present but carry no controls** —
+  they render their value the way the read-only card does. The row stays (the
+  paid-social assets are mixed, and a form showing half a field list reads as
+  broken); the *inputs* go. Drawn as disabled inputs at 0.6 opacity they still read
+  as enabled on a phone, so the first thing a tenant did on an enforced field was
+  tap a control that could never accept anything. `field_type` on an *editable* row
+  does render **disabled rather than omitted**, styled inert (no chevron, flat
+  fill): the server ignores it on this path, and a control that accepts input the
+  server discards is the failure this panel keeps refusing.
+- **Only rows the tenant TOUCHED are sent.** The form posts a row only once its
+  inputs have fired, and drops the request entirely when nothing changed. Posting
+  every rendered row wrote an override to every house_default field of the asset —
+  each equal to the seed's own value, so nothing looked different — and silently
+  detached all of them from future seed updates. That is the failure the override
+  columns exist to prevent, arriving through the front door. The server already
+  reads an absent value as "leave it alone"; this is the client keeping its side.
+- **`counts.editable` did not change meaning.** It still counts assets that open
+  the *full* form. The new state travels in `counts.houseEditable`. A stale client
+  reads the old key to mean what it always meant.
 
 ## Accounts vs. tenants — what is per-user and what is shared
 
@@ -401,6 +537,42 @@ pass CI and still be broken in the browser. For anything in `public/app.html`
 (2,800+ lines of inline markup, CSS, and vanilla JS), **the device is the test**:
 load the page and click through it.
 
+### The case that justifies that rule — not a hypothetical
+
+The house-default form (`libOpenHouseForm`, `settings.html`) shipped a defect
+that **passed 558 green tests** and was caught in the first minute of a browser
+pass. It posted every row it rendered, so changing ONE number wrote an override
+to every `house_default` field of the asset. Each override equalled the seed's
+own value, so nothing on screen looked wrong — the card grew three "Yours" chips
+instead of one — while all three fields silently detached from every future seed
+update. The server said `3 changed` for a one-field edit. That is the exact
+failure the override columns exist to prevent, arriving through the front door.
+
+Two more from the same pass: locked rows drawn as disabled inputs at 0.55
+opacity read as **enabled** on a phone, and the disabled unit `<select>` read as
+a dropdown failing to open.
+
+None of the three was reachable by a source scan, because none was a question
+about what the source SAYS:
+
+| The defect | What a string test can see | What it took |
+| --- | --- | --- |
+| posts every row | nothing — the bug is a missing condition | run the save and read the DB |
+| dimmed reads as enabled | the CSS rule is present and correct | look at it at 390px |
+| inert control reads as broken | the `disabled` attribute is set | look at it |
+
+So the rule is not "browsers catch more". It is that a source scan can only
+answer *is this line present*, and the three questions worth asking about a form
+are **what does it send**, **what does it look like**, and **what does the
+database hold afterwards**. Ask those three, in a browser, against a real
+Postgres. `git log` for the device-pass commit has the exact setup — the schema
+scripts, the seed, a `connect-pg-simple` session row and a signed cookie — which
+takes about five minutes to stand up and is worth it for anything that writes.
+
+A structural test added AFTER a browser finds something is a tripwire, not
+coverage. Label it as one where you write it, so the next reader does not mistake
+a green suite for a working page.
+
 ## Deploy
 
 Railway via Nixpacks; `npm start` is the start command (also in `railway.json`
@@ -439,6 +611,20 @@ The code's pre-migration tolerances still stand and are still correct — a
 project row created *before* `migrateAddProjectTemplateDraft` has NULL in those
 three columns, so `resolveProjectTemplate` still returns `unlinked` for it and
 still names the script. That is a row-age condition now, not a deployment one.
+
+**Not yet run in production** — the house-default work, in this order (both are
+dry-run by default; pass `--commit` to write):
+
+| Script | What it does |
+| --- | --- |
+| `migrateAddHouseDefaultOverrides.js` | adds the three nullable `*_override` columns to `copy_fields`. Purely additive, no backfill |
+| `migrateBackfillSeededSpecType.js` | `spec_type` NULL → `house_default`, **bundled assets only**, scoped through `db/assets.isSeededAssetName` so it cannot drift from the gate |
+
+Either deploy order is safe. Before the first: both reads catch `42703` and
+report nothing overridden, and a seeded asset is as read-only as it was. Before
+the second: the affected fields are already editable (the gate treats NULL as
+`house_default`) but render no Settings line until it runs. Neither state is
+broken, and neither script needs the other to have run.
 
 ## The review overlay's wording lives in two places — keep them in step
 
@@ -505,6 +691,11 @@ the Google Sheet (and `services/sheets.js`) has been **fully retired** — that
 file no longer exists. A new tenant is seeded from the bundled default library
 (`src/data/defaultAssets.js`) on install. **Postgres is mandatory** —
 `pipeline.generateDoc` throws if a tenant has no asset library (no DB / unseeded).
+
+`getTenantAssets` returns the **effective** value per field —
+`COALESCE(<col>_override, <col>)` — so a tenant's own house-default number is what
+reaches the doc. See "House defaults are the tenant's" above for why the override
+lives in its own column.
 
 Stale-comment warning: several files still mention "the Sheet" in comments
 (`services/gemini.js`, `destinations/googleDocs.js`, `destinations/docBuilder.js`,
@@ -780,24 +971,38 @@ of the seven rows asserting the fetch read the right page; any detected change
 goes to a human before a stored number moves; and email guidance is dated
 observed practice that is never hash-watched.
 
-### The 15 email fields now have no automated update path — accepted 2026-08-05
+### The 15 email fields have no AUTOMATED update path — accepted 2026-08-05
 
 A consequence Kyle accepted when approving `source_kind`, recorded so it is not
 rediscovered as a bug. The 15 `copy_fields` cited to Litmus (10 Subject Line
-pairs + 5 Preheader, across the five seeded email assets) can now be changed only
-by a hand-written migration:
+pairs + 5 Preheader, across the five seeded email assets):
 
-- **No Settings path.** Those five assets are seeded, and `db/assets.js` makes a
-  seeded asset read-only apart from `is_active` (`isSeededAssetName`, derived
-  from the name). A tenant cannot edit `Subject Line 1`'s `char_max`.
 - **No LiveSpecs path.** `guardEdits` only ever runs against a flag, and an
   observed_practice row never produces one. The gate survives in form and becomes
   unreachable.
 
 That is the intended behaviour, not a gap to close: observed practice should
 change when a human re-reads the source and decides it has moved, not when a
-publisher ships a layout tweak. It is written down because "nothing can edit
-these fields" looks like a defect to anyone who meets it without this paragraph.
+publisher ships a layout tweak. It is written down because "nothing updates these
+fields" looks like a defect to anyone who meets it without this paragraph.
+
+**There IS a tenant path now, and this paragraph used to deny it.** All 15 are
+`spec_type = 'house_default'` — the Litmus URL is on `spec_note`, not
+`spec_source`, which is `quillio_default` — so the house-default work makes them
+settable in Settings like any other house default. That is consistent rather than
+contradictory: nobody enforces subject-line length, so the number was always a
+Quillio recommendation a tenant could reasonably disagree with. What stays true is
+that nothing changes them *automatically*. A tenant setting their own writes an
+override and leaves the base row for the hand-written migration to move.
+
+**Watch this pair if `affected_fields` is ever re-derived.** Those 15 pairs sit in
+the two Litmus watch rows' `affected_fields` (derived from `spec_note` text, see
+`migrateAddSpecTables.js:129`), so `guardEdits` would permit `commitReview` to
+write them — cross-tenant, no tenant predicate — if those rows ever produced a
+flag again. They cannot today, because `source_kind = observed_practice` is
+checked before any fetch. The override columns make that survivable rather than
+merely unlikely: `commitReview` writes the base column, a tenant's value is in the
+override, and the tenant's number wins either way.
 
 ### `unconfirmed` is the other silent, terminal status — and it has its own counter
 

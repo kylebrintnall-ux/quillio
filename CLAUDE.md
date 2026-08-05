@@ -612,19 +612,26 @@ project row created *before* `migrateAddProjectTemplateDraft` has NULL in those
 three columns, so `resolveProjectTemplate` still returns `unlinked` for it and
 still names the script. That is a row-age condition now, not a deployment one.
 
-**Not yet run in production** — the house-default work, in this order (both are
-dry-run by default; pass `--commit` to write):
+**The house-default work's migrations have run** (2026-08-05):
 
-| Script | What it does |
+| Script | Result |
 | --- | --- |
-| `migrateAddHouseDefaultOverrides.js` | adds the three nullable `*_override` columns to `copy_fields`. Purely additive, no backfill |
-| `migrateBackfillSeededSpecType.js` | `spec_type` NULL → `house_default`, **bundled assets only**, scoped through `db/assets.isSeededAssetName` so it cannot drift from the gate |
+| `migrateAddHouseDefaultOverrides.js` | 3 columns added, 437 `copy_fields` rows, 0 overrides set |
+| `migrateBackfillSeededSpecType.js` | nothing to do — 47 NULL `spec_type` rows, **all on tenant-authored assets**, correctly left alone |
 
-Either deploy order is safe. Before the first: both reads catch `42703` and
-report nothing overridden, and a seeded asset is as read-only as it was. Before
-the second: the affected fields are already editable (the gate treats NULL as
-`house_default`) but render no Settings line until it runs. Neither state is
-broken, and neither script needs the other to have run.
+The backfill finding zero bundled rows to tier is the good outcome, and it
+settles a question the squashed history could not: production ran
+`migrateAddCopyFieldSpecType` **after** the three field-inserting migrations
+(`migrateAssetSpecFixes`, `migrateAddSubheadField`, `migrateAddGraphicCopyGroup`),
+so the drift the script exists for never occurred here. The 47 remaining NULLs
+are tenant-authored fields, which are NULL **by construction** — `createAssetType`
+never writes `spec_type` — and must stay that way: a custom field has no house
+default to be told to go and set. Re-running the script is a no-op and will keep
+reporting those 47.
+
+The script is worth keeping rather than deleting: it is the repair for a state
+another tenant's database could still be in, and the guard if the three inserting
+migrations are ever re-run against a database that has since been backfilled.
 
 ## The review overlay's wording lives in two places — keep them in step
 

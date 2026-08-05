@@ -52,7 +52,9 @@
 - Make a promise, ask a question, or create a curiosity gap
 - Concrete and specific over vague and aspirational
 - Numbers and specifics earn attention ("3 ways," "in 10 minutes")
-- Avoid setup-and-punchline in tight character limits — there's no room
+- Avoid setup-and-punchline where the limit is too tight to land the payoff — a
+  truncated joke is worse than none. That is a constraint on structure, not on
+  punctuation: a mark that makes a line turn is not a setup.
 - Don't waste characters on your brand name unless it IS the hook
 
 **By length:**
@@ -97,9 +99,7 @@ Where mediums differ:
 
 **Internal punctuation.** A headline may take a colon, an em dash or a question
 mark where the mark earns its place. The rule above removes a full stop; it does
-not remove punctuation that does work inside the line, and it has been read as
-though it removed both — which produces flat declaratives where the sense wanted
-a break.
+not remove punctuation that does work inside the line.
 
 None of these marks is preferred, expected, or a target. Most headlines need
 none. This is a permission, not an instruction: use one where the line turns, and

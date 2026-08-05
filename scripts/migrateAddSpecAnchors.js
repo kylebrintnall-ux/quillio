@@ -42,10 +42,10 @@
 // The first pass of this file carried seven CANDIDATES chosen without being able
 // to see the pages — this repo denies egress to every one of those hosts. They
 // have now been through --verify against the live pages, and the results are
-// folded in below. Three are seeded, one is waiting on a re-verify, three are
-// deliberately left unanchored. Each row says which and why, because "no anchor
-// because nobody got to it" and "no anchor because anchoring it is the wrong
-// answer" are different states and only one of them is a to-do.
+// folded in below. FOUR ARE SEEDED. Three are deliberately left unanchored, each
+// for a stated reason, because "no anchor because nobody got to it" and "no
+// anchor because anchoring it is the wrong answer" are different states and only
+// one of them is a to-do.
 //
 //   node scripts/migrateAddSpecAnchors.js --verify
 //
@@ -89,10 +89,13 @@ const STATEMENTS = [
 //
 //   'seed'       verified present, low occurrence, content rather than chrome.
 //                The seed writes it.
-//   'verify'     the first candidate was wrong and the replacements have not been
-//                measured yet. `options` are what --verify should measure. The
-//                seed writes NOTHING and says so — the row stays unanchored, and
-//                unanchored is a state the detector already handles.
+//   'verify'     a candidate has been proposed but not measured. `options` are
+//                what --verify should measure; the seed writes NOTHING and says
+//                so, leaving the row unanchored, which the detector handles.
+//                NO ROW IS IN THIS STATE TODAY — X was the last one and it now
+//                verifies. The branch stays because the next watch entry added
+//                (the LinkedIn Carousel row, if it is added) starts here, and
+//                because the alternative is seeding an unmeasured guess.
 //   'unanchored' a decision, not a gap. The seed writes nothing and prints the
 //                reason, so the next person reads why rather than assuming the
 //                row was missed.
@@ -110,40 +113,31 @@ const CANDIDATES = [
   },
   {
     match: 'business.x.com/en/help/campaign-setup/creative-ad-specifications',
-    decision: 'verify',
+    decision: 'seed',
+    anchor: 'post copy:',
+    scope: 'normalized',
+    evidence: 'verified against the live page: exact match, 9x in normalized text',
     why:
-      'The first candidate, "Creative ad specifications", was WRONG — and wrong in an instructive way. It ' +
-      "came from the URL slug, not from the page: the page's heading is \"Creative ad specs\". A string that " +
-      'looks like it must be on the page because it is in the address is exactly the kind of plausible-but-' +
-      'absent anchor --verify exists to catch, and it would have failed this entry on its first real run.',
-    options: [
-      {
-        anchor: 'post copy:',
-        scope: 'normalized',
-        why:
-          'PREFERRED. The spec label attached to the limit we actually store — the direct analogue of ' +
-          "LinkedIn's \"Introductory text\". It appears wherever a character limit is stated and cannot " +
-          'appear on a 404 or an auth wall. A moderate occurrence count is FINE here and does not disqualify ' +
-          'it: what disqualifies a phrase is being site chrome that survives an error page, and a spec label ' +
-          'is the opposite of chrome. ' +
-          'TWO WAYS THIS EXACT STRING CAN MISS A PAGE THAT PLAINLY CONTAINS IT, both of which --verify now ' +
-          'reports: the match is CASE-SENSITIVE, so a rendered "Post copy:" is not this string; and ' +
-          'normalize() turns every tag into a space, so `<strong>Post copy</strong>:` becomes "Post copy :" ' +
-          'and the colon stops being adjacent. If the case-insensitive or whitespace-flexible count is ' +
-          'non-zero while the exact count is 0, seed the form the page actually renders — and if only the ' +
-          'colon is the problem, seed "Post copy" without it. Two words naming a spec field are still ' +
-          'content, not chrome.',
-      },
-      {
-        anchor: 'Creative ad specs',
-        scope: 'normalized',
-        why:
-          "FALLBACK. The page's own heading, now that we know what it actually says. Weaker than a spec " +
-          'label for the reason every page title is weaker: a breadcrumb or a related-links rail on a ' +
-          'sibling help page can carry it, so it can survive on something that is not this page. Use it only ' +
-          'if no form of "post copy" verifies.',
-      },
-    ],
+      'The spec label attached to the limit we store — the direct analogue of LinkedIn\'s "Introductory ' +
+      'text". It appears wherever a character limit is stated and cannot appear on a 404 or an auth wall. ' +
+      'Nine occurrences is NOT a mark against it: what disqualifies a phrase is being site chrome that ' +
+      'survives an error page, and a spec label is the opposite of chrome.\n' +
+      '       THE COLON WAS CHECKED, NOT ASSUMED. normalize() turns every tag into a space, so a page ' +
+      'marked up as `<strong>Post copy</strong>:` normalizes to "Post copy :" and this anchor would fail ' +
+      'on a page that plainly renders the label. X puts the colon INSIDE the bold, so normalize() leaves ' +
+      'it adjacent and the exact match holds. If X ever moves the colon outside, drop it and seed ' +
+      '"post copy" — two words naming a spec field are still content, not chrome.\n' +
+      '       The first candidate here, "Creative ad specifications", was WRONG in an instructive way: it ' +
+      'came from the URL slug, not the page, whose heading reads "Creative ad specs". A string that looks ' +
+      'like it must be on the page because it is in the address is exactly the plausible-but-absent anchor ' +
+      '--verify exists to catch, and it would have failed this entry on its first real run.',
+    // Recorded, not seeded. The page's own heading, which verified at 1x. Weaker
+    // than a spec label for the reason every page title is weaker — a breadcrumb
+    // or a related-links rail on a sibling help page can carry it, so it can
+    // survive on something that is not this page. Here so that a future failure
+    // of "post copy:" starts from a measured second choice rather than a fresh
+    // guess.
+    fallback: { anchor: 'Creative ad specs', scope: 'normalized' },
   },
   {
     match: 'support.google.com/google-ads/answer/17090561',
@@ -335,7 +329,15 @@ async function verify(pool) {
       if (raw === null) continue;
       const norm = normalize(raw);
       console.log(`   normalized ${norm.length} chars   (stored anchor)`);
-      measure(stored, row.anchor_scope === 'raw' ? 'raw' : 'normalized', raw, norm);
+      const held = measure(stored, row.anchor_scope === 'raw' ? 'raw' : 'normalized', raw, norm);
+      // A stored anchor that stops verifying is the page changing shape, and the
+      // next question is always "what do we use instead". Measure the recorded
+      // fallback in the same run rather than sending someone back for a second
+      // pass — but only on a failure, so a healthy row stays one line.
+      if (!held && cand && cand.fallback) {
+        console.log('   the stored anchor no longer verifies. Measuring the recorded fallback:');
+        measure(cand.fallback.anchor, cand.fallback.scope === 'raw' ? 'raw' : 'normalized', raw, norm);
+      }
       console.log('');
       continue;
     }

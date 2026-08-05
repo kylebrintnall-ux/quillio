@@ -767,6 +767,58 @@ copy of it. Verified, because it is a tempting and wrong explanation for any
 can exist between two fields of the same asset. What genuinely differs per field
 is the `Field guidance:` line (`fieldGuidanceFor`) and the field's own name.
 
+### LIVE CONTRADICTION in craft.md — §1.4 overrides §2's internal-punctuation rule
+
+§2 now says a headline "may take a colon, an em dash or a question mark where the
+mark earns its place". §1.4, three sections above it and in the ALWAYS-injected
+universal block, says:
+
+> **One idea per line.** Especially in short formats. Don't cram.
+
+A colon or an em dash almost always joins two ideas. So the universal principle
+argues against the specific permission, in the same prompt, every time.
+
+**This is recorded as unresolved, not as resolved.** The permission was approved
+knowing the tension existed; what was not known then is that §1.4 states it
+directly. No rewording of the §2 block can fix it, because the conflict is with a
+rule in another section that is right on its own terms — "don't cram" is good
+advice for a 30-character headline. Whoever picks this up should decide between
+them rather than assume the later, more specific rule wins: nothing in the prompt
+establishes precedence, and the measured behaviour is 0/12 adoption, which is
+what §1.4 would predict.
+
+Related and separate: §2.55 was reworded so it would stop arguing with the same
+permission ("a mark that makes a line turn is not a setup"). That fixed the
+setup-and-punchline collision. It did not touch §1.4.
+
+### An example in craft.md is copied as SYNTAX, not just as a theme
+
+The most concrete evidence in this repo about how examples behave, measured
+2026-08-05 across two independent runs:
+
+- `craft.md` §1.7 — "Specifics beat generalities. **'Save 4 hours a week'** beats
+  'save time.'"
+- `craft.md` §2.54 — "Numbers and specifics earn attention (**'3 ways,' 'in 10
+  minutes'**)"
+
+Both examples are *number + time unit*. §2.54's is specifically
+**`in [number] [unit]`**.
+
+The brief said **"in about a minute"**. The string "60 seconds" appears zero
+times in the brief, the writer prompt, `craft.md` and `voice.md`. Ten of twelve
+generated headlines ended **"in 60 seconds"** — the same preposition, the same
+slot, the same unit class as §2.54's example, and a *more specific* number than
+the brief supplied.
+
+So the model did not take "be specific". It took the sentence pattern, discarded
+the brief's own phrasing, and invented a figure to fill the slot. Two examples in
+two sections agreeing on a shape was enough to make that shape near-universal.
+
+**Before adding an example to `craft.md`, assume its grammar will be reproduced,
+not just its point.** If that would be a bad house style, describe the quality
+instead of demonstrating it — and if a rule cannot be stated without an example,
+that is a signal about the rule.
+
 **Editing `craft.md` — mind the structural coupling.** To save tokens,
 `gemini.js` slices it per asset: everything *except* the
 `## … Writing Across Mediums` section is treated as universal craft and always

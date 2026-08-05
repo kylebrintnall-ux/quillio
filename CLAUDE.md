@@ -831,11 +831,24 @@ same asset both ways, prints the copy side by side). What it showed:
 
 **The limit, and it is ordered.** On a TOTAL parse failure `byKey` is empty, so
 only completed fields contribute: field 1 sees nothing, field 9 sees eight. The
-symptom is visible in the output — AFTER's Subject Line 1 is nearly identical to
-BEFORE's Subject Line 2, and the two headlines still overlap somewhat. Later
-fields gain more than earlier ones and the first field gains nothing. Fixing that
-would mean a second pass over the early fields, which is more calls for the
-rarest case; not done.
+symptom has a fingerprint — AFTER's *first* field reverts to the same generic
+line the BEFORE arm produced over and over. In the recorded run AFTER's Subject
+Line 1 ("Stop rewriting the same brief into six templates") differs from BEFORE's
+Headline (Offer 1) by a single word. Later fields gain more than earlier ones and
+the first field gains nothing. Fixing that would mean a second pass over the
+early fields — more calls, for the rarest case; not done.
+
+**What that measurement is, and is not.** `cohesionAB` forces a TOTAL parse
+failure, which is both the RARE case and the only partially-fixed one. The common
+case — one field missing or over-limit inside an otherwise-good batch — has a
+full `byKey`, so the rescued field sees **all** its siblings and is not subject to
+the ordering limit at all. **The recorded result is therefore a lower bound**, and
+the case that actually happens more often is better than what the output shows.
+
+**Division of labour is improved, not complete.** In the same run, AFTER's Subject
+Line 2 ("Get hours of your week back…") and Headline (Offer 1) ("Get hours back
+with…") still take the same benefit angle. Enough context to stop five fields
+converging on one framing was not enough to stop two.
 
 **Sibling context cannot help a 20–25 character field.** The CTAs came back
 byte-identical in both arms. There are only so many ways to write a 20-character

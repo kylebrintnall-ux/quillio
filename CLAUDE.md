@@ -791,6 +791,34 @@ Subhead (do not echo the headline) — mechanics, invisible in the doc when they
 stop being sent, and nothing errors. It never fired only because all 20 seeded
 instances are `house_default` with a NULL note.
 
+**Known gap — a copy-doc draft kept OVER its limit is invisible.**
+`generateAssetDrafts` marks a field `unenforced` when the single-field rescue
+fails or returns long: the draft is kept and written, but its limit was never
+enforced. `core/pipeline.js` reads that flag and puts it in the **template**
+path's summary ("N of the drafted are OVER LIMIT — the rescue failed").
+`destinations/googleDocs.js` never reads it at all, so on the **copy doc** the
+same condition reaches nobody — not the Slack card, not the web overlay, not the
+project row. Same condition, surfaced on one document and silent on the other.
+Not fixed; recorded so the asymmetry is not mistaken for the copy-doc path being
+unable to produce it.
+
+**Known gap — a failed batch draft silently degrades an asset's COHESION.**
+`generateAssetDrafts` writes every field of an asset in ONE call so they can
+reference each other. When that response fails to parse, `parsed` becomes `{}`
+and every field falls through to `generateFieldDraft` — sequentially, one call
+each — and **that call is not given `siblings`**. `siblingContextBlock` therefore
+emits nothing, so a nine-field asset comes back as nine independently written
+lines with no knowledge of one another. The fields are all present and all within
+their limits, so nothing downstream can tell: `fieldCount` is identical and the
+completion card is identical. `[gemini] BATCH_PARSE_FAIL` in the log is the only
+trace. The rescue loop is sequential, so the fields drafted earlier ARE available
+when the later ones are drafted — passing them as siblings is the shape of the
+fix, and is deliberately not done yet. Do not add a tolerant parse first:
+`extractJsonArray`'s first-`[`-to-last-`]` trick has no working object analogue
+for this shape (first-`{` to last-`}` on `{}{"a":1}` returns the whole malformed
+string), so the repair needs different logic and a real sample to write it
+against.
+
 **Known gap — `generateFieldVariations` receives no per-field guidance at all.**
 Not the tenant's `spec_note`, not the built-in rule, not the tier line: `notes`
 is absent from its signature, from `buildVariationsPrompt`, and from the

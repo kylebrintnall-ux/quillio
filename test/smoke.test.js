@@ -1125,6 +1125,65 @@ test('builtInFieldGuidance forces sentence case for Graphic Headline', () => {
   assert.strictEqual(builtInFieldGuidance('CTA Button'), '');
 });
 
+// A PARSE FAILURE WITH NO SAMPLE IS A BUG YOU CAN ONLY SEE THE SHADOW OF.
+// Seen in production: "Unexpected non-whitespace character after JSON at position
+// 2" on a 9-field asset. That message gives the SHAPE (a complete two-character
+// JSON value with something immediately after it — `{}x`, `[]{…}`, `""…`) and
+// nothing about the content, and `text` was declared inside the try, so the raw
+// response was not merely unlogged: it was out of scope in the catch.
+test('the batch parse failure logs the raw response, greppably and on one line', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  const fn = src.slice(src.indexOf('async function generateAssetDrafts'), src.indexOf('// --- Conceptual variations'));
+  assert.ok(fn.length > 500, 'found generateAssetDrafts');
+
+  // HOISTED. The declaration is above the try, and the assignment inside it.
+  assert.match(fn, /let text = '';\n {2}try \{\n {4}text = await callGemini\(\{/);
+  assert.ok(!/const text = await callGemini/.test(fn), 'no block-scoped redeclaration survives');
+
+  // A token EMITTED from exactly one place, so `grep BATCH_PARSE_FAIL` over a log
+  // window counts occurrences exactly — nothing in this system persists or counts
+  // the event. Comments stripped first: the comment beside it names the token
+  // twice explaining why it is unique, and counting that would be counting the
+  // documentation rather than the emitter.
+  const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.strictEqual((code.match(/BATCH_PARSE_FAIL/g) || []).length, 1, 'emitted from one place');
+  const log = fn.match(/console\.warn\(\s*`\[gemini\] BATCH_PARSE_FAIL[\s\S]*?\);/)[0];
+  for (const key of ['asset=', 'fields=', 'err=', 'len=', 'raw=']) {
+    assert.ok(log.includes(key), `the line carries ${key}`);
+  }
+  // fields is the COST: every field falls through to a sequential single-field
+  // rescue, so fields=9 is nine extra calls.
+  assert.match(log, /fields=\$\{fields\.length\}/);
+  // Every free-text value is JSON.stringify'd, which is what keeps the record on
+  // one line — a raw multi-line dump is unusable where concurrent requests
+  // interleave, and would break the grep this exists for.
+  assert.match(log, /asset=\$\{JSON\.stringify\(assetType\)\}/);
+  assert.match(log, /raw=\$\{JSON\.stringify\(sampleForLog\(text\)\)\}/);
+});
+
+test('sampleForLog bounds the sample from BOTH ends and reports the true length separately', () => {
+  const { sampleForLog } = require('../src/services/gemini');
+
+  // Short responses pass through whole — the shape that produced the real
+  // failure is only a few characters long.
+  assert.strictEqual(sampleForLog('{}x'), '{}x');
+  assert.strictEqual(sampleForLog(''), '');
+  assert.strictEqual(sampleForLog(null), '', 'a failed call leaves text empty, not null-ish garbage');
+  assert.strictEqual(sampleForLog(undefined), '');
+
+  // HEAD AND TAIL, because the two failure shapes live at opposite ends: a
+  // "position N" error is decided in the first characters, and "Unexpected end of
+  // JSON input" means truncation, which only the tail shows.
+  const long = 'H'.repeat(1000) + 'M'.repeat(2000) + 'T'.repeat(400);
+  const s = sampleForLog(long);
+  assert.ok(s.startsWith('H'.repeat(200)), 'keeps the head');
+  assert.ok(s.endsWith('T'.repeat(200)), 'keeps the tail');
+  assert.ok(s.length < long.length, 'and is bounded');
+  // The elision says how much is missing, so a bounded sample never reads as a
+  // short response — and the log line carries len= separately besides.
+  assert.match(s, /…\[2000 more\]…/);
+});
+
 // THE FLOOR REACHES A CHARACTER FIELD'S PROMPT. It never did: lengthClause read
 // charMin only on the words branch, and the batch prompt's per-field line made
 // the same split independently. A tenant set Graphic Headline to 40-60, the doc

@@ -695,6 +695,63 @@ misses are a capital letter and a tag boundary. The gap a tag opens is before
 on a page that plainly renders the label — that is why the flexible variant
 allows whitespace anywhere inside the anchor.
 
+### `unconfirmed` is the other silent, terminal status — and it has its own counter
+
+A hash that moves is refetched once and only flagged if it reproduces. A change
+that doesn't reproduce is `unconfirmed`: no flag, and `current_hash` is left
+where it was. That is right for one-off noise and **wrong forever** for a page
+that genuinely changed *and* varies per request — it reports `unconfirmed` every
+week and never surfaces the change. Until `migrateAddUnconfirmedTracking.js`,
+the branch also cleared `last_error` and reset `consecutive_failures`, so such an
+entry read as perfectly healthy.
+
+| Column | |
+| --- | --- |
+| `consecutive_unconfirmed` | runs in a row with no usable comparison |
+| `last_unconfirmed_reason` | `page varies per request`, or `refetch failed: <reason>` |
+
+**Two counters, not one, because the reset rules differ.** An `unconfirmed` run
+is evidence the URL and anchor are fine — we read the page, twice — so it
+**clears** `consecutive_failures`; sharing one field would make it increment what
+it ought to clear. A `failed` or `error` week says nothing about whether the page
+holds still, so it leaves `consecutive_unconfirmed` **untouched** — neither
+incrementing nor resetting. An entry that goes unconfirmed twice, errors for
+three weeks, then unconfirmed again reads 3, and 3 is the true answer.
+
+`UNCONFIRMED_STREAK_ALERT = 3`: one is the confirm step working as designed, two
+is two bad Mondays, three is a month with no usable comparison. At the threshold
+the entry is counted in `summary.stuck` and its health row turns red. The streak
+is **shown from 1 upward** — the alert is what waits for 3, so a row climbing
+1 → 2 is visible on the way rather than appearing fully formed after a month.
+
+`summary.stuck`, like `summary.unanchored`, is a separate axis and not a status:
+an entry is `unconfirmed` *this run* and stuck *for a month*, and both matter.
+
+The health table's error column is now **Problem** and renders whichever applies
+— `last_error`, else the streak and its reason. One column because a reader asks
+it one question; two counters because the code branches on them.
+
+### Changing `normalize()` re-baselines every affected page — plan for it
+
+`normalize()` hashes the whole page, so any change to it changes the hash of
+every page it affects. On the next run those entries report `changed`, the
+refetch **confirms** (the new normalizer is deterministic, so it reproduces
+perfectly), and the queue fills with review flags for spec changes that did not
+happen. This applies to the selector-scoped work, and equally to the one-line
+fixes that look free — e.g. stripping `<!--…-->` properly before the tag strip.
+
+Two ways to handle it, neither of which is "just ship it":
+
+1. **Suppress flags on the first run after the change** — re-hash and store
+   without comparing, so the new normalizer establishes its own baselines.
+2. **Re-baseline every row deliberately** — clear `current_hash` for the
+   affected entries before deploying, so they take the `baseline` branch, which
+   already writes without flagging.
+
+(2) is less code and reuses a path that exists; (1) is safer if the change lands
+in a deploy nobody is watching. Either way it is a decision to take *with* the
+normalizer change, not after seven false flags.
+
 ### `affected_fields` is a snapshot, and nothing refreshes it
 
 `spec_watch_list.affected_fields` was computed **once**, when

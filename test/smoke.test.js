@@ -13558,6 +13558,7 @@ test('a disabled primary is opaque, and the picker lede is body text', () => {
 function fakeDetectorPool(rows) {
   const queries = [];
   const failures = new Map(); // id -> running consecutive_failures
+  const unconfirmed = new Map(); // id -> running consecutive_unconfirmed
   const run = async (sql, params) => {
     const flat = String(sql).replace(/\s+/g, ' ').trim();
     queries.push({ sql: flat, params: params || [] });
@@ -13573,6 +13574,18 @@ function fakeDetectorPool(rows) {
         throw e;
       }
       return { rows };
+    }
+    // Checked BEFORE the failure clauses: the unconfirmed write carries
+    // `consecutive_failures = 0` too (an unconfirmed run clears the failure
+    // streak), so matching on that first would route it to the wrong branch and
+    // silently return no RETURNING row.
+    if (/consecutive_unconfirmed = COALESCE/.test(flat)) {
+      const id = params[1];
+      const seed = (rows.find((r) => r.id === id) || {}).consecutive_unconfirmed || 0;
+      const n = (unconfirmed.has(id) ? unconfirmed.get(id) : seed) + 1;
+      unconfirmed.set(id, n);
+      failures.set(id, 0);
+      return { rows: [{ consecutive_unconfirmed: n }] };
     }
     if (/consecutive_failures = COALESCE/.test(flat)) {
       const id = params[1];
@@ -13597,23 +13610,45 @@ async function runDetectorWith({ rows, fetchImpl }) {
   const db = require('../src/db');
   const realGetPool = db.getPool;
   const realFetch = globalThis.fetch;
+  const realDelay = process.env.SPEC_REFETCH_DELAY_MS;
   const detPath = require.resolve('../src/services/specDetector');
   const wlPath = require.resolve('../src/db/specWatch');
   const pool = fakeDetectorPool(rows);
   db.getPool = () => pool;
   globalThis.fetch = fetchImpl;
+  // The confirm-on-refetch path sleeps 1.5s by default. The module reads this at
+  // LOAD, and we evict it below, so setting the env here is enough — no fake
+  // timers, no stubbed sleep. It is also why the `|| 1500` this used to use had
+  // to go: 0 is the obvious value to set, and `||` turned it back into 1500.
+  process.env.SPEC_REFETCH_DELAY_MS = '0';
   delete require.cache[detPath];
   delete require.cache[wlPath];
   try {
     const det = require(detPath);
     const out = await det.runDetection();
-    return { out, queries: pool.queries };
+    return { out, queries: pool.queries, det };
   } finally {
     db.getPool = realGetPool;
     globalThis.fetch = realFetch;
+    if (realDelay === undefined) delete process.env.SPEC_REFETCH_DELAY_MS;
+    else process.env.SPEC_REFETCH_DELAY_MS = realDelay;
     delete require.cache[detPath];
     delete require.cache[wlPath];
   }
+}
+
+// A fetch stub that answers each successive call from a list. The confirm path
+// fetches the same URL twice, so "what the page did between our two fetches" is
+// just the next entry. A string is a 200 with that body; a number is that status.
+function fetchSequence(...steps) {
+  let i = 0;
+  return async () => {
+    const step = steps[Math.min(i, steps.length - 1)];
+    i += 1;
+    if (typeof step === 'number') return { ok: false, status: step, text: async () => '' };
+    if (step instanceof Error) throw step;
+    return { ok: true, status: 200, text: async () => step };
+  };
 }
 
 const okResponse = (body) => async () => ({ ok: true, status: 200, text: async () => body });
@@ -13636,6 +13671,11 @@ function watchRow(over) {
       expected_content: 'Introductory text',
       anchor_scope: 'normalized',
       consecutive_failures: 0,
+      // A FULLY MIGRATED row — both migrations applied. The pre-migration tests
+      // build their rows literally instead, because the signal the detector
+      // reads is the KEY being absent, which an override cannot express.
+      consecutive_unconfirmed: 0,
+      last_unconfirmed_reason: null,
     },
     over || {}
   );
@@ -13828,7 +13868,10 @@ test('the anchor check precedes every comparison branch', () => {
   }
 });
 
-test('specWatch.getWatchList degrades to the pre-anchor columns', async () => {
+// Two independent migrations add columns to this table, so there are three
+// states a database can be in and getWatchList has to land in the right one.
+// `absent` is the set of columns this fake database does not have.
+async function watchListAgainst(absent) {
   const wlPath = require.resolve('../src/db/specWatch');
   const db = require('../src/db');
   const realGetPool = db.getPool;
@@ -13836,25 +13879,54 @@ test('specWatch.getWatchList degrades to the pre-anchor columns', async () => {
   db.getPool = () => ({
     query: async (sql) => {
       asked.push(String(sql).replace(/\s+/g, ' ').trim());
-      if (/expected_content/.test(sql)) {
-        const e = new Error('column "expected_content" does not exist');
-        e.code = '42703';
-        throw e;
+      for (const col of absent) {
+        if (new RegExp(`\\b${col}\\b`).test(sql)) {
+          const e = new Error(`column "${col}" does not exist`);
+          e.code = '42703';
+          throw e;
+        }
       }
       return { rows: [{ id: 1 }] };
     },
   });
   delete require.cache[wlPath];
   try {
-    const rows = await require(wlPath).getWatchList();
-    assert.strictEqual(rows.length, 1);
-    assert.ok(!('consecutive_failures' in rows[0]),
-      'the fallback must NOT default the columns in — key presence is the signal the detector reads');
-    assert.strictEqual(asked.length, 2, 'tried the new shape, then the old one');
+    return { rows: await require(wlPath).getWatchList(), asked };
   } finally {
     db.getPool = realGetPool;
     delete require.cache[wlPath];
   }
+}
+
+test('specWatch.getWatchList degrades one migration at a time', async () => {
+  // Fully migrated: one query, every column.
+  const full = await watchListAgainst([]);
+  assert.strictEqual(full.asked.length, 1);
+  assert.match(full.asked[0], /consecutive_unconfirmed/);
+
+  // Anchors run, unconfirmed tracking not: falls exactly one tier.
+  const mid = await watchListAgainst(['consecutive_unconfirmed', 'last_unconfirmed_reason']);
+  assert.strictEqual(mid.asked.length, 2, 'tried the newest shape, then the anchor shape');
+  assert.match(mid.asked[1], /expected_content/, 'and kept the anchor columns');
+  assert.ok(!('consecutive_unconfirmed' in mid.rows[0]),
+    'the fallback must NOT default the columns in — key presence is the signal the detector reads');
+
+  // Neither migration run: falls all the way to the base columns.
+  const base = await watchListAgainst([
+    'expected_content', 'anchor_scope', 'consecutive_failures',
+    'consecutive_unconfirmed', 'last_unconfirmed_reason',
+  ]);
+  assert.strictEqual(base.asked.length, 3);
+  assert.ok(!/expected_content|consecutive/.test(base.asked[2]));
+  assert.ok(!('consecutive_failures' in base.rows[0]));
+});
+
+test('specWatch.getWatchList does NOT swallow a broken table', async () => {
+  // A missing base column is not a pre-migration deploy, it is a broken table.
+  // Returning [] there would report an empty watch list — nothing to check, all
+  // clear — which is the same silent-success shape this whole subsystem keeps
+  // producing. It must throw.
+  await assert.rejects(() => watchListAgainst(['source_url']), /source_url/);
 });
 
 test('migrateAddSpecAnchors adds the three columns and seeds idempotently', () => {
@@ -13978,4 +14050,387 @@ test('the admin health page shows anchor state and failure runs', () => {
   assert.match(html, /w\.anchored\?'yes':'none'/);
   assert.match(html, /failed run/, 'a run of failures is visible without reading the database');
   assert.match(html, /unanchored/, 'and the summary line says how many entries are unanchored');
+});
+
+// --- The original detector path: fetch → normalize → hash → compare ----------
+//
+// The July audit found zero tests referencing specDetector, runDetection,
+// hashText or REFETCH, and the path has been modified twice since. These pin it.
+//
+// NAMING CONVENTION. A test whose title starts KNOWN DEFECT / KNOWN GAP /
+// SUSPECT pins behaviour we believe is WRONG, so that fixing it reads as "these
+// tests described the old behaviour and change together" rather than "the change
+// broke twelve tests". Each says what it is waiting on. `grep "KNOWN DEFECT\|
+// KNOWN GAP\|SUSPECT" test/smoke.test.js` lists the debt without reading code.
+
+test('hashText: stable for identical input, different for different input', () => {
+  const { hashText } = require('../src/services/specDetector');
+  assert.strictEqual(hashText('LinkedIn intro text 150'), hashText('LinkedIn intro text 150'));
+  assert.notStrictEqual(hashText('150'), hashText('220'));
+  assert.match(hashText('x'), /^[0-9a-f]{64}$/, 'sha256, hex');
+  // Derived, never pasted. A literal here would be a second source of truth for
+  // a value the code computes, and the only way it could disagree is silently.
+  assert.strictEqual(hashText(''), require('crypto').createHash('sha256').update('', 'utf8').digest('hex'));
+});
+
+test('normalize: script bodies and whitespace churn do not change the hash', () => {
+  const { normalize, hashText } = require('../src/services/specDetector');
+  const h = (html) => hashText(normalize(html));
+  const base = '<html><body><h1>Intro</h1><p>150 characters</p></body></html>';
+
+  // The two things the middle-ground strip exists to absorb.
+  assert.strictEqual(h(base), h(base.replace('<h1>', '<h1  >').replace('</p>', '</p>\n\n\t  ')),
+    'whitespace and attribute spacing are absorbed');
+  assert.strictEqual(
+    h('<script>var t=' + Date.now() + ';</script>' + base),
+    h('<script>var t=0;</script>' + base),
+    'a script BODY changes on every request and must not move the hash'
+  );
+  assert.strictEqual(h('<style>.a{color:red}</style>' + base), h('<style>.a{color:blue}</style>' + base));
+
+  // And the thing it must NOT absorb, or the detector has no job.
+  assert.notStrictEqual(h(base), h(base.replace('150', '220')), 'a spec number moves the hash');
+});
+
+test('KNOWN DEFECT — whole-page normalization: a footer year rollover reads as a spec change', () => {
+  // WAITING ON: selector-scoped normalization (hash only the spec region).
+  // These three assertions describe today's behaviour and are expected to be
+  // INVERTED by that work — they are not a statement that this is right.
+  // The audit established each of them by running fixtures; this pins them.
+  const { normalize, hashText } = require('../src/services/specDetector');
+  const h = (html) => hashText(normalize(html));
+  const page = (nav, footer, banner) =>
+    `<nav>${nav}</nav><main><h1>Intro</h1><p>150 characters</p></main>` +
+    `<div class="promo">${banner}</div><footer>© ${footer} Example</footer>`;
+  const control = page('Products Pricing', '2026', '');
+
+  assert.notStrictEqual(h(control), h(page('Products Pricing Careers', '2026', '')),
+    'a new nav link reads as a change');
+  assert.notStrictEqual(h(control), h(page('Products Pricing', '2027', '')),
+    'a footer year rollover reads as a change — this one fires on 1 January, everywhere at once');
+  assert.notStrictEqual(h(control), h(page('Products Pricing', '2026', 'Black Friday')),
+    'an A/B banner reads as a change');
+
+  // The spec text is identical in all four. That is the whole complaint.
+  for (const html of [control, page('Products Pricing Careers', '2026', '')]) {
+    assert.match(normalize(html), /150 characters/);
+  }
+});
+
+test('KNOWN GAP — normalize() leaks residue when a tag or comment contains ">"', () => {
+  // WAITING ON: the same selector-scoped normalization work. Filed as evidence
+  // for it, since a leaked value that varies per request is a page we can never
+  // confirm — see the unconfirmed streak.
+  //
+  // NOT MEASURED IN PRODUCTION. These are fixtures. Whether any of the seven
+  // live watch pages actually carries a '>' inside a comment or attribute is
+  // UNKNOWN — this environment has no egress to those hosts, and nothing has
+  // checked. Do not read this test as evidence the leak is firing.
+  const { normalize } = require('../src/services/specDetector');
+  assert.strictEqual(normalize('<a title="a > b">Link</a> tail'), 'b">Link tail',
+    'the tag regex stops at the first ">" and the rest of the attribute becomes text');
+  assert.strictEqual(normalize('<!-- cache HIT > 2026-08-05T12:00 -->Body'), '2026-08-05T12:00 -->Body',
+    'so a CDN cache comment can leak a per-request timestamp into the hashed text');
+  assert.strictEqual(normalize('<!-- cache HIT 2026 -->Body'), 'Body',
+    'a comment WITHOUT a ">" inside is stripped cleanly — which is why this is easy to miss');
+  assert.strictEqual(normalize('<script>var spec=280;Body'), 'var spec=280;Body',
+    'an unclosed <script> has its whole body hashed as visible text');
+  assert.notStrictEqual(normalize('<p>a&nbsp;b</p>'), normalize('<p>a b</p>'),
+    'entities are never decoded, so &nbsp; and a real NBSP are different pages');
+});
+
+test('KNOWN GAP — a redirect is followed and never noticed', () => {
+  // WAITING ON: a decision. fetch defaults to redirect:'follow' and res.url is
+  // never inspected, so a platform that 301s its whole help centre to a hub page
+  // returns 200, hashes fine, reads as one big `changed`, then `unchanged`
+  // forever — watching a page that is not the one the row names.
+  // The anchor is the only thing that would catch it, which covers four of the
+  // seven rows and none of the three deliberately left unanchored.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specDetector.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function fetchText'), src.indexOf('function hasAnchorColumns'));
+  assert.ok(!/res\.url/.test(fn), 'nothing compares the final URL to the requested one');
+  assert.ok(!/redirect:/.test(fn), 'and nothing sets redirect:manual — this is the default follow');
+});
+
+test('fetchText: a non-2xx throws with the status, a 2xx returns the body', async () => {
+  const { fetchText } = require('../src/services/specDetector');
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  try {
+    globalThis.fetch = async (url, opts) => {
+      seen.push(opts);
+      return { ok: true, status: 200, text: async () => 'BODY' };
+    };
+    assert.strictEqual(await fetchText('https://example.test/'), 'BODY');
+    assert.strictEqual(seen[0].headers['User-Agent'], 'Quillio-LiveSpecs/1.0 (spec-watch)',
+      'the watcher identifies itself — a page owner blocking us should be able to tell who we are');
+    assert.ok(seen[0].signal, 'and the timeout AbortSignal is wired');
+
+    globalThis.fetch = async () => ({ ok: false, status: 503, text: async () => '' });
+    await assert.rejects(() => fetchText('https://example.test/'), /status 503/,
+      'the status reaches last_error, so "503 every week" is diagnosable from the row');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// The five original statuses, each asserted on WHAT IT WROTE rather than on the
+// string it returned. That distinction is the lesson of the zero-row write bug
+// the audit found: a function that did nothing returns a success-shaped object
+// just as happily as one that worked.
+const SPEC_PAGE = '<html><body><h2>Introductory text</h2><p>Intro Text 150 characters</p></body></html>';
+const SPEC_PAGE_EDITED = SPEC_PAGE.replace('150', '220');
+
+function pageHash(html) {
+  const { normalize, hashText } = require('../src/services/specDetector');
+  return hashText(normalize(html));
+}
+
+test('detector: baseline advances the hash and writes no flag', async () => {
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: null })],
+    fetchImpl: fetchSequence(SPEC_PAGE),
+  });
+  assert.strictEqual(out.results[0].status, 'baseline');
+  const writes = queries.filter((q) => /^UPDATE/i.test(q.sql));
+  assert.strictEqual(writes.length, 1);
+  assert.match(writes[0].sql, /SET current_hash = \$1/);
+  assert.strictEqual(writes[0].params[0], pageHash(SPEC_PAGE), 'and it stores the hash of what it read');
+  assert.strictEqual(queries.filter((q) => /INSERT INTO spec_review_queue/i.test(q.sql)).length, 0);
+});
+
+test('detector: unchanged writes neither the hash nor a flag', async () => {
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: pageHash(SPEC_PAGE) })],
+    fetchImpl: fetchSequence(SPEC_PAGE),
+  });
+  assert.strictEqual(out.results[0].status, 'unchanged');
+  const writes = queries.filter((q) => /^UPDATE/i.test(q.sql));
+  assert.strictEqual(writes.length, 1);
+  assert.ok(!/current_hash/.test(writes[0].sql), 'the baseline is not rewritten with the same value');
+  assert.match(writes[0].sql, /last_checked_at = NOW\(\)/);
+  assert.strictEqual(queries.filter((q) => /INSERT INTO spec_review_queue/i.test(q.sql)).length, 0);
+});
+
+test('detector: changed is the ONLY status that both flags and advances', async () => {
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: pageHash(SPEC_PAGE), id: 42, is_test: false })],
+    // Same body twice: the refetch reproduces, so the change confirms.
+    fetchImpl: fetchSequence(SPEC_PAGE_EDITED, SPEC_PAGE_EDITED),
+  });
+  assert.strictEqual(out.results[0].status, 'changed');
+
+  // Order matters: the flag and the hash advance in ONE transaction, flag first.
+  // Reversed, a crash between them loses the flag and the change is never seen
+  // again — the hash would already agree with the new page.
+  const sqls = queries.map((q) => q.sql);
+  const begin = sqls.findIndex((s) => s === 'BEGIN');
+  const insert = sqls.findIndex((s) => /INSERT INTO spec_review_queue/i.test(s));
+  const advance = sqls.findIndex((s) => /SET current_hash/.test(s));
+  const commit = sqls.findIndex((s) => s === 'COMMIT');
+  assert.ok(begin >= 0 && begin < insert && insert < advance && advance < commit, sqls.join(' | '));
+
+  const flag = queries.find((q) => /INSERT INTO spec_review_queue/i.test(q.sql));
+  assert.strictEqual(flag.params[0], 42, 'the flag names the watch row');
+  assert.strictEqual(flag.params[2], pageHash(SPEC_PAGE), 'old hash');
+  assert.strictEqual(flag.params[3], pageHash(SPEC_PAGE_EDITED), 'new hash');
+});
+
+test('detector: a flag insert that fails rolls back and does not advance the hash', async () => {
+  // The transaction is the point. A flag written without the hash advancing
+  // re-flags forever; a hash advanced without the flag loses the change.
+  const rows = [watchRow({ current_hash: pageHash(SPEC_PAGE) })];
+  const db = require('../src/db');
+  const realGetPool = db.getPool;
+  const realFetch = globalThis.fetch;
+  const realDelay = process.env.SPEC_REFETCH_DELAY_MS;
+  const detPath = require.resolve('../src/services/specDetector');
+  const wlPath = require.resolve('../src/db/specWatch');
+  const sqls = [];
+  const client = {
+    query: async (sql) => {
+      sqls.push(String(sql).replace(/\s+/g, ' ').trim());
+      if (/INSERT INTO spec_review_queue/i.test(sql)) throw new Error('flag insert exploded');
+      return { rows: [] };
+    },
+    release() {},
+  };
+  db.getPool = () => ({
+    query: async (sql) => {
+      sqls.push(String(sql).replace(/\s+/g, ' ').trim());
+      return /^SELECT/i.test(String(sql)) ? { rows } : { rows: [{ consecutive_failures: 1 }] };
+    },
+    connect: async () => client,
+  });
+  globalThis.fetch = fetchSequence(SPEC_PAGE_EDITED, SPEC_PAGE_EDITED);
+  process.env.SPEC_REFETCH_DELAY_MS = '0';
+  delete require.cache[detPath];
+  delete require.cache[wlPath];
+  try {
+    const out = await require(detPath).runDetection();
+    assert.strictEqual(out.results[0].status, 'error', 'the row reports error, and the run continues');
+    assert.match(out.results[0].error, /flag insert exploded/);
+    assert.ok(sqls.includes('ROLLBACK'));
+    assert.ok(!sqls.includes('COMMIT'));
+    assert.ok(!sqls.some((s) => /SET current_hash/.test(s)), 'the baseline never moved');
+  } finally {
+    db.getPool = realGetPool;
+    globalThis.fetch = realFetch;
+    if (realDelay === undefined) delete process.env.SPEC_REFETCH_DELAY_MS;
+    else process.env.SPEC_REFETCH_DELAY_MS = realDelay;
+    delete require.cache[detPath];
+    delete require.cache[wlPath];
+  }
+});
+
+test('detector: a hash that moves and does not reproduce is unconfirmed, and does not advance', async () => {
+  // Two different bodies: the confirm refetch disagrees with the first fetch.
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: pageHash(SPEC_PAGE) })],
+    fetchImpl: fetchSequence(SPEC_PAGE_EDITED, SPEC_PAGE_EDITED + '<p>nonce 7</p>'),
+  });
+  assert.strictEqual(out.results[0].status, 'unconfirmed');
+  assert.ok(!queries.some((q) => /SET current_hash/.test(q.sql)),
+    'the baseline must not advance to a value we could not reproduce');
+  assert.strictEqual(queries.filter((q) => /INSERT INTO spec_review_queue/i.test(q.sql)).length, 0);
+  assert.strictEqual(out.results[0].unconfirmed_reason, 'page varies per request');
+  assert.strictEqual(out.results[0].consecutive_unconfirmed, 1);
+});
+
+test('detector: the two unconfirmed causes are told apart', async () => {
+  // The refetch failing and the page varying are one status and two problems.
+  // "This page has a nonce" needs normalization work; "the site was down for the
+  // 1.5s between our fetches" needs nothing at all.
+  const { out } = await runDetectorWith({
+    rows: [watchRow({ current_hash: pageHash(SPEC_PAGE) })],
+    fetchImpl: fetchSequence(SPEC_PAGE_EDITED, 503),
+  });
+  assert.strictEqual(out.results[0].status, 'unconfirmed');
+  assert.strictEqual(out.results[0].unconfirmed_reason, 'refetch failed: status 503');
+});
+
+test('detector: the unconfirmed streak climbs, alerts at the threshold, and resets on a definite answer', async () => {
+  const { UNCONFIRMED_STREAK_ALERT } = require('../src/services/specDetector');
+  const at = (stored) =>
+    runDetectorWith({
+      rows: [watchRow({ current_hash: pageHash(SPEC_PAGE), consecutive_unconfirmed: stored })],
+      fetchImpl: fetchSequence(SPEC_PAGE_EDITED, SPEC_PAGE_EDITED + '<p>nonce</p>'),
+    });
+
+  // Visible from 1, NOT held back until the alert — a row climbing 1 -> 2 is the
+  // early signal, and hiding it would make a month of drift appear fully formed.
+  const first = await at(0);
+  assert.strictEqual(first.out.results[0].consecutive_unconfirmed, 1);
+  assert.strictEqual(first.out.summary.stuck, 0, 'one is the confirm step working as designed');
+
+  const atAlert = await at(UNCONFIRMED_STREAK_ALERT - 1);
+  assert.strictEqual(atAlert.out.results[0].consecutive_unconfirmed, UNCONFIRMED_STREAK_ALERT);
+  assert.strictEqual(atAlert.out.summary.stuck, 1, 'and a month of it is not');
+  assert.strictEqual(atAlert.out.summary.unconfirmed, 1, 'stuck is an axis, not a status');
+
+  // A definite answer clears it. Anything else would leave "stuck for a month"
+  // outliving the month.
+  const recovered = await runDetectorWith({
+    rows: [watchRow({ current_hash: pageHash(SPEC_PAGE), consecutive_unconfirmed: 9 })],
+    fetchImpl: fetchSequence(SPEC_PAGE),
+  });
+  assert.strictEqual(recovered.out.results[0].status, 'unchanged');
+  assert.strictEqual(recovered.out.results[0].consecutive_unconfirmed, 0);
+  assert.match(recovered.queries.find((q) => /^UPDATE/i.test(q.sql)).sql, /consecutive_unconfirmed = 0/);
+});
+
+test('detector: a week we could not read leaves the unconfirmed streak alone', async () => {
+  // THE reason the two counters are separate. An error says nothing about
+  // whether the page holds still, so it must neither increment nor reset the
+  // streak — and a stuck entry that errors this week still reports what it was
+  // stuck on rather than going quiet.
+  const { out, queries } = await runDetectorWith({
+    rows: [
+      watchRow({
+        current_hash: pageHash(SPEC_PAGE),
+        consecutive_unconfirmed: 4,
+        last_unconfirmed_reason: 'page varies per request',
+      }),
+    ],
+    fetchImpl: fetchSequence(500),
+  });
+  assert.strictEqual(out.results[0].status, 'error');
+  assert.strictEqual(out.results[0].consecutive_unconfirmed, 4, 'carried, not reset and not incremented');
+  assert.strictEqual(out.results[0].unconfirmed_reason, 'page varies per request');
+  assert.strictEqual(out.summary.stuck, 1, 'and it still counts as stuck');
+  const write = queries.find((q) => /^UPDATE/i.test(q.sql));
+  assert.ok(!/consecutive_unconfirmed/.test(write.sql), 'the write does not touch the streak');
+  assert.match(write.sql, /consecutive_failures = COALESCE/, 'only the failure count moves');
+});
+
+test('detector: an unconfirmed run CLEARS the failure count', async () => {
+  // The mirror image, and the other half of why one shared counter cannot work:
+  // we read the page twice, so the URL and the anchor are demonstrably fine.
+  const { queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: pageHash(SPEC_PAGE), consecutive_failures: 6 })],
+    fetchImpl: fetchSequence(SPEC_PAGE_EDITED, SPEC_PAGE_EDITED + '<p>nonce</p>'),
+  });
+  const write = queries.find((q) => /consecutive_unconfirmed = COALESCE/.test(q.sql));
+  assert.match(write.sql, /consecutive_failures = 0/, 'a successful read clears the failure streak');
+});
+
+test('KNOWN GAP — an unanchored 200 that renders nothing still becomes the baseline', async () => {
+  // NOT A DEFECT LEFT UNFIXED — a consequence of a decision taken by Kyle on
+  // 2026-08-05: Meta and both Litmus rows are UNANCHORED BY DECISION (Meta
+  // because the only candidate asserted delivery rather than rendering; Litmus
+  // because a blog post ages rather than changes, so hash-diffing it measures
+  // the wrong variable). Anchored rows are protected — see "an empty page cannot
+  // become the baseline" above. These three are not.
+  //
+  // WAITING ON: the platform-enforced vs observed-practice split (source_kind)
+  // for Litmus, and a decision on whether the Meta row belongs on the list.
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ current_hash: null, expected_content: null })],
+    fetchImpl: fetchSequence('<html><body><div id="root"></div></body></html>'),
+  });
+  assert.strictEqual(out.results[0].status, 'baseline');
+  assert.strictEqual(out.results[0].anchored, false);
+  const write = queries.find((q) => /SET current_hash/.test(q.sql));
+  assert.strictEqual(write.params[0], require('../src/services/specDetector').hashText(''),
+    'sha256 of the empty string is stored as the legitimate baseline, and every later run agrees');
+});
+
+test('the refetch is implicitly anchored — do not add a second check', async () => {
+  // RECORDED SO NOBODY "FIXES" IT. The refetch is never anchor-checked, which
+  // looks like a hole: an error page could confirm a change. It cannot.
+  // confirmHash === newHash means the refetch produced text identical to the
+  // first fetch, which checkAnchor already verified. A checkAnchor call on that
+  // branch could never fail — it would be dead code that reads like a safeguard.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specDetector.js'), 'utf8');
+  assert.strictEqual((src.match(/checkAnchor\(row, html, normalized\)/g) || []).length, 1,
+    'exactly one anchor check in the run loop');
+  assert.match(src, /NO SECOND ANCHOR CHECK HERE, AND THAT IS CORRECT/,
+    'and the reason is written where someone would otherwise add one');
+});
+
+test('SPEC_REFETCH_DELAY_MS=0 means 0', () => {
+  // It used to be `Number(env) || 1500`, so 0 — the obvious value to set when
+  // you want a run to go fast — silently became the default. Nothing failed;
+  // runs were just 1.5s per moved hash slower than asked. The detector tests
+  // above depend on this: without it they would each sleep 1.5s and still pass.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specDetector.js'), 'utf8');
+  const decl = src.slice(src.indexOf('const REFETCH_DELAY_MS'), src.indexOf('const UNCONFIRMED_STREAK_ALERT'));
+  assert.match(decl, /Number\.isFinite/);
+  assert.ok(!/\|\|\s*1500/.test(decl), 'no falsy-coalesce onto the default');
+});
+
+test('every pinned-defect test says what it is waiting on', () => {
+  // The convention is the point: a future fix should read as "these tests
+  // described the old behaviour and change together", not "the change broke
+  // twelve tests". A pinned defect with no stated blocker is indistinguishable
+  // from an assertion that the behaviour is correct.
+  const src = fs.readFileSync(__filename, 'utf8');
+  const titles = src.match(/^test\('(?:KNOWN DEFECT|KNOWN GAP|SUSPECT)[^']*'/gm) || [];
+  assert.ok(titles.length >= 4, `expected pinned-defect tests, found ${titles.length}`);
+  for (const t of titles) {
+    const at = src.indexOf(t);
+    const body = src.slice(at, src.indexOf("\n});", at));
+    assert.match(body, /WAITING ON:|NOT A DEFECT LEFT UNFIXED|RECORDED SO NOBODY/,
+      `${t} must name what it is waiting on`);
+  }
 });

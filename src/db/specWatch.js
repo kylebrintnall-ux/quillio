@@ -9,34 +9,57 @@
 const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
 
 const WATCH_ORDER = 'ORDER BY is_test, display_name NULLS LAST, id';
-const WATCH_COLUMNS = `id, source_url, display_name, affected_fields, current_hash,
+const WATCH_BASE = `id, source_url, display_name, affected_fields, current_hash,
             last_checked_at, last_error, is_test, created_at`;
+
+// Two independent migrations have added columns here, and a person can be in any
+// state between them. Tried newest-first; a 42703 falls to the next tier.
+//
+// The row a tier returns LACKS THE KEYS its tier dropped, and the detector reads
+// key presence to decide what it may write — so a fallback must never default
+// the missing columns in. "Column absent" and "column present and NULL" are
+// different states (an unseeded anchor is the latter) and only one of them means
+// "do not write here".
+//
+// Three tiers, not four: a database with the unconfirmed columns but NOT the
+// anchor ones degrades all the way to base. That combination requires running
+// the second migration and not the first, which is not the documented order, and
+// degrading further than strictly necessary is safe — it writes less, never
+// wrongly.
+const WATCH_TIERS = [
+  {
+    extra: 'expected_content, anchor_scope, consecutive_failures, consecutive_unconfirmed, last_unconfirmed_reason',
+  },
+  {
+    extra: 'expected_content, anchor_scope, consecutive_failures',
+    missing: ['spec_watch_list.consecutive_unconfirmed', 'scripts/migrateAddUnconfirmedTracking.js'],
+  },
+  {
+    extra: null,
+    missing: ['spec_watch_list.expected_content', 'scripts/migrateAddSpecAnchors.js'],
+  },
+];
 
 // All watch-list rows (the URLs being monitored). Ordered real-entries-first,
 // test entries last. Returns [] when there's no DB.
-//
-// expected_content / anchor_scope / consecutive_failures arrive with
-// scripts/migrateAddSpecAnchors.js. Until it runs we fall back to the columns
-// that have always existed, so a deploy that lands ahead of the migration still
-// runs detection instead of erroring out of every admin read. The detector tells
-// the two states apart by KEY PRESENCE — a fallback row has no
-// `consecutive_failures` key at all, where a migrated-but-unseeded row has the
-// key set to a value — so don't "tidy" this by defaulting the missing columns in.
 async function getWatchList() {
   const p = getPool();
   if (!p) return [];
-  try {
-    const res = await p.query(
-      `SELECT ${WATCH_COLUMNS}, expected_content, anchor_scope, consecutive_failures
-         FROM spec_watch_list ${WATCH_ORDER}`
-    );
-    return (res && res.rows) || [];
-  } catch (err) {
-    if (!isUndefinedColumn(err)) throw err;
-    warnMissingSchema('spec_watch_list.expected_content', 'scripts/migrateAddSpecAnchors.js');
-    const res = await p.query(`SELECT ${WATCH_COLUMNS} FROM spec_watch_list ${WATCH_ORDER}`);
-    return (res && res.rows) || [];
+  let lastErr = null;
+  for (const tier of WATCH_TIERS) {
+    const cols = tier.extra ? `${WATCH_BASE}, ${tier.extra}` : WATCH_BASE;
+    try {
+      const res = await p.query(`SELECT ${cols} FROM spec_watch_list ${WATCH_ORDER}`);
+      if (tier.missing) warnMissingSchema(tier.missing[0], tier.missing[1]);
+      return (res && res.rows) || [];
+    } catch (err) {
+      if (!isUndefinedColumn(err)) throw err;
+      lastErr = err;
+    }
   }
+  // Even the base columns are missing — that is not a pre-migration deploy,
+  // it is a broken table, and swallowing it would report an empty watch list.
+  throw lastErr;
 }
 
 // The editable test-page content (singleton row id=1). Returns the string, or
@@ -112,6 +135,13 @@ async function getDetectionHealth() {
     consecutive_failures: Object.prototype.hasOwnProperty.call(r, 'consecutive_failures')
       ? Number(r.consecutive_failures) || 0
       : null,
+    // Stability. An entry stuck on `unconfirmed` is read fine every week and
+    // still not watched, and it is the one state that leaves no error behind —
+    // so the streak and its reason are what the health page has to render.
+    consecutive_unconfirmed: Object.prototype.hasOwnProperty.call(r, 'consecutive_unconfirmed')
+      ? Number(r.consecutive_unconfirmed) || 0
+      : null,
+    unconfirmed_reason: r.last_unconfirmed_reason || null,
   }));
 
   return { lastRun, watch };

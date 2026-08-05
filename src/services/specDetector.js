@@ -290,7 +290,6 @@ async function runDetection() {
   };
 
   for (const row of rows) {
-    const checkedAt = new Date().toISOString();
     let status;
     let error = null;
     let failures = null;
@@ -419,7 +418,11 @@ async function runDetection() {
       source_url: row.source_url,
       is_test: row.is_test,
       status,
-      last_checked_at: checkedAt,
+      // Stamped AFTER the work, not before it. The database gets NOW() at the
+      // moment of the UPDATE, and a run with a refetch spends 1.5s between the
+      // two — so a timestamp captured at the top of the loop had the run output
+      // and the health page disagreeing by seconds about the same event.
+      last_checked_at: new Date().toISOString(),
       error,
       anchored,
       consecutive_failures: failures,

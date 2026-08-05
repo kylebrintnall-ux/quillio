@@ -637,12 +637,50 @@ hashed and compared; the run reports `anchored: false` per result and counts
 unanchored *and* unchanged, and both facts matter). Every existing row is in that
 state until the migration seeds it.
 
-The seeded anchors are **candidates chosen without seeing the pages** — this
-repo's environment denies egress to those hosts. Run
-`node scripts/migrateAddSpecAnchors.js --verify` from somewhere with egress
-first: it fetches each URL and prints the status, normalized length and
-occurrence counts, and says whether the detector would PASS or FAIL. A candidate
-that is absent, or that occurs forty times, is the wrong string.
+### What is anchored, what isn't, and why — the state after --verify
+
+The candidates were chosen without seeing the pages (this repo denies egress to
+those hosts) and then measured with
+`node scripts/migrateAddSpecAnchors.js --verify` from somewhere with egress.
+Three survived. The other four are each a **decision**, recorded on the candidate
+row in the migration so nobody re-proposes a rejected string:
+
+| Row | State | |
+| --- | --- | --- |
+| LinkedIn single-image | seeded | `Introductory text`, 2x |
+| Google responsive display | seeded | `Responsive display ads`, 5x |
+| Test page | seeded | `Quillio Test Spec`, 1x |
+| X creative specs | **awaiting re-verify** | the first candidate came from the URL slug, not the page — the heading is "Creative ad specs", not "Creative ad specifications" |
+| Meta ads guide | **unanchored by decision** | see below |
+| Litmus subject line | **unanchored by decision** | see below |
+| Litmus preview text | **unanchored by decision** | see below |
+
+**Meta.** The candidate was a raw-body check for the canonical URL fragment. It
+was rejected because it asserts the *document was served*, not that the *content
+rendered* — so it would pass on exactly the broken page the feature exists to
+catch. An anchor that cannot fail is worse than none: it reports a guarantee it
+is not providing. The row is **not removed** either; it carries 10 pairs in
+`affected_fields`, which is the write gate, and deleting it leaves those fields
+gated by nothing — the same trade as the LinkedIn Carousel gap. **Whether that
+row belongs on the watch list at all is an open decision**, not one taken here:
+Meta was retiered enforced → recommended, and this list is for pages publishing
+enforced limits.
+
+**Both Litmus rows.** Not a search for a better phrase — a blog post does not
+change, it *ages*, so hash-diffing it measures the wrong variable and a working
+anchor would only make that wrong measurement fire reliably. Anchoring them is
+**blocked on the platform-enforced vs observed-practice split** (a `source_kind`
+on the watch row), which is agreed and unbuilt. It is not blocked on finding a
+string.
+
+**Reading the verify output.** The detector matches exactly and
+case-sensitively; the report adds a case-insensitive and a whitespace-flexible
+count purely as diagnostics, because the two ways a well-chosen anchor silently
+misses are a capital letter and a tag boundary. `<strong>Post copy</strong>:`
+normalizes to `Post copy :` — the gap opens before *attached punctuation*, not
+between the words — so `Post copy:` is absent from a page that plainly renders
+it. High occurrence is **not** itself disqualifying: what disqualifies a phrase
+is being site chrome that would survive an error page.
 ### `affected_fields` is a snapshot, and nothing refreshes it
 
 `spec_watch_list.affected_fields` was computed **once**, when

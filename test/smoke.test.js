@@ -1161,6 +1161,61 @@ test('the batch parse failure logs the raw response, greppably and on one line',
   assert.match(log, /raw=\$\{JSON\.stringify\(sampleForLog\(text\)\)\}/);
 });
 
+// THE BATCH RESCUE NOW SEES THE SET IT BELONGS TO. It never did: the batch
+// writes every field of an asset in one call so they can reference each other,
+// and the fallback redrafted a field in ignorance of all of them. On a total
+// parse failure that turned a nine-field email into nine independent lines with
+// an identical fieldCount and an identical completion card.
+test('the batch rescue is given siblings, from finished fields AND unreached batch values', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  const fn = src.slice(src.indexOf('async function generateAssetDrafts'), src.indexOf('// --- Conceptual variations'));
+
+  // It is PASSED. The whole gap was one absent key.
+  const call = fn.match(/copy = await generateFieldDraft\(\{[\s\S]*?\}\);/)[0];
+  assert.match(call, /\n\s*siblings,\n/, 'the rescue receives siblings');
+  // Still no currentCopy — this is a first draft, not a revision, and
+  // currentCopyBlock's rule is that a first draft must not be told it has one.
+  assert.ok(!/currentCopy/.test(call.replace(/^\s*\/\/.*$/gm, '')), 'no currentCopy on a first draft');
+
+  // BUILT INSIDE THE LOOP. The two call sites this copies (googleDocs scoped
+  // redraft, pipeline template regenerate) build once and filter self per
+  // iteration, because they read copy that already exists in the document. This
+  // is a FIRST draft — copy accumulates as the loop runs — so a list built once
+  // would hand every field the same empty set.
+  assert.ok(fn.indexOf('for (const f of fields)') < fn.indexOf('const siblings = fields'),
+    'siblings is built per field, inside the loop');
+
+  // TWO SOURCES, and the second is the one that matters for the common case: a
+  // single field missing or over-limit inside an otherwise-good batch is
+  // redrafted while its siblings sit in byKey.
+  assert.match(fn, /const finished = new Map\(out\.map\(\(d\) => \[d\.fieldName, d\.copy\]\)\)/);
+  assert.match(fn, /finished\.has\(s\.fieldName\)/);
+  assert.match(fn, /cleanDraft\(byKey\.get\(s\.fieldName\.trim\(\)\.toLowerCase\(\)\) \|\| ''\)/);
+
+  // Same shape as the other two call sites: self excluded, empties dropped.
+  assert.match(fn, /\.filter\(\(s\) => s\.fieldName !== f\.fieldName\)/);
+  assert.match(fn, /\.filter\(\(s\) => s\.copy\)/);
+});
+
+// siblingContextBlock is what turns that list into prompt text, and its contract
+// is what makes an empty list safe — asserted here because the rescue now relies
+// on it for field 1 of a failed batch, which has no siblings at all.
+test('siblingContextBlock emits nothing for an empty or all-blank list', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  // eslint-disable-next-line no-eval
+  const siblingContextBlock = eval('(' + src.slice(
+    src.indexOf('function siblingContextBlock'), src.indexOf('// The field\'s CURRENT copy')
+  ).trim() + ')');
+
+  assert.strictEqual(siblingContextBlock([]), '', 'field 1 of a failed batch has none');
+  assert.strictEqual(siblingContextBlock(undefined), '');
+  assert.strictEqual(siblingContextBlock([{ fieldName: 'A', copy: '   ' }]), '', 'blank copy is not context');
+  const one = siblingContextBlock([{ fieldName: 'Headline (Offer 1)', copy: 'Ship copy in a minute' }]);
+  assert.match(one, /- Headline \(Offer 1\): Ship copy in a minute/);
+  // Context only — the model must not rewrite or emit them.
+  assert.match(one, /do NOT rewrite or output them/);
+});
+
 test('sampleForLog bounds the sample from BOTH ends and reports the true length separately', () => {
   const { sampleForLog } = require('../src/services/gemini');
 

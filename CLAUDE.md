@@ -576,6 +576,35 @@ words-to-cut list *outside* the mediums section so they stay universal. The same
 guide that happens to carry its own mediums section; a typical one has none and
 passes through whole.
 
+### Per-field guidance: composed, not chosen — and absent from riffs
+
+`gemini.js` `fieldGuidanceFor(fieldName, notes)` builds the `Field guidance:` line
+both draft prompts emit. It **space-joins** the field's own note and
+`builtInFieldGuidance(fieldName)`, note first — it does not pick one.
+
+`notes` is not the `spec_note`. For a **template marker** it is
+(`core/pipeline.js` passes `m.spec_note`), but for the **copy doc** it is the
+italic line `parseDoc` recovers, which `fieldHint` composes as `spec_note` **plus
+the `spec_type` tier sentence**. That is why this was `notes || builtIn…` and
+wrong: a tenant writing a note, a migration adding one, or a re-tier to
+enforced/recommended each silently deleted the built-in rule from every prompt
+for that field. The two built-ins are Graphic Headline (sentence case) and
+Subhead (do not echo the headline) — mechanics, invisible in the doc when they
+stop being sent, and nothing errors. It never fired only because all 20 seeded
+instances are `house_default` with a NULL note.
+
+**Known gap — `generateFieldVariations` receives no per-field guidance at all.**
+Not the tenant's `spec_note`, not the built-in rule, not the tier line: `notes`
+is absent from its signature, from `buildVariationsPrompt`, and from the
+`googleDocs.js` call site. So **every riff/doorway prompt goes out with none of
+it** — a riffed Graphic Headline has never been told about sentence case, and a
+tenant's writing note reaches the first draft but not a single variation.
+
+Deliberately **not** fixed alongside the compose change. Closing it alters what
+every riff produces for every tenant, which needs its own commit and its own
+before/after — where the compose fix was a provable no-op on current data. It is
+a real gap, not a design choice; treat it as work waiting, not as settled.
+
 ## What goes on the LiveSpecs watch list — and what doesn't
 
 `spec_watch_list` feeds the detector (`services/specDetector.js`), which fetches a

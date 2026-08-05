@@ -1113,8 +1113,16 @@ function trimToCeiling(s, max) {
 // Built-in per-field creative guidance, keyed by normalized field name. Fills the
 // gap left by the retired Sheet "Notes" column for fields that need the same
 // instruction regardless of tenant. Returns '' when there's nothing built in.
-// COMPOSED with the field's own note rather than overridden by it — see
-// fieldGuidanceFor below.
+//
+// A FIELD'S OWN NOTE DOES NOT REPLACE THIS — IT LEADS IT. fieldGuidanceFor sends
+// both, note first, mechanic second. This comment used to say a tenant's note
+// "takes precedence over this", which described a `||` that suppressed the
+// built-in entirely; if you are reading that sentence somewhere, it is stale and
+// the code below is the truth. The reason is what these two entries ARE: sentence
+// case, and not echoing the headline. They are MECHANICS a model gets wrong by
+// default, not voice claims a brand could reasonably overrule — so a tenant note
+// about what to say has no conflict with them, and one that does conflict wins by
+// being read first. Do not restore the short-circuit to match a stale sentence.
 function builtInFieldGuidance(fieldName) {
   const name = String(fieldName || '').trim().toLowerCase();
   if (name === 'subhead') {

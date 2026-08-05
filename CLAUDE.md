@@ -791,6 +791,43 @@ Related and separate: §2.55 was reworded so it would stop arguing with the same
 permission ("a mark that makes a line turn is not a setup"). That fixed the
 setup-and-punchline collision. It did not touch §1.4.
 
+### Available and unplumbed — campaign signal the drafter never sees
+
+Measured 2026-08-05. A field-draft prompt is 15,405 characters: 66% `craft.md`
+(never varies), 24% `voice.md` or the tenant guide (varies per TENANT, never per
+campaign), 2% the campaign. Three campaign-specific things already exist and do
+not reach the drafter. **The raw brief is being worked; the other two are logged
+here and deliberately not started.**
+
+**1. The raw brief — the one that matters, in progress.** `createDocument`
+receives `brief` and uses it for `makeTitle` and nothing else. What reaches the
+drafter is `summary` + `writerPrompt`, which are Gemini's compression of it. The
+product's claim is "send the brief you already have"; the drafter reads a
+paraphrase while the original names a file.
+
+**2. Reference insights — ingested, rendered, never read back.** Drive files,
+Slides, PDFs, external URLs and Slack canvases are fetched at real cost by
+`fetchAllReferences`, passed to `createDocument`, and rendered into the document
+body. The DRAFT path re-reads the doc through `parseDoc`, which returns only
+`{ summary, writerPrompt, assets }` — so the insights are on the page and are
+never recovered. Everything ingested informs the document a human reads and none
+of it informs the copy. COST: the same parser question as the brief (see below),
+plus a judgement about volume — insights can be long, and they compete with the
+brief for the same share.
+
+**3. `funnelStage` — a live slot that is permanently empty.** The prompt builder
+emits `funnel: …` per field, and `core/pipeline.js:871-872` sets
+`funnelStage: ''` with the comment `not stored in copy_fields (Sheet-only)`. The
+channel, the plumbing and the prompt clause all exist; the value was retired with
+the Sheet and never replaced. Awareness vs consideration vs decision changes what
+a headline should do, so this is campaign signal in the strict sense. COST: a
+column on `copy_fields` or a per-brief value, plus deciding whether it is a
+property of the FIELD (it is not — the same field serves different stages in
+different campaigns) or of the BRIEF (it is, which means parsing it out).
+
+`notes: ''` on the same two lines is NOT in this category — the copy-doc path
+fills it from the doc's italic line at draft time. Only `funnelStage` is dead.
+
 ### An example in craft.md is copied as SYNTAX, not just as a theme
 
 The most concrete evidence in this repo about how examples behave, measured

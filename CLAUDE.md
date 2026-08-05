@@ -695,6 +695,81 @@ misses are a capital letter and a tag boundary. The gap a tag opens is before
 on a page that plainly renders the label — that is why the flexible variant
 allows whitespace anywhere inside the anchor.
 
+### `source_kind`: not every cited source is hash-watchable
+
+`spec_watch_list.source_kind` is `platform_enforced` (the default, and every
+platform spec page) or `observed_practice`. An observed_practice row is **not
+fetched, not hashed, not compared** — the detector reports it as `not_watched`,
+a status counted in the run summary, and it can never produce a flag.
+
+The two Litmus blog posts are the only observed_practice rows
+(`scripts/migrateAddSourceKind.js`). **There is no authoritative email spec.**
+Nobody enforces subject-line length — clients truncate — so email guidance is
+observed best practice from a dated source, and hash-diffing a blog post measures
+the wrong variable: the post does not change, it **ages**, while client behaviour
+moves independently of it. On 2026-08-05 a single run produced 6 pending flags,
+all Litmus, both pages having changed twice in that one run. A queue that fills
+with noise teaches a reviewer to dismiss Litmus flags, and a reviewer who has
+learned that will eventually dismiss a real one. Those 6 were dismissed in the
+same transaction as the reclassification.
+
+`not_watched` is a **status**, not a silent skip, for the same reason
+`unanchored` is counted: a row absent from the run output is indistinguishable
+from a row that fell off the list. It is also excluded from `summary.unanchored`
+and from every hash-watch count on the health page — a row that is never fetched
+cannot be "unanchored", and counting it would inflate a number that measures a
+real gap on the rows it applies to.
+
+**Six columns on an observed_practice row are permanently meaningless** —
+`current_hash`, `last_checked_at`, `consecutive_failures`,
+`consecutive_unconfirmed`, `expected_content`, `anchor_scope`. They are left as
+they are rather than cleared, and the rows stay on a table they barely use,
+because `affected_fields` — **the write gate** `specReview.guardEdits` reads —
+lives on the row. Deleting the row leaves those 15 pairs gated by nothing, which
+is the LinkedIn Carousel trade exactly. The admin health page renders those
+columns as `n/a` / `not checked` for such a row so they are not read as current.
+
+### "Checked", not "verified" — the distinction is load-bearing
+
+The weekly run detects that a **source page changed**. It never re-reads the
+number and never compares it to what is stored. **Nothing in this system verifies
+a stored limit against its source on a schedule.**
+
+So: say *checked*, everywhere, including for platform_enforced rows. "Verified"
+reads better and claims something the mechanism does not do. If you find
+"verified" in a user-facing string, that is a regression, not a style choice.
+
+`copy_fields.spec_verified_at` is the trap. It is written by
+`specReview.commitReview` (`spec_verified_at = NOW()`) on an approved edit and is
+**SELECTed by nothing** — `getTenantAssets` lists its columns explicitly and that
+is not among them. It reaches no doc, no settings panel, no admin view. Its
+existence is not evidence that a verification date is shown anywhere.
+
+The accurate description of what the system does: every limit is cited to its
+source; platform spec pages are checked weekly for changes, with anchors on four
+of the seven rows asserting the fetch read the right page; any detected change
+goes to a human before a stored number moves; and email guidance is dated
+observed practice that is never hash-watched.
+
+### The 15 email fields now have no automated update path — accepted 2026-08-05
+
+A consequence Kyle accepted when approving `source_kind`, recorded so it is not
+rediscovered as a bug. The 15 `copy_fields` cited to Litmus (10 Subject Line
+pairs + 5 Preheader, across the five seeded email assets) can now be changed only
+by a hand-written migration:
+
+- **No Settings path.** Those five assets are seeded, and `db/assets.js` makes a
+  seeded asset read-only apart from `is_active` (`isSeededAssetName`, derived
+  from the name). A tenant cannot edit `Subject Line 1`'s `char_max`.
+- **No LiveSpecs path.** `guardEdits` only ever runs against a flag, and an
+  observed_practice row never produces one. The gate survives in form and becomes
+  unreachable.
+
+That is the intended behaviour, not a gap to close: observed practice should
+change when a human re-reads the source and decides it has moved, not when a
+publisher ships a layout tweak. It is written down because "nothing can edit
+these fields" looks like a defect to anyone who meets it without this paragraph.
+
 ### `unconfirmed` is the other silent, terminal status — and it has its own counter
 
 A hash that moves is refetched once and only flagged if it reproduces. A change

@@ -13902,22 +13902,28 @@ test('specWatch.getWatchList degrades one migration at a time', async () => {
   // Fully migrated: one query, every column.
   const full = await watchListAgainst([]);
   assert.strictEqual(full.asked.length, 1);
-  assert.match(full.asked[0], /consecutive_unconfirmed/);
+  assert.match(full.asked[0], /source_kind/);
 
-  // Anchors run, unconfirmed tracking not: falls exactly one tier.
-  const mid = await watchListAgainst(['consecutive_unconfirmed', 'last_unconfirmed_reason']);
-  assert.strictEqual(mid.asked.length, 2, 'tried the newest shape, then the anchor shape');
-  assert.match(mid.asked[1], /expected_content/, 'and kept the anchor columns');
-  assert.ok(!('consecutive_unconfirmed' in mid.rows[0]),
+  // Everything but the newest migration: falls exactly one tier.
+  const noKind = await watchListAgainst(['source_kind']);
+  assert.strictEqual(noKind.asked.length, 2);
+  assert.match(noKind.asked[1], /consecutive_unconfirmed/, 'and keeps the tier below');
+  assert.ok(!('source_kind' in noKind.rows[0]),
     'the fallback must NOT default the columns in — key presence is the signal the detector reads');
 
-  // Neither migration run: falls all the way to the base columns.
+  // Two migrations back.
+  const mid = await watchListAgainst(['source_kind', 'consecutive_unconfirmed', 'last_unconfirmed_reason']);
+  assert.strictEqual(mid.asked.length, 3);
+  assert.match(mid.asked[2], /expected_content/, 'and kept the anchor columns');
+  assert.ok(!('consecutive_unconfirmed' in mid.rows[0]));
+
+  // No migration run: falls all the way to the base columns.
   const base = await watchListAgainst([
-    'expected_content', 'anchor_scope', 'consecutive_failures',
+    'source_kind', 'expected_content', 'anchor_scope', 'consecutive_failures',
     'consecutive_unconfirmed', 'last_unconfirmed_reason',
   ]);
-  assert.strictEqual(base.asked.length, 3);
-  assert.ok(!/expected_content|consecutive/.test(base.asked[2]));
+  assert.strictEqual(base.asked.length, 4);
+  assert.ok(!/expected_content|consecutive|source_kind/.test(base.asked[3]));
   assert.ok(!('consecutive_failures' in base.rows[0]));
 });
 
@@ -14433,4 +14439,179 @@ test('every pinned-defect test says what it is waiting on', () => {
     assert.match(body, /WAITING ON:|NOT A DEFECT LEFT UNFIXED|RECORDED SO NOBODY/,
       `${t} must name what it is waiting on`);
   }
+});
+
+// --- source_kind: platform_enforced vs observed_practice ---------------------
+//
+// There is no authoritative email spec. Nobody enforces subject-line length —
+// clients truncate — so email guidance is observed best practice from a dated
+// source, and hash-diffing a blog post measures the wrong variable: the post does
+// not change, it AGES. On 2026-08-05 one run produced 6 pending flags, all from
+// the two Litmus posts, both of which changed twice in a single run.
+
+test('detector: an observed_practice row is not fetched, hashed or compared', async () => {
+  let fetched = 0;
+  const { out, queries } = await runDetectorWith({
+    rows: [watchRow({ id: 5, source_kind: 'observed_practice', current_hash: 'a'.repeat(64) })],
+    fetchImpl: async () => {
+      fetched += 1;
+      return { ok: true, status: 200, text: async () => SPEC_PAGE };
+    },
+  });
+  assert.strictEqual(fetched, 0, 'the page is never requested');
+  assert.strictEqual(out.results[0].status, 'not_watched');
+  assert.strictEqual(out.summary.not_watched, 1);
+
+  // No write of ANY kind — including last_checked_at, which would have the health
+  // page reporting "checked 2 minutes ago" about a page nobody requested.
+  assert.strictEqual(queries.filter((q) => !/^SELECT/i.test(q.sql)).length, 0);
+});
+
+test('detector: an observed_practice row can never produce a flag', async () => {
+  // The whole point. Its stored hash disagrees with everything, its anchor is
+  // absent, and it still cannot reach the compare branch — so it cannot queue a
+  // review of an article that says what it said in 2021.
+  const { out, queries } = await runDetectorWith({
+    rows: [
+      watchRow({
+        id: 5,
+        source_kind: 'observed_practice',
+        current_hash: 'deadbeef'.repeat(8),
+        expected_content: null,
+      }),
+    ],
+    fetchImpl: fetchSequence('<html><body>something else entirely</body></html>'),
+  });
+  assert.strictEqual(out.results[0].status, 'not_watched');
+  assert.strictEqual(out.summary.changed, 0);
+  assert.strictEqual(out.summary.unconfirmed, 0);
+  assert.strictEqual(queries.filter((q) => /INSERT INTO spec_review_queue/i.test(q.sql)).length, 0);
+});
+
+test('detector: not_watched is a status the run states, not a row that vanishes', async () => {
+  // A skipped row absent from the output is indistinguishable from a row that
+  // fell off the list. It is counted, pre-seeded so a clean run reports 0, and
+  // present in results with its source_kind.
+  const { out } = await runDetectorWith({
+    rows: [
+      watchRow({ id: 1, current_hash: pageHash(SPEC_PAGE) }),
+      watchRow({ id: 2, source_kind: 'observed_practice' }),
+    ],
+    fetchImpl: fetchSequence(SPEC_PAGE),
+  });
+  assert.strictEqual(out.summary.total, 2);
+  assert.strictEqual(out.results.length, 2, 'every row is accounted for');
+  assert.deepStrictEqual(out.results.map((r) => r.status), ['unchanged', 'not_watched']);
+  assert.strictEqual(out.results[1].source_kind, 'observed_practice');
+  assert.strictEqual(out.results[0].source_kind, 'platform_enforced');
+
+  const clean = await runDetectorWith({
+    rows: [watchRow({ current_hash: pageHash(SPEC_PAGE) })],
+    fetchImpl: fetchSequence(SPEC_PAGE),
+  });
+  assert.strictEqual(clean.out.summary.not_watched, 0, 'reported as 0, not omitted');
+});
+
+test('detector: an observed_practice row is not counted as unanchored', async () => {
+  // `unanchored` measures "we fetched a page and nothing verifies it was the
+  // right one". A row that is never fetched cannot be in that state, and
+  // counting it would inflate the number that describes a real gap elsewhere.
+  const { out } = await runDetectorWith({
+    rows: [
+      watchRow({ id: 1, current_hash: pageHash(SPEC_PAGE), expected_content: null }),
+      watchRow({ id: 2, source_kind: 'observed_practice', expected_content: null }),
+    ],
+    fetchImpl: fetchSequence(SPEC_PAGE),
+  });
+  assert.strictEqual(out.summary.unanchored, 1, 'the watched row only');
+  assert.strictEqual(out.summary.not_watched, 1);
+});
+
+test('detector: anything that is not observed_practice is watched', async () => {
+  // Including a row from a database where the column does not exist yet. The
+  // pre-migration behaviour is the one every row has today; defaulting the other
+  // way would stop watching the entire list on a deploy that lands first.
+  const { isObservedPractice } = require('../src/services/specDetector');
+  assert.strictEqual(isObservedPractice({ source_kind: 'observed_practice' }), true);
+  for (const kind of ['platform_enforced', undefined, null, '', 'OBSERVED_PRACTICE', 'observed']) {
+    assert.strictEqual(isObservedPractice({ source_kind: kind }), false, `${JSON.stringify(kind)} is watched`);
+  }
+  const legacy = { id: 1, source_url: 'https://example.test/', display_name: 'Legacy', current_hash: null, is_test: false };
+  const { out } = await runDetectorWith({ rows: [legacy], fetchImpl: fetchSequence(SPEC_PAGE) });
+  assert.strictEqual(out.results[0].status, 'baseline', 'a pre-migration row is still watched');
+});
+
+test('an observed_practice row keeps six columns that no longer mean anything', () => {
+  // NOT AN OVERSIGHT, and the reason has to live next to the fact or the next
+  // person tidies the rows off the table. current_hash, last_checked_at,
+  // consecutive_failures, consecutive_unconfirmed, expected_content and
+  // anchor_scope are hash-watch machinery, and an observed_practice row uses none
+  // of it. It stays on spec_watch_list because affected_fields — the write gate
+  // guardEdits reads — lives on the row; deleting the row leaves those 15 pairs
+  // gated by nothing, which is the LinkedIn Carousel trade exactly.
+  // Read through the markdown: the sentence carries backticks, bold and a line
+  // break, none of which are the claim. Asserting on the raw bytes would pin the
+  // formatting and fail on a rewrap.
+  const claude = fs
+    .readFileSync(path.join(__dirname, '..', 'CLAUDE.md'), 'utf8')
+    .replace(/[`*]/g, '')
+    .replace(/\s+/g, ' ');
+  assert.match(claude, /source_kind/, 'the split is documented');
+  assert.match(claude, /the write gate .{0,40} lives on the row/,
+    'and so is why the rows stay on a table they barely use');
+  assert.match(claude, /gated by nothing/, 'including what deleting them would cost');
+
+  // The admin health page must not read those columns as current for such a row.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.match(html, /const observed = w\.source_kind === 'observed_practice'/);
+  assert.match(html, /observed\?'not checked'/, 'last-checked is not presented as a live check');
+  assert.match(html, /observed practice — not hash-watched/);
+});
+
+test('migrateAddSourceKind: defaults to platform_enforced and refuses to guess', () => {
+  const { STATEMENTS, OBSERVED, EXPECTED_PENDING } = require('../scripts/migrateAddSourceKind');
+  assert.match(STATEMENTS[0][1], /ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'platform_enforced'/,
+    'every existing row keeps behaving exactly as it does today');
+  assert.strictEqual(OBSERVED.length, 2);
+  assert.ok(OBSERVED.every((o) => /litmus\.com/.test(o.match)), 'only the two Litmus posts');
+  assert.strictEqual(EXPECTED_PENDING, 6, 'the count observed on 2026-08-05');
+
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSourceKind.js'), 'utf8');
+  // The dismissal is scoped, printed, counted and reversible. Each of those is a
+  // separate promise and a missing one is not visible in the output.
+  assert.match(src, /watch_id = ANY\(\$1::bigint\[\]\) AND status = 'pending'/, 'scoped to those rows');
+  assert.match(src, /flag #\$\{f\.id\}/, 'every flag printed before anything is written');
+  // The CONDITION, not just the message. A test that only proves the throw text
+  // exists passes with the branch disabled — `} else if (false) {` keeps every
+  // string in the file and dismisses whatever is queued.
+  assert.match(src, /\} else if \(pending\.length !== EXPECTED_PENDING\) \{/,
+    'a different count refuses rather than proceeding');
+  assert.match(src, /expected \$\{EXPECTED_PENDING\} pending Litmus flags, found \$\{pending\.length\}/,
+    'and says what it found');
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/, 'dry run by default');
+  const noCommit = src.slice(src.indexOf('    } else {', src.indexOf('if (COMMIT) {')));
+  assert.match(noCommit, /await client\.query\('ROLLBACK'\)/);
+
+  // The DDL, the reclassification and the dismissal are ONE transaction: flags
+  // queued against rows that stop producing flags must not outlive the change
+  // that stopped them.
+  const begin = src.indexOf("await client.query('BEGIN')");
+  const commit = src.indexOf("await client.query('COMMIT')");
+  // The DDL runs through the STATEMENTS loop, so the loop is what has to be
+  // inside the transaction — the SQL literal itself lives at the top of the file.
+  for (const step of ['for (const [label, sql] of STATEMENTS)', "SET source_kind = 'observed_practice'", "SET status = 'dismissed'"]) {
+    const at = src.indexOf(step, begin);
+    assert.ok(at > begin && at < commit, `${step} is inside the transaction`);
+  }
+  // Lexical position is not enough: every write must go through the TRANSACTION
+  // CLIENT. Swapping one `client.query` for `pool.query` leaves it sitting
+  // between BEGIN and COMMIT in the source while running outside the
+  // transaction — so the rollback would no longer undo it.
+  for (const write of [
+    "await client.query(\n        \"UPDATE spec_watch_list SET source_kind = 'observed_practice'",
+    "await client.query(\n        `UPDATE spec_review_queue SET status = 'dismissed'",
+  ]) {
+    assert.ok(src.includes(write), `this write runs on the transaction client, not the pool: ${write.slice(0, 60)}`);
+  }
+  assert.ok(!/await pool\.query\(/.test(src), 'nothing in this migration writes outside the transaction');
 });

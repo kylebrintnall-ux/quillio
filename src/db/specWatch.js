@@ -12,8 +12,8 @@ const WATCH_ORDER = 'ORDER BY is_test, display_name NULLS LAST, id';
 const WATCH_BASE = `id, source_url, display_name, affected_fields, current_hash,
             last_checked_at, last_error, is_test, created_at`;
 
-// Two independent migrations have added columns here, and a person can be in any
-// state between them. Tried newest-first; a 42703 falls to the next tier.
+// Three independent migrations have added columns here, and a person can be in
+// any state between them. Tried newest-first; a 42703 falls to the next tier.
 //
 // The row a tier returns LACKS THE KEYS its tier dropped, and the detector reads
 // key presence to decide what it may write — so a fallback must never default
@@ -21,17 +21,21 @@ const WATCH_BASE = `id, source_url, display_name, affected_fields, current_hash,
 // different states (an unseeded anchor is the latter) and only one of them means
 // "do not write here".
 //
-// Three tiers, not four: a database with the unconfirmed columns but NOT the
-// anchor ones degrades all the way to base. That combination requires running
-// the second migration and not the first, which is not the documented order, and
+// One tier per migration, newest first, rather than one per combination: a
+// database that ran a later migration and not an earlier one degrades all the
+// way past both. That requires running them out of the documented order, and
 // degrading further than strictly necessary is safe — it writes less, never
-// wrongly.
+// wrongly. The one thing it must never do is default a missing column IN.
+const ANCHOR_COLS = 'expected_content, anchor_scope, consecutive_failures';
+const UNCONFIRMED_COLS = 'consecutive_unconfirmed, last_unconfirmed_reason';
 const WATCH_TIERS = [
+  { extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind` },
   {
-    extra: 'expected_content, anchor_scope, consecutive_failures, consecutive_unconfirmed, last_unconfirmed_reason',
+    extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}`,
+    missing: ['spec_watch_list.source_kind', 'scripts/migrateAddSourceKind.js'],
   },
   {
-    extra: 'expected_content, anchor_scope, consecutive_failures',
+    extra: ANCHOR_COLS,
     missing: ['spec_watch_list.consecutive_unconfirmed', 'scripts/migrateAddUnconfirmedTracking.js'],
   },
   {
@@ -127,6 +131,10 @@ async function getDetectionHealth() {
     baselined: !!r.current_hash,
     last_error: r.last_error || null,
     pending_count: byWatch.get(String(r.id)) || 0,
+    // An observed_practice row is not hash-watched at all, so every health column
+    // beside it is historical from the moment it was reclassified. The page has
+    // to say which rows they no longer describe, or they read as current.
+    source_kind: r.source_kind === 'observed_practice' ? 'observed_practice' : 'platform_enforced',
     // Anchor state, so "this entry isn't really being watched" is visible on the
     // health page and not only in a run's output. `null` for consecutive_failures
     // means the column isn't there yet (pre-migration), which is a different

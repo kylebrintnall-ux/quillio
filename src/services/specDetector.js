@@ -38,9 +38,18 @@
 // current_hash, so neither can look like a change. is_test is inherited onto the
 // flag row so test-page changes stay structurally isolated from real specs.
 //
+// NOT EVERY WATCHED SOURCE IS HASH-WATCHABLE. spec_watch_list.source_kind splits
+// them: 'platform_enforced' (the default, and every platform spec page) behaves
+// exactly as described above, while 'observed_practice' — a dated study or blog
+// post — is NOT fetched, hashed or compared at all. A blog post does not change,
+// it AGES, so hash-diffing it measures the wrong variable and every layout tweak
+// the publisher ships queues a review of an article that still says what it said
+// in 2021. Those rows report `not_watched` and can never produce a flag.
+//
 // Requires scripts/migrateAddSpecAnchors.js (expected_content, anchor_scope,
-// consecutive_failures) and scripts/migrateAddUnconfirmedTracking.js
-// (consecutive_unconfirmed, last_unconfirmed_reason). Both are tolerated absent.
+// consecutive_failures), scripts/migrateAddUnconfirmedTracking.js
+// (consecutive_unconfirmed, last_unconfirmed_reason) and
+// scripts/migrateAddSourceKind.js (source_kind). All are tolerated absent.
 
 const crypto = require('crypto');
 const { getPool } = require('../db');
@@ -67,6 +76,15 @@ const REFETCH_DELAY_MS = (() => {
 const UNCONFIRMED_STREAK_ALERT = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Is this entry hash-watchable at all? Anything other than the explicit
+// 'observed_practice' is treated as platform_enforced, INCLUDING a row from a
+// database where the column does not exist yet — the pre-migration behaviour is
+// the one every row has today, and defaulting the other way would silently stop
+// watching the whole list on a deploy that lands before the migration.
+function isObservedPractice(row) {
+  return !!row && row.source_kind === 'observed_practice';
+}
 
 // Normalize HTML to the visible text we hash. Middle-ground strip: drop
 // <script>/<style> blocks AND their contents (noise that changes constantly),
@@ -287,6 +305,7 @@ async function runDetection() {
     error: 0,
     unanchored: 0,
     stuck: 0,
+    not_watched: 0,
   };
 
   for (const row of rows) {
@@ -300,6 +319,38 @@ async function runDetection() {
     // anchor is configured is a property of the entry and is true or false
     // before the run starts.
     const anchored = !!(row && typeof row.expected_content === 'string' && row.expected_content.trim());
+
+    // OBSERVED PRACTICE: not fetched, not hashed, not compared, no write of any
+    // kind — including last_checked_at, which would otherwise have the health
+    // page reporting "checked 2 minutes ago" about a page nobody requested.
+    //
+    // It is a STATUS rather than a silent skip, and it is pre-seeded in the
+    // summary, so the run states the fact. A row that vanished from the output
+    // would be indistinguishable from a row that fell off the list.
+    if (isObservedPractice(row)) {
+      summary.not_watched += 1;
+      results.push({
+        watch_id: row.id,
+        display_name: row.display_name,
+        source_url: row.source_url,
+        is_test: row.is_test,
+        status: 'not_watched',
+        last_checked_at: null,
+        error: null,
+        anchored: false,
+        consecutive_failures: null,
+        consecutive_unconfirmed: null,
+        unconfirmed_reason: null,
+        source_kind: 'observed_practice',
+      });
+      console.log(`[detector] ${row.display_name}: not_watched (observed practice — ages, does not change)`);
+      continue;
+    }
+
+    // `unanchored` counts entries that ARE watched and have nothing verifying we
+    // read the right page. An observed_practice row is never fetched, so calling
+    // it unanchored would be vacuous — and would inflate the number that measures
+    // a real gap on the rows this actually applies to.
     if (!anchored) summary.unanchored += 1;
     try {
       const html = await fetchText(row.source_url);
@@ -428,6 +479,7 @@ async function runDetection() {
       consecutive_failures: failures,
       consecutive_unconfirmed: streakAfter,
       unconfirmed_reason: unconfirmedReason,
+      source_kind: 'platform_enforced',
     });
     console.log(
       `[detector] ${row.display_name}: ${status}${anchored ? '' : ' (no anchor)'}` +
@@ -441,4 +493,12 @@ async function runDetection() {
   return { ran: true, summary, results };
 }
 
-module.exports = { runDetection, normalize, hashText, fetchText, checkAnchor, UNCONFIRMED_STREAK_ALERT };
+module.exports = {
+  runDetection,
+  normalize,
+  hashText,
+  fetchText,
+  checkAnchor,
+  isObservedPractice,
+  UNCONFIRMED_STREAK_ALERT,
+};

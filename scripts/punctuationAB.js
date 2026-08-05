@@ -91,6 +91,18 @@ if (process.env.QUILLIO_AB_ARM) {
       targets.push({ asset: a, field: f });
     }
   }
+  // BY CEILING, DESCENDING — and this is a correction, not a preference. The
+  // first version took the first two per asset in LIBRARY ORDER, which starts
+  // with paid social, so every sampled field had a 20-70 ceiling and produced
+  // 27-58 characters. A colon in a 32-character line would be wrong, so that
+  // sample could not have exercised the rule it was built to test: 0/12 was
+  // uninformative rather than negative.
+  //
+  // craft.md's own "By length" is the reason — ultra-short headlines get "One
+  // idea. One benefit. No setup." The permission can only matter where a line has
+  // room to turn, which is the 130-character subject lines and the 120-130
+  // hero subheadlines.
+  targets.sort((x, y) => (y.field.char_max || 0) - (x.field.char_max || 0));
   const picked = [];
   const seenAsset = new Map();
   for (const t of targets) {
@@ -226,8 +238,43 @@ function report(label, rows) {
   } else {
     console.log('  POSITION n/a — fewer than two lines carry a mark');
   }
-  console.log(`  OPENERS  ${openers.size} distinct across ${shapes.length} lines`);
-  return { lens, positions, openers, withMark: withMark.length, n: shapes.length, failed: failed.length };
+  // MODAL SHARE, NOT A DISTINCT COUNT. "5 distinct across 12" is true and hides
+  // that one opener owned 8 of the 12 — a distinct count is neither a spread nor
+  // an extreme, which is what CLAUDE.md's measurement note asks for. The template
+  // finding in the first run came from reading the lines, not from this number,
+  // and that was a defect in the instrument.
+  const openCount = new Map();
+  for (const s of shapes) openCount.set(s.opener, (openCount.get(s.opener) || 0) + 1);
+  const ranked = [...openCount].sort((a, b) => b[1] - a[1]);
+  const [topOpener, topN] = ranked[0];
+  console.log(`  OPENERS  ${openers.size} distinct across ${shapes.length} lines — `
+    + `most common "${topOpener}" ${topN}/${shapes.length} (${Math.round((topN / shapes.length) * 100)}%)`);
+  console.log(`           ${ranked.map(([w, n]) => `${w}:${n}`).join('  ')}`);
+
+  // EXACT DUPLICATES, which the first run produced twice across different assets
+  // and the instrument did not notice at all. Independent calls returning a
+  // byte-identical string is the strongest single signal that the prompt, not the
+  // brief, is deciding the shape.
+  const byText = new Map();
+  for (const s of shapes) {
+    const k = s.copy.trim().toLowerCase();
+    if (!byText.has(k)) byText.set(k, []);
+    byText.get(k).push(`${s.asset} / ${s.field}`);
+  }
+  const dupes = [...byText].filter(([, v]) => v.length > 1);
+  if (dupes.length) {
+    console.log(`  DUPLICATES  ${dupes.length} string(s) produced by more than one field:`);
+    for (const [text, where] of dupes) {
+      console.log(`     "${text}"`);
+      for (const w of where) console.log(`        ${w}`);
+    }
+  } else {
+    console.log('  DUPLICATES  none');
+  }
+  return {
+    lens, positions, openers, withMark: withMark.length, n: shapes.length,
+    failed: failed.length, topOpener, topN, dupes: dupes.length,
+  };
 }
 
 function runArm(arm) {
@@ -274,7 +321,8 @@ function runArm(arm) {
   }
   console.log(`  length range      BEFORE ${Math.max(...b.lens) - Math.min(...b.lens)}   AFTER ${Math.max(...a.lens) - Math.min(...a.lens)}`);
   console.log(`  lines with a mark BEFORE ${b.withMark}/${b.n}   AFTER ${a.withMark}/${a.n}`);
-  console.log(`  distinct openers  BEFORE ${b.openers.size}/${b.n}   AFTER ${a.openers.size}/${a.n}`);
+  console.log(`  modal opener      BEFORE "${b.topOpener}" ${b.topN}/${b.n}   AFTER "${a.topOpener}" ${a.topN}/${a.n}`);
+  console.log(`  exact duplicates  BEFORE ${b.dupes}   AFTER ${a.dupes}`);
   if (a.positions.length >= 2) {
     const pct = a.positions.map((p) => Math.round(p * 100));
     console.log(`  AFTER mark position spread ${Math.max(...pct) - Math.min(...pct)} points, stdev ${stdev(pct).toFixed(1)}`);

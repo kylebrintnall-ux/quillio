@@ -9139,22 +9139,22 @@ test('the create form survives a dozen-plus fields on a phone', () => {
   // The row is STACKED: a single grid line put the field name in the narrowest
   // column, where at 390px it showed nine characters — "Section 1 Headline" and
   // "Section 1 Body" rendered identically. The name now owns the first line.
-  assert.match(html, /\.lib-fname \{ flex: 1; min-width: 0/);
+  assert.match(html, /\.lib-fname \{[^}]*flex: 1; min-width: 0/);
   assert.ok(!/\.lib-frow \{ display: grid/.test(html), 'the row is no longer a five-column grid');
   assert.match(createJs, /name\.className = 'lib-fname'/);
   assert.match(createJs, /var ctl = el\('div', 'lib-fctl'\)/, 'the small values share the line below');
 
   // Thumb targets, and a unit control that reads as a control. "chars" with
   // appearance:none and no arrow was a label sitting beside two numbers.
-  assert.match(html, /\.lib-fdel \{ flex: none;[^}]*min-height: 36px; min-width: 36px/);
-  assert.match(html, /\.lib-funit::after \{ content: '▾'/);
-  assert.match(html, /\.lib-funit select \{ width: 86px; min-height: 36px/);
+  assert.match(html, /\.lib-fdel \{[^}]*flex: none;[^}]*min-height: 36px; min-width: 36px/);
+  assert.match(html, /\.lib-funit::after \{[^}]*content: '▾'/);
+  assert.match(html, /\.lib-funit select \{[^}]*width: 86px; min-height: 36px/);
   assert.match(createJs, /var unitWrap = el\('span', 'lib-funit'\)/);
 
   // The writing note is the only guidance a custom field gets, so it is a
   // full-width invitation with a stated reason above the rows — not a small
   // underlined word beside an X.
-  assert.match(html, /\.lib-fnotebtn \{ display: block; width: 100%;[^}]*min-height: 38px/);
+  assert.match(html, /\.lib-fnotebtn \{[^}]*display: block; width: 100%;[^}]*min-height: 38px/);
   assert.match(createJs, /'\+ Add a writing note'/);
   assert.match(createJs, /'Writing note — the drafter follows this'/);
   assert.match(createJs, /lib-notewhy/, 'the reason is stated once, above the rows');
@@ -9393,9 +9393,9 @@ test('the sanitizer is applied on BOTH review result paths', () => {
 
 test('an asset name is a heading, and the toggle never moves', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
-  // Headings take the display face; body copy stays in Encode Sans.
+  // Headings take the display face; body copy stays in the body face.
   assert.match(html, /\.lib-name \{ font-family: 'StarCrush', serif/);
-  assert.match(html, /\.lib-group \{ font-size: 11px/);
+  assert.match(html, /\.lib-group \{[^}]*font-size: 11px/);
   assert.ok(!/\.lib-group \{[^}]*StarCrush/.test(html), 'the group is body copy, not a heading');
 
   // The head is two columns and the toggle is not one of the wrapping things.
@@ -9407,18 +9407,18 @@ test('an asset name is a heading, and the toggle never moves', () => {
 
   // The create form's row-name rule is scoped, so it stops bolding the read-only
   // card's field names 70 lines above it.
-  assert.match(html, /\.lib-frow \.lib-fname \{ flex: 1/);
+  assert.match(html, /\.lib-frow \.lib-fname \{[^}]*flex: 1/);
   assert.match(html, /\.lib-fname \{ color: var\(--ink\); \}/, 'the card\'s own rule is intact');
 });
 
 test('the review modal reads its heading in the display face and cannot be abandoned', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   // "Reviewing your copy…" is the heading of that state, so it takes .review-status
-  // (StarCrush) like the result heading — it was .review-note (Encode Sans) while
-  // the Close button below it was StarCrush, i.e. the rule exactly inverted.
+  // (StarCrush) like the result heading — it was .review-note (the body face)
+  // while the Close button below it was StarCrush, i.e. the rule exactly inverted.
   assert.match(html, /<div class="review-status">Reviewing your copy…<\/div>/);
   assert.match(html, /\.review-status \{ font-family: 'StarCrush', serif/);
-  assert.match(html, /\.review-note \{ font-family: 'Encode Sans Semi Condensed'/);
+  assert.match(html, /\.review-note \{ font-family: 'Frank Ruhl Libre'/);
 
   // Close is gone — the run takes seconds and there is nothing to gain by
   // abandoning it. Its handler and its element go together; no dead listener.

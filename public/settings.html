@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Encode+Sans+Semi+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:ital,wght@0,400;0,700;1,400;1,700&display=swap">
   <style>
     :root {
       --accent: #4DD9D9;
@@ -28,6 +29,7 @@
       -webkit-text-size-adjust: 100%;
     }
     nav {
+      font-family: 'Encode Sans Semi Condensed', sans-serif;
       border-bottom: 1px solid var(--line);
       padding: 14px 16px;
       display: flex;
@@ -35,9 +37,10 @@
       justify-content: space-between;
       gap: 16px;
     }
-    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; cursor: pointer; }
+    nav .brand { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; cursor: pointer; }
     nav .links { display: flex; gap: 16px; }
     nav .navlink {
+      font-family: 'Encode Sans Semi Condensed', sans-serif;
       font-size: 15px; color: var(--muted); background: none; border: none;
       padding: 0; font-weight: 600; cursor: pointer;
     }
@@ -50,31 +53,31 @@
     .sidebar { display: flex; gap: 8px; flex-wrap: wrap; }
     .tab {
       font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--bg);
-      color: var(--muted); border-radius: 999px; padding: 8px 16px; font-weight: 600;
+      color: var(--muted); border-radius: 999px; padding: 8px 16px; font-weight: 600; font-family: 'Encode Sans Semi Condensed', sans-serif;
     }
     .tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 
     .panel { display: none; }
     .panel.active { display: block; }
 
-    h1 { font-size: 24px; line-height: 1.25; margin: 4px 0 16px; }
-    h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 24px 0 8px; }
-    .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #1a9a9a; margin-bottom: 4px; }
+    h1 { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 24px; line-height: 1.25; margin: 4px 0 16px; }
+    h2 { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 24px 0 8px; }
+    .eyebrow { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #1a9a9a; margin-bottom: 4px; }
     p { margin: 8px 0; }
     .muted { color: var(--muted); }
     .break { overflow-wrap: anywhere; }
     a { color: #1a9a9a; }
 
-    label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
+    label { font-family: 'Encode Sans Semi Condensed', sans-serif; display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
     input[type="text"], textarea {
       width: 100%; font: inherit; padding: 11px 12px;
-      border: 1px solid var(--line); border-radius: 8px; resize: vertical;
+      border: 1px solid var(--line); border-radius: 8px; resize: vertical; font-family: 'Encode Sans Semi Condensed', sans-serif;
     }
     input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 
     button.btn {
       font: inherit; cursor: pointer; border: none; border-radius: 8px;
-      padding: 11px 16px; background: var(--ink); color: #fff; font-weight: 600;
+      padding: 11px 16px; background: var(--ink); color: #fff; font-weight: 600; font-family: 'Encode Sans Semi Condensed', sans-serif;
     }
     button.btn:active { transform: translateY(1px); }
     button.btn:disabled { opacity: 0.55; cursor: default; }
@@ -83,14 +86,14 @@
     .btnrow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 
     .card { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 12px 0; }
-    .card .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .card .k { font-weight: 600; }
+    .card .row { font-family: 'Encode Sans Semi Condensed', sans-serif; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .card .k { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 600; }
     .card .v { color: var(--muted); overflow-wrap: anywhere; }
-    .pill { display: inline-block; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+    .pill { font-family: 'Encode Sans Semi Condensed', sans-serif; display: inline-block; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
 
     .soon { opacity: 0.5; }
     .soon .row { cursor: not-allowed; }
-    .badge-soon { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
+    .badge-soon { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
 
     /* Terminal voice.md block */
     .terminal {
@@ -100,7 +103,7 @@
       padding: 24px; border-radius: 8px; white-space: normal;
       overflow-wrap: anywhere;
     }
-    .terminal .t-h { color: var(--accent); font-weight: 600; margin: 14px 0 4px; }
+    .terminal .t-h { font-family: 'Encode Sans Semi Condensed', sans-serif; color: var(--accent); font-weight: 600; margin: 14px 0 4px; }
     .terminal .t-h:first-child { margin-top: 0; }
     .terminal .t-ul { margin: 4px 0 10px; padding-left: 20px; }
     .terminal .t-ul li { margin: 2px 0; }
@@ -112,16 +115,17 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
 
-    .banner { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #b3e6c4; background: #d8f5e0; color: #0a5d2a; border-radius: 8px; font-size: 14px; }
-    .error { margin-top: 12px; padding: 10px 12px; border: 1px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 8px; font-size: 14px; }
+    .banner { font-family: 'Encode Sans Semi Condensed', sans-serif; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #b3e6c4; background: #d8f5e0; color: #0a5d2a; border-radius: 8px; font-size: 14px; }
+    .error { font-family: 'Encode Sans Semi Condensed', sans-serif; margin-top: 12px; padding: 10px 12px; border: 1px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 8px; font-size: 14px; }
     .empty { margin-top: 16px; padding: 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; }
-    .progress { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    .progress { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
     .hidden { display: none !important; }
 
     /* --- Doc Header setup (step 6b) --- */
     /* Passive descriptive copy — legible over the gradient but clearly NOT an
        input: soft translucent wash, no input-style border, subtle left accent. */
     .hdr-lede {
+      font-family: 'Frank Ruhl Libre', serif;
       background: rgba(255,255,255,0.22); border: none; border-left: 3px solid rgba(201,168,76,0.6);
       border-radius: 0 10px 10px 0; padding: 4px 16px; margin: 0 0 18px;
       color: rgba(26,26,46,0.82); line-height: 1.55; font-size: 14.5px;
@@ -133,8 +137,8 @@
       display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
     }
     .hdr-upload-card .btn { margin: 0; }
-    .hdr-upload-title { font-weight: 600; font-size: 14px; color: var(--ink); }
-    .hdr-hint { color: rgba(26,26,46,0.55); font-size: 12px; margin: 0; }
+    .hdr-upload-title { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 600; font-size: 14px; color: var(--ink); }
+    .hdr-hint { font-family: 'Encode Sans Semi Condensed', sans-serif; color: rgba(26,26,46,0.55); font-size: 12px; margin: 0; }
     /* Branded bottom toast (ported from the app) — replaces the generic banner. */
     .toast {
       position: fixed; left: 50%; bottom: 28px; z-index: 300; max-width: 380px; width: max-content;
@@ -155,23 +159,23 @@
       background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px; margin: 0 0 10px;
     }
-    .hdr-block .bh { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-    .hdr-block .bh .bt { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    .hdr-block .bh { font-family: 'Encode Sans Semi Condensed', sans-serif; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .hdr-block .bh .bt { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
     .hdr-block .bh .ba { display: flex; gap: 4px; }
-    .hdr-iconbtn { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; line-height: 1; }
+    .hdr-iconbtn { font-family: 'Encode Sans Semi Condensed', sans-serif; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; line-height: 1; }
     .hdr-iconbtn:hover { color: var(--ink, #1a1a2e); border-color: var(--accent); }
     .hdr-field { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px; align-items: center; margin: 6px 0; }
-    .hdr-field input, .hdr-block > input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; box-sizing: border-box; }
-    .hdr-field select { padding: 7px 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; }
+    .hdr-field input, .hdr-block > input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; box-sizing: border-box; font-family: 'Encode Sans Semi Condensed', sans-serif; }
+    .hdr-field select { padding: 7px 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; font-family: 'Encode Sans Semi Condensed', sans-serif; }
     .hdr-addfield { margin-top: 6px; }
     .hdr-preview { border: 1px solid var(--line); border-radius: 10px; padding: 18px; background: #fff; min-height: 120px; overflow-x: auto; }
-    .pv-heading { font-weight: 700; font-size: 20px; margin: 0 0 6px; }
+    .pv-heading { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 700; font-size: 20px; margin: 0 0 6px; }
     .pv-line { margin: 3px 0; }
     .pv-line .lbl { color: #444; }
     .pv-hr { border: 0; border-top: 1px solid #bbb; margin: 10px 0; }
     .pv-table { border-collapse: collapse; width: 100%; }
     .pv-table td { border: 1px solid #808080; padding: 6px 8px; vertical-align: top; }
-    .pv-wordmark { font-weight: 700; font-size: 18px; }
+    .pv-wordmark { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 700; font-size: 18px; }
     .pv-empty { color: #999; font-style: italic; }
 
     /* --- File-naming pattern (§3, step 7b) --- */
@@ -191,15 +195,16 @@
     }
     .naming-seg.dragging { opacity: 0.65; box-shadow: 0 8px 24px rgba(0,0,0,0.22); }
     .naming-drag {
+      font-family: 'Encode Sans Semi Condensed', sans-serif;
       flex: none; width: 26px; height: 30px; display: flex; align-items: center; justify-content: center;
       color: rgba(26,26,46,0.4); font-size: 16px; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
     }
     .naming-seg select, .naming-seg input {
-      font: inherit; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; background: #fff;
+      font: inherit; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; background: #fff; font-family: 'Encode Sans Semi Condensed', sans-serif;
     }
     .naming-seg .naming-type { flex: none; }
     .naming-seg .naming-val { flex: 1 1 auto; min-width: 0; }
-    .naming-empty { color: rgba(26,26,46,0.6); font-size: 13px; margin: 4px 0 12px; }
+    .naming-empty { font-family: 'Encode Sans Semi Condensed', sans-serif; color: rgba(26,26,46,0.6); font-size: 13px; margin: 4px 0 12px; }
 
     @media (min-width: 720px) {
       .content { min-width: 0; }
@@ -219,11 +224,12 @@
       --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF; --ink: #1A1A2E;
     }
     html, body { height: auto; min-height: 100%; overflow-x: hidden; }
-    body { font-family: 'Encode Sans Semi Condensed', sans-serif; background: var(--ink); color: var(--ink); -webkit-font-smoothing: antialiased; }
+    body { font-family: 'Frank Ruhl Libre', serif; background: var(--ink); color: var(--ink); -webkit-font-smoothing: antialiased; }
     .sky-bg { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, #1E78BE 0%, #2FA8DC 35%, #3BBDE0 60%, #4DD9D9 100%); }
     .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
 
     nav {
+      font-family: 'Encode Sans Semi Condensed', sans-serif;
       position: relative; z-index: 10;
       display: flex; align-items: center; justify-content: space-between;
       height: 58px; padding: 0 12px 0 18px; gap: 8px;
@@ -257,11 +263,11 @@
       background: rgba(255,255,255,0.35); border: 1.5px solid rgba(255,255,255,0.55);
       box-shadow: 0 4px 16px rgba(26,26,46,0.06); transition: transform 0.12s, background 0.15s, box-shadow 0.15s; }
     .hub-card:hover { background: rgba(255,255,255,0.55); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(26,26,46,0.12); }
-    .hub-icon { width: 56px; height: 56px; border-radius: 12px; background: var(--cream);
+    .hub-icon { font-family: 'Encode Sans Semi Condensed', sans-serif; width: 56px; height: 56px; border-radius: 12px; background: var(--cream);
       display: flex; align-items: center; justify-content: center; }
     .hub-icon svg { width: 40px; height: 40px; image-rendering: pixelated; display: block; }
     .hub-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .hub-desc { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; line-height: 1.4; color: rgba(26,26,46,0.68); }
+    .hub-desc { font-family: 'Frank Ruhl Libre', serif; font-size: 12px; line-height: 1.4; color: rgba(26,26,46,0.68); }
     @media (max-width: 420px) { .hub { grid-template-columns: 1fr; } }
 
     /* Back link at the top of a section (returns to the hub). */
@@ -295,7 +301,7 @@
     .terminal {
       background: rgba(26,26,46,0.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       color: rgba(255,255,255,0.85); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 16px; padding: 20px;
-      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 13px; line-height: 1.7;
+      font-family: 'Frank Ruhl Libre', serif; font-size: 13px; line-height: 1.7;
     }
     .terminal .t-h { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px; letter-spacing: 0.03em; color: var(--sky-btm); margin: 14px 0 4px; }
     .terminal .t-h:first-child { margin-top: 0; }
@@ -322,10 +328,10 @@
     .btnrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
     /* Voice action row — compact pills */
     #voice-view .btnrow { gap: 8px; }
-    #voice-view .btnrow .btn { flex: 1; font-size: 10px; padding: 11px 8px; text-align: center; }
+    #voice-view .btnrow .btn { font-family: 'Encode Sans Semi Condensed', sans-serif; flex: 1; font-size: 10px; padding: 11px 8px; text-align: center; }
 
     /* Rows / cards */
-    label { color: var(--ink); font-weight: 500; font-size: 13px; }
+    label { font-family: 'Encode Sans Semi Condensed', sans-serif; color: var(--ink); font-weight: 500; font-size: 13px; }
     input[type="text"], textarea {
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
       color: var(--ink); -webkit-appearance: none; padding: 12px 14px;
@@ -335,11 +341,11 @@
       background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 18px; margin: 8px 0;
     }
-    .card .k { font-weight: 500; color: var(--ink); font-size: 14px; }
-    .card .v { color: rgba(26,26,46,0.5); font-size: 12px; }
-    .pill { background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.55); }
+    .card .k { font-family: 'Encode Sans Semi Condensed', sans-serif; font-weight: 500; color: var(--ink); font-size: 14px; }
+    .card .v { font-family: 'Encode Sans Semi Condensed', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
+    .pill { font-family: 'Encode Sans Semi Condensed', sans-serif; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.55); }
     .soon { opacity: 0.55; background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.3); }
-    .badge-soon { color: rgba(26,26,46,0.45); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
+    .badge-soon { font-family: 'Encode Sans Semi Condensed', sans-serif; color: rgba(26,26,46,0.45); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
 
     /* Asset library (read-only). Two levels — asset, then its fields — so the
        structure a clone-and-edit feature will attach to is visible as structure,
@@ -356,19 +362,22 @@
     .lib-head { display: flex; align-items: flex-start; gap: 10px; }
     .lib-headtext { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
     /* An asset name is a heading, so it is set in the display face like every
-       other heading in the app (.hub-name, .settings-title, h2). Body copy — the
-       group, the field rows, the spec notes — stays in Encode Sans. */
+       other heading in the app (.hub-name, .settings-title, h2). Below it the
+       split is by role, not by size: the reading copy — .lib-dir, .lib-hint,
+       .lib-notewhy — is Frank Ruhl Libre, while the labels and counts that
+       frame it (.lib-group, .lib-field, .lib-limit, .lib-tier) stay in Encode
+       Sans. Every rule here declares its own family; none inherits from body. */
     .lib-name { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px;
       letter-spacing: 0.02em; color: var(--ink); }
-    .lib-group { font-size: 11px; color: rgba(26,26,46,0.45); }
-    .lib-dir { font-size: 12px; font-style: italic; color: rgba(26,26,46,0.55); margin-top: 4px; }
+    .lib-group { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11px; color: rgba(26,26,46,0.45); }
+    .lib-dir { font-family: 'Frank Ruhl Libre', serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.55); margin-top: 4px; }
     .lib-fields { list-style: none; margin: 8px 0 0; padding: 0; }
-    .lib-field { padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
+    .lib-field { font-family: 'Encode Sans Semi Condensed', sans-serif; padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .lib-field:first-child { border-top: none; }
     .lib-fname { color: var(--ink); }
-    .lib-limit { color: rgba(26,26,46,0.5); font-size: 12px; }
-    .lib-sub { font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
-    .lib-tier { font-size: 11px; font-weight: 600; }
+    .lib-limit { font-family: 'Encode Sans Semi Condensed', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
+    .lib-sub { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
+    .lib-tier { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11px; font-weight: 600; }
     .lib-tier.enforced { color: #8a4b00; }
     .lib-tier.recommended { color: #1E6F8E; }
     /* Sub-group heading ("Graphic Copy").
@@ -384,6 +393,7 @@
        was bleeding upward and reading as that field's own uneven bottom padding
        (measured 28.5px to the next row vs 12.5px everywhere else). */
     .lib-grouplabel {
+      font-family: 'Encode Sans Semi Condensed', sans-serif;
       margin: 11px 0 0; padding: 0; border-top: none;
       font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       color: rgba(26,26,46,0.62);
@@ -404,33 +414,33 @@
        assets and one custom one, it should not shout. */
     .lib-editbtn { flex: none; background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.7);
       border-radius: 999px; cursor: pointer; padding: 5px 12px; min-height: 30px; margin-top: -2px;
-      font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); }
+      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); }
     .lib-editbtn:hover { color: var(--ink); border-color: rgba(26,26,46,0.3); }
     /* flex: none + a head that cannot wrap = the same x on every card. The small
        top offset centres it against the FIRST line of the name, not the block. */
     .lib-toggle { position: relative; width: 40px; height: 24px; flex: none; cursor: pointer; margin-top: 1px; }
     .lib-toggle input { opacity: 0; width: 0; height: 0; }
     .lib-track { position: absolute; inset: 0; background: rgba(26,26,46,0.2); border-radius: 999px; transition: background .15s; }
-    .lib-track::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .15s; }
+    .lib-track::before { font-family: 'Encode Sans Semi Condensed', sans-serif; content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .15s; }
     .lib-toggle input:checked + .lib-track { background: var(--sky-btm); }
     .lib-toggle input:checked + .lib-track::before { transform: translateX(16px); }
     .lib-toggle input:disabled + .lib-track { opacity: 0.5; cursor: progress; }
-    .lib-rowerr { font-size: 11.5px; color: #8a1f1f; margin-top: 6px; }
+    .lib-rowerr { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11.5px; color: #8a1f1f; margin-top: 6px; }
 
     /* Create-an-asset form. Collapsed to a single button until opened, so the
        library stays a library. */
     .lib-newbtn { margin: 14px 0 4px; }
     .lib-new { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px; margin: 12px 0; }
-    .lib-new h2 { font-size: 15px; margin: 0 0 4px; }
-    .lib-new label { display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
-    .lib-new input[type="text"], .lib-new textarea { width: 100%; font-size: 14px; }
+    .lib-new h2 { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 15px; margin: 0 0 4px; }
+    .lib-new label { font-family: 'Encode Sans Semi Condensed', sans-serif; display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
+    .lib-new input[type="text"], .lib-new textarea { font-family: 'Encode Sans Semi Condensed', sans-serif; width: 100%; font-size: 14px; }
     .lib-new textarea { font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.5; }
     /* The paste box is the primary input for a feature whose whole point is a
        dozen-plus fields, so it opens at eight lines and grows with what is in it
        (libAutoGrow) rather than becoming a four-line scroll port. */
     .lib-paste { min-height: 172px; resize: none; overflow: hidden; }
-    .lib-hint { font-size: 11.5px; color: rgba(26,26,46,0.55); margin: 4px 0 0; line-height: 1.5; }
+    .lib-hint { font-family: 'Frank Ruhl Libre', serif; font-size: 11.5px; color: rgba(26,26,46,0.55); margin: 4px 0 0; line-height: 1.5; }
     /* One field row, stacked on purpose. A single grid line put the field NAME —
        the only value you cannot infer from the others — in the narrowest column:
        at 390px it showed nine characters, so "Section 1 Headline" and
@@ -446,51 +456,52 @@
     .lib-fhead { display: flex; align-items: center; gap: 6px; }
     .lib-fctl { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
     .lib-frow input[type="text"], .lib-frow input[type="number"], .lib-frow select, .lib-frow textarea {
+      font-family: 'Encode Sans Semi Condensed', sans-serif;
       padding: 8px 9px; font-size: 13px; border-radius: 9px;
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); color: var(--ink);
     }
     /* Scoped to a create-form row: unscoped, this rule also caught the read-only
        card's field-name span 70 lines above and bolded every field in the library. */
-    .lib-frow .lib-fname { flex: 1; min-width: 0; font-weight: 600; }
+    .lib-frow .lib-fname { font-family: 'Encode Sans Semi Condensed', sans-serif; flex: 1; min-width: 0; font-weight: 600; }
     .lib-fctl input[type="number"] { width: 62px; }
-    .lib-fctl .lib-sep { font-size: 12px; color: rgba(26,26,46,0.45); }
+    .lib-fctl .lib-sep { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; color: rgba(26,26,46,0.45); }
     /* The unit was a bare "chars" with appearance:none and no affordance — it
        read as a label sitting beside two numbers, not as the control that
        switches the whole row between characters and words. It now carries a
        chevron, a solid border and a pressable fill. */
     .lib-funit { position: relative; display: inline-flex; }
-    .lib-funit::after { content: '▾'; position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+    .lib-funit::after { font-family: 'Encode Sans Semi Condensed', sans-serif; content: '▾'; position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
       font-size: 11px; color: rgba(26,26,46,0.55); pointer-events: none; }
-    .lib-funit select { width: 86px; min-height: 36px; padding-right: 22px; cursor: pointer;
+    .lib-funit select { font-family: 'Encode Sans Semi Condensed', sans-serif; width: 86px; min-height: 36px; padding-right: 22px; cursor: pointer;
       -webkit-appearance: none; appearance: none; font-weight: 600;
       background: rgba(255,255,255,0.78); border-color: rgba(26,26,46,0.18); }
     /* Pushed to the far edge, away from the name it sits beside, and sized as a
        real thumb target rather than a 17px glyph. */
-    .lib-fdel { flex: none; background: none; border: none; cursor: pointer; font-size: 20px;
+    .lib-fdel { font-family: 'Encode Sans Semi Condensed', sans-serif; flex: none; background: none; border: none; cursor: pointer; font-size: 20px;
       line-height: 1; color: rgba(26,26,46,0.4); padding: 6px 10px; min-height: 36px; min-width: 36px; }
     .lib-fdel:hover { color: #8a1f1f; }
     /* The writing note is the ONLY guidance the drafter gets for a custom field —
        gemini.js reads `notes || builtInFieldGuidance(fieldName)`, and a custom
        field has no built-in and no tier line — so it is a full-width invitation
        rather than a word beside an X. */
-    .lib-fnotebtn { display: block; width: 100%; margin-top: 6px; padding: 9px 10px; min-height: 38px;
+    .lib-fnotebtn { font-family: 'Encode Sans Semi Condensed', sans-serif; display: block; width: 100%; margin-top: 6px; padding: 9px 10px; min-height: 38px;
       text-align: left; cursor: pointer; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.62);
       background: rgba(255,255,255,0.28); border: 1.5px dashed rgba(26,26,46,0.22); border-radius: 9px; }
     .lib-fnotebtn:hover { color: var(--ink); border-color: rgba(26,26,46,0.4); }
     .lib-fnotewrap { margin-top: 6px; }
-    .lib-fnotelab { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    .lib-fnotelab { font-family: 'Encode Sans Semi Condensed', sans-serif; display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
       text-transform: uppercase; color: rgba(26,26,46,0.5); margin-bottom: 4px; }
-    .lib-fnote { width: 100%; min-height: 54px; resize: none; overflow: hidden; font-family: inherit;
+    .lib-fnote { width: 100%; min-height: 54px; resize: none; overflow: hidden; font-family: 'Encode Sans Semi Condensed', sans-serif;
       font-size: 12.5px !important; line-height: 1.5; }
     /* Said once, above the rows, so every note button below reads as the thing
        that fills a real gap rather than an optional extra. */
-    .lib-notewhy { font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.6);
+    .lib-notewhy { font-family: 'Frank Ruhl Libre', serif; font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.6);
       background: rgba(255,255,255,0.3); border-radius: 9px; padding: 8px 10px; margin: 10px 0 0; }
     /* What the reconciler did, in words, whenever it protected an edit. */
-    .lib-kept { font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.72);
+    .lib-kept { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.72);
       background: rgba(255,255,255,0.42); border-left: 2px solid rgba(26,26,46,0.28);
       border-radius: 0 9px 9px 0; padding: 7px 10px; margin: 8px 0 0; }
-    .lib-newerr { font-size: 12.5px; color: #8a1f1f; margin-top: 10px; }
+    .lib-newerr { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12.5px; color: #8a1f1f; margin-top: 10px; }
     .lib-newerr ul { margin: 4px 0 0; padding-left: 18px; }
 
     /* Template documents (custom document types, step one). Read-only: upload,
@@ -501,25 +512,25 @@
     .tpl-drop:hover { border-color: rgba(26,26,46,0.45); background: rgba(255,255,255,0.42); }
     .tpl-droptitle { display: block; font-family: 'StarCrush', serif; font-size: 15px;
       letter-spacing: 0.02em; color: var(--ink); }
-    .tpl-dropsub { display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5;
+    .tpl-dropsub { font-family: 'Encode Sans Semi Condensed', sans-serif; display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5;
       color: rgba(26,26,46,0.55); }
     #tpl-upload-btn { margin-top: 12px; }
     /* Naming, renaming, and the field->marker mapper (step two). */
     .tpl-namerow { margin-top: 12px; }
-    .tpl-namerow label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .tpl-namerow label { font-family: 'Encode Sans Semi Condensed', sans-serif; display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
     .tpl-nameinput { width: 100%; max-width: 420px; padding: 8px 10px; font: inherit; font-size: 14px;
-      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
-    .tpl-namehint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-family: 'Encode Sans Semi Condensed', sans-serif; }
+    .tpl-namehint { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; color: var(--muted); margin-top: 4px; }
     .tpl-rename { background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px;
-      cursor: pointer; text-decoration: underline; padding: 0 0 0 8px; }
+      cursor: pointer; text-decoration: underline; padding: 0 0 0 8px; font-family: 'Encode Sans Semi Condensed', sans-serif; }
     .tpl-rename:hover { color: var(--fg); }
-    .tpl-usedby { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .tpl-usedby { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; color: var(--muted); margin-top: 2px; }
     /* The confirm screen: one row per marker, editable. */
     .cf-open { background: none; border: 1px solid var(--line); border-radius: 6px; font: inherit;
-      font-size: 12px; padding: 3px 9px; cursor: pointer; color: var(--fg); margin-left: 8px; }
+      font-size: 12px; padding: 3px 9px; cursor: pointer; color: var(--fg); margin-left: 8px; font-family: 'Encode Sans Semi Condensed', sans-serif; }
     .cf-open:hover { border-color: var(--fg); }
     .cf-panel { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
-    .cf-lede { font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+    .cf-lede { font-family: 'Frank Ruhl Libre', serif; font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
     .cf-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
       padding: 9px 0; border-bottom: 1px solid var(--line); }
     .cf-row:last-of-type { border-bottom: 0; }
@@ -530,16 +541,16 @@
     .cf-marker { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
       color: var(--muted); display: block; margin-bottom: 3px; word-break: break-all; }
     .cf-name { width: 100%; padding: 6px 8px; font: inherit; font-size: 13px;
-      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-family: 'Encode Sans Semi Condensed', sans-serif; }
     .cf-limit { flex: 0 0 74px; padding: 6px 8px; font: inherit; font-size: 13px;
-      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-family: 'Encode Sans Semi Condensed', sans-serif; }
     .cf-unit { flex: 0 0 84px; padding: 6px 4px; font: inherit; font-size: 12px;
-      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
-    .cf-meta { flex: 1 1 100%; font-size: 11px; color: var(--muted); padding-left: 26px; }
-    .cf-meta b { color: var(--fg); font-weight: 500; }
+      border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-family: 'Encode Sans Semi Condensed', sans-serif; }
+    .cf-meta { font-family: 'Encode Sans Semi Condensed', sans-serif; flex: 1 1 100%; font-size: 11px; color: var(--muted); padding-left: 26px; }
+    .cf-meta b { font-family: 'Encode Sans Semi Condensed', sans-serif; color: var(--fg); font-weight: 500; }
     .cf-guess { color: #8a6d3b; }
     .cf-actions { margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .cf-count { font-size: 12px; color: var(--muted); }
+    .cf-count { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; color: var(--muted); }
     @media (max-width: 480px) {
       .cf-main { flex: 1 1 100%; }
       .cf-limit, .cf-unit { flex: 1 1 calc(50% - 4px); }
@@ -550,19 +561,19 @@
     .tpl-head { display: flex; align-items: flex-start; gap: 10px; }
     .tpl-name { flex: 1; min-width: 0; font-family: 'StarCrush', serif; font-weight: normal;
       font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .tpl-open { flex: none; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); text-decoration: underline; }
-    .tpl-meta { font-size: 11.5px; color: rgba(26,26,46,0.55); margin-top: 4px; }
+    .tpl-open { font-family: 'Encode Sans Semi Condensed', sans-serif; flex: none; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); text-decoration: underline; }
+    .tpl-meta { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11.5px; color: rgba(26,26,46,0.55); margin-top: 4px; }
     .tpl-marks { list-style: none; margin: 10px 0 0; padding: 0; }
-    .tpl-mark { padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
+    .tpl-mark { font-family: 'Encode Sans Semi Condensed', sans-serif; padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .tpl-mark:first-child { border-top: none; }
     .tpl-token { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--ink); }
-    .tpl-count { font-size: 11px; color: rgba(26,26,46,0.5); margin-left: 6px; }
-    .tpl-where { display: block; font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
+    .tpl-count { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 11px; color: rgba(26,26,46,0.5); margin-left: 6px; }
+    .tpl-where { font-family: 'Encode Sans Semi Condensed', sans-serif; display: block; font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
     /* A malformed marker is shown, never swallowed — a tenant who typo'd a brace
        has to see it here rather than discover it when nothing fills in. */
-    .tpl-warn { font-size: 12px; color: #8a1f1f; background: rgba(255,255,255,0.42);
+    .tpl-warn { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12px; color: #8a1f1f; background: rgba(255,255,255,0.42);
       border-left: 2px solid #8a1f1f; border-radius: 0 9px 9px 0; padding: 7px 10px; margin-top: 10px; }
-    .tpl-empty { font-size: 12.5px; color: rgba(26,26,46,0.6); margin-top: 8px; }
+    .tpl-empty { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 12.5px; color: rgba(26,26,46,0.6); margin-top: 8px; }
 
     /* Notes / banners / states on the sky */
     .note { color: rgba(26,26,46,0.65); }

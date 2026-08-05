@@ -387,12 +387,14 @@
     .lib-tier.mine { color: #2f6b46; }
 
     /* --- Reduced form: setting your own limits on a BUNDLED asset ---------- */
-    /* A locked row is dimmed rather than hidden. The bundled paid-social assets
-       are MIXED — house defaults beside platform limits — so a form showing only
-       the editable half would read as a truncated list. Dimmed-and-present says
-       "this field exists and is not yours"; absent says nothing at all. */
-    .lib-frow.locked { opacity: 0.55; }
-    .lib-frow.locked input, .lib-frow.locked textarea, .lib-frow.locked select { cursor: not-allowed; }
+    /* A locked row is PRESENT but carries no controls — it renders its value the
+       way the read-only card does. The bundled paid-social assets are MIXED, so a
+       form showing only the editable half would read as a truncated list; but
+       dimmed INPUTS were worse than either, because at 0.55 opacity on a light
+       card they still read as enabled and invited a tap that does nothing. */
+    .lib-frow.locked { opacity: 0.6; }
+    .lib-fstatic { padding: 2px 0 0; }
+    .lib-fstaticnote { margin: 4px 0 0; font-size: 12.5px; color: rgba(26,26,46,0.66); }
     /* The field name as TEXT, where the full form has an input. Same size and
        weight, so the two forms read as the same list with different powers. */
     .lib-fname.static { font-size: 14px; font-weight: 600; padding: 6px 0; margin-right: 8px; }
@@ -497,6 +499,12 @@
     .lib-funit select { font-family: 'Encode Sans Semi Condensed', sans-serif; width: 86px; min-height: 36px; padding-right: 22px; cursor: pointer;
       -webkit-appearance: none; appearance: none; font-weight: 600;
       background: rgba(255,255,255,0.78); border-color: rgba(26,26,46,0.18); }
+    /* The unit control on an EDITABLE row: shown, inert, and plainly so. No
+       chevron and a flat fill, so it does not read as a dropdown that is failing
+       to open. */
+    .lib-funit.locked::after { display: none; }
+    .lib-funit.locked select { background: rgba(26,26,46,0.05); border-color: transparent;
+      color: rgba(26,26,46,0.55); cursor: default; padding-right: 12px; }
     /* Pushed to the far edge, away from the name it sits beside, and sized as a
        real thumb target rather than a 17px glyph. */
     .lib-fdel { font-family: 'Encode Sans Semi Condensed', sans-serif; flex: none; background: none; border: none; cursor: pointer; font-size: 20px;
@@ -1236,12 +1244,50 @@
     function libHouseRow(f) {
       var editable = f.editable !== false;
       var wrap = el('div', 'lib-frow' + (editable ? '' : ' locked'));
+      // ONLY A ROW THE USER TOUCHED IS SENT. Posting every rendered row would
+      // write an override to every house_default field of the asset — equal to
+      // the seed's value, so nothing LOOKS different — and silently detach all of
+      // them from every future seed update. Opening the form and changing one
+      // number would quietly pin the other five forever.
+      //
+      // The server already speaks this language: an absent value means "not
+      // offered, leave it alone". This is the client keeping its side of it.
+      var dirty = false;
 
       var head = el('div', 'lib-fhead');
       head.appendChild(el('span', 'lib-fname static', f.field_name));
       var tier = libTierNode(f);
       if (tier) head.appendChild(tier);
       wrap.appendChild(head);
+
+      // The limit as a sentence, in the same "[40-90 chars]" idiom the read-only
+      // card and every generated doc already use.
+      var unitWord = (f.field_type === 'words') ? 'words' : 'chars';
+      var limitText = function (lo, hi) {
+        if (!hi) return 'no limit';
+        return (lo ? lo + '–' + hi : 'up to ' + hi) + ' ' + unitWord;
+      };
+
+      // A LOCKED ROW GETS NO CONTROLS AT ALL — it is drawn as the read-only card
+      // draws it. This started as dimmed inputs, and on a device that was the
+      // worst of the three options: at 0.55 opacity on a light card the row read
+      // as ENABLED, so the first thing a tenant does is tap a field that will
+      // never accept anything. "Dimmed, not hidden" was the right call about the
+      // ROW — the paid-social assets are mixed and a half list reads as broken —
+      // but the way to keep a row present without lying about it is to show its
+      // value rather than a control that refuses input.
+      if (!editable) {
+        var lockedLine = el('div', 'lib-fstatic');
+        lockedLine.appendChild(el('span', 'lib-limit', limitText(f.char_min, f.char_max)));
+        wrap.appendChild(lockedLine);
+        if (f.spec_note) wrap.appendChild(el('p', 'lib-fstaticnote', f.spec_note));
+        wrap.appendChild(el('p', 'lib-hint',
+          f.spec_type === 'enforced'
+            ? 'The platform enforces this one — copy over it and it gets cut.'
+            : 'Someone measured this one. Quillio keeps it in step with the source.'));
+        wrap.readRow = function () { return null; };
+        return wrap;
+      }
 
       var ctl = el('div', 'lib-fctl');
       var min = document.createElement('input');
@@ -1250,11 +1296,17 @@
       var max = document.createElement('input');
       max.type = 'number'; max.min = '0'; max.value = f.char_max || ''; max.placeholder = 'max';
       max.setAttribute('aria-label', 'Limit for ' + f.field_name);
-      var unitWrap = el('span', 'lib-funit');
+      // The unit stays a real control and stays DISABLED — shown rather than
+      // omitted, so the row is not silently missing something the full form has,
+      // and disabled rather than live, because the server ignores field_type on
+      // this path and a control whose input is discarded is the failure this
+      // panel keeps refusing. It is styled as plainly inert (no chevron, flat
+      // fill) so it cannot be mistaken for a control that is failing to open.
+      var unitWrap = el('span', 'lib-funit locked');
       var unit = document.createElement('select');
-      unit.setAttribute('aria-label', 'Counted in');
-      unit.disabled = true;                       // never editable on a bundled asset
-      unit.title = 'The unit is part of the built-in asset type.';
+      unit.setAttribute('aria-label', 'Counted in ' + unitWord + ' — set by the built-in asset type');
+      unit.disabled = true;
+      unit.title = 'Built-in asset types set their own unit.';
       ['text', 'words'].forEach(function (u) {
         var o = document.createElement('option'); o.value = u;
         o.textContent = u === 'words' ? 'words' : 'chars';
@@ -1268,26 +1320,34 @@
       ctl.appendChild(unitWrap);
       wrap.appendChild(ctl);
 
+      // THE NOTE IS COLLAPSED UNTIL IT HAS SOMETHING IN IT, the same way the full
+      // form collapses it. Rendered open on every row, its two-line uppercase
+      // label was about a third of the form's height on a phone and turned a
+      // six-field asset into a wall of shouting.
       var note = document.createElement('textarea');
       note.className = 'lib-fnote';
       note.value = f.spec_note || '';
-      note.placeholder = 'Writing note — the drafter follows this';
+      note.placeholder = 'e.g. Lead with the outcome. No product names.';
       note.setAttribute('aria-label', 'Writing note for ' + f.field_name);
       var noteWrap = el('div', 'lib-fnotewrap');
       noteWrap.appendChild(el('span', 'lib-fnotelab', 'Writing note — the drafter follows this'));
       noteWrap.appendChild(note);
+      var noteBtn = el('button', 'lib-fnotebtn', '+ Add a writing note');
+      noteBtn.type = 'button';
+      var setNoteOpen = function (open) {
+        noteWrap.classList.toggle('hidden', !open);
+        noteBtn.classList.toggle('hidden', open);
+        noteBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) libAutoGrow(note);
+      };
+      noteBtn.addEventListener('click', function () { setNoteOpen(true); note.focus(); });
+      wrap.appendChild(noteBtn);
       wrap.appendChild(noteWrap);
+      setNoteOpen(!!f.spec_note);
       note.addEventListener('input', function () { libAutoGrow(note); });
-
-      if (!editable) {
-        [min, max, note].forEach(function (e) { e.disabled = true; });
-        wrap.appendChild(el('p', 'lib-hint',
-          f.spec_type === 'enforced'
-            ? 'The platform enforces this one — copy over it and it gets cut.'
-            : 'This limit comes from someone who measured it. Quillio keeps it in step with the source.'));
-        wrap.readRow = function () { return null; };
-        return wrap;
-      }
+      [min, max, note].forEach(function (e) {
+        e.addEventListener('input', function () { dirty = true; });
+      });
 
       // WHAT QUILLIO'S NUMBER IS, and the way back to it. Shown only once the
       // tenant has changed something, because on an untouched field the stored
@@ -1324,8 +1384,10 @@
 
       // `reset` and values are mutually exclusive by construction, not by the
       // server having to guess which half of a contradictory request to honour.
+      // null = this row was not touched and must not be sent.
       wrap.readRow = function () {
         if (doReset) return { id: f.id, reset: true };
+        if (!dirty) return null;
         return {
           id: f.id,
           char_min: min.value === '' ? 0 : Number(min.value),
@@ -1343,7 +1405,7 @@
       box.appendChild(el('p', 'lib-hint',
         '"' + asset.name + '" is one of Quillio\'s built-in asset types, so its name and its list of fields stay as they are. '
         + 'The fields marked House default are yours — set the counts and the writing note to whatever your team works to. '
-        + 'Fields held to a platform limit can\'t be changed here.'));
+        + 'Fields held to a platform limit are shown but can\'t be changed here, and the unit each field counts in comes with the built-in type.'));
 
       var rows = el('div');
       box.appendChild(rows);

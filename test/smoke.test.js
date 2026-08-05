@@ -10547,6 +10547,65 @@ test('the update route is session-scoped and answers 404 across tenants', () => 
   assert.strictEqual((route.match(/updateAssetType\(/g) || []).length, 2, 'and both are in this route');
 });
 
+// BOTH OF THESE ARE REGRESSIONS THE SUITE DID NOT CATCH. They were found by
+// loading the page in a browser, which is the only thing that tests public/*.html
+// (CLAUDE.md: "the device is the test"). These assertions are structural — the
+// suite still executes no JS — so they pin the SHAPE that was wrong, not the
+// behaviour. Treat them as a tripwire, not as coverage.
+test('the house-default form sends only the rows the tenant touched', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const form = html.slice(html.indexOf('--- Set your own limits on a BUNDLED asset'), html.indexOf('--- Create an asset type'));
+  assert.ok(form.length > 500, 'found the reduced form');
+
+  // WHAT WENT WRONG. The form posted every rendered row, so saving ONE changed
+  // number wrote an override to every house_default field of the asset — each
+  // equal to the seed's own value, so nothing looked different on screen — and
+  // silently detached all of them from every future seed update. Confirmed on a
+  // real Postgres: editing Graphic Headline alone logged "3 changed" and left
+  // Subhead and CTA Button pinned. That is the exact failure the override
+  // columns exist to prevent, arriving through the front door.
+  assert.match(form, /var dirty = false;/);
+  assert.match(form, /e\.addEventListener\('input', function \(\) \{ dirty = true; \}\);/);
+  assert.match(form, /if \(!dirty\) return null;/, 'an untouched row is not sent');
+  // A reset is an explicit act and IS sent, even though nothing was typed.
+  assert.ok(form.indexOf('if (doReset) return { id: f.id, reset: true };') < form.indexOf('if (!dirty) return null;'),
+    'reset is checked before the dirty gate, so it survives it');
+  // And the caller drops the nulls rather than posting them.
+  assert.match(form, /if \(row\) fields\.push\(row\);/);
+  assert.match(form, /if \(fields\.length === 0\) \{ close\(\); return; \}/,
+    'nothing touched → no request at all');
+});
+
+test('a locked row in the house-default form renders no control at all', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const form = html.slice(html.indexOf('--- Set your own limits on a BUNDLED asset'), html.indexOf('--- Create an asset type'));
+
+  // WHAT WENT WRONG. Locked rows were drawn as DISABLED INPUTS at 0.55 opacity.
+  // On a phone, against this card's light background, they read as enabled — so
+  // the first thing a tenant does on an enforced field is tap a control that can
+  // never accept anything. "Dimmed, not hidden" is still right about the ROW (the
+  // paid-social assets are mixed and a half list reads as broken), but a row is
+  // kept honest by showing its VALUE, not a control that refuses input.
+  const locked = form.slice(form.indexOf('if (!editable) {'), form.indexOf('var ctl = el('));
+  assert.ok(locked.length > 100, 'found the locked branch');
+  for (const control of ["createElement('input')", "createElement('textarea')", "createElement('select')"]) {
+    assert.ok(!locked.includes(control), `a locked row builds no ${control}`);
+  }
+  assert.match(locked, /lib-fstatic/, 'it renders the value as text');
+  assert.match(locked, /wrap\.readRow = function \(\) \{ return null; \};/, 'and is never posted');
+  // The locked branch returns BEFORE any control is built, so a control cannot be
+  // added above it and reach a locked row by accident.
+  assert.ok(form.indexOf('if (!editable) {') < form.indexOf("var min = document.createElement('input')"));
+
+  // field_type stays a real, DISABLED control on an editable row — shown rather
+  // than omitted, and styled inert so it does not read as a dropdown failing to
+  // open (no chevron, flat fill).
+  assert.match(form, /var unitWrap = el\('span', 'lib-funit locked'\);/);
+  assert.match(form, /unit\.disabled = true;/);
+  assert.match(html, /\.lib-funit\.locked::after \{ display: none; \}/, 'no chevron on the inert unit');
+  assert.match(html, /\.lib-funit\.locked select \{ background: rgba\(26,26,46,0\.05\)/);
+});
+
 test('removing an asset is is_active, and the UI says what that means', () => {
   // Five tables reference asset_types(id) with no ON DELETE, so the row cannot
   // go anywhere. is_active ALREADY means everything "deleted" would mean — a

@@ -380,11 +380,22 @@ would silently take back.
   number, which is when a setting actually gets adopted.
 - **Settings → Asset library.** A bundled asset with at least one house_default
   field gets a **Set limits** button (`houseEditable` from the server) opening the
-  reduced form in its own card. Locked rows are drawn **dimmed, not hidden** — the
+  reduced form in its own card. Locked rows are **present but carry no controls** —
+  they render their value the way the read-only card does. The row stays (the
   paid-social assets are mixed, and a form showing half a field list reads as
-  broken. `field_type` renders **disabled rather than omitted**: the server ignores
-  it on this path, and a control that accepts input the server discards is the
-  failure this panel keeps refusing.
+  broken); the *inputs* go. Drawn as disabled inputs at 0.6 opacity they still read
+  as enabled on a phone, so the first thing a tenant did on an enforced field was
+  tap a control that could never accept anything. `field_type` on an *editable* row
+  does render **disabled rather than omitted**, styled inert (no chevron, flat
+  fill): the server ignores it on this path, and a control that accepts input the
+  server discards is the failure this panel keeps refusing.
+- **Only rows the tenant TOUCHED are sent.** The form posts a row only once its
+  inputs have fired, and drops the request entirely when nothing changed. Posting
+  every rendered row wrote an override to every house_default field of the asset —
+  each equal to the seed's own value, so nothing looked different — and silently
+  detached all of them from future seed updates. That is the failure the override
+  columns exist to prevent, arriving through the front door. The server already
+  reads an absent value as "leave it alone"; this is the client keeping its side.
 - **`counts.editable` did not change meaning.** It still counts assets that open
   the *full* form. The new state travels in `counts.houseEditable`. A stale client
   reads the old key to mean what it always meant.

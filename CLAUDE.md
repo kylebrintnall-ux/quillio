@@ -435,6 +435,27 @@ and came back clean, so nothing on that path is waiting on a schema change:
 
 A matrix has since been built and drafted end to end on tenant `T0B8LPRDKHR`.
 
+The LiveSpecs detector's migrations have also run:
+
+| Script | Result |
+| --- | --- |
+| `migrateAddSpecAnchors.js` | 3 columns added; 4 anchors seeded, 3 rows left unanchored by decision |
+| `migrateAddUnconfirmedTracking.js` | `consecutive_unconfirmed`, `last_unconfirmed_reason` added |
+| `migrateAddSourceKind.js` | `source_kind` added; the 2 Litmus rows → `observed_practice`; their 6 pending flags dismissed |
+| `migrateRetireDeadAssets.js` | the 5 dead asset types + `Form and Confirmation Copy` retired |
+
+So a detection run now reports 7 entries: 5 hash-watched (4 anchored, 1
+unanchored — Meta) and 2 `not_watched`.
+
+**The pre-migration tolerances stay.** `getWatchList`'s four-tier degradation and
+the detector's key-presence checks (`hasAnchorColumns`, `hasUnconfirmedColumns`)
+are no longer protecting a deploy that lands ahead of a migration — that window
+has closed. They now protect a **rollback**: Railway redeploying an older commit
+against the migrated database, and the reverse. Deleting them would make the
+schema and the code a matched pair that must move together, which is the
+condition this codebase has consistently refused to create. They cost four
+`SELECT` attempts on a cold read and nothing after.
+
 The code's pre-migration tolerances still stand and are still correct — a
 project row created *before* `migrateAddProjectTemplateDraft` has NULL in those
 three columns, so `resolveProjectTemplate` still returns `unlinked` for it and
@@ -612,7 +633,7 @@ forever. On a *first* run it was worse: `sha256('')` became the legitimate
 baseline and every later run agreed with it.
 
 So `spec_watch_list` carries three columns
-(`scripts/migrateAddSpecAnchors.js` — **not yet run in production**):
+(`scripts/migrateAddSpecAnchors.js`):
 
 | Column | Means |
 | --- | --- |

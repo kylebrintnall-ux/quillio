@@ -130,16 +130,24 @@ async function loadHealth(){
   try { h = await api('/admin/api/health'); }
   catch(e){ sum.appendChild(el('div',{class:'msg err',text:'Health load failed: '+e.message})); return; }
   const watch = h.watch || [];
-  const withErrors = watch.filter(w=>w.last_error).length;
+  // Observed-practice sources are not hash-watched, so every count that measures
+  // the hash watch excludes them. Including them would inflate numbers that
+  // describe a real gap on the rows they apply to — and would report a row as
+  // erroring on the strength of a last_error nothing has refreshed since it was
+  // reclassified.
+  const hashWatched = watch.filter(w=>w.source_kind !== 'observed_practice');
+  const notWatched = watch.length - hashWatched.length;
+  const withErrors = hashWatched.filter(w=>w.last_error).length;
   const pending = watch.reduce((a,w)=>a+(w.pending_count||0),0);
-  const unanchored = watch.filter(w=>!w.anchored).length;
+  const unanchored = hashWatched.filter(w=>!w.anchored).length;
   const alertAt = h.unconfirmedAlertAt || 3;
-  const stuck = watch.filter(w=>w.consecutive_unconfirmed >= alertAt).length;
+  const stuck = hashWatched.filter(w=>w.consecutive_unconfirmed >= alertAt).length;
   sum.appendChild(el('div',{},['Last detection run: '+(h.lastRun ? relTime(h.lastRun)+' ('+new Date(h.lastRun).toLocaleString()+')' : 'never')]));
-  sum.appendChild(el('div',{},['Last run result: '+watch.length+' watched · '+withErrors+' with error(s) · '+pending+' pending flag(s)']));
+  sum.appendChild(el('div',{},['Last run result: '+hashWatched.length+' hash-watched · '+withErrors+' with error(s) · '+pending+' pending flag(s)']));
   // Unanchored entries are still checked, but nothing verifies the fetch read the
   // right page — say so on the summary line rather than only in the table.
-  sum.appendChild(el('div',{},['Anchors: '+(watch.length-unanchored)+' of '+watch.length+' asserted'+(unanchored?' · '+unanchored+' unanchored':'')]));
+  sum.appendChild(el('div',{},['Anchors: '+(hashWatched.length-unanchored)+' of '+hashWatched.length+' asserted'+(unanchored?' · '+unanchored+' unanchored':'')]));
+  if(notWatched) sum.appendChild(el('div',{},['Not hash-watched: '+notWatched+' observed-practice source'+(notWatched===1?'':'s')+' — dated guidance, never flagged']));
   // A stuck entry is read successfully every week and still not watched, which
   // is why it needs saying on the summary rather than only in a row.
   if(stuck) sum.appendChild(el('div',{},['Stuck: '+stuck+' entr'+(stuck===1?'y':'ies')+' with no usable comparison for '+alertAt+'+ runs']));
@@ -150,16 +158,23 @@ async function loadHealth(){
     el('th',{text:'Baselined'}), el('th',{text:'Anchor'}), el('th',{text:'Problem'}), el('th',{text:'Pending'}),
   ]));
   for(const w of watch){
-    const fails = w.consecutive_failures;
-    const stuckAt = w.consecutive_unconfirmed;
+    const observed = w.source_kind === 'observed_practice';
+    // Every hash-watch column on an observed-practice row is historical: nothing
+    // has fetched it since it was reclassified, and nothing will. Reading them as
+    // current is the one wrong conclusion this table can lead someone to.
+    const fails = observed ? null : w.consecutive_failures;
+    const stuckAt = observed ? 0 : w.consecutive_unconfirmed;
     const isStuck = stuckAt >= alertAt;
-    const tr = el('tr', (w.last_error || fails>1 || isStuck) ? {class:'err-row'} : {});
+    const tr = el('tr', (!observed && (w.last_error || fails>1 || isStuck)) ? {class:'err-row'} : {});
     tr.appendChild(el('td',{},[el('div',{class:'title',text:w.display_name||'(no name)'}), el('div',{class:'note',text:w.source_url})]));
-    tr.appendChild(el('td',{},[el('span',{class:'badge '+(w.is_test?'test':'real'),text:w.is_test?'TEST':'REAL'})]));
-    tr.appendChild(el('td',{text:relTime(w.last_checked_at)}));
-    tr.appendChild(el('td',{text:w.baselined?'yes':'no'}));
     tr.appendChild(el('td',{},[
-      el('div',{text:w.anchored?'yes':'none'}),
+      el('span',{class:'badge '+(w.is_test?'test':'real'),text:w.is_test?'TEST':'REAL'}),
+      observed ? el('div',{class:'note',text:'observed practice'}) : null,
+    ].filter(Boolean)));
+    tr.appendChild(el('td',{text:observed?'not checked':relTime(w.last_checked_at)}));
+    tr.appendChild(el('td',{text:observed?'n/a':(w.baselined?'yes':'no')}));
+    tr.appendChild(el('td',{},[
+      el('div',{text:observed?'n/a':(w.anchored?'yes':'none')}),
       // A run of failures is the signal that an anchor is wrong rather than that
       // the site had one bad morning, so it goes next to the anchor, not the error.
       fails ? el('div',{class:'note',text:fails+' failed run'+(fails===1?'':'s')+' in a row'}) : null,
@@ -172,7 +187,11 @@ async function loadHealth(){
     // early signal, and holding the note until the alert threshold would make a
     // month of drift appear fully formed with no warning.
     tr.appendChild(el('td',{},
-      w.last_error ? [el('div',{text:w.last_error})]
+      observed ? [
+        el('div',{text:'observed practice — not hash-watched'}),
+        el('div',{class:'note',text:'ages rather than changes; can never raise a flag'}),
+      ]
+      : w.last_error ? [el('div',{text:w.last_error})]
       : stuckAt ? [
           el('div',{text:'unconfirmed '+stuckAt+' run'+(stuckAt===1?'':'s')+' in a row'+(isStuck?' — NOT BEING WATCHED':'')}),
           w.unconfirmed_reason ? el('div',{class:'note',text:w.unconfirmed_reason}) : null,

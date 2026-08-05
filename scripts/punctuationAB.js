@@ -110,7 +110,16 @@ if (process.env.QUILLIO_AB_ARM) {
 
   (async () => {
     const out = [];
+    let n = 0;
+    // PROGRESS TO STDERR, not stdout — stdout is piped to the parent and carries
+    // the result payload. 24 sequential model calls is minutes of silence
+    // otherwise, which is indistinguishable from a hang.
+    process.stderr.write(`  [${process.env.QUILLIO_AB_ARM}] ${picked.length} headlines\n`);
     for (const t of picked) {
+      n += 1;
+      process.stderr.write(
+        `  [${process.env.QUILLIO_AB_ARM}] ${String(n).padStart(2)}/${picked.length} ${t.asset.name} / ${t.field.field_name}\n`
+      );
       let copy = '';
       try {
         copy = await generateFieldDraft({
@@ -179,6 +188,20 @@ const stdev = (v) => {
 
 function report(label, rows) {
   const ok = rows.filter((r) => r.copy);
+  const failed = rows.filter((r) => !r.copy);
+  // A DROPPED FIELD IS SAID OUT LOUD. Filtering the failures out silently would
+  // compute a spread over however many happened to succeed and present it as the
+  // set — a partial result wearing a complete one's clothes.
+  if (failed.length) {
+    console.log(`\n  !! ${label}: ${failed.length}/${rows.length} field(s) produced no copy and are excluded:`);
+    for (const f of failed) {
+      console.log(`     ${f.asset} / ${f.field} — ${String(f.error || 'empty').split('\n')[0].slice(0, 120)}`);
+    }
+  }
+  if (ok.length === 0) {
+    console.log(`\n${'#'.repeat(78)}\n# ${label}   NO USABLE DRAFTS — nothing to report\n${'#'.repeat(78)}`);
+    return { lens: [], positions: [], openers: new Set(), withMark: 0, n: 0, failed: failed.length };
+  }
   const shapes = ok.map((r) => ({ ...r, ...shapeOf(r.copy) }));
   const lens = shapes.map((s) => s.length);
   const withMark = shapes.filter((s) => s.primary);
@@ -204,7 +227,7 @@ function report(label, rows) {
     console.log('  POSITION n/a — fewer than two lines carry a mark');
   }
   console.log(`  OPENERS  ${openers.size} distinct across ${shapes.length} lines`);
-  return { lens, positions, openers, withMark: withMark.length, n: shapes.length };
+  return { lens, positions, openers, withMark: withMark.length, n: shapes.length, failed: failed.length };
 }
 
 function runArm(arm) {
@@ -241,6 +264,14 @@ function runArm(arm) {
   const a = report('AFTER — permission present', after);
 
   console.log(`\n${'='.repeat(78)}\nWHAT TO READ\n${'='.repeat(78)}`);
+  if (!b.n || !a.n) {
+    console.log('  One or both arms produced no usable drafts — see the failures above.');
+    console.log('  Nothing below would mean anything, so it is not printed.');
+    return;
+  }
+  if (b.failed || a.failed) {
+    console.log(`  NOTE: the arms are uneven — BEFORE ${b.n} usable, AFTER ${a.n}. Compare with that in mind.`);
+  }
   console.log(`  length range      BEFORE ${Math.max(...b.lens) - Math.min(...b.lens)}   AFTER ${Math.max(...a.lens) - Math.min(...a.lens)}`);
   console.log(`  lines with a mark BEFORE ${b.withMark}/${b.n}   AFTER ${a.withMark}/${a.n}`);
   console.log(`  distinct openers  BEFORE ${b.openers.size}/${b.n}   AFTER ${a.openers.size}/${a.n}`);

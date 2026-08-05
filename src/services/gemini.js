@@ -1112,8 +1112,17 @@ function trimToCeiling(s, max) {
 
 // Built-in per-field creative guidance, keyed by normalized field name. Fills the
 // gap left by the retired Sheet "Notes" column for fields that need the same
-// instruction regardless of tenant. Returns '' when there's nothing built in. A
-// tenant's own field notes (if ever restored) take precedence over this.
+// instruction regardless of tenant. Returns '' when there's nothing built in.
+//
+// A FIELD'S OWN NOTE DOES NOT REPLACE THIS — IT LEADS IT. fieldGuidanceFor sends
+// both, note first, mechanic second. This comment used to say a tenant's note
+// "takes precedence over this", which described a `||` that suppressed the
+// built-in entirely; if you are reading that sentence somewhere, it is stale and
+// the code below is the truth. The reason is what these two entries ARE: sentence
+// case, and not echoing the headline. They are MECHANICS a model gets wrong by
+// default, not voice claims a brand could reasonably overrule — so a tenant note
+// about what to say has no conflict with them, and one that does conflict wins by
+// being read first. Do not restore the short-circuit to match a stale sentence.
 function builtInFieldGuidance(fieldName) {
   const name = String(fieldName || '').trim().toLowerCase();
   if (name === 'subhead') {
@@ -1123,6 +1132,40 @@ function builtInFieldGuidance(fieldName) {
     return 'Write in sentence case: capitalize only the first word and proper nouns (brand names, product names, acronyms like AI or SaaS) — NOT every word. e.g. "Resolve tickets faster with AI", not "Resolve Tickets Faster With AI".';
   }
   return '';
+}
+
+// THE FIELD'S GUIDANCE LINE — composed from both sources, never chosen between.
+//
+// This was `notes || builtInFieldGuidance(fieldName)` at both call sites, and
+// that `||` is a latent bug, not a preference. `notes` is whatever guidance the
+// field carries: for a TEMPLATE marker it is the raw spec_note
+// (core/pipeline.js:1515, :1733), but for the copy doc it is the italic line
+// parseDoc recovers (destinations/googleDocs.js:830) — which fieldHint composes
+// as spec_note PLUS the spec_type tier sentence. So any of three unrelated
+// events made the built-in rule vanish from every prompt for that field:
+// a tenant writing a spec_note, a migration adding one, or the field being
+// tiered enforced/recommended so the tier line renders.
+//
+// It has never fired: all 20 seeded 'Subhead' / 'Graphic Headline' fields are
+// house_default with a NULL spec_note, so fieldHint returns null, `notes` is ''
+// and the built-in has always won. That is the whole safety margin — one
+// spec_note away, on the two fields whose rules are about mechanics a model gets
+// wrong by default (sentence case; not echoing the headline). Nothing would
+// error and nothing in the doc would show it.
+//
+// THE FIELD'S OWN NOTE COMES FIRST. Where the two touch, the note still reads as
+// the governing instruction — CLAUDE.md's prompt hierarchy ("field Tone Notes
+// win for their field") is kept in ORDER rather than by discarding the craft
+// rule that the hierarchy never said to discard.
+//
+// Space-joined into ONE line because that is what both call sites emit: a single
+// `Field guidance: …` in the per-field prompt, and one `guidance: …` clause
+// inside the batch prompt's per-field line, which is `;`-separated and cannot
+// carry a newline.
+function fieldGuidanceFor(fieldName, notes) {
+  return [String(notes == null ? '' : notes).trim(), builtInFieldGuidance(fieldName)]
+    .filter(Boolean)
+    .join(' ');
 }
 
 // Generate a single piece of draft copy for one asset field, honoring the
@@ -1265,7 +1308,7 @@ async function generateFieldDraft({
   const limitLine =
     lengthClause(charMax, fieldType, charMin) ||
     'Keep it concise — a complete, self-contained thought appropriate for the field.';
-  const fieldGuidance = notes || builtInFieldGuidance(fieldName);
+  const fieldGuidance = fieldGuidanceFor(fieldName, notes);
 
   const prompt = [
     'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
@@ -1389,7 +1432,7 @@ async function generateAssetDrafts({
           ? `${Number(f.charMin) > 0 ? `${f.charMin}-` : 'up to '}${wordCeiling} WORDS (a word count, not characters)`
           : 'no word limit — length is yours to judge; measured in WORDS, not characters')
         : (Number(f.charMax) > 0 ? `character limit ${f.charMax} — stay within this limit` : 'concise');
-      const guidance = f.notes || builtInFieldGuidance(f.fieldName);
+      const guidance = fieldGuidanceFor(f.fieldName, f.notes);
       const extra = [
         f.funnelStage ? `funnel: ${f.funnelStage}` : '',
         guidance ? `guidance: ${guidance}` : '',
@@ -2666,6 +2709,9 @@ module.exports = {
   buildBrandContext,
   mediumKeywordsForAsset,
   builtInFieldGuidance,
+  // The composed guidance line — both draft prompts go through it, so the
+  // built-in craft rule cannot be displaced by the field carrying a note.
+  fieldGuidanceFor,
   siblingContextBlock,
   overLimit,
   assignDoorways,

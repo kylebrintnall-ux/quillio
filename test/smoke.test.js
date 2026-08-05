@@ -1107,6 +1107,114 @@ test('builtInFieldGuidance forces sentence case for Graphic Headline', () => {
   assert.strictEqual(builtInFieldGuidance('CTA Button'), '');
 });
 
+// THE REGRESSION THIS GUARDS. Both draft prompts used to read
+// `notes || builtInFieldGuidance(fieldName)`, so a field that carried ANY italic
+// line lost its built-in craft rule outright. On the copy doc `notes` is
+// fieldHint's composed line — spec_note PLUS the tier sentence — so a spec_note,
+// a migration adding one, or a re-tier to enforced/recommended each silently
+// deleted the sentence-case rule from every Graphic Headline prompt. It has
+// never fired only because all 20 seeded Subhead / Graphic Headline fields are
+// house_default with a NULL note, which is a one-column safety margin.
+test('fieldGuidanceFor composes the built-in rule with the field note instead of being displaced by it', () => {
+  const { fieldGuidanceFor, builtInFieldGuidance } = require('../src/services/gemini');
+
+  // The case that motivated this: a tier line present on Graphic Headline. The
+  // sentence-case rule MUST survive it.
+  const tier = 'Platform limit (LinkedIn). Stay within this count.';
+  const withTier = fieldGuidanceFor('Graphic Headline', tier);
+  assert.match(withTier, /sentence case/i, 'the built-in rule survives a tier line');
+  assert.ok(withTier.includes(tier), 'and the tier line is still there');
+
+  // Same for Subhead, whose rule is the other one a model gets wrong by default.
+  const withNote = fieldGuidanceFor('Subhead', 'Keep it to the date and venue.');
+  assert.match(withNote, /supporting line/i, 'the built-in rule survives a spec_note');
+  assert.ok(withNote.includes('Keep it to the date and venue.'));
+
+  // ORDER IS THE PRECEDENCE. The field's own note leads, so where the two touch
+  // it still reads as the governing instruction — CLAUDE.md's hierarchy is kept
+  // by ordering, not by throwing the craft rule away.
+  assert.ok(
+    withNote.indexOf('Keep it to the date and venue.') < withNote.indexOf('Secondary supporting line'),
+    'the field note comes first'
+  );
+
+  // ONE line, space-joined: the batch prompt's per-field clause is ';'-separated
+  // and cannot carry a newline.
+  assert.ok(!/\n/.test(withTier), 'no newline — both call sites emit a single line');
+
+  // NO BEHAVIOUR CHANGE where there is nothing to compose. These three cover
+  // every field in the seeded library, which is why this commit is a no-op on
+  // today's data.
+  assert.strictEqual(fieldGuidanceFor('Graphic Headline', ''), builtInFieldGuidance('Graphic Headline'),
+    'note-less built-in field: byte-identical to before');
+  assert.strictEqual(fieldGuidanceFor('Intro Text', 'Lead with the outcome.'), 'Lead with the outcome.',
+    'note-carrying field with no built-in: byte-identical to before');
+  assert.strictEqual(fieldGuidanceFor('Intro Text', ''), '', 'neither → empty, so the caller omits the line');
+
+  // Nullish and whitespace-only notes are the empty case, not a leading space.
+  assert.strictEqual(fieldGuidanceFor('Intro Text', null), '');
+  assert.strictEqual(fieldGuidanceFor('Intro Text', undefined), '');
+  assert.strictEqual(fieldGuidanceFor('Graphic Headline', '   '), builtInFieldGuidance('Graphic Headline'));
+});
+
+// The helper only matters if BOTH prompts go through it. A `||` restored at
+// either call site brings the bug back for that path alone — the batch drafts
+// most copy, the single-field generator drafts every rescue and every regenerate.
+test('both draft prompts build their guidance through fieldGuidanceFor', () => {
+  const src = require('fs').readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  assert.match(src, /const fieldGuidance = fieldGuidanceFor\(fieldName, notes\)/,
+    'generateFieldDraft');
+  assert.match(src, /const guidance = fieldGuidanceFor\(f\.fieldName, f\.notes\)/,
+    'generateAssetDrafts (the batch)');
+
+  // CODE ONLY. fieldGuidanceFor's own comment quotes the `||` it replaced —
+  // naming the bug is the point of that comment — so a raw scan of the file
+  // fails on the documentation rather than on a regression. Whole-line comments
+  // are dropped first; the file has no block comments (asserted below, because
+  // this stripper would not survive one).
+  assert.ok(!/^\s*\/\*/m.test(src), 'no block comments — the line stripper below is sufficient');
+  const code = src
+    .split('\n')
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join('\n');
+  assert.ok(!/\bnotes \|\| builtInFieldGuidance\b/.test(code), 'no short-circuit survives');
+  assert.ok(!/f\.notes \|\| builtInFieldGuidance/.test(code), 'nor in the batch');
+});
+
+// Today's seeded library is entirely unaffected — asserted, not assumed, because
+// "this is a no-op" is the claim that makes the commit safe to ship on its own.
+test('the composed fallback changes no seeded field: none carries both a note and a built-in rule', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { builtInFieldGuidance, fieldGuidanceFor } = require('../src/services/gemini');
+  const { fieldHint } = require('../src/destinations/googleDocs');
+
+  const both = [];
+  let builtIn = 0;
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      if (!builtInFieldGuidance(f.field_name)) continue;
+      builtIn++;
+      // What parseDoc would recover for this field: fieldHint's composed line,
+      // or '' when it renders none.
+      const hint = fieldHint({
+        specNote: f.spec_note,
+        specType: f.spec_type,
+        specSource: f.spec_source || a.spec_source,
+      });
+      const notes = hint ? hint.text : '';
+      if (notes) both.push(`${a.name} / ${f.field_name}`);
+      // The composed value equals the old `||` result for every seeded field.
+      assert.strictEqual(
+        fieldGuidanceFor(f.field_name, notes),
+        notes || builtInFieldGuidance(f.field_name),
+        `${a.name} / ${f.field_name} drafts identically`
+      );
+    }
+  }
+  assert.strictEqual(builtIn, 20, '20 seeded Subhead / Graphic Headline fields');
+  assert.deepStrictEqual(both, [], 'none of them renders an italic line, so none changes');
+});
+
 test('db/assets exposes seedTenantAssets + getTenantAssets', () => {
   const a = require('../src/db/assets');
   assert.strictEqual(typeof a.seedTenantAssets, 'function');

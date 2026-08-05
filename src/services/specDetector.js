@@ -19,9 +19,19 @@
 // 'unchanged' — and consecutive_failures increments. See checkAnchor below for
 // why a 200 response is not evidence that we read the right page.
 //
+// UNCONFIRMED IS NOT FREE EITHER. A page that genuinely changed AND varies per
+// request reports 'unconfirmed' every run, forever, and never surfaces its
+// change — repeatable, silent, terminal. So it carries its OWN streak
+// (consecutive_unconfirmed) and its own reason, separate from
+// consecutive_failures because the reset rules differ: an unconfirmed run
+// CLEARS the failure count (we read the page, twice), while a failed or errored
+// run leaves the unconfirmed streak untouched (a week we could not read says
+// nothing about whether the page holds still).
+//
 // SAFETY: this NEVER writes to copy_fields or any spec/field data. It only
 //   - updates spec_watch_list (current_hash, last_checked_at, last_error,
-//     consecutive_failures), and
+//     consecutive_failures, consecutive_unconfirmed, last_unconfirmed_reason),
+//     and
 //   - inserts spec_review_queue rows (flags) on a CONFIRMED change.
 // A fetch failure or a missed anchor updates last_checked_at + last_error +
 // consecutive_failures only — it never flags and never overwrites a good
@@ -29,7 +39,8 @@
 // flag row so test-page changes stay structurally isolated from real specs.
 //
 // Requires scripts/migrateAddSpecAnchors.js (expected_content, anchor_scope,
-// consecutive_failures).
+// consecutive_failures) and scripts/migrateAddUnconfirmedTracking.js
+// (consecutive_unconfirmed, last_unconfirmed_reason). Both are tolerated absent.
 
 const crypto = require('crypto');
 const { getPool } = require('../db');
@@ -38,7 +49,22 @@ const { getWatchList } = require('../db/specWatch');
 const FETCH_TIMEOUT_MS = 10000;
 // Delay before the confirmation refetch. Long enough that a per-request-varying
 // page returns a different value; short enough to keep a run snappy. Overridable.
-const REFETCH_DELAY_MS = Number(process.env.SPEC_REFETCH_DELAY_MS) || 1500;
+// Read with Number.isFinite rather than `|| 1500`, so 0 means 0 — the obvious
+// value to set when you want a run to go fast, and the one `||` silently turns
+// back into the default.
+const REFETCH_DELAY_MS = (() => {
+  const raw = Number(process.env.SPEC_REFETCH_DELAY_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 1500;
+})();
+
+// A streak of unconfirmed runs stops being noise and becomes "we cannot watch
+// this page" at three. The confirm step EXISTS to absorb one-off noise, so 1 is
+// the design working and 2 is two bad Mondays; 3 consecutive weekly runs is a
+// month in which the entry has produced no usable comparison, and it is the
+// smallest number that cannot be coincidence. The streak is REPORTED from 1
+// upward — only the alert is held to this threshold, so a row climbing toward it
+// is visible on the way rather than appearing fully formed after a month.
+const UNCONFIRMED_STREAK_ALERT = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -129,6 +155,27 @@ function resetFailures(row) {
   return hasAnchorColumns(row) ? ', consecutive_failures = 0' : '';
 }
 
+// Same key-presence trick for the second migration. The two are independent —
+// a database can have the anchor columns and not these — so they are tested
+// separately rather than inferred from one another.
+function hasUnconfirmedColumns(row) {
+  return !!row && Object.prototype.hasOwnProperty.call(row, 'consecutive_unconfirmed');
+}
+
+// Clears the unconfirmed streak. Appended ONLY on a definite outcome — baseline,
+// unchanged, changed. Deliberately NOT on failed or error: a week in which we
+// could not read the page says nothing about whether the page holds still, so
+// it must neither increment the streak nor reset it. That asymmetry is why this
+// is a separate counter from consecutive_failures and not the same one.
+function resetUnconfirmed(row) {
+  return hasUnconfirmedColumns(row) ? ', consecutive_unconfirmed = 0, last_unconfirmed_reason = NULL' : '';
+}
+
+// The full SET fragment for a run that reached a definite answer.
+function resetStreaks(row) {
+  return `${resetFailures(row)}${resetUnconfirmed(row)}`;
+}
+
 // Record a detected change atomically: insert the flag, then advance the hash.
 // Wrapped in a transaction so we never insert a flag but fail to move the hash
 // (which would re-flag the same change on every subsequent run).
@@ -142,7 +189,7 @@ async function recordChange(pool, row, newHash) {
       [row.id, row.source_url, row.current_hash, newHash, row.is_test]
     );
     await client.query(
-      `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $2`,
+      `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)} WHERE id = $2`,
       [newHash, row.id]
     );
     await client.query('COMMIT');
@@ -186,6 +233,35 @@ async function bumpFailure(pool, row, error) {
   return (res && res.rows && res.rows[0] && res.rows[0].consecutive_failures) || null;
 }
 
+// Record a run that read the page but could not get a stable comparison out of
+// it. Clears last_error and consecutive_failures — we DID read the page, twice,
+// so the URL and the anchor are demonstrably fine — while incrementing a streak
+// of its own and storing WHY.
+//
+// Never touches current_hash. The baseline stays where it was, so it never
+// advances to a value we could not reproduce.
+async function bumpUnconfirmed(pool, row, reason) {
+  if (!hasUnconfirmedColumns(row)) {
+    // Pre-migration: exactly the write this branch always did.
+    await pool.query(
+      `UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $1`,
+      [row.id]
+    );
+    return null;
+  }
+  const res = await pool.query(
+    `UPDATE spec_watch_list
+        SET last_checked_at = NOW(),
+            last_error = NULL${resetFailures(row)},
+            consecutive_unconfirmed = COALESCE(consecutive_unconfirmed, 0) + 1,
+            last_unconfirmed_reason = $1
+      WHERE id = $2
+      RETURNING consecutive_unconfirmed`,
+    [reason, row.id]
+  );
+  return (res && res.rows && res.rows[0] && res.rows[0].consecutive_unconfirmed) || null;
+}
+
 // Run the detector over every watch entry. Returns a per-URL summary so the
 // caller (the admin endpoint) can show what happened. Never throws for a single
 // bad URL — that row is reported as status:'error' and the run continues.
@@ -198,15 +274,28 @@ async function runDetection() {
   // `failed` is pre-seeded like the rest so a clean run reports 0 rather than
   // omitting the key — an absent count and a zero count read differently to
   // whoever is scanning the summary, and this is the one worth noticing.
-  // `unanchored` is a SEPARATE axis, not a status: an entry can be unanchored and
-  // unchanged at the same time, and both facts matter.
-  const summary = { total: rows.length, baseline: 0, unchanged: 0, changed: 0, unconfirmed: 0, failed: 0, error: 0, unanchored: 0 };
+  // `unanchored` and `stuck` are SEPARATE axes, not statuses: an entry can be
+  // unanchored and unchanged at the same time, or unconfirmed this run and stuck
+  // for a month, and in each case both facts matter.
+  const summary = {
+    total: rows.length,
+    baseline: 0,
+    unchanged: 0,
+    changed: 0,
+    unconfirmed: 0,
+    failed: 0,
+    error: 0,
+    unanchored: 0,
+    stuck: 0,
+  };
 
   for (const row of rows) {
     const checkedAt = new Date().toISOString();
     let status;
     let error = null;
     let failures = null;
+    let streak = null;
+    let unconfirmedReason = null;
     // Read off the ROW, not off anchorInfo: an entry that never got as far as
     // the anchor check (the fetch threw) is not thereby "unanchored". Whether an
     // anchor is configured is a property of the entry and is true or false
@@ -234,14 +323,14 @@ async function runDetection() {
       } else if (!row.current_hash) {
         // First ever check → record the baseline. Nothing to compare to, so no flag.
         await pool.query(
-          `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $2`,
+          `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)} WHERE id = $2`,
           [newHash, row.id]
         );
         status = 'baseline';
       } else if (row.current_hash === newHash) {
         // Unchanged → just bump last_checked_at (and clear any stale error).
         await pool.query(
-          `UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $1`,
+          `UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL${resetStreaks(row)} WHERE id = $1`,
           [row.id]
         );
         status = 'unchanged';
@@ -250,25 +339,41 @@ async function runDetection() {
         // Refetch after a short delay; a genuine change gives the SAME newHash
         // again, transient noise gives a different one.
         let confirmHash = null;
+        // KEEP THE REASON. The refetch has two distinct ways of not confirming,
+        // and discarding which one it was made every unconfirmed run look
+        // identical: "this page has a nonce" and "the site was down for the 1.5
+        // seconds between our two fetches" are the two answers, and a streak
+        // counter is only actionable if the run also says which.
+        let refetchError = null;
         try {
           await sleep(REFETCH_DELAY_MS);
           confirmHash = hashText(normalize(await fetchText(row.source_url)));
         } catch (e) {
           // Couldn't refetch → can't confirm → treat as unconfirmed (no flag).
+          refetchError = e.message || String(e);
           confirmHash = null;
         }
 
         if (confirmHash && confirmHash === newHash) {
           // Reproduced → real change. Flag it (transaction), then advance the hash.
+          //
+          // NO SECOND ANCHOR CHECK HERE, AND THAT IS CORRECT — do not "fix" it.
+          // confirmHash === newHash means the refetch produced the identical
+          // normalized text to the first fetch, which checkAnchor already
+          // verified. The refetch is implicitly anchored by the equality. A
+          // checkAnchor call on this branch could never fail, i.e. it would be
+          // dead code that reads like a safeguard.
           await recordChange(pool, row, newHash);
           status = 'changed';
         } else {
-          // Did not reproduce → transient noise. DON'T flag, DON'T advance the
-          // baseline hash (leave current_hash where it was); just bump the check.
-          await pool.query(
-            `UPDATE spec_watch_list SET last_checked_at = NOW(), last_error = NULL${resetFailures(row)} WHERE id = $1`,
-            [row.id]
-          );
+          // Did not reproduce. DON'T flag, DON'T advance the baseline hash.
+          //
+          // This is the one status that is repeatable, silent and terminal at
+          // once: a page that genuinely changed AND varies per request reports
+          // this every week, forever, and never surfaces its change. So it
+          // carries its own streak — see bumpUnconfirmed.
+          unconfirmedReason = refetchError ? `refetch failed: ${refetchError}` : 'page varies per request';
+          streak = await bumpUnconfirmed(pool, row, unconfirmedReason);
           status = 'unconfirmed';
         }
       }
@@ -286,7 +391,28 @@ async function runDetection() {
       status = 'error';
     }
 
+    // The streak AFTER this run, which is not always the one we just wrote:
+    // a definite outcome cleared it to 0, an unconfirmed run returned the new
+    // value, and failed/error left the stored value alone — deliberately, since
+    // a week we could not read says nothing about whether the page holds still.
+    let streakAfter;
+    if (status === 'unconfirmed') streakAfter = streak;
+    else if (status === 'failed' || status === 'error') {
+      streakAfter = hasUnconfirmedColumns(row) ? Number(row.consecutive_unconfirmed) || 0 : null;
+      // Carry the stored reason too, so a stuck entry that errors this week
+      // still says what it was stuck ON rather than going quiet.
+      unconfirmedReason = (streakAfter && row.last_unconfirmed_reason) || null;
+    } else streakAfter = hasUnconfirmedColumns(row) ? 0 : null;
+
+    // Same shape for the failure counter: what it IS after this run, not only
+    // what this run wrote. A success path resets it, so 0 — and null still means
+    // "the column isn't there". Reporting null-on-success next to a streak that
+    // reports 0 would invite a reader to infer a difference that isn't there.
+    if (failures === null && hasAnchorColumns(row)) failures = 0;
+
     summary[status] = (summary[status] || 0) + 1;
+    if (streakAfter >= UNCONFIRMED_STREAK_ALERT) summary.stuck += 1;
+
     results.push({
       watch_id: row.id,
       display_name: row.display_name,
@@ -297,15 +423,19 @@ async function runDetection() {
       error,
       anchored,
       consecutive_failures: failures,
+      consecutive_unconfirmed: streakAfter,
+      unconfirmed_reason: unconfirmedReason,
     });
     console.log(
       `[detector] ${row.display_name}: ${status}${anchored ? '' : ' (no anchor)'}` +
         `${error ? ` (${error})` : ''}` +
-        `${failures > 1 ? ` [${failures} consecutive failures]` : ''}`
+        `${failures > 1 ? ` [${failures} consecutive failures]` : ''}` +
+        `${streakAfter ? ` [unconfirmed ${streakAfter} in a row: ${unconfirmedReason}]` : ''}` +
+        `${streakAfter >= UNCONFIRMED_STREAK_ALERT ? ' — STUCK, this page is not being watched' : ''}`
     );
   }
 
   return { ran: true, summary, results };
 }
 
-module.exports = { runDetection, normalize, hashText, fetchText, checkAnchor };
+module.exports = { runDetection, normalize, hashText, fetchText, checkAnchor, UNCONFIRMED_STREAK_ALERT };

@@ -13828,7 +13828,10 @@ test('the anchor check precedes every comparison branch', () => {
   }
 });
 
-test('specWatch.getWatchList degrades to the pre-anchor columns', async () => {
+// Two independent migrations add columns to this table, so there are three
+// states a database can be in and getWatchList has to land in the right one.
+// `absent` is the set of columns this fake database does not have.
+async function watchListAgainst(absent) {
   const wlPath = require.resolve('../src/db/specWatch');
   const db = require('../src/db');
   const realGetPool = db.getPool;
@@ -13836,25 +13839,54 @@ test('specWatch.getWatchList degrades to the pre-anchor columns', async () => {
   db.getPool = () => ({
     query: async (sql) => {
       asked.push(String(sql).replace(/\s+/g, ' ').trim());
-      if (/expected_content/.test(sql)) {
-        const e = new Error('column "expected_content" does not exist');
-        e.code = '42703';
-        throw e;
+      for (const col of absent) {
+        if (new RegExp(`\\b${col}\\b`).test(sql)) {
+          const e = new Error(`column "${col}" does not exist`);
+          e.code = '42703';
+          throw e;
+        }
       }
       return { rows: [{ id: 1 }] };
     },
   });
   delete require.cache[wlPath];
   try {
-    const rows = await require(wlPath).getWatchList();
-    assert.strictEqual(rows.length, 1);
-    assert.ok(!('consecutive_failures' in rows[0]),
-      'the fallback must NOT default the columns in — key presence is the signal the detector reads');
-    assert.strictEqual(asked.length, 2, 'tried the new shape, then the old one');
+    return { rows: await require(wlPath).getWatchList(), asked };
   } finally {
     db.getPool = realGetPool;
     delete require.cache[wlPath];
   }
+}
+
+test('specWatch.getWatchList degrades one migration at a time', async () => {
+  // Fully migrated: one query, every column.
+  const full = await watchListAgainst([]);
+  assert.strictEqual(full.asked.length, 1);
+  assert.match(full.asked[0], /consecutive_unconfirmed/);
+
+  // Anchors run, unconfirmed tracking not: falls exactly one tier.
+  const mid = await watchListAgainst(['consecutive_unconfirmed', 'last_unconfirmed_reason']);
+  assert.strictEqual(mid.asked.length, 2, 'tried the newest shape, then the anchor shape');
+  assert.match(mid.asked[1], /expected_content/, 'and kept the anchor columns');
+  assert.ok(!('consecutive_unconfirmed' in mid.rows[0]),
+    'the fallback must NOT default the columns in — key presence is the signal the detector reads');
+
+  // Neither migration run: falls all the way to the base columns.
+  const base = await watchListAgainst([
+    'expected_content', 'anchor_scope', 'consecutive_failures',
+    'consecutive_unconfirmed', 'last_unconfirmed_reason',
+  ]);
+  assert.strictEqual(base.asked.length, 3);
+  assert.ok(!/expected_content|consecutive/.test(base.asked[2]));
+  assert.ok(!('consecutive_failures' in base.rows[0]));
+});
+
+test('specWatch.getWatchList does NOT swallow a broken table', async () => {
+  // A missing base column is not a pre-migration deploy, it is a broken table.
+  // Returning [] there would report an empty watch list — nothing to check, all
+  // clear — which is the same silent-success shape this whole subsystem keeps
+  // producing. It must throw.
+  await assert.rejects(() => watchListAgainst(['source_url']), /source_url/);
 });
 
 test('migrateAddSpecAnchors adds the three columns and seeds idempotently', () => {

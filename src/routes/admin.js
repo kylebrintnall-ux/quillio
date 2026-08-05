@@ -18,7 +18,7 @@ const {
   setTestPageContent,
   getDetectionHealth,
 } = require('../db/specWatch');
-const { runDetection } = require('../services/specDetector');
+const { runDetection, UNCONFIRMED_STREAK_ALERT } = require('../services/specDetector');
 const {
   getFlagForReview,
   getSuggestions,
@@ -64,7 +64,11 @@ router.get('/admin/api/watch-list', requireAdmin, async (req, res) => {
 router.get('/admin/api/health', requireAdmin, async (req, res) => {
   try {
     const health = await getDetectionHealth();
-    res.status(200).json({ success: true, ...health });
+    // The alert threshold travels with the payload so the page and the detector
+    // cannot drift. It lives in specDetector (the code that branches on it) and
+    // is passed through here rather than read by db/specWatch, which specDetector
+    // already requires — that direction would be a require cycle.
+    res.status(200).json({ success: true, ...health, unconfirmedAlertAt: UNCONFIRMED_STREAK_ALERT });
   } catch (err) {
     console.error('[admin] health read failed:', err.message);
     res.status(500).json({ success: false, error: 'Failed to read health' });

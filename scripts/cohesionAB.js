@@ -102,8 +102,26 @@ async function armBefore() {
 // AFTER: the real path, with the batch response forced to be unparseable.
 async function armAfter() {
   const { asset, fields } = specFor(ASSET);
+  // SCOPED TO THIS ARM ONLY. The patch is installed here and restored in the
+  // `finally`, so it cannot outlive this function — which is what makes the arm
+  // order irrelevant. armBefore never patches fetch at all (it calls
+  // generateFieldDraft directly), so running the arms in the other order changes
+  // nothing: the interception exists only while generateAssetDrafts is on the
+  // stack, and every request outside that window goes to the real fetch.
+  //
+  // WHY "THE FIRST generateContent REQUEST" IS EXACTLY THE BATCH, and cannot be
+  // something else: callGemini issues ONE fetch per call with no internal retry,
+  // generateAssetDrafts makes exactly one callGemini for the batch, and that call
+  // is the FIRST await in the function — the prompt is assembled from local
+  // strings. So nothing can reach the network ahead of it.
+  //
+  // The retry that DOES exist — generateFieldDraft's corrective rewrite when a
+  // draft is over its ceiling — is a second callGemini inside a RESCUE, which by
+  // definition happens after the batch has already been intercepted. It reaches
+  // the real model, correctly.
   const realFetch = global.fetch;
   let intercepted = false;
+  let realCalls = 0;
   global.fetch = async (url, opts) => {
     if (!intercepted && String(url).includes('generateContent')) {
       intercepted = true;
@@ -114,10 +132,12 @@ async function armAfter() {
         text: async () => JSON.stringify({ candidates: [{ content: { parts: [{ text: BAD_JSON }] } }] }),
       };
     }
+    realCalls++;
     return realFetch(url, opts);
   };
+  let drafts;
   try {
-    const drafts = await generateAssetDrafts({
+    drafts = await generateAssetDrafts({
       assetType: asset.name,
       assetDirection: asset.asset_direction || '',
       summary: BRIEF.summary,
@@ -125,11 +145,32 @@ async function armAfter() {
       fields,
       voiceGuide: '',
     });
-    if (!intercepted) console.warn('WARNING: the batch call was never intercepted — the arms are not comparable.');
-    return drafts;
   } finally {
     global.fetch = realFetch;
   }
+
+  // THROW, NOT WARN. If the interception never fired, the batch went to the real
+  // model and probably SUCCEEDED — which means no field was ever rescued, and the
+  // AFTER arm is a clean batch draft being compared against nine blind singles.
+  // That output looks entirely plausible and answers a different question than
+  // the one asked. A warning at the end of a long run is exactly the kind of
+  // thing that gets scrolled past; refusing to print the table is not.
+  if (!intercepted) {
+    throw new Error(
+      'the batch request was never intercepted — the AFTER arm did not exercise the rescue path, '
+        + 'so the two arms are not comparable. Check the generateContent URL match.'
+    );
+  }
+  // Each rescue is at least one real request, so anything below one-per-field
+  // means the loop did not run the way this script assumes.
+  if (realCalls < fields.length) {
+    throw new Error(
+      `expected at least ${fields.length} real model calls (one rescue per field), saw ${realCalls} — `
+        + 'the rescue loop did not run as expected.'
+    );
+  }
+  console.log(`  (batch intercepted; ${realCalls} real model calls for ${fields.length} fields)`);
+  return drafts;
 }
 
 (async () => {

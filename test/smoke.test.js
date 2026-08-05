@@ -1125,6 +1125,96 @@ test('builtInFieldGuidance forces sentence case for Graphic Headline', () => {
   assert.strictEqual(builtInFieldGuidance('CTA Button'), '');
 });
 
+// THE CLIENT'S OWN WORDS REACH THE DRAFTER. Until this, `createDocument` received
+// `brief` and used it for `makeTitle` alone, so the original named a FILE and the
+// drafter read Gemini's compression of it. Measured consequence: the brief said
+// "in about a minute" and ten of twelve headlines said "in 60 seconds", a phrase
+// present in no input at all.
+test('briefBlock labels the brief as authoritative and demotes the two derived sources', () => {
+  const { briefBlock } = require('../src/services/gemini');
+  const block = briefBlock('Runs in about a minute. Ops persona, Q3.').join('\n');
+
+  assert.match(block, /AUTHORITATIVE/, 'the brief outranks the paraphrases');
+  assert.match(block, /the client's own words, verbatim/);
+  assert.match(block, /Where it and the\s*\n?\s*summary below differ, follow the brief/,
+    'precedence is stated, not implied by ordering');
+  assert.ok(block.includes('Runs in about a minute. Ops persona, Q3.'), 'verbatim, not summarised');
+
+  // The other two are still present and still labelled by WHAT THEY ARE. Three
+  // sources with equal billing invite the model to reconcile them and prefer the
+  // shortest; naming the derivation is the whole point of keeping them.
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  assert.match(src, /Creative direction \(a directive extracted from the brief\): \$\{writerPrompt\}/);
+  assert.match(src, /Campaign summary \(a read of the ask — the brief above is the source\): \$\{summary\}/);
+  // BOTH draft builders, identically — a field rescued out of a failed batch must
+  // not be told a different story about which source wins.
+  assert.strictEqual((src.match(/\.\.\.briefBlock\(brief\)/g) || []).length, 2, 'both draft prompts');
+  assert.strictEqual(
+    (src.match(/Creative direction \(a directive extracted from the brief\)/g) || []).length, 2
+  );
+});
+
+test('an absent brief changes nothing, and a long one is tail-cut and said out loud', () => {
+  const { briefBlock, MAX_BRIEF_CHARS } = require('../src/services/gemini');
+
+  // ABSENT IS THE DEGRADATION, and it is total: a pre-migration project row, a
+  // doc with no project row, no tenant, or an unmigrated database all land here.
+  // No lines means the prompt is what it was before the column existed.
+  for (const empty of ['', '   ', null, undefined]) {
+    assert.deepStrictEqual(briefBlock(empty), [], `${JSON.stringify(empty)} emits nothing`);
+  }
+
+  // Under the cap: verbatim, no notice.
+  const short = briefBlock('a'.repeat(MAX_BRIEF_CHARS - 1)).join('\n');
+  assert.ok(!/cut for length/.test(short), 'no truncation notice when nothing was cut');
+
+  // Over the cap: THE HEAD IS KEPT. A brief front-loads what the campaign is;
+  // cutting the middle would splice two halves into a sentence nobody wrote.
+  const raw = 'HEAD-'.repeat(4) + 'x'.repeat(MAX_BRIEF_CHARS) + 'TAIL-TAIL';
+  const long = briefBlock(raw).join('\n');
+  assert.ok(long.includes('HEAD-HEAD-HEAD-HEAD-'), 'the opening survives');
+  assert.ok(!long.includes('TAIL-TAIL'), 'the tail is what goes');
+
+  // AND THE MODEL IS TOLD. A severed brief that stops mid-sentence otherwise
+  // reads as the end of the ask, and a truncated thought gets treated as the
+  // complete one.
+  assert.match(long, /cut for length/);
+  assert.match(long, /characters not shown/);
+  assert.match(long, /Do NOT treat the last line above as the end of the ask/);
+
+  // The cap is applied at PROMPT-BUILD time, never on write — projects.brief_raw
+  // keeps whatever was sent, so raising it later is a code change and not data
+  // that was already discarded.
+  const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  assert.match(pipe, /brief_raw: spec\.brief \|\| null/, 'stored whole');
+  assert.ok(!/slice\(0, *MAX_BRIEF|substring\(0, *MAX_BRIEF/.test(pipe), 'not truncated on write');
+});
+
+test('the brief is read from the project row and threaded to every draft call', () => {
+  const pipe = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'pipeline.js'), 'utf8');
+  const gd = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  const gem = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+
+  // Read through the lookup this path ALREADY makes for the template half, so
+  // this is a field on an existing query rather than a new query.
+  assert.match(pipe, /const project = await getProjectByAnyDocId\(tenantId, docId\)/);
+  assert.match(pipe, /brief = \(project && project\.brief_raw\) \|\| null/);
+  // Every failure is the same failure: no brief, and a prompt identical to before.
+  assert.match(pipe, /brief lookup failed — drafting without it/);
+  assert.match(pipe, /generateDraft\(\s*docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append, brief\s*\)/);
+
+  // Threaded to BOTH gemini entry points — scoped to generateDraft, because
+  // createDocument has had its own `brief` parameter since long before this and
+  // a file-wide count silently included it.
+  const draftFn = gd.slice(gd.indexOf('async function generateDraft(id, direction'));
+  assert.strictEqual((draftFn.match(/^\s+brief,$/gm) || []).length, 2, 'batch and single-field');
+  assert.match(draftFn, /generateAssetDrafts\(\{\s*\n\s*assetType: a\.assetType,\s*\n\s*brief,/);
+  // …and to the batch RESCUE, or a field that fell out of a failed batch would be
+  // the one field in the asset drafted without the campaign's own words.
+  const rescue = gem.slice(gem.indexOf('async function generateAssetDrafts'), gem.indexOf('// --- Conceptual variations'));
+  assert.match(rescue, /copy = await generateFieldDraft\(\{\s*\n\s*assetType,\s*\n(\s*\/\/.*\n)*\s*brief,/);
+});
+
 // A PARSE FAILURE WITH NO SAMPLE IS A BUG YOU CAN ONLY SEE THE SHADOW OF.
 // Seen in production: "Unexpected non-whitespace character after JSON at position
 // 2" on a 9-field asset. That message gives the SHAPE (a complete two-character
@@ -2573,7 +2663,7 @@ test('selective regen (Phase 1): scopedFields threaded route -> adapter -> pipel
   assert.ok(/runWebDraft\(docId, tenantContext = \{\}, direction, scopedFields(, append)?(, docKind)?\)/.test(rd('src/adapters/web.js')), 'adapter accepts scopedFields');
   assert.ok(/generateDraft\(docId, direction, clients, tenantId, scopedFields(, append)?\)/.test(rd('src/core/pipeline.js')), 'pipeline accepts scopedFields');
   const gd = rd('src/destinations/googleDocs.js');
-  assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields(, append)?\)/.test(gd), 'destination accepts scopedFields');
+  assert.ok(/generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields(, append)?(, brief)?\)/.test(gd), 'destination accepts scopedFields');
   assert.ok(!/lookupDirection, targets\)/.test(gd), 'no bare `targets` param (avoids assetTargets collision)');
   assert.ok(/scopeKeys/.test(gd) && /generateFieldDraft\(/.test(gd), 'destination scoped branch uses per-field generator');
   // Sibling copy is read BEFORE the delete phase (the getDocContent sibling read
@@ -3073,7 +3163,7 @@ test('append: buildVariantBlock startIndex force-numbers a batch from 1; omitted
 test('append: additive write inserts below, never deletes (deleteEnd:null guarantee)', () => {
   const gd = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
   // append is a run-level, scoped-only mode.
-  assert.ok(/async function generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append\)/.test(gd), 'generateDraft takes append');
+  assert.ok(/async function generateDraft\(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append(, brief)?\)/.test(gd), 'generateDraft takes append');
   assert.ok(/const appendMode = !!\(append && scopeKeys\)/.test(gd), 'append is scoped-only (appendMode guard)');
   // The no-delete guarantee is in the DATA: append fields carry deleteEnd:null and
   // insert at the field's current copy end (deleteEnd, or insertIndex when empty).
@@ -3101,7 +3191,7 @@ test('append: threaded route -> adapter -> pipeline -> destination; scoped-only;
   // The call wraps across two lines since custom document types step four made
   // generateDraft await its result before syncing the template document.
   assert.ok(
-    /generateDraft\(\s*docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append\s*\)/.test(pipe),
+    /generateDraft\(\s*docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append(, brief)?\s*\)/.test(pipe),
     'pipeline threads append to destination'
   );
 });
@@ -11327,24 +11417,33 @@ test('the project row records the template document without disturbing copy_doc_
   assert.match(src, /template_doc_id = null,\n\s+template_doc_url = null,/);
   // EVERY COMBINATION of optional columns, not a priority order — a database
   // with template_doc_* but no created_by must not lose both. Generated rather
-  // than hand-written now that there are three groups: eight hand-kept lines
-  // that all have to stay in agreement is the wrong shape for "try every subset".
-  assert.match(src, /const GROUPS = \[CREATED_BY, TEMPLATE, DRAFT_LINK\]/);
+  // than hand-written, which is what let the FOURTH group (brief_raw) be one
+  // array entry instead of doubling sixteen hand-kept lines.
+  assert.match(src, /const GROUPS = \[CREATED_BY, TEMPLATE, DRAFT_LINK, BRIEF_RAW\]/);
   assert.match(src, /for \(let mask = \(1 << GROUPS\.length\) - 1; mask >= 0; mask--\)/);
   assert.match(src, /attempts\.sort\(\(a, b\) => b\.groups\.length - a\.groups\.length/, 'widest first');
+  // brief_raw is its OWN group and not folded into DRAFT_LINK: they arrived in
+  // different migrations, so a database can have one and not the other and the
+  // set has to be able to drop exactly one of them.
+  assert.match(src, /const BRIEF_RAW = \{ extra: \['brief_raw'\], values: \[brief_raw\] \}/);
+  assert.match(src, /const DRAFT_LINK = \{\s*\n\s*extra: \['doc_template_id', 'brief_summary', 'brief_writer_prompt'\]/);
   // The generated set really does include the singletons and the empty one —
   // asserted by running the generator, not by matching lines that no longer
-  // exist. Eight subsets of three groups, widest first, ending with none.
-  const GROUPS = ['CREATED_BY', 'TEMPLATE', 'DRAFT_LINK'];
+  // exist. Sixteen subsets of four groups, widest first, ending with none.
+  const GROUPS = ['CREATED_BY', 'TEMPLATE', 'DRAFT_LINK', 'BRIEF_RAW'];
   const gen = [];
   for (let mask = (1 << GROUPS.length) - 1; mask >= 0; mask--) {
     gen.push({ mask, groups: GROUPS.filter((_, i) => mask & (1 << i)) });
   }
   gen.sort((a, b) => b.groups.length - a.groups.length || b.mask - a.mask);
-  assert.strictEqual(gen.length, 8);
+  assert.strictEqual(gen.length, 16);
   assert.deepStrictEqual(gen[0].groups, GROUPS, 'widest first');
-  assert.deepStrictEqual(gen[7].groups, [], 'and the bare insert last');
+  assert.deepStrictEqual(gen[15].groups, [], 'and the bare insert last');
   for (const g of GROUPS) assert.ok(gen.some((a) => a.groups.length === 1 && a.groups[0] === g), `${g} alone is tried`);
+  // The pair that matters most: brief_raw present WITHOUT the older draft-link
+  // columns, and vice versa. Neither can take the other down.
+  assert.ok(gen.some((a) => a.groups.includes('BRIEF_RAW') && !a.groups.includes('DRAFT_LINK')));
+  assert.ok(gen.some((a) => a.groups.includes('DRAFT_LINK') && !a.groups.includes('BRIEF_RAW')));
   assert.match(src, /isUndefinedColumn\(err\)/);
 });
 

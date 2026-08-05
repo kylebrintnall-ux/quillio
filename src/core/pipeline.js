@@ -1365,6 +1365,10 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
       doc_template_id: (templateDocs.find((t) => t.id) || {}).templateId || null,
       brief_summary: spec.summary || null,
       brief_writer_prompt: spec.writerPrompt || null,
+      // The source those two are derived from. Stored WHOLE — the prompt's cap is
+      // applied at read time (services/gemini.js briefBlock), so raising it later
+      // is a code change rather than data that was already thrown away.
+      brief_raw: spec.brief || null,
       status: 'not_started',
       slack_channel_id: projectMeta.slackChannelId || null,
       slack_thread_ts: projectMeta.slackThreadTs || null,
@@ -1840,11 +1844,35 @@ async function generateDraft(docId, direction, clients, tenantId, scopedFields, 
   }
   console.log(`[workflow] draft voice guide: ${voiceGuide ? 'tenant (Postgres)' : 'repo voice.md'}`);
   const lookupDirection = await getAssetDirections(tenantId);
+
+  // THE CLIENT'S OWN BRIEF, off the project row.
+  //
+  // The doc carries `summary` and `writerPrompt` and parseDoc recovers them, but
+  // the brief itself was never in the document — `createDocument` used it for
+  // `makeTitle` alone. It comes from Postgres instead, through the lookup this
+  // path ALREADY makes for the template half (getProjectByAnyDocId), so this adds
+  // a field to an existing query rather than a query.
+  //
+  // Every failure mode is the same one: no brief. A pre-migration row, a project
+  // saved before the column existed, a doc with no project row, no tenant, or a
+  // database that has not run the migration — all of them leave `brief` null,
+  // briefBlock emits nothing, and the prompt is what it was yesterday.
+  let brief = null;
+  if (tenantId) {
+    try {
+      const project = await getProjectByAnyDocId(tenantId, docId);
+      brief = (project && project.brief_raw) || null;
+    } catch (err) {
+      console.warn('[workflow] brief lookup failed — drafting without it:', err.message);
+    }
+  }
+  console.log(`[workflow] draft brief: ${brief ? `${brief.length} chars from the project row` : 'none — summary/writerPrompt only'}`);
+
   // `scopedFields` (optional [{assetType, fieldName}]) scopes the draft to those
   // fields; undefined → whole-doc, exactly as before. `append` (Variations Matrix
   // Step 1) makes a scoped call ADDITIVE — insert below existing copy, no delete.
   const result = await getDestination().generateDraft(
-    docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append
+    docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append, brief
   );
 
   // AND THE MATRIX, ON THIS SAME PATH.

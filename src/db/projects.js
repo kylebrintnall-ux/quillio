@@ -49,6 +49,12 @@ async function saveProject(tenantId, projectData = {}) {
     doc_template_id = null,
     brief_summary = null,
     brief_writer_prompt = null,
+    // The client's OWN WORDS, verbatim — the source brief_summary and
+    // brief_writer_prompt are Gemini's compression of. Until this column the
+    // original reached `makeTitle` and nothing else, so the drafter read a
+    // paraphrase of the campaign and never the campaign.
+    // scripts/migrateAddProjectBriefRaw.js.
+    brief_raw = null,
   } = projectData;
 
   console.log(
@@ -98,7 +104,12 @@ async function saveProject(tenantId, projectData = {}) {
     // agreement, where the interesting property is simply "try every subset,
     // biggest first". Generated, so a fourth group is one array entry and not a
     // doubling of hand-written combinations.
-    const GROUPS = [CREATED_BY, TEMPLATE, DRAFT_LINK];
+    const BRIEF_RAW = { extra: ['brief_raw'], values: [brief_raw] };
+    // Its own group, not folded into DRAFT_LINK: they arrived in different
+    // migrations, so a database can have one and not the other and the power set
+    // has to be able to drop exactly one of them. This is the "a fourth group is
+    // one array entry" the comment above promised.
+    const GROUPS = [CREATED_BY, TEMPLATE, DRAFT_LINK, BRIEF_RAW];
     const attempts = [];
     for (let mask = (1 << GROUPS.length) - 1; mask >= 0; mask--) {
       attempts.push({ mask, groups: GROUPS.filter((_, i) => mask & (1 << i)) });

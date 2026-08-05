@@ -799,11 +799,12 @@ campaign), 2% the campaign. Three campaign-specific things already exist and do
 not reach the drafter. **The raw brief is being worked; the other two are logged
 here and deliberately not started.**
 
-**1. The raw brief — the one that matters, in progress.** `createDocument`
-receives `brief` and uses it for `makeTitle` and nothing else. What reaches the
-drafter is `summary` + `writerPrompt`, which are Gemini's compression of it. The
-product's claim is "send the brief you already have"; the drafter reads a
-paraphrase while the original names a file.
+**1. The raw brief — DONE.** It now reaches the drafter. `projects.brief_raw`
+(`scripts/migrateAddProjectBriefRaw.js`) stores the client's words verbatim at
+brief time; `pipeline.generateDraft` reads them back through the
+`getProjectByAnyDocId` lookup it already makes for the template half, and threads
+them to both draft prompts and to the batch rescue. See below for the two
+decisions inside it.
 
 **2. Reference insights — ingested, rendered, never read back.** Drive files,
 Slides, PDFs, external URLs and Slack canvases are fetched at real cost by
@@ -827,6 +828,49 @@ different campaigns) or of the BRIEF (it is, which means parsing it out).
 
 `notes: ''` on the same two lines is NOT in this category — the copy-doc path
 fills it from the doc's italic line at draft time. Only `funnelStage` is dead.
+
+### The brief lives on the project row, NOT in the doc — and what that gave up
+
+`projects.brief_raw`, a third column beside `brief_summary` and
+`brief_writer_prompt`, which `migrateAddProjectTemplateDraft` added for the same
+reason: the draft path is handed a document id and a tenant and needs campaign
+context without reading it back out of the copy doc.
+
+**The alternative was rendering the brief into the doc and recovering it in
+`parseDoc`.** Rejected on fidelity — a Docs round-trip is a lossy channel
+(formatting, line breaks) for the one value whose exactness is the entire product
+claim, and `parseDoc` takes only the FIRST paragraph after a `HEADING_2`, so
+multi-paragraph briefs would have needed a parser change shared by the draft and
+regenerate paths.
+
+**THE TRADE, recorded as a decision rather than an oversight: a writer can no
+longer correct the brief in the doc and redraft against the correction.** Option
+A would have allowed that, and it is a real feature — the doc is the working
+surface, and "fix the brief, press regenerate" is a coherent thing to want.
+Fidelity of the original won: the claim is *send the brief you already have, in
+your own words*, and words that have been through a document round-trip are not
+reliably the words that were sent. If revisability is wanted later, the answer is
+a way to EDIT `brief_raw`, not to move it into the doc.
+
+**Three sources, and the prompt says which outranks which.** `briefBlock`
+(`services/gemini.js`) labels the brief AUTHORITATIVE and states the precedence
+outright — "where it and the summary below differ, follow the brief". `summary`
+and `writerPrompt` stay, because they do work the brief does not: one states the
+ask when a brief buries it, the other is `parseBrief`'s extraction of creative
+direction as a *directive*. They are relabelled by what they are rather than
+presented as a third equal description. Both draft builders use the identical
+block, so a field rescued out of a failed batch is not told a different story.
+
+**Truncation is tail-first, capped at `MAX_BRIEF_CHARS` (6000), and announced.**
+The head is kept because a brief front-loads; cutting the middle would splice two
+halves into a sentence nobody wrote. The model is told the brief was cut, so a
+severed sentence is not read as the end of the ask. **The cap is applied at
+prompt-build time, never on write** — `brief_raw` keeps whatever was sent, so
+raising the cap later is a code change rather than data already discarded.
+
+Absent is the whole degradation: a pre-migration row, a project saved before the
+column, a doc with no project row, no tenant, or an unmigrated database all leave
+`brief` null, `briefBlock` emits nothing, and the prompt is what it was before.
 
 ### An example in craft.md is copied as SYNTAX, not just as a theme
 

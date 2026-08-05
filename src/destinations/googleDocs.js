@@ -984,7 +984,13 @@ function buildVariantBlock(variations, { distance, charMax, fieldType, startInde
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount }.
-async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append) {
+// `brief` is the client's own words off the project row (pipeline.generateDraft).
+// Null for a pre-migration project, a doc with no project row, or no tenant — and
+// null is the whole degradation: gemini's briefBlock emits nothing and the prompt
+// is what it was before. The doc is still the source for summary and writerPrompt;
+// this is the ONE value that could not live there (see
+// scripts/migrateAddProjectBriefRaw.js for why not).
+async function generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append, brief) {
   const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
@@ -1135,6 +1141,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
               // Phase-1 path: one bare draft, count 1 / Stay close.
               const c = await generateFieldDraft({
                 assetType: a.assetType,
+                brief,
                 fieldName: f.fieldName,
                 charMax: f.charMax,
                 charMin: f.charMin,
@@ -1176,6 +1183,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
       } else {
         drafts = await generateAssetDrafts({
           assetType: a.assetType,
+          brief,
           assetDirection: a.assetDirection,
           summary,
           writerPrompt,

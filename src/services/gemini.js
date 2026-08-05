@@ -156,6 +156,61 @@ function buildBrandContext(assetType, voiceGuide) {
   return sliceGuide(VOICE_PARSED, VOICE_GUIDE, assetType);
 }
 
+// THE BRIEF, AND WHICH OF THE THREE CAMPAIGN SOURCES OUTRANKS WHICH.
+//
+// A draft prompt can carry three descriptions of the same campaign, and until the
+// brief arrived it carried two paraphrases and not the original:
+//
+//   brief        the client's own words, verbatim — AUTHORITATIVE
+//   writerPrompt ONE sentence of creative direction, EXTRACTED from the brief
+//                (gemini.js parseBrief) — a directive, not a description
+//   summary      a read of what the ask is, useful when a brief buries it
+//
+// Presented with equal billing, three sources invite the model to reconcile them
+// and to prefer the shortest. Saying which is authoritative is the whole job of
+// this block: `summary` and `writerPrompt` stay because they do work the brief
+// does not — one states the ask when the brief scatters it, the other converts it
+// into an instruction — but they stop being the primary source.
+//
+// This is not hypothetical tidiness. With no brief in the prompt, the campaign
+// was 2% of 15,405 characters, the brief said "in about a minute", and ten of
+// twelve headlines said "in 60 seconds" — a phrase present in no input.
+const MAX_BRIEF_CHARS = 6000;
+
+// TAIL-TRUNCATED, AND SAID OUT LOUD. Three decisions:
+//
+//   • THE HEAD IS KEPT. A brief front-loads: what the campaign is, who it is for,
+//     what the offer is. Cutting the middle would splice two halves into a
+//     sentence nobody wrote, which is worse than a clean stop.
+//   • THE MODEL IS TOLD. A severed brief that ends mid-sentence reads as the end
+//     of the ask, and the model would treat a truncated thought as the complete
+//     one. The notice costs a line and removes that reading.
+//   • THE ORIGINAL IS NOT TOUCHED. The cap is applied HERE, at prompt-build time,
+//     never on write — `projects.brief_raw` keeps whatever was sent, so raising
+//     the cap later is a code change and not a data loss that already happened.
+//
+// 6000 characters puts a long brief at roughly a third of the prompt, which is a
+// lot and is the point: it is the only part that is about THIS campaign.
+function briefBlock(brief) {
+  const raw = String(brief == null ? '' : brief).trim();
+  if (!raw) return [];
+  const truncated = raw.length > MAX_BRIEF_CHARS;
+  const text = truncated ? raw.slice(0, MAX_BRIEF_CHARS).trimEnd() : raw;
+  return [
+    'THE BRIEF — the client\'s own words, verbatim. This is the AUTHORITATIVE source for',
+    'what this campaign is, what it offers, and the vocabulary it uses. Where it and the',
+    'summary below differ, follow the brief. Prefer ITS phrasing and ITS words over any',
+    'paraphrase — if it says "about a minute", do not write "60 seconds".',
+    '"""',
+    text,
+    truncated
+      ? `[…the brief continues beyond this point and was cut for length — ${raw.length - text.length} characters not shown. Do NOT treat the last line above as the end of the ask.]`
+      : '',
+    '"""',
+    '',
+  ].filter((l) => l !== '');
+}
+
 // Prompt lines for the craft + brand sections, scoped to the asset's medium.
 // Two clearly labeled blocks: craft.md = how good copy works (always present);
 // brand = how this company sounds (tenant guide, else the repo voice.md).
@@ -1358,6 +1413,10 @@ async function generateFieldDraft({
   notes,
   funnelStage,
   assetDirection,
+  // The client's own words. Absent on a pre-migration project row and on any
+  // caller that has none — briefBlock emits nothing, and the prompt is then
+  // byte-identical to before except for the two relabelled lines.
+  brief,
   summary,
   writerPrompt,
   direction,
@@ -1374,8 +1433,14 @@ async function generateFieldDraft({
     'Write marketing copy for a single field. Return ONLY the copy itself — no labels, quotes, options, or commentary. Exactly one version.',
     '',
     ...brandVoiceLines(assetType, voiceGuide),
-    `Campaign summary: ${summary}`,
-    `Creative direction: ${writerPrompt}`,
+    // The brief FIRST, then the two things DERIVED from it, each labelled by what
+    // it is rather than presented as a third equal description of the campaign.
+    // Both draft builders use the identical block and ordering: a field rescued
+    // out of a failed batch must not be told a different story about which source
+    // outranks which. See briefBlock.
+    ...briefBlock(brief),
+    `Creative direction (a directive extracted from the brief): ${writerPrompt}`,
+    `Campaign summary (a read of the ask — the brief above is the source): ${summary}`,
     `Asset: ${assetType}`,
     assetDirection ? `Asset creative direction (apply to ALL fields): ${assetDirection}` : '',
     channel ? `Channel: ${channel}` : '',
@@ -1462,6 +1527,10 @@ async function generateAssetDrafts({
   channel,
   toneNotes,
   assetDirection,
+  // The client's own words. Absent on a pre-migration project row and on any
+  // caller that has none — briefBlock emits nothing, and the prompt is then
+  // byte-identical to before except for the two relabelled lines.
+  brief,
   summary,
   writerPrompt,
   fields,
@@ -1522,8 +1591,14 @@ async function generateAssetDrafts({
     '',
     ...revisionLines,
     ...brandVoiceLines(assetType, voiceGuide),
-    `Campaign summary: ${summary}`,
-    `Creative direction: ${writerPrompt}`,
+    // The brief FIRST, then the two things DERIVED from it, each labelled by what
+    // it is rather than presented as a third equal description of the campaign.
+    // Both draft builders use the identical block and ordering: a field rescued
+    // out of a failed batch must not be told a different story about which source
+    // outranks which. See briefBlock.
+    ...briefBlock(brief),
+    `Creative direction (a directive extracted from the brief): ${writerPrompt}`,
+    `Campaign summary (a read of the ask — the brief above is the source): ${summary}`,
     `Asset: ${assetType}`,
     assetDirection ? `Asset creative direction (apply to ALL fields): ${assetDirection}` : '',
     channel ? `Channel: ${channel}` : '',
@@ -1654,6 +1729,10 @@ async function generateAssetDrafts({
       try {
         copy = await generateFieldDraft({
           assetType,
+          // The rescue gets the same brief the batch had. Without it a field that
+          // fell out of a failed batch would be the ONE field in the asset drafted
+          // without the campaign's own words — silently, and only sometimes.
+          brief,
           channel,
           fieldName: f.fieldName,
           charMax: f.charMax,
@@ -2863,6 +2942,9 @@ module.exports = {
   // Bounded one-line sample of a model response, for failure logs. Exported for
   // tests only — no caller outside this file needs it.
   sampleForLog,
+  // The labelled brief block and its cap. Exported for tests only.
+  briefBlock,
+  MAX_BRIEF_CHARS,
   siblingContextBlock,
   overLimit,
   assignDoorways,

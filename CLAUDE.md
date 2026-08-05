@@ -802,22 +802,57 @@ project row. Same condition, surfaced on one document and silent on the other.
 Not fixed; recorded so the asymmetry is not mistaken for the copy-doc path being
 unable to produce it.
 
-**Known gap — a failed batch draft silently degrades an asset's COHESION.**
+### The batch-failure rescue gets siblings — FIXED, with an ordering limit
+
 `generateAssetDrafts` writes every field of an asset in ONE call so they can
 reference each other. When that response fails to parse, `parsed` becomes `{}`
-and every field falls through to `generateFieldDraft` — sequentially, one call
-each — and **that call is not given `siblings`**. `siblingContextBlock` therefore
-emits nothing, so a nine-field asset comes back as nine independently written
-lines with no knowledge of one another. The fields are all present and all within
-their limits, so nothing downstream can tell: `fieldCount` is identical and the
-completion card is identical. `[gemini] BATCH_PARSE_FAIL` in the log is the only
-trace. The rescue loop is sequential, so the fields drafted earlier ARE available
-when the later ones are drafted — passing them as siblings is the shape of the
-fix, and is deliberately not done yet. Do not add a tolerant parse first:
-`extractJsonArray`'s first-`[`-to-last-`]` trick has no working object analogue
-for this shape (first-`{` to last-`}` on `{}{"a":1}` returns the whole malformed
-string), so the repair needs different logic and a real sample to write it
-against.
+and every field falls through to `generateFieldDraft`, sequentially. That call
+used to be passed no `siblings` at all, so a nine-field asset came back as nine
+independently written lines — and nothing downstream could tell: every field
+present, every field within its limit, `fieldCount` identical, completion card
+identical, `[gemini] BATCH_PARSE_FAIL` in the log the only trace.
+
+The rescue now builds siblings **per field, inside the loop**, from two sources:
+`out` for fields already finished this pass, and `byKey` for fields not yet
+reached. That second source is why it matters beyond parse failures — one field
+missing or over-limit inside an otherwise-GOOD batch takes the same path and now
+sees **all** its siblings.
+
+**Measured with `scripts/cohesionAB.js`** (forces a batch failure, drafts the
+same asset both ways, prints the copy side by side). What it showed:
+
+- **BEFORE: five of nine fields said the same thing.** Both subject lines, the
+  preheader and both headlines all reached for the strongest framing, because
+  none of them knew another field had already taken it. That is the
+  characteristic shape of independent drafts, not a length or quality problem.
+- **AFTER: the fields divide the work.** Subject Line 1 states the problem,
+  Subject Line 2 takes the benefit angle instead of restating it, and the
+  Preheader *continues* the subject rather than paraphrasing it.
+
+**The limit, and it is ordered.** On a TOTAL parse failure `byKey` is empty, so
+only completed fields contribute: field 1 sees nothing, field 9 sees eight. The
+symptom is visible in the output — AFTER's Subject Line 1 is nearly identical to
+BEFORE's Subject Line 2, and the two headlines still overlap somewhat. Later
+fields gain more than earlier ones and the first field gains nothing. Fixing that
+would mean a second pass over the early fields, which is more calls for the
+rarest case; not done.
+
+**Sibling context cannot help a 20–25 character field.** The CTAs came back
+byte-identical in both arms. There are only so many ways to write a 20-character
+CTA, and the constraint decides it before context can.
+
+**The overlap metric was blind to the entire change**: mean shared content words
+per field pair was 2.81 in both arms. Cohesion is not word reuse — a set coheres
+by dividing the work, which is a *structural* property invisible to a lexical
+count. `cohesionAB.js` prints the number labelled as a hint precisely because of
+this; if you reach for a similar metric, expect it to miss.
+
+Still true, and still the reason not to reach for the obvious repair first: **do
+not add a tolerant parse.** `extractJsonArray`'s first-`[`-to-last-`]` trick has
+no working object analogue for this shape — first-`{` to last-`}` on `{}{"a":1}`
+returns the whole malformed string and fails identically. That repair needs
+different logic ("the first non-empty JSON value in the response") and a real
+sample from `BATCH_PARSE_FAIL` to write it against.
 
 **Known gap — `generateFieldVariations` receives no per-field guidance at all.**
 Not the tenant's `spec_note`, not the built-in rule, not the tier line: `notes`

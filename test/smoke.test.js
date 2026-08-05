@@ -13875,35 +13875,42 @@ test('migrateAddSpecAnchors adds the three columns and seeds idempotently', () =
   assert.ok(!/railway run/.test(src.replace(/NEVER `railway run`/g, '')), 'and never railway run');
 });
 
-test('the anchor plan: three seeded, one pending, three unanchored by decision', () => {
+test('the anchor plan: four seeded, three unanchored by decision', () => {
   const { CANDIDATES } = require('../scripts/migrateAddSpecAnchors');
   const by = (d) => CANDIDATES.filter((c) => c.decision === d);
   assert.strictEqual(CANDIDATES.length, 7, 'one entry per live watch row');
-  assert.strictEqual(by('seed').length, 3);
-  assert.strictEqual(by('verify').length, 1);
+  assert.strictEqual(by('seed').length, 4);
+  assert.strictEqual(by('verify').length, 0, 'nothing is proposed-but-unmeasured any more');
   assert.strictEqual(by('unanchored').length, 3);
 
-  // The three that were measured against the live pages, verbatim. Pinned because
-  // a typo here is not a test failure anywhere else — it is a watch entry that
-  // fails every run from the day it is seeded.
+  // The four measured against the live pages, verbatim. Pinned because a typo
+  // here is not a test failure anywhere else — it is a watch entry that fails
+  // every run from the day it is seeded, and it looks exactly like a page that
+  // changed.
   assert.deepStrictEqual(
     by('seed').map((c) => [c.anchor, c.scope]),
     [
       ['Introductory text', 'normalized'],
+      ['post copy:', 'normalized'],
       ['Responsive display ads', 'normalized'],
       ['Quillio Test Spec', 'normalized'],
     ]
   );
   for (const c of by('seed')) assert.ok(c.evidence, `${c.anchor} records what verify measured`);
 
-  // The X entry proposes two strings and commits to NEITHER. Its first candidate
-  // came from the URL slug rather than the page, which is the whole reason this
-  // decision state exists.
-  const x = by('verify')[0];
-  assert.match(x.match, /business\.x\.com/);
-  assert.strictEqual(x.anchor, undefined, 'a pending entry has no anchor to seed');
-  assert.strictEqual(x.options.length, 2);
-  assert.deepStrictEqual(x.options.map((o) => o.anchor), ['post copy:', 'Creative ad specs']);
+  // The X row keeps its trailing colon, and keeps the note saying the colon was
+  // CHECKED rather than assumed: X puts it inside the bold, so normalize() leaves
+  // it adjacent. The same anchor on `<strong>Post copy</strong>:` would need it
+  // dropped, and that is the sentence that stops the next person copying this
+  // shape onto a page marked up the other way.
+  const x = by('seed').find((c) => /business\.x\.com/.test(c.match));
+  assert.strictEqual(x.anchor, 'post copy:');
+  assert.match(x.why, /CHECKED, NOT ASSUMED/);
+  assert.match(x.why, /INSIDE the bold/);
+  // Its runner-up is recorded, not seeded — a measured second choice beats a
+  // fresh guess if the page ever moves.
+  assert.strictEqual(x.fallback.anchor, 'Creative ad specs');
+  assert.ok(!CANDIDATES.some((c) => c.anchor === 'Creative ad specs'), 'the fallback is not itself seeded');
 
   // Meta and both Litmus rows are declined on the merits, and each says why on
   // itself — the reason is what stops the next person re-proposing the same
@@ -13912,6 +13919,16 @@ test('the anchor plan: three seeded, one pending, three unanchored by decision',
   assert.ok(declined.some((m) => /facebook\.com/.test(m)));
   assert.strictEqual(declined.filter((m) => /litmus\.com/.test(m)).length, 2);
   for (const c of by('unanchored')) assert.match(c.why, /DELIBERATELY UNANCHORED/);
+});
+
+test("the 'verify' decision survives having no rows in it", () => {
+  // Nothing uses it today, and that is exactly when a branch gets deleted as
+  // dead. It is the entry point for the next watch row added — seeding an
+  // unmeasured guess is the alternative — so both the handler and the reason
+  // have to stay.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecAnchors.js'), 'utf8');
+  assert.match(src, /cand\.decision === 'verify'/, 'the seed loop still refuses to write for it');
+  assert.match(src, /NO ROW IS IN THIS STATE TODAY/, 'and says why it is empty rather than gone');
 });
 
 test('only a decision of seed writes an anchor', () => {

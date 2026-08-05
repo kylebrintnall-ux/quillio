@@ -642,18 +642,32 @@ state until the migration seeds it.
 The candidates were chosen without seeing the pages (this repo denies egress to
 those hosts) and then measured with
 `node scripts/migrateAddSpecAnchors.js --verify` from somewhere with egress.
-Three survived. The other four are each a **decision**, recorded on the candidate
+Four survived. The other three are each a **decision**, recorded on the candidate
 row in the migration so nobody re-proposes a rejected string:
 
 | Row | State | |
 | --- | --- | --- |
 | LinkedIn single-image | seeded | `Introductory text`, 2x |
+| X creative specs | seeded | `post copy:`, 9x — see the colon note below |
 | Google responsive display | seeded | `Responsive display ads`, 5x |
 | Test page | seeded | `Quillio Test Spec`, 1x |
-| X creative specs | **awaiting re-verify** | the first candidate came from the URL slug, not the page — the heading is "Creative ad specs", not "Creative ad specifications" |
 | Meta ads guide | **unanchored by decision** | see below |
 | Litmus subject line | **unanchored by decision** | see below |
 | Litmus preview text | **unanchored by decision** | see below |
+
+**X, and the colon.** Its first candidate, `Creative ad specifications`, came
+from the URL slug rather than the page — the heading reads "Creative ad specs" —
+which is the plausible-but-absent anchor `--verify` exists to catch. The seeded
+anchor is the spec label attached to the limit we store, the analogue of
+LinkedIn's `Introductory text`. Nine occurrences is not a mark against it: what
+disqualifies a phrase is being **site chrome that survives an error page**, and a
+spec label is the opposite of chrome. The trailing colon was **checked, not
+assumed** — X puts it inside the bold, so `normalize()` leaves it adjacent. The
+same anchor against `<strong>Post copy</strong>:` would normalize to
+`Post copy :` and fail on a healthy page; if X ever moves the colon outside,
+drop it. `Creative ad specs` stays on the row as a **recorded fallback**, not
+seeded, and `--verify` measures it automatically if the stored anchor ever stops
+matching.
 
 **Meta.** The candidate was a raw-body check for the canonical URL fragment. It
 was rejected because it asserts the *document was served*, not that the *content
@@ -676,11 +690,11 @@ string.
 **Reading the verify output.** The detector matches exactly and
 case-sensitively; the report adds a case-insensitive and a whitespace-flexible
 count purely as diagnostics, because the two ways a well-chosen anchor silently
-misses are a capital letter and a tag boundary. `<strong>Post copy</strong>:`
-normalizes to `Post copy :` — the gap opens before *attached punctuation*, not
-between the words — so `Post copy:` is absent from a page that plainly renders
-it. High occurrence is **not** itself disqualifying: what disqualifies a phrase
-is being site chrome that would survive an error page.
+misses are a capital letter and a tag boundary. The gap a tag opens is before
+*attached punctuation*, not between words, so a word-level check reports "absent"
+on a page that plainly renders the label — that is why the flexible variant
+allows whitespace anywhere inside the anchor.
+
 ### `affected_fields` is a snapshot, and nothing refreshes it
 
 `spec_watch_list.affected_fields` was computed **once**, when

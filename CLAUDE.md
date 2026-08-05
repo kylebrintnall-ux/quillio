@@ -876,6 +876,31 @@ returns the whole malformed string and fails identically. That repair needs
 different logic ("the first non-empty JSON value in the response") and a real
 sample from `BATCH_PARSE_FAIL` to write it against.
 
+### Measuring a prompt change: report the SPREAD, not the hit rate
+
+**A compliance count cannot tell redundancy leaving from range leaving.** Both
+look like "less variance in the output", both are what an added instruction
+produces, and only one of them is a win. Two runs on this system establish it,
+and they point opposite ways:
+
+| | The change | What compliance said | What actually happened |
+| --- | --- | --- | --- |
+| `scripts/cohesionAB.js` | rescue gains siblings | every field in band, before and after | bodies dropped 89→69 and 42→31 words because they stopped re-establishing the premise. **Redundancy left — a gain** |
+| `scripts/floorAB.js` | `char_min` reaches the prompt | Subhead **5/5 in band in BOTH arms** | spread collapsed 54-85 → 66-75, and the punchiest line in the run was the 54 that no longer appears. **Range left — a cost** |
+
+The Subhead is the case to remember: by hit rate the floor changed **nothing at
+all**, and it still cost the best line. No count would ever have surfaced that.
+Only reading the copy did.
+
+So any A/B on this system reports the **spread and the extremes**, and whoever
+runs it reads the copy at both ends. A hit rate is a safety check, not a result.
+Both scripts print every sample for this reason, and `cohesionAB` labels its
+lexical-overlap number a hint precisely because it was blind to the only thing
+that changed (2.81 in both arms).
+
+This outranks any individual prompt rule: it is how you find out whether the next
+one paid for itself.
+
 ### Stating the floor works — measured, and the prediction was backwards
 
 `scripts/floorAB.js`, run against production. Both arms go through the same code

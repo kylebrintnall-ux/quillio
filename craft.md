@@ -95,6 +95,16 @@ Where mediums differ:
 - **CTAs are not headlines either** — see Section 4. They take no terminal
   punctuation at all.
 
+**Internal punctuation.** A headline may take a colon, an em dash or a question
+mark where the mark earns its place. The rule above removes a full stop; it does
+not remove punctuation that does work inside the line, and it has been read as
+though it removed both — which produces flat declaratives where the sense wanted
+a break.
+
+None of these marks is preferred, expected, or a target. Most headlines need
+none. This is a permission, not an instruction: use one where the line turns, and
+nothing where it does not.
+
 -----
 
 ## 3. Body Copy

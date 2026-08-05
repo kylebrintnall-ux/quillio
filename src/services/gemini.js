@@ -1604,6 +1604,53 @@ async function generateAssetDrafts({
     // `copy.length > f.charMax` — which, on a word field, called every correct
     // draft too long and sent it here for a rescue it did not need.
     if (!copy || overLimit(copy, f.charMax, f.fieldType)) {
+      // SIBLING CONTEXT, WHICH THIS CALL NEVER HAD. The batch writes every field
+      // of an asset in ONE call so they can reference each other; a rescue
+      // without siblings is a field written in ignorance of the set it belongs
+      // to. When the whole batch fails to parse, EVERY field takes this path, so
+      // a nine-field email came back as nine independent lines with an identical
+      // fieldCount and an identical completion card — the one thing that changed
+      // was the only thing nothing measured.
+      //
+      // BUILT PER FIELD, INSIDE THE LOOP, from two sources — and that is the one
+      // way this differs from the two call sites it copies. googleDocs.js's
+      // scoped redraft and pipeline.js's template regenerate both read siblings
+      // from copy that ALREADY EXISTS in the document, so they can build the list
+      // once and filter self per iteration. This is a FIRST draft: nothing exists
+      // yet and the copy accumulates as the loop runs, so the list has to be
+      // rebuilt each time or every field would see the same empty set.
+      //
+      //   `out`   fields already finished this pass — their FINAL copy, post-rescue
+      //   `byKey` fields not yet reached — their BATCH copy, when the batch parsed
+      //
+      // The second source is what makes this worth doing for the COMMON case
+      // rather than only for a total parse failure. A single field missing or
+      // over its limit inside an otherwise-good batch takes this same path, and
+      // today it is redrafted blind while its eight finished siblings sit in the
+      // very map being read one line above. With both sources it now sees all of
+      // them: the earlier ones as written, the later ones as drafted.
+      //
+      // On a total parse failure byKey is empty, so this degrades to "everything
+      // drafted so far" — field 1 sees nothing, field 9 sees eight. Asymmetric,
+      // and still strictly more than the nothing it had.
+      //
+      // Same shape as the other two call sites: [{ fieldName, copy }], self
+      // excluded, empties dropped (siblingContextBlock drops them anyway, but a
+      // list of blanks would be a misleading thing to hand it).
+      const finished = new Map(out.map((d) => [d.fieldName, d.copy]));
+      const siblings = fields
+        .filter((s) => s.fieldName !== f.fieldName)
+        .map((s) => ({
+          fieldName: s.fieldName,
+          copy: finished.has(s.fieldName)
+            ? String(finished.get(s.fieldName) || '').trim()
+            // cleanDraft, because that is what this value becomes when its own
+            // turn comes — context should be what will be written, not the raw
+            // string with its fences and labels still on it.
+            : cleanDraft(byKey.get(s.fieldName.trim().toLowerCase()) || '').trim(),
+        }))
+        .filter((s) => s.copy);
+
       try {
         copy = await generateFieldDraft({
           assetType,
@@ -1624,6 +1671,11 @@ async function generateAssetDrafts({
           writerPrompt,
           direction,
           voiceGuide,
+          siblings,
+          // No currentCopy, deliberately. This is a first draft, not a revision —
+          // currentCopyBlock's own rule is that a first draft has none and must
+          // not be told there is. The over-limit case is the near-miss: the batch
+          // DID produce something, but it is being replaced rather than revised.
         });
       } catch (err) {
         // Keep the batch value if we had one; otherwise leave it empty (dropped

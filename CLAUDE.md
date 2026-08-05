@@ -758,6 +758,15 @@ comments are stripped; a file with only headings/comments (an unfilled
 placeholder) injects nothing. Edits to either repo file take effect on
 restart/deploy.
 
+**The craft slice is per ASSET, never per FIELD.** `buildCraftContext(assetType)`
+takes one argument and `mediumKeywordsForAsset` matches on the asset name alone,
+so a LinkedIn Single Image Ad's Headline and its Intro Text get the **identical**
+9,547-character block — and in the batch prompt they are in ONE call with ONE
+copy of it. Verified, because it is a tempting and wrong explanation for any
+"field X gets different guidance from field Y" observation: no slicing difference
+can exist between two fields of the same asset. What genuinely differs per field
+is the `Field guidance:` line (`fieldGuidanceFor`) and the field's own name.
+
 **Editing `craft.md` — mind the structural coupling.** To save tokens,
 `gemini.js` slices it per asset: everything *except* the
 `## … Writing Across Mediums` section is treated as universal craft and always
@@ -866,6 +875,38 @@ no working object analogue for this shape — first-`{` to last-`}` on `{}{"a":1
 returns the whole malformed string and fails identically. That repair needs
 different logic ("the first non-empty JSON value in the response") and a real
 sample from `BATCH_PARSE_FAIL` to write it against.
+
+### Stating the floor works — measured, and the prediction was backwards
+
+`scripts/floorAB.js`, run against production. Both arms go through the same code
+path; the only difference is whether `char_min` reaches the prompt.
+
+| | BEFORE (ceiling only) | AFTER (floor stated) |
+| --- | --- | --- |
+| Preheader `[85-100]` | 83, 60, 88, 82, 91 — median **83**, in-band **2/5** | 88, 87, 89, 92, 87 — median **88**, in-band **5/5** |
+| Subhead `[40-90]` | 54, 85, 71, 69, 69 — median **69**, in-band 5/5 | 70, 70, 67, 75, 66 — median **70**, in-band 5/5 |
+
+**The reasoning that predicted this was wrong, and the correction is the useful
+part.** The expectation was that the Preheader would barely move — its 100
+ceiling was already pushing it up — and that the Subhead would move, because
+40-90 leaves room to be short. The opposite happened.
+
+The `even a few characters short` clause did its damage **where the band left
+LEAST room**, not most. Fifteen characters separate an 85 floor from a 100
+ceiling, and the prompt spent its closing clause recommending the model spend
+them. The Subhead's floor was never binding: the model writes a subhead around 69
+unprompted, which is mid-band. **A nudge's cost is proportional to how little
+slack the band has, not how much.**
+
+**The side effect is the one to watch: the Subhead's SPREAD collapsed**, 54-85
+(31 characters) to 66-75 (9). Stating both ends cut the distribution by two
+thirds. In-band went 5/5 → 5/5 — nothing was fixed — and the punchiest line in
+the run was the 54-character one that no longer appears.
+
+So a band buys predictability and spends variance, and it spends it even on a
+field that was already compliant. Worth holding in mind before adding a further
+instruction that pushes the same way: **uniformity is the default failure mode of
+an accumulating prompt**, and each individual rule looks free.
 
 **Known gap — `generateFieldVariations` receives no per-field guidance at all.**
 Not the tenant's `spec_note`, not the built-in rule, not the tier line: `notes`

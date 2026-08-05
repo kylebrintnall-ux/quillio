@@ -1236,6 +1236,17 @@ function currentCopyBlock(currentCopy) {
 // undermined by a FEATURE rather than by having been wrong. When you add a
 // capability, the comments worth re-reading are the ones that justify an
 // omission by saying the case never arises.
+//
+// A FLOOR IN THE PROMPT IS NOT ENFORCEMENT, and the difference is the whole
+// reason this is safe to state here and nowhere else. It tells the model where
+// the useful range is, so it does not default short because the prompt said
+// short was safe. Nothing checks the result against it: no trim, no rescue, no
+// retry, and — decided 2026-08-05 — no review note either (see
+// copyReview.collectCopyFields, where the no-floor rule was re-examined and
+// held). ONLY THE CEILING IS ENFORCED. Over is a defect, under is a choice: copy
+// that says the thing in 32 characters beats copy padded to 40 to reach a
+// number. If you ever find yourself adding a check that fires on being under
+// this range, you are undoing that decision rather than completing this one.
 function lengthClause(charMax, fieldType, charMin) {
   const max = Number(charMax) > 0 ? Number(charMax) : null;
   if (!max) return null;

@@ -1214,20 +1214,45 @@ function currentCopyBlock(currentCopy) {
 // One helper, four callers, so the phrasing cannot drift between the drafter, the
 // variations generator and the two reviewers.
 //
-// `charMin` only appears for word fields. On a character field a floor is close to
-// meaningless (and the subject-line work just removed the last ones); on a word
-// field the floor is half the point — 50–125 words says "this is a structured
-// email", where "up to 125" would read as "shorter is safer".
+// THE FLOOR IS STATED FOR BOTH UNITS. It used to be word-only, and the comment
+// here read: "on a character field a floor is close to meaningless (and the
+// subject-line work just removed the last ones)".
+//
+// THAT WAS CORRECT WHEN IT WAS WRITTEN, and it stopped being correct without
+// anyone editing it. Two things moved underneath it. The seed in fact kept 19
+// character fields with a floor — every Subhead, every Preheader, the Meta
+// Title/Description pairs — so "the last ones" was true of the fields that work
+// had just touched and not of the library. And the house-default work made a
+// character floor something a TENANT can type, which is the case that has no
+// defensible reading at all: they set 40-60, the field renders [40-60], and the
+// model is told only "limit 60". A number a tenant can see and the drafter
+// cannot is not a subtle failure.
+//
+// Worse than silent: the no-floor sentence ends "even a few characters short",
+// which pushes DOWN. Sitting beside a floor it would argue against it, so the
+// floor branch does not inherit it.
+//
+// The general lesson, since this is the second time today: a decision can be
+// undermined by a FEATURE rather than by having been wrong. When you add a
+// capability, the comments worth re-reading are the ones that justify an
+// omission by saying the case never arises.
 function lengthClause(charMax, fieldType, charMin) {
   const max = Number(charMax) > 0 ? Number(charMax) : null;
   if (!max) return null;
+  const min = Number(charMin) > 0 && Number(charMin) < max ? Number(charMin) : null;
   if (String(fieldType || '') === 'words') {
-    const min = Number(charMin) > 0 ? Number(charMin) : null;
     const range = min ? `${min}-${max} words` : `up to ${max} words`;
     return (
       `Length: ${range}. This is a WORD count, not characters. Structure matters more than ` +
       'hitting a number: context in one or two sentences, the ask in one, the next step in one. ' +
       'A well-structured email at the top of the range beats a cramped one at the bottom.'
+    );
+  }
+  if (min) {
+    return (
+      `Length: ${min}-${max} characters. BOTH ends are real: at least ${min}, never more than ${max}. ` +
+      'Write a COMPLETE, self-contained thought and land it inside that range — do not stop short of ' +
+      `${min} to be safe, and never run up to ${max} and get cut off mid-sentence.`
     );
   }
   return (
@@ -1426,12 +1451,23 @@ async function generateAssetDrafts({
       // char_max 0 = NO limit. The character branch already guarded that; the
       // word branch did not, and rendered "up to 0 WORDS" — a real constraint
       // asserted on an unlimited field, in the batch prompt that drafts most copy.
-      const wordCeiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
+      const ceiling = Number(f.charMax) > 0 ? Number(f.charMax) : null;
+      // THE FLOOR, ON BOTH UNITS — see lengthClause for why this was word-only and
+      // why that stopped being right. This line does not call lengthClause (it is
+      // a terse clause inside a per-field bullet, not a paragraph) so the same
+      // omission had to be fixed twice; a floor stated in one draft path and not
+      // the other is a field that obeys its range only when it is redrafted alone.
+      // Guarded against min >= max, which would state an impossible range.
+      const floor = Number(f.charMin) > 0 && ceiling && Number(f.charMin) < ceiling ? Number(f.charMin) : null;
       const limit = f.fieldType === 'words'
-        ? (wordCeiling
-          ? `${Number(f.charMin) > 0 ? `${f.charMin}-` : 'up to '}${wordCeiling} WORDS (a word count, not characters)`
+        ? (ceiling
+          ? `${floor ? `${floor}-` : 'up to '}${ceiling} WORDS (a word count, not characters)`
           : 'no word limit — length is yours to judge; measured in WORDS, not characters')
-        : (Number(f.charMax) > 0 ? `character limit ${f.charMax} — stay within this limit` : 'concise');
+        : (ceiling
+          ? (floor
+            ? `${floor}-${ceiling} characters — at least ${floor}, never more than ${ceiling}`
+            : `character limit ${ceiling} — stay within this limit`)
+          : 'concise');
       const guidance = fieldGuidanceFor(f.fieldName, f.notes);
       const extra = [
         f.funnelStage ? `funnel: ${f.funnelStage}` : '',

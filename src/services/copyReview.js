@@ -76,6 +76,26 @@ function assetInstance(asset, countFallback) {
 // i.e. an instruction to pad. gemini.LENGTH_RULE tells the model not to; not
 // carrying the number is what makes that unfalsifiable. Do not add it back —
 // judging "this CTA has no verb" needs no count.
+//
+// RE-EXAMINED 2026-08-05 AND HELD. The house-default work let a tenant set a
+// character floor for the first time, one drafted under it, and the obvious
+// follow-up was a deterministic under-minimum note computed HERE in code — no
+// model, no LENGTH_RULE change, so none of the padding advice above could come
+// back. It was designed and then not built, because the premise was wrong rather
+// than the mechanism: the draft that came in at 32 against a floor of 40 was
+// BETTER than the band, and a note flagging it would have flagged the best line
+// in the document.
+//
+// So the rule is not "the model must not be trusted with a floor". It is that
+// UNDER A FLOOR IS NOT A DEFECT. Copy that says the thing in fewer characters
+// beats copy padded to reach a number, whoever is doing the counting and however
+// the note is worded. Only the ceiling is enforced: over is a defect, under is a
+// choice. A deterministic check would have been technically clean and would
+// still have been telling writers off for being concise.
+//
+// The floor is not useless — it belongs in the DRAFT prompt, where it tells the
+// model where the useful range is (see gemini.lengthClause). It does not belong
+// in a review, where it can only ever be an accusation.
 function collectCopyFields(content) {
   const out = [];
   const ordinal = instanceCounter();

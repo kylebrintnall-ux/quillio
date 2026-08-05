@@ -1125,6 +1125,88 @@ test('builtInFieldGuidance forces sentence case for Graphic Headline', () => {
   assert.strictEqual(builtInFieldGuidance('CTA Button'), '');
 });
 
+// THE FLOOR REACHES A CHARACTER FIELD'S PROMPT. It never did: lengthClause read
+// charMin only on the words branch, and the batch prompt's per-field line made
+// the same split independently. A tenant set Graphic Headline to 40-60, the doc
+// rendered [40-60], parseDoc recovered charMin 40, and the model was told
+// "Character limit: 60" — then handed a sentence ending "even a few characters
+// short", which argues DOWN. The draft came back at 32.
+test('lengthClause states the floor on a character field, and drops the go-short nudge', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  // lengthClause is not exported (four internal callers, no public surface), so it
+  // is lifted out of the source as an expression. A bare eval of a function
+  // DECLARATION does not bind in a strict-mode arrow scope — hence the parens.
+  // eslint-disable-next-line no-eval
+  const lengthClause = eval('(' + src.slice(src.indexOf('function lengthClause'), src.indexOf('function countWords')).trim() + ')');
+
+  const floored = lengthClause(60, 'text', 40);
+  assert.match(floored, /40-60 characters/, 'the range, in characters');
+  assert.match(floored, /at least 40/, 'the floor stated as a floor');
+  assert.match(floored, /never more than 60/, 'and the ceiling still stated');
+  // THE NUDGE MUST NOT SURVIVE BESIDE A FLOOR. "finish it, even a few characters
+  // short" is sound advice against a bare ceiling and argues against the floor it
+  // would sit next to.
+  assert.ok(!/even a few characters short/.test(floored), 'no go-short nudge when there is a floor');
+  assert.match(floored, /do not stop short of 40 to be safe/, 'it says the opposite instead');
+
+  // No floor → byte-identical to before. Most seeded character fields are here.
+  assert.strictEqual(
+    lengthClause(60, 'text', 0),
+    'Character limit: 60. Stay within this limit — write a COMPLETE, self-contained thought ' +
+    'and finish it, even a few characters short; never run up to the limit and get cut off mid-sentence.'
+  );
+  // Word fields unchanged.
+  assert.match(lengthClause(120, 'words', 50), /^Length: 50-120 words\. This is a WORD count/);
+  // No ceiling → no clause at all, floor or not: char_max 0 is the no-limit
+  // sentinel and a lone floor is not a length spec.
+  assert.strictEqual(lengthClause(0, 'text', 40), null);
+  // An impossible range is not asserted — min >= max falls back to the ceiling.
+  assert.ok(!/BOTH ends/.test(lengthClause(60, 'text', 60)));
+  assert.ok(!/BOTH ends/.test(lengthClause(60, 'text', 99)));
+});
+
+test('the batch prompt states the floor too — the same omission had to be fixed twice', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  const block = src.slice(src.indexOf('const fieldLines = fields'), src.indexOf('const guidance = fieldGuidanceFor'));
+  assert.ok(block.length > 200, 'found the per-field bullet builder');
+
+  // It composes its own clause rather than calling lengthClause (it is a terse
+  // bullet, not a paragraph), which is exactly why the floor went missing here
+  // as well. A floor honoured in one draft path and not the other means a field
+  // obeys its range only when redrafted alone.
+  assert.match(block, /\$\{floor\}-\$\{ceiling\} characters — at least \$\{floor\}, never more than \$\{ceiling\}/);
+  assert.match(block, /character limit \$\{ceiling\} — stay within this limit/, 'the no-floor form survives');
+  // Same guards as lengthClause: no ceiling → no range; min >= max → no range.
+  assert.match(block, /Number\(f\.charMin\) > 0 && ceiling && Number\(f\.charMin\) < ceiling/);
+  // And the word branch still reads the floor it always read.
+  assert.match(block, /\$\{floor \? `\$\{floor\}-` : 'up to '\}\$\{ceiling\} WORDS/);
+});
+
+// WHAT THIS ACTUALLY CHANGES, counted rather than assumed. The floor was NOT a
+// tenant-only affair: the seed ships 19 character fields with one, so this alters
+// the prompt for every tenant on day one, not just for anyone who has opted in
+// through Settings. Asserted so the blast radius is a number in the repo rather
+// than a memory.
+test('19 seeded CHARACTER fields already carry a floor — this is not opt-in-only', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const floored = [];
+  let charFields = 0;
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      if ((f.field_type || 'text') === 'words') continue;
+      charFields++;
+      // The field name is pushed on its own: "Event Follow-Up / Recap Email"
+      // contains a slash, so splitting a joined string back apart mis-parses it.
+      if (Number(f.char_min) > 0) floored.push({ asset: a.name, field: f.field_name });
+    }
+  }
+  assert.strictEqual(charFields, 166, 'character fields in the seed');
+  assert.strictEqual(floored.length, 19, 'and 19 of them have a floor');
+  // The shape of them: every Subhead, every Preheader, the landing-page meta pairs.
+  const names = new Set(floored.map((r) => r.field));
+  assert.deepStrictEqual([...names].sort(), ['Meta Description', 'Meta Title', 'Preheader', 'Subhead']);
+});
+
 // THE REGRESSION THIS GUARDS. Both draft prompts used to read
 // `notes || builtInFieldGuidance(fieldName)`, so a field that carried ANY italic
 // line lost its built-in craft rule outright. On the copy doc `notes` is
@@ -9654,8 +9736,13 @@ test('the DRAFT path treats char_max 0 as no limit — including on word fields'
 
   // 1. generateAssetDrafts' per-field line — the batch prompt that drafts most
   //    copy. Rendered "up to 0 WORDS (a word count, not characters)".
-  const lines = gem.slice(gem.indexOf('const fieldLines = fields'), gem.indexOf('const fieldLines = fields') + 900);
-  assert.match(lines, /const wordCeiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null/);
+  // Bounded by the next statement rather than a byte count: a comment added above
+  // the branches used to push them out of a fixed-width window and fail here for
+  // a reason that had nothing to do with the guard.
+  const lines = gem.slice(gem.indexOf('const fieldLines = fields'), gem.indexOf('const guidance = fieldGuidanceFor'));
+  // `wordCeiling` was renamed `ceiling` when the character branch grew a floor and
+  // needed the same guarded value. The NAME was never the point — the > 0 guard is.
+  assert.match(lines, /const ceiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null/);
   assert.match(lines, /'no word limit — length is yours to judge; measured in WORDS, not characters'/);
   assert.ok(!/'up to '\}\$\{f\.charMax\}/.test(lines), 'the raw charMax is no longer interpolated');
 
@@ -9710,7 +9797,6 @@ test('no ceiling is ever interpolated into a prompt without a > 0 guard', () => 
   for (const decl of [
     /const ceiling = Number\(charMax\) > 0 \? Number\(charMax\) : null;/,
     /const ceiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
-    /const wordCeiling = Number\(f\.charMax\) > 0 \? Number\(f\.charMax\) : null;/,
     /const max = Number\(charMax\) > 0 \? Number\(charMax\) : null;/,
   ]) {
     assert.match(gem, decl);
@@ -9732,7 +9818,10 @@ test('no ceiling is ever interpolated into a prompt without a > 0 guard', () => 
       `ceiling assigned without a guard: ${a}`
     );
   }
-  assert.strictEqual(assignments.length, 4, 'two prompt ceilings, two enforcement ceilings');
+  // Five now: the batch's per-field ceiling was `wordCeiling` until the character
+  // branch grew a floor and needed the same guarded value under a name that no
+  // longer claimed to be word-only.
+  assert.strictEqual(assignments.length, 5, 'three prompt ceilings, two enforcement ceilings');
 });
 
 // --- A terminal Slack card cannot be reverted by a late write ----------------

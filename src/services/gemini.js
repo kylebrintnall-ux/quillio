@@ -266,6 +266,30 @@ function stripJsonFences(text) {
     .trim();
 }
 
+// A BOUNDED, ONE-LINE SAMPLE of a model response, for a failure log.
+//
+// Head AND tail, because the two failure shapes live at opposite ends: a
+// "position N" error is decided in the first characters (an empty {} followed by
+// content fails at position 2), while "Unexpected end of JSON input" means the
+// response was truncated and only the tail shows where. Reporting one end would
+// diagnose half the cases.
+//
+// JSON.stringify, not the raw string: newlines become \n so the whole sample
+// stays on ONE line. A multi-line dump is unusable in Railway's log view, where
+// concurrent requests interleave, and it would break the grep this exists for.
+//
+// Bounded because a batch response can run to thousands of characters and this
+// is a log, not a store. The TRUE length is reported separately, so a truncated
+// sample never reads as a short response.
+//
+// It is tenant copy, so it is logged ONLY on the failure path and never on a
+// successful draft. Nothing here touches credentials or the voice guide.
+function sampleForLog(text, head = 1000, tail = 400) {
+  const s = String(text == null ? '' : text);
+  if (s.length <= head + tail) return s;
+  return `${s.slice(0, head)}…[${s.length - head - tail} more]…${s.slice(-tail)}`;
+}
+
 // Resilient JSON-array extractor for "thinking" models (e.g. gemini-3.5-flash)
 // that can leak reasoning prose around — or fences around — the actual JSON.
 // Tries, in order: (1) parse the fence-stripped text directly; (2) if that
@@ -1516,8 +1540,19 @@ async function generateAssetDrafts({
   ].join('\n');
 
   let parsed = {};
+  // HOISTED SO THE CATCH CAN SEE IT. `text` used to be declared inside the try,
+  // which meant the raw response was not merely unlogged — it was out of scope,
+  // and no line added to the catch could have printed it. A parse failure with no
+  // sample is a bug you can only ever see the shadow of: the error message gives
+  // the SHAPE of the failure ("position 2" means a complete two-character value
+  // with something immediately after it) and nothing at all about the content.
+  //
+  // A second thing the hoist buys, free: this catch covers BOTH a callGemini
+  // failure (network, rate limit, timeout) and a JSON.parse failure, and the old
+  // message called them all "parse failed". `len=0` now tells them apart.
+  let text = '';
   try {
-    const text = await callGemini({
+    text = await callGemini({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       // Headroom so a many-field asset (e.g. a carousel: 9–10 fields) can't
       // truncate mid-JSON and fail the parse, which would push every field onto
@@ -1529,7 +1564,21 @@ async function generateAssetDrafts({
     });
     parsed = JSON.parse(stripJsonFences(text));
   } catch (err) {
-    console.warn(`[gemini] asset batch draft parse failed for ${assetType}: ${err.message}`);
+    // ONE LINE, STABLE PREFIX, key=value. `BATCH_PARSE_FAIL` is a token that
+    // appears nowhere else in the source, so `grep BATCH_PARSE_FAIL` over a log
+    // window counts occurrences exactly — which is the whole point, since nothing
+    // in this system persists or counts this event (no metrics, no events table,
+    // and the project row records the document, not how it was drafted).
+    //
+    // asset and fields are here because the cost is per FIELD: every field of
+    // this asset now falls through to a sequential single-field rescue, so
+    // fields=9 is nine extra model calls, and the pair is what makes a log line
+    // tell you what the failure cost.
+    console.warn(
+      `[gemini] BATCH_PARSE_FAIL asset=${JSON.stringify(assetType)} fields=${fields.length} ` +
+        `err=${JSON.stringify(err && err.message ? err.message : String(err))} ` +
+        `len=${String(text || '').length} raw=${JSON.stringify(sampleForLog(text))}`
+    );
     parsed = {};
   }
 
@@ -2759,6 +2808,9 @@ module.exports = {
   // The composed guidance line — both draft prompts go through it, so the
   // built-in craft rule cannot be displaced by the field carrying a note.
   fieldGuidanceFor,
+  // Bounded one-line sample of a model response, for failure logs. Exported for
+  // tests only — no caller outside this file needs it.
+  sampleForLog,
   siblingContextBlock,
   overLimit,
   assignDoorways,

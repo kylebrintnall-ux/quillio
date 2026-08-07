@@ -806,28 +806,144 @@ brief time; `pipeline.generateDraft` reads them back through the
 them to both draft prompts and to the batch rescue. See below for the two
 decisions inside it.
 
-**2. Reference insights — ingested, rendered, never read back.** Drive files,
-Slides, PDFs, external URLs and Slack canvases are fetched at real cost by
-`fetchAllReferences`, passed to `createDocument`, and rendered into the document
-body. The DRAFT path re-reads the doc through `parseDoc`, which returns only
-`{ summary, writerPrompt, assets }` — so the insights are on the page and are
-never recovered. Everything ingested informs the document a human reads and none
-of it informs the copy. COST: the same parser question as the brief (see below),
-plus a judgement about volume — insights can be long, and they compete with the
-brief for the same share.
+**2. Reference insights — the STATS now reach the drafter; the key messages
+deliberately do not.** See "Reference insights" below. The framing this list had
+was WRONG in a way worth keeping visible: it said none of the ingested material
+informed the copy. In fact `enrichWithReferences` rewrites `summary` and
+`writerPrompt` from the reference content and both adapters overwrite the
+originals, so the model's *read* of the references has always reached the
+drafter. What was stranded was the extracted figures.
 
-**3. `funnelStage` — a live slot that is permanently empty.** The prompt builder
-emits `funnel: …` per field, and `core/pipeline.js:871-872` sets
-`funnelStage: ''` with the comment `not stored in copy_fields (Sheet-only)`. The
-channel, the plumbing and the prompt clause all exist; the value was retired with
-the Sheet and never replaced. Awareness vs consideration vs decision changes what
-a headline should do, so this is campaign signal in the strict sense. COST: a
-column on `copy_fields` or a per-brief value, plus deciding whether it is a
-property of the FIELD (it is not — the same field serves different stages in
-different campaigns) or of the BRIEF (it is, which means parsing it out).
+**3. `funnelStage` — the slot is still empty; the drafter now INFERS instead.**
+The prompt builder still emits `funnel: …` per field and `core/pipeline.js`
+still sets `funnelStage: ''`. No column was added and none should be added on
+spec — see "Funnel stage" below for what was done instead and why the stored
+version was declined.
 
 `notes: ''` on the same two lines is NOT in this category — the copy-doc path
-fills it from the doc's italic line at draft time. Only `funnelStage` is dead.
+fills it from the doc's italic line at draft time.
+
+### Funnel stage: inferred, not stored — and the two prompts now share one definition
+
+`services/gemini.js` `FUNNEL_STAGE_INFERENCE` is the single definition of top-
+and bottom-of-funnel. Three call sites splat it: both draft builders and
+`buildVariantReviewPrompt`. A smoke test asserts the literal appears in the
+source exactly **once** and that all three reach for the constant, because two
+prompts carrying their own wording leaves a future reader with two answers and no
+way to tell which is current.
+
+**The finding that motivated it.** The review prompt had told the model to infer
+the funnel stage from "the asset type + brief" since it was written. The draft
+prompts never did. Since the raw brief arrived, the prompt that says the stage is
+unknowable holds *exactly the evidence* the prompt that says it is knowable is
+told to read. That is a disagreement between two prompts in one system, not a
+missing feature.
+
+**The consequence clause is per-prompt, and only the definition is shared.**
+`FUNNEL_STAGE_FOR_REVIEW` is "Funnel stage shapes which doorway fits";
+`FUNNEL_STAGE_FOR_DRAFT` is "Funnel stage shapes what this copy has to do."
+Doorways exist only on the review/variations path, and a dangling term in a
+prompt that has no such concept is worse than no clause at all. What must never
+drift is the definition, and that is the part that is shared.
+
+**A stored value still wins.** `funnelStage ? 'Funnel stage: …' : <inference>` —
+nothing populates it today, but a column or a per-brief value would, and an
+inference must not talk over a value somebody set.
+
+**The stored column was declined, not deferred.** It is strictly more work than
+either of the two changes beside it: `parseBrief`'s JSON contract is the one call
+whose failure mode is the whole brief refusing to parse, and the value would need
+a column, a migration and threading through both surfaces — to supply something
+the model can already infer from inputs it now holds. If the inference proves
+unreliable, that measurement tells us what the column is worth buying.
+
+### Reference insights: the stats are the drafter's, the key messages are the reader's
+
+`referenceInsights` is `[{ source, type, stats, keyMessages }]`, one object per
+source, produced by the enrich pass (≤3 stats of <10 words, ≤2 key messages of
+<12 words). A 20:1 compression of up to 6000 chars per source. `type` is the
+**transport** (`drive`/`external`/`pdf`/…) — nothing anywhere records a source's
+**purpose**, and that asymmetry decides the split below.
+
+**`stats` reach both draft prompts.** `referenceStatsBlock` renders them with
+their source attached, and `parseDoc` recovers them from the doc.
+
+**`keyMessages` do not, and this is DECLINED rather than not-yet-done.** Two
+items of under 12 words summarising a source is that source's positioning at
+headline length, handed to a model whose job is to write a headline — and for a
+competitor page, that is the competitor's own copy. The drafter cannot tell one
+source's kind from another's, because `type` is the file format. The
+counter-argument ("the enrich pass already took the competitive framing") is the
+argument *against*: the enrich pass had the full source text and an explicit
+instruction to pull competitor-category framing, and its considered extract is
+the one `Competitive Framing:` line in the writer direction. That is a
+**controlled** channel — one sentence, labelled as positioning. `keyMessages`
+beside it is the **uncontrolled** version of the same material with nothing
+marking it as somebody else's. They stay in the doc, where the human reading them
+is informed rather than primed. Reopening this needs a way to record a
+reference's PURPOSE, not a change of mind about volume.
+
+**The block is framed as ATTRIBUTION, never as truth**, and the exact wording
+matters: "FIGURES REPORTED IN THE LINKED MATERIAL … They are REPORTED, not
+verified: nothing in this system has checked them against their source. Use one
+only where it earns its place, and only as that source's claim. Do NOT invent a
+figure, and do NOT round, combine or sharpen one of these into a number no source
+stated." A test asserts the word **verbatim** never appears in it. The enrich
+prompt does say "verbatim from source only" — but that is an instruction to a
+model, and no instruction in this system has ever had a compliance rate of 1.0.
+Asserting a guarantee nothing provides is worst on this class of output, where
+being wrong is a false factual claim in published copy rather than a weak
+headline. The two prohibitions are there because the measured failure was
+*invention* ("in 60 seconds", from a brief that said "about a minute"); the risk
+of handing over real figures is not that they are ignored but that they are
+sharpened.
+
+**PROVENANCE GAP, and it is an ARTEFACT rather than a decision.** The raw
+reference content is fetched, capped at `REF_CONTENT_MAX` (6000/source), used for
+the single enrich call, and **never persisted**. Nothing chose that; nothing
+needed it after the call, so nothing kept it. The consequence now matters: by
+draft time there is no text left to check a figure against, so no validator is
+possible even in principle, and a figure that reaches published copy cannot be
+traced past the source's *name*. The source name is the whole of the provenance.
+
+What keeping it would cost: a column (or Drive-side blob) holding up to 6000
+chars per source per project, written at brief time. That is not large. The real
+cost is the decision underneath it — retaining a customer's linked material as
+Quillio data, which is a privacy and retention question rather than a schema one,
+and is why this is logged rather than built. **The cheaper half is worth
+considering on its own**: storing each stat's *offset* or its surrounding
+sentence at enrich time would make a figure checkable against a source a human
+can open, without retaining the source.
+
+**Why the doc, not the project row — the opposite call to `brief_raw`.** Neither
+reason that put the brief on the project row applies here: a stat is already a
+model extraction of ≤10 words rendered as its own bullet, and a bullet list
+round-trips through Docs exactly, where a multi-paragraph brief does not and
+would have needed a parser change. What decides it is the fabrication risk. A
+figure is reported and unverifiable, so the only check that exists is the human
+looking at the page — and reading them back out of the doc means **a wrong number
+can be deleted from Reference Insights before Generate First Draft is pressed,
+and it will not reach the prompt.** On the project row it would be unreachable.
+
+`parseDoc` therefore returns `referenceStats` and `enrichedFromReferences`
+alongside `{ summary, writerPrompt, assets }`. Both keys are additive; every
+existing consumer destructures the original three.
+
+**The one case where the flag understates.** `enrichedFromReferences` is the
+presence of the Reference Insights section. If the enrich pass succeeds but
+returns zero insights (references read, none produced — `pipeline.js` already
+warns about exactly this), no section renders, the flag is false, and the prompt
+keeps its pre-change wording. That is the status quo, not a regression. On a
+total enrich failure the flag is *correct*, because the catch returns the brief
+unchanged and the summary was never enriched.
+
+**Not wired: `generateFieldVariations`.** The riff path gets no stats, the same
+way it gets no per-field guidance. That gap is documented above and unchanged.
+
+**Not wired: the template document.** `resolveProjectTemplate`'s `spec` is
+`{ summary, writerPrompt }` off the project row, so the template draft path has
+**never** received `brief_raw` either — it is a brief-free path already, and the
+stats follow the brief. This is not a new asymmetry.
 
 ### The brief lives on the project row, NOT in the doc — and what that gave up
 
@@ -860,6 +976,26 @@ ask when a brief buries it, the other is `parseBrief`'s extraction of creative
 direction as a *directive*. They are relabelled by what they are rather than
 presented as a third equal description. Both draft builders use the identical
 block, so a field rescued out of a failed batch is not told a different story.
+
+**The precedence sentence is CONDITIONAL, because unconditionally it is false.**
+`briefBlock(brief, enriched)` and `derivedCampaignLines(summary, writerPrompt,
+enriched)` move together on one flag. When a brief carried references,
+`enrichWithReferences` **rewrites** `summary` and `writerPrompt` from the
+reference content and both adapters overwrite the originals — so on that path the
+summary is a read of the brief *and* the linked material and can legitimately
+carry a statistic, a persona or a competitive frame the brief does not contain.
+"Where it and the summary below differ, follow the brief" then instructs the
+model to discard exactly the material that was fetched at real cost to produce
+it. The enriched wording keeps the brief authoritative on **what the campaign is
+and how it is worded** while telling the model the specifics below came from
+sources it cannot see, and to keep them.
+
+The model is **told** which case it is in rather than left to infer it: inferring
+would mean guessing whether an unfamiliar specific came from an unseen source or
+from nowhere, and "from nowhere" is the failure this whole block exists to
+prevent. The unenriched branch is **byte-identical** to what shipped, which is
+why the sentence is swapped by rewriting the group rather than appending to it.
+`briefBlock(x)` and `briefBlock(x, false)` are asserted equal.
 
 **Truncation is tail-first, capped at `MAX_BRIEF_CHARS` (6000), and announced.**
 The head is kept because a brief front-loads; cutting the middle would splice two

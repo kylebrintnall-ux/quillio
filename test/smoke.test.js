@@ -1143,15 +1143,268 @@ test('briefBlock labels the brief as authoritative and demotes the two derived s
   // The other two are still present and still labelled by WHAT THEY ARE. Three
   // sources with equal billing invite the model to reconcile them and prefer the
   // shortest; naming the derivation is the whole point of keeping them.
-  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
-  assert.match(src, /Creative direction \(a directive extracted from the brief\): \$\{writerPrompt\}/);
-  assert.match(src, /Campaign summary \(a read of the ask — the brief above is the source\): \$\{summary\}/);
+  const { derivedCampaignLines } = require('../src/services/gemini');
+  const derived = derivedCampaignLines('S', 'W', false).join('\n');
+  assert.match(derived, /Creative direction \(a directive extracted from the brief\): W/);
+  assert.match(derived, /Campaign summary \(a read of the ask — the brief above is the source\): S/);
+
   // BOTH draft builders, identically — a field rescued out of a failed batch must
-  // not be told a different story about which source wins.
-  assert.strictEqual((src.match(/\.\.\.briefBlock\(brief\)/g) || []).length, 2, 'both draft prompts');
+  // not be told a different story about which source wins. The two lines moved
+  // into derivedCampaignLines when they gained a second wording, so the pairing
+  // that has to hold is briefBlock and derivedCampaignLines called together,
+  // twice, with the SAME enrichment flag.
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
   assert.strictEqual(
-    (src.match(/Creative direction \(a directive extracted from the brief\)/g) || []).length, 2
+    (src.match(/\.\.\.briefBlock\(brief, enrichedFromReferences\)/g) || []).length, 2, 'both draft prompts'
   );
+  assert.strictEqual(
+    (src.match(/\.\.\.derivedCampaignLines\(summary, writerPrompt, enrichedFromReferences\)/g) || []).length, 2
+  );
+});
+
+test('the brief block and the derived labels tell the truth on the REFERENCE path', () => {
+  const { briefBlock, derivedCampaignLines } = require('../src/services/gemini');
+
+  // THE BUG THIS FIXES. enrichWithReferences REWRITES summary and writerPrompt
+  // from the reference content and both adapters overwrite the originals, so on
+  // this path the summary can carry a statistic or a persona the brief does not.
+  // "Where it and the summary below differ, follow the brief" told the model to
+  // throw exactly that away.
+  const enriched = briefBlock('Runs in about a minute.', true).join('\n');
+  assert.ok(
+    !/Where it and the\s*\n?\s*summary below differ, follow the brief\./.test(enriched),
+    'the unconditional precedence sentence is gone on this path'
+  );
+  assert.match(enriched, /reference material/, 'the model is TOLD which case it is in');
+  assert.match(enriched, /keep them/, 'reference-derived specifics survive');
+  // The brief still wins where they genuinely conflict — demoted, not dethroned.
+  assert.match(enriched, /AUTHORITATIVE/);
+  assert.match(enriched, /conflict about what the campaign IS or how it is worded,\s*\n?\s*follow the brief/);
+
+  // The labels move WITH it: saying the summary came from the linked material and
+  // then calling it "a read of the ask — the brief above is the source" two lines
+  // later would re-open the contradiction.
+  const derived = derivedCampaignLines('S', 'W', true).join('\n');
+  assert.match(derived, /Creative direction \(a directive extracted from the brief and the linked reference material\)/);
+  assert.match(derived, /Campaign summary \(a read of the brief and the linked reference material\)/);
+  assert.ok(!/a read of the ask/.test(derived));
+
+  // AND THE COMMON PATH DOES NOT MOVE. A brief that linked nothing gets the exact
+  // bytes it got before this change.
+  assert.strictEqual(
+    briefBlock('Runs in about a minute.', false).join('\n'),
+    briefBlock('Runs in about a minute.').join('\n'),
+    'omitted flag === false'
+  );
+  assert.match(briefBlock('x', false).join('\n'), /Where it and the\s*\n?\s*summary below differ, follow the brief\./);
+});
+
+test('funnel stage: ONE definition, reached by both the draft and review prompts', () => {
+  const {
+    FUNNEL_STAGE_INFERENCE, FUNNEL_STAGE_FOR_DRAFT, FUNNEL_STAGE_FOR_REVIEW, buildVariantReviewPrompt,
+  } = require('../src/services/gemini');
+
+  // The DEFINITION is what must never drift. Two prompts carrying their own
+  // wording for top- and bottom-of-funnel leaves a future reader with two
+  // answers and no way to tell which is current — so there is one array and
+  // both sides splat it. A literal re-typed into either prompt fails here.
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  assert.strictEqual(
+    (src.match(/Infer the FUNNEL STAGE from the asset type \+ brief/g) || []).length, 1,
+    'the definition is written exactly once'
+  );
+  assert.strictEqual((src.match(/\.\.\.FUNNEL_STAGE_INFERENCE/g) || []).length, 3,
+    'both draft builders and the review prompt reach for it');
+
+  // The CONSEQUENCE clause is per-prompt on purpose: "which doorway fits" means
+  // nothing where doorways do not exist, and the draft prompts have no such
+  // concept. A dangling term is worse than none.
+  assert.match(FUNNEL_STAGE_FOR_REVIEW, /doorway/);
+  assert.ok(!/doorway/i.test(FUNNEL_STAGE_FOR_DRAFT), 'the draft clause names no review concept');
+
+  // The review prompt still says it, via the shared constant.
+  const prompt = buildVariantReviewPrompt({
+    assetType: 'Organic Social — LinkedIn', fieldName: 'Post Copy', charMax: 200,
+    variations: [{ doorway: 'Contrast', copy: 'a' }],
+  });
+  for (const line of FUNNEL_STAGE_INFERENCE) assert.ok(prompt.includes(line));
+  assert.ok(prompt.includes(FUNNEL_STAGE_FOR_REVIEW));
+});
+
+test('funnel stage: the draft prompts infer it, and a stored value still wins', async () => {
+  const { FUNNEL_STAGE_INFERENCE, FUNNEL_STAGE_FOR_DRAFT } = require('../src/services/gemini');
+  const field = { assetType: 'Organic Social — LinkedIn', fieldName: 'Post Copy', charMax: 200, summary: 'S', writerPrompt: 'W' };
+
+  const inferred = (await geminiWith(() => 'Short line.', (g) => g.generateFieldDraft(field))).prompts[0];
+  for (const line of FUNNEL_STAGE_INFERENCE) assert.ok(inferred.includes(line), 'inference reaches the drafter');
+  assert.ok(inferred.includes(FUNNEL_STAGE_FOR_DRAFT));
+  // It sits BELOW the campaign context it tells the model to read.
+  assert.ok(
+    inferred.indexOf('Campaign summary') < inferred.indexOf('Infer the FUNNEL STAGE'),
+    'the evidence is above the instruction to read it'
+  );
+
+  // A STORED stage still wins. Nothing writes one today, but a column or a
+  // per-brief value would, and an inference must not talk over it.
+  const stored = (await geminiWith(
+    () => 'Short line.',
+    (g) => g.generateFieldDraft({ ...field, funnelStage: 'consideration' })
+  )).prompts[0];
+  assert.ok(stored.includes('Funnel stage: consideration'));
+  assert.ok(!stored.includes('Infer the FUNNEL STAGE'), 'no inference when a value was set');
+
+  // The BATCH builder says it too — it is the path that drafts most copy.
+  const batch = (await geminiWith(
+    () => '{"Post Copy":"Short line."}',
+    (g) => g.generateAssetDrafts({ ...field, fields: [{ fieldName: 'Post Copy', charMax: 200 }] })
+  )).prompts[0];
+  for (const line of FUNNEL_STAGE_INFERENCE) assert.ok(batch.includes(line), 'and the batch prompt');
+});
+
+test('reference stats reach BOTH draft builders, and the rescue too', async () => {
+  const stats = [{ text: '4 hours saved per week', source: 'Ops Benchmark 2026' }];
+  const args = {
+    assetType: 'Organic Social — LinkedIn', summary: 'S', writerPrompt: 'W',
+    brief: 'Runs in about a minute.', enrichedFromReferences: true, referenceStats: stats,
+  };
+
+  const single = (await geminiWith(
+    () => 'Short line.',
+    (g) => g.generateFieldDraft({ ...args, fieldName: 'Post Copy', charMax: 200 })
+  )).prompts[0];
+  assert.match(single, /FIGURES REPORTED IN THE LINKED MATERIAL/);
+  assert.match(single, /4 hours saved per week — Ops Benchmark 2026/);
+  // The relabelled campaign lines travel with them — same enrichment flag.
+  assert.match(single, /Campaign summary \(a read of the brief and the linked reference material\)/);
+
+  // THE RESCUE. A batch that fails to parse sends every field to the single-field
+  // generator; a rescued field must not be the ONE field in the asset drafted
+  // without the figures, or told a different story about where its direction
+  // came from. Same rule the brief already follows.
+  const { prompts } = await geminiWith(
+    (p, n) => (n === 1 ? 'not json at all' : 'Short line.'),
+    (g) => g.generateAssetDrafts({ ...args, fields: [{ fieldName: 'Post Copy', charMax: 200 }] })
+  );
+  assert.strictEqual(prompts.length, 2, 'the batch failed and the rescue ran');
+  assert.ok(isBatchPrompt(prompts[0]) && !isBatchPrompt(prompts[1]));
+  for (const p of prompts) {
+    assert.match(p, /FIGURES REPORTED IN THE LINKED MATERIAL/);
+    assert.match(p, /4 hours saved per week — Ops Benchmark 2026/);
+    assert.match(p, /a read of the brief and the linked reference material/);
+  }
+});
+
+test('reference stats reach the prompt as ATTRIBUTED, never as verified', () => {
+  const { referenceStatsBlock, MAX_REFERENCE_STATS } = require('../src/services/gemini');
+
+  assert.deepStrictEqual(referenceStatsBlock([]), [], 'no stats, no block');
+  assert.deepStrictEqual(referenceStatsBlock(undefined), []);
+  assert.deepStrictEqual(referenceStatsBlock([{ text: '   ', source: 'X' }]), [], 'blank rows drop');
+
+  const block = referenceStatsBlock([
+    { text: '4 hours saved per week', source: 'Ops Benchmark 2026' },
+    { text: '38% faster onboarding', source: null },
+  ]).join('\n');
+
+  // THE FRAMING IS ATTRIBUTION, NOT TRUTH. There is no validator possible: the
+  // raw reference text is capped at 6000 chars per source, used once for the
+  // enrich call, and never persisted — so by draft time there is nothing left to
+  // check a figure against. Calling these "verbatim" would assert a guarantee
+  // nothing in the system provides, on the one output class where being wrong is
+  // a false factual claim rather than a weak headline.
+  assert.match(block, /REPORTED, not verified/);
+  assert.ok(!/verbatim/i.test(block), 'never claims verbatim — nothing checked it');
+  assert.match(block, /4 hours saved per week — Ops Benchmark 2026/, 'each figure carries its source');
+  assert.match(block, /^- 38% faster onboarding$/m, 'a sourceless figure still lists, without a dangling dash');
+
+  // The two prohibitions earn their lines from the measured failure: with no
+  // figures available the drafter invented "in 60 seconds" from a brief that
+  // said "about a minute". Handing it real ones risks sharpening, not ignoring.
+  assert.match(block, /Do NOT invent a figure/);
+  assert.match(block, /round, combine\s*\n?\s*or sharpen one of these/);
+
+  // Capped, and the cap is not silent.
+  const many = Array.from({ length: MAX_REFERENCE_STATS + 5 }, (_, i) => ({ text: `stat ${i}`, source: 's' }));
+  const rows = referenceStatsBlock(many).filter((l) => l.startsWith('- '));
+  assert.strictEqual(rows.length, MAX_REFERENCE_STATS);
+});
+
+test('parseDoc recovers reference STATS from the doc, and never key messages', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+
+  function makeDoc(paras) {
+    let idx = 1;
+    return { body: { content: paras.map((para) => {
+      const raw = (para.text || '') + '\n';
+      const startIndex = idx; const endIndex = idx + raw.length; idx = endIndex;
+      return { startIndex, endIndex, paragraph: {
+        paragraphStyle: para.style ? { namedStyleType: para.style } : {},
+        elements: [{ textRun: { content: raw, textStyle: { bold: !!para.bold, italic: !!para.italic } } }],
+      } };
+    }) } };
+  }
+
+  // The layout appendBody emits: a From: line per source, then labelled runs.
+  const doc = makeDoc([
+    { text: 'Campaign Summary', style: 'HEADING_2' },
+    { text: 'the summary', italic: true },
+    { text: 'Writer Direction', style: 'HEADING_2' },
+    { text: 'the direction', italic: true },
+    { text: 'Reference Insights', style: 'HEADING_2' },
+    { text: 'From: Ops Benchmark 2026 (pdf)', italic: true },
+    { text: 'Stats:', italic: true },
+    { text: '4 hours saved per week' },
+    { text: '38% faster onboarding' },
+    { text: 'Key messages:', italic: true },
+    { text: 'The fastest way to ship briefs' },
+    { text: '' },
+    { text: 'From: competitor.example (external)', italic: true },
+    { text: 'Key messages:', italic: true },
+    { text: 'Built for teams that move' },
+    { text: '' },
+    { text: 'Reference Materials', style: 'HEADING_2' },
+    { text: 'Ops Benchmark 2026' },
+    { text: 'LinkedIn Single Image Ad', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true },
+    { text: '' },
+  ]);
+
+  const { summary, writerPrompt, assets, referenceStats, enrichedFromReferences } = parseDoc(doc);
+
+  // The section's presence is the signal that summary/writerPrompt were written
+  // from linked material — which is what briefBlock's conditional turns on.
+  assert.strictEqual(enrichedFromReferences, true);
+  assert.deepStrictEqual(referenceStats, [
+    { text: '4 hours saved per week', source: 'Ops Benchmark 2026' },
+    { text: '38% faster onboarding', source: 'Ops Benchmark 2026' },
+  ]);
+
+  // KEY MESSAGES ARE DELIBERATELY NOT COLLECTED. A source's positioning at
+  // headline length, handed to a model whose job is to write a headline — and
+  // for the competitor row above, that is the competitor's own copy. The enrich
+  // pass already made its considered extract into the writer direction's
+  // "Competitive Framing:" line; this would be the uncontrolled one beside it.
+  const flat = JSON.stringify(referenceStats);
+  assert.ok(!flat.includes('Built for teams that move'), "a competitor's positioning stays out of the prompt");
+  assert.ok(!flat.includes('fastest way to ship briefs'));
+
+  // And the section leaks into nothing else: the field scan and the two campaign
+  // values are exactly what they were.
+  assert.strictEqual(summary, 'the summary');
+  assert.strictEqual(writerPrompt, 'the direction');
+  assert.strictEqual(assets.length, 1);
+  assert.deepStrictEqual(assets[0].fields.map((f) => f.fieldName), ['Headline']);
+
+  // A doc with no such section: empty, false, and every prompt below unmoved.
+  const plain = parseDoc(makeDoc([
+    { text: 'Campaign Summary', style: 'HEADING_2' },
+    { text: 'the summary', italic: true },
+    { text: 'LinkedIn Single Image Ad', style: 'HEADING_3' },
+    { text: 'Headline [50]', bold: true },
+    { text: '' },
+  ]));
+  assert.deepStrictEqual(plain.referenceStats, []);
+  assert.strictEqual(plain.enrichedFromReferences, false);
 });
 
 test('an absent brief changes nothing, and a long one is tail-cut and said out loud', () => {

@@ -69,20 +69,104 @@ const STATS = [
   { text: '4.5 hours a week lost to reformatting', source: 'marketingops.example' },
 ];
 
-// Every number that is legitimately available to the model: the brief's own, and
-// the supplied figures'. Anything else in the output was made up.
-const SUPPLIED_NUMBERS = STATS.flatMap((s) => s.text.match(/\d+(?:\.\d+)?/g) || []);
-const BRIEF_NUMBERS = [BRIEF.brief, BRIEF.summary, BRIEF.writerPrompt]
-  .join(' ')
-  .match(/\d+(?:\.\d+)?/g) || [];
+// --- THE NUMERIC COUNTER, AND WHAT IT CANNOT SEE ---------------------------
+//
+// READ THIS BEFORE TRUSTING ANY NUMBER BELOW. A perfect version of this counter
+// still reports "Get the 2026 Content Ops Benchmark" as CLEAN. Every digit in
+// that line was supplied; the failure is that the line offers the reader a
+// document that does not exist. The counter measures whether the FIGURES were
+// handled honestly. It cannot measure whether the copy invented an OFFER, which
+// is the failure the first run actually produced — in five of five Offer 2
+// bodies, while the invented-number column was reporting something else. The
+// TRIPWIRES below exist because of that, and they are tripwires, not coverage.
+//
+// The first version of this counter was wrong in BOTH directions at once:
+//
+//   OVER-REPORTED. SUPPLIED_NUMBERS was built from `s.text` only, so 2026 — the
+//   year inside the source name, which the prompt itself carried at the time —
+//   counted as invented. And the brief spells "six", so the model writing "6"
+//   was flagged for converting a spelled number to a digit, which is faithful.
+//
+//   UNDER-REPORTED. A bare \d+ scan of the brief whitelisted "3" (from "Q3") and
+//   "2" (from "B2B"), so a genuine invention of "3 ways" or "2x faster" would
+//   have passed clean. Junk in the allowlist is worse than junk in the count:
+//   one is visible noise, the other is a silent hole.
+//
+// Both are fixed here. NUM_RE ignores digits welded to letters, so Q3 and B2B
+// contribute nothing, and spelled numbers in the brief are mapped to digits.
+//
+// SOURCE-NAME NUMBERS ARE NO LONGER WHITELISTED, AND THAT IS A CHANGE OF FACT,
+// NOT A CHANGE OF MIND: the block no longer sends the source, so 2026 appearing
+// in the output is now a genuine invention AND a source leak. It should show up
+// in this column and in TRIPWIRE A at the same time.
+//
+// STILL BLIND, and stated so nobody reads a zero as safety: spelled-out
+// inventions ("four hours a week") are invisible, so this column is a FLOOR ON
+// INVENTION, NOT A CENSUS.
+const NUM_RE = /(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z0-9])/g;
+const SPELLED = {
+  one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7',
+  eight: '8', nine: '9', ten: '10', eleven: '11', twelve: '12', twenty: '20',
+  thirty: '30', forty: '40', fifty: '50', hundred: '100',
+};
+
+const numbersIn = (t) => (String(t).match(NUM_RE) || []);
+
+const BRIEF_TEXT = [BRIEF.brief, BRIEF.summary, BRIEF.writerPrompt].join(' ');
+const SUPPLIED_NUMBERS = STATS.flatMap((s) => numbersIn(s.text));
+const BRIEF_NUMBERS = [
+  ...numbersIn(BRIEF_TEXT),
+  // "six different asset templates" makes 6 a faithful rendering, not invention.
+  ...(BRIEF_TEXT.toLowerCase().match(/\b[a-z]+\b/g) || []).map((w) => SPELLED[w]).filter(Boolean),
+];
 const KNOWN = new Set([...SUPPLIED_NUMBERS, ...BRIEF_NUMBERS]);
 
-const numbersIn = (t) => (String(t).match(/\d+(?:\.\d+)?/g) || []);
 const isFigureLed = (t) => /\d/.test(String(t).slice(0, 20));
 const usesSupplied = (t) => numbersIn(t).some((n) => SUPPLIED_NUMBERS.includes(n));
-// Spelled-out numbers are NOT counted — "four hours" is the same claim as "4
-// hours" and this would miss it. The count is a floor on invention, not a census.
 const invented = (t) => numbersIn(t).filter((n) => !KNOWN.has(n));
+
+// --- TRIPWIRE A: SOURCE LEAK. Must read 0. ---------------------------------
+//
+// A REGRESSION ALARM, NOT COVERAGE. The source name is no longer sent to the
+// model at all, so after this change nothing in the output can legitimately
+// contain a distinctive piece of one. A non-zero here means either the block
+// started rendering `source` again or something else is leaking it — and it is
+// the check that would have caught both first-run failures: the fabricated
+// "B2B Content Ops Benchmark 2026" offer and the "marketingops.example"
+// hostname appearing in three drafts of customer-facing copy.
+//
+// "Distinctive" = a token from a source name that is 4+ chars and does NOT
+// already appear in the brief or the figures. That drops "B2B" (in the brief)
+// and "2026" (handled by the invented-number column) and keeps "Benchmark",
+// "Content", "marketingops".
+const SOURCE_TOKENS = (() => {
+  const own = new Set(
+    (`${BRIEF_TEXT} ${STATS.map((s) => s.text).join(' ')}`.toLowerCase().match(/[a-z]{4,}/g) || [])
+  );
+  const out = new Set();
+  for (const s of STATS) {
+    for (const tok of String(s.source).toLowerCase().match(/[a-z]{4,}/g) || []) {
+      if (!own.has(tok)) out.add(tok);
+    }
+  }
+  return [...out];
+})();
+const sourceLeak = (t) => SOURCE_TOKENS.filter((tok) => String(t).toLowerCase().includes(tok));
+
+// --- TRIPWIRE B: FABRICATED OFFER. Read the lines. -------------------------
+//
+// HINT, NOT A VERDICT, and it has known false positives BY DESIGN. "Get the
+// Guide" is an approved craft.md CTA and appeared legitimately in the first
+// run's BEFORE arm. An artefact noun is not proof of a fabricated offer — a
+// campaign really can be offering a report. What this does is put every line
+// that could be one in front of you, which is the only check that works,
+// because the thing being asked is "does the client actually have this".
+const ARTEFACT_NOUNS = [
+  'report', 'benchmark', 'study', 'whitepaper', 'white paper', 'guide',
+  'research', 'survey', 'ebook', 'e-book', 'playbook', 'toolkit',
+];
+const artefactHits = (t) =>
+  ARTEFACT_NOUNS.filter((n) => new RegExp(`\\b${n.replace(/[-\s]/g, '[-\\s]')}s?\\b`, 'i').test(String(t)));
 
 function fieldsFor(asset) {
   return (asset.fields || []).map((f) => ({
@@ -170,21 +254,46 @@ function stats(ns) {
           const n = lens[i];
           const mark = s && n === s.min ? ' <- MIN' : s && n === s.max ? ' <- MAX' : '';
           const inv = invented(t);
-          const tag = inv.length ? `  [INVENTED: ${inv.join(', ')}]` : (usesSupplied(t) ? '  [supplied]' : '');
-          console.log(`      ${String(n).padStart(4)}  ${t}${mark}${tag}`);
+          const leak = sourceLeak(t);
+          const tags = [
+            inv.length ? `INVENTED: ${inv.join(', ')}` : (usesSupplied(t) ? 'supplied' : ''),
+            leak.length ? `SOURCE LEAK: ${leak.join(', ')}` : '',
+            artefactHits(t).length ? `artefact?: ${artefactHits(t).join(', ')}` : '',
+          ].filter(Boolean);
+          console.log(`      ${String(n).padStart(4)}  ${t}${mark}${tags.length ? `  [${tags.join('] [')}]` : ''}`);
         });
       }
 
       const led = all.filter(isFigureLed).length;
       const used = all.filter(usesSupplied).length;
       const inv = all.filter((t) => invented(t).length > 0);
+      const leaks = all.filter((t) => sourceLeak(t).length > 0);
+      const artefacts = all.filter((t) => artefactHits(t).length > 0);
+
       console.log(`\n  figure-led (a number in the first 20 chars): ${led}/${all.length}`);
       console.log(`  uses a supplied figure:                      ${used}/${all.length}`);
       console.log(`  INVENTED a number:                           ${inv.length}/${all.length}`);
       if (inv.length) {
-        console.log('  ↑ the block says do NOT round, combine or sharpen. Each of these is a');
-        console.log('    factual claim no source made. Read them:');
+        console.log('  ↑ do NOT round or sharpen, do NOT combine two into one. Each of these');
+        console.log('    is a factual claim no source made. Read them:');
         for (const t of inv) console.log(`      ${t}`);
+      }
+
+      // TRIPWIRE A — a regression alarm. The source is not in the prompt.
+      console.log(`  TRIPWIRE A · source leak (MUST be 0):        ${leaks.length}/${all.length}`);
+      if (leaks.length) {
+        console.log('  ↑ THE SOURCE NAME IS NOT SENT TO THE MODEL. If this is non-zero the');
+        console.log('    withholding has regressed. Read them:');
+        for (const t of leaks) console.log(`      ${t}`);
+      }
+
+      // TRIPWIRE B — a hint with deliberate false positives. Read the lines.
+      console.log(`  TRIPWIRE B · artefact noun (READ, not fail): ${artefacts.length}/${all.length}`);
+      if (artefacts.length) {
+        console.log('  ↑ "Get the Guide" is an approved craft.md CTA, so a hit here is NOT a');
+        console.log('    failure by itself. The question each line has to answer is: does the');
+        console.log('    client actually HAVE this thing? Read them:');
+        for (const t of artefacts) console.log(`      ${t}`);
       }
     }
   }
@@ -194,5 +303,11 @@ function stats(ns) {
   console.log('the figures are being used as a TEMPLATE rather than as evidence — the same');
   console.log('shape as the "in 60 seconds" run — and that is a reason to reword the block');
   console.log('even if every number in it is real. Read the extremes in both arms.');
+  console.log('');
+  console.log('AND NAME THE FAILURE YOU ARE WATCHING FOR BEFORE THE RUN, THEN READ THE COPY');
+  console.log('FOR THE ONES YOU DID NOT NAME. The first run of this script counted invented');
+  console.log('numbers — most of which turned out to be its own arithmetic — while five of');
+  console.log('five Offer 2 bodies pitched a report the client does not have, unflagged. No');
+  console.log('numeric column could have seen it. The Offer 2 fields are where to look.');
   console.log('='.repeat(78));
 })();

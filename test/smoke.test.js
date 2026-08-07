@@ -1309,7 +1309,7 @@ test('reference stats reach BOTH draft builders, and the rescue too', async () =
     (g) => g.generateFieldDraft({ ...args, fieldName: 'Post Copy', charMax: 200 })
   )).prompts[0];
   assert.match(single, /FIGURES REPORTED IN THE LINKED MATERIAL/);
-  assert.match(single, /4 hours saved per week — Ops Benchmark 2026/);
+  assert.match(single, /^- 4 hours saved per week$/m, 'the figure, without its source');
   // The relabelled campaign lines travel with them — same enrichment flag.
   assert.match(single, /Campaign summary \(a read of the brief and the linked reference material\)/);
 
@@ -1325,7 +1325,8 @@ test('reference stats reach BOTH draft builders, and the rescue too', async () =
   assert.ok(isBatchPrompt(prompts[0]) && !isBatchPrompt(prompts[1]));
   for (const p of prompts) {
     assert.match(p, /FIGURES REPORTED IN THE LINKED MATERIAL/);
-    assert.match(p, /4 hours saved per week — Ops Benchmark 2026/);
+    assert.match(p, /^- 4 hours saved per week$/m);
+    assert.ok(!p.includes('Ops Benchmark 2026'), 'no source name on any call in the asset');
     assert.match(p, /a read of the brief and the linked reference material/);
   }
 });
@@ -1342,6 +1343,25 @@ test('reference stats reach the prompt as ATTRIBUTED, never as verified', () => 
     { text: '38% faster onboarding', source: null },
   ]).join('\n');
 
+  // THE SOURCE NAME NEVER REACHES THE PROMPT. Sending it turned the source into
+  // a lead magnet the client was offering: five of five Offer 2 bodies pitched a
+  // report Quillio does not have, and a source hostname appeared by name in
+  // customer-facing copy. craft.md's always-injected CTA library has a
+  // "Gated content (whitepaper, report, guide)" destination and says the CTA
+  // must match the destination, so a named report in the prompt is an offer the
+  // model is correct to reach for. The fix is to remove the object, not to
+  // prohibit it — a prohibition would have to beat a rule that is right.
+  assert.ok(!block.includes('Ops Benchmark 2026'), 'the source name is withheld');
+  assert.ok(!/2026/.test(block), 'and so is anything inside it');
+  assert.match(block, /^- 4 hours saved per week$/m, 'the figure goes, bare');
+
+  // The clause that caused the attribution leak is gone. It was written to
+  // constrain how a figure was asserted; read as copy direction it says
+  // attribute this in the copy.
+  assert.ok(!/that source's claim/.test(block), 'no instruction to attribute');
+  // What still needs saying without names.
+  assert.match(block, /do NOT combine two of them\s*\n?\s*into a single figure/);
+
   // THE FRAMING IS ATTRIBUTION, NOT TRUTH. There is no validator possible: the
   // raw reference text is capped at 6000 chars per source, used once for the
   // enrich call, and never persisted — so by draft time there is nothing left to
@@ -1350,14 +1370,13 @@ test('reference stats reach the prompt as ATTRIBUTED, never as verified', () => 
   // a false factual claim rather than a weak headline.
   assert.match(block, /REPORTED, not verified/);
   assert.ok(!/verbatim/i.test(block), 'never claims verbatim — nothing checked it');
-  assert.match(block, /4 hours saved per week — Ops Benchmark 2026/, 'each figure carries its source');
   assert.match(block, /^- 38% faster onboarding$/m, 'a sourceless figure still lists, without a dangling dash');
 
   // The two prohibitions earn their lines from the measured failure: with no
   // figures available the drafter invented "in 60 seconds" from a brief that
   // said "about a minute". Handing it real ones risks sharpening, not ignoring.
   assert.match(block, /Do NOT invent a figure/);
-  assert.match(block, /round, combine\s*\n?\s*or sharpen one of these/);
+  assert.match(block, /do NOT round\s*\n?\s*or sharpen one of these/);
 
   // Capped, and the cap is not silent.
   const many = Array.from({ length: MAX_REFERENCE_STATS + 5 }, (_, i) => ({ text: `stat ${i}`, source: 's' }));

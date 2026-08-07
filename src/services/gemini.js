@@ -313,22 +313,71 @@ const MAX_REFERENCE_STATS = 12;
 // section — the enrich pass's per-source extraction, which its own prompt
 // constrains to "verbatim from source only — no inferred or generated stats".
 //
-// THE FRAMING IS ATTRIBUTION, NOT TRUTH, AND THAT IS DELIBERATE. There is no
-// validator possible here and there never will be: the raw reference content is
-// capped at 6000 chars per source, used once for the enrich call, and never
-// persisted — so by draft time there is nothing left to check a figure against.
-// "Verbatim" is a prompt instruction to a model, and no instruction in this
-// system has ever had a compliance rate of 1.0. A block that called these
-// verbatim would be asserting a guarantee nothing provides, on the one class of
-// output where being wrong is a false factual claim in published copy rather
-// than a weak headline. Naming the source and calling them REPORTED says exactly
-// as much as is actually known.
+// THE SOURCE NAME IS DELIBERATELY WITHHELD. `source` arrives on every row and is
+// never rendered. The first version sent `- <figure> — <source>` and it produced
+// a failure worse than the invention it was written to prevent.
 //
-// The two prohibitions earn their lines from the measured failure this block
-// exists to correct: with no figures available the drafter invented one ("in 60
-// seconds", present in no input, from a brief that said "about a minute"). The
-// risk of handing it real ones is not that it ignores them — it is that it
-// rounds, combines or sharpens them into a number no source published.
+// WHAT HAPPENED, measured by scripts/statsAB.js against Demand Gen Nurture
+// Email: the model turned the source NAME into a lead magnet the client was
+// offering. Five of five Offer 2 bodies pitched "B2B Content Ops Benchmark
+// 2026"; four of five Offer 2 headlines were "Get the 2026 Content Ops
+// Benchmark"; the CTA moved to "Get the Report" four times in five. Quillio does
+// not have that report — it is somebody else's citation — so the copy offered a
+// prospect a document that does not exist. Separately, a source hostname
+// appeared by name in three drafts of customer-facing copy.
+//
+// WHY THE MODEL WAS RIGHT TO DO IT, which is the part that decides the fix.
+// craft.md is ALWAYS injected. Its CTA section states "The CTA must match the
+// destination", and its approved library contains a destination category named
+// "Gated content (whitepaper, report, guide)" whose entries include the literal
+// string "Get the Report". craft.md also says a secondary offer should "read as
+// lighter". Demand Gen Nurture Email has fields NAMED "Headline (Offer 2)" /
+// "Offer Body 2" / "CTA Text (Offer 2)", so the prompt asks outright what the
+// second, lighter offer is — and a named report was the only object in the
+// prompt that could be one. Every rule involved was correct on its own terms.
+//
+// SO WORDING CANNOT CARRY THIS, and three things say so rather than one:
+//   • A prohibition has to name what it prohibits, and this file's own measured
+//     history is that a named shape gets reproduced (craft.md demonstrates a
+//     number-led opening twice; the model invented "in 60 seconds" to fill it).
+//   • The careful clause ALREADY LOST once. "…and only as that source's claim"
+//     was written to constrain how a figure was asserted; read as copy direction
+//     it says attribute this in the copy, and that is the hostname leak.
+//   • A new prohibition would have to beat an always-injected rule that is right
+//     on its own terms. Plenty of campaigns really do offer a report, so the
+//     gated-content category cannot be deleted. CLAUDE.md already records one
+//     late clause arguing with an always-present rule (§1.4 vs the §2
+//     punctuation permission) and its measured adoption was 0/12.
+// Withholding differs in KIND, not degree: there is no object in the prompt, so
+// there is nothing to reason about and no compliance rate to fall below 1.0.
+//
+// PER-FIELD GATING WAS CONSIDERED AND REFUSED. It keeps the object and aims it:
+// the failure appeared in a TWENTY-CHARACTER field (CTA Text (Offer 2)), so it
+// is not about length or room. Offer-shaped fields are common across the library
+// and nothing records which they are — and Event Landing Page has literal
+// "Stat 1 / Stat 2 / Stat 3" fields, which want a figure more than any field in
+// the product and would be the last ones anybody would gate. Removing the fuel
+// is cheaper and more complete than aiming it.
+//
+// WHAT IS LOST: nothing the drafter needs. The figure is what fills craft.md's
+// specificity slot, and the LinkedIn Single Image Ad arm — zero invention, zero
+// fabricated offers — is the evidence that the numbers alone are the gain. The
+// human's attribution is untouched: it lives in the doc's Reference Insights
+// section as "From: <source> (<type>)", which is where it is read and where a
+// wrong figure can be deleted before Generate First Draft.
+//
+// THE FRAMING IS STILL ATTRIBUTION, NOT TRUTH. There is no validator possible
+// and there never will be: the raw reference content is capped at 6000 chars per
+// source, used once for the enrich call, and never persisted, so by draft time
+// there is nothing left to check a figure against. "Verbatim" is an instruction
+// to a model, and no instruction here has ever had a compliance rate of 1.0.
+// Calling these REPORTED says exactly as much as is actually known — and it
+// needs no name to say it.
+//
+// The three prohibitions earn their lines from the measured failure this block
+// exists to correct: with no figures available the drafter invented one. The
+// risk of handing it real ones is not that it ignores them but that it rounds or
+// sharpens them, or welds two into one.
 function referenceStatsBlock(stats) {
   const rows = (Array.isArray(stats) ? stats : [])
     .map((s) => ({
@@ -345,11 +394,12 @@ function referenceStatsBlock(stats) {
   }
   return [
     'FIGURES REPORTED IN THE LINKED MATERIAL — taken from the reference documents the client',
-    'linked, each shown with the source it came from. They are REPORTED, not verified: nothing',
-    'in this system has checked them against their source. Use one only where it earns its',
-    'place, and only as that source\'s claim. Do NOT invent a figure, and do NOT round, combine',
-    'or sharpen one of these into a number no source stated.',
-    ...shown.map((s) => (s.source ? `- ${s.text} — ${s.source}` : `- ${s.text}`)),
+    'linked. They are REPORTED, not verified: nothing in this system has checked them against',
+    'their source. Use one only where it earns its place. Do NOT invent a figure, do NOT round',
+    'or sharpen one of these into a number no source stated, and do NOT combine two of them',
+    'into a single figure.',
+    // THE FIGURE ONLY. `source` is deliberately not rendered — see above.
+    ...shown.map((s) => `- ${s.text}`),
     '',
   ];
 }

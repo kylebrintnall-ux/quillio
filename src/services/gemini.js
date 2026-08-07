@@ -156,6 +156,39 @@ function buildBrandContext(assetType, voiceGuide) {
   return sliceGuide(VOICE_PARSED, VOICE_GUIDE, assetType);
 }
 
+// HOW TO READ THE EVIDENCE FOR FUNNEL STAGE — ONE DEFINITION, SHARED VERBATIM.
+//
+// The variant-review prompt has told the model to infer the funnel stage since
+// it was written; the DRAFT prompts never did, and `funnelStage` reaches them as
+// the empty string (core/pipeline.js sets it, with a comment saying the Sheet
+// column that fed it is gone). So two prompts in one system disagreed about
+// whether funnel stage is knowable — and since the raw brief arrived, the one
+// that says no holds exactly the evidence the one that says yes is told to read.
+//
+// This is the shared DEFINITION, and it lives here rather than in craft.md for
+// three reasons:
+//
+//   • craft.md answers "how does good copy work". This answers "what is this
+//     campaign", which is a different question and a different authority.
+//   • craft.md is SLICED PER ASSET and injected by brandVoiceLines BEFORE any
+//     campaign context enters the prompt. An instruction to infer from "the
+//     asset type + brief" would sit above the brief it refers to.
+//   • craft.md is a tenant-facing document about writing. A rule about how to
+//     read the inputs is the system's, not the house style's.
+//
+// The two consequence clauses below are per-prompt on purpose. "Which doorway
+// fits" is meaningful only where doorways exist (the review path); the draft
+// prompts have no such concept and a dangling term is worse than none. What must
+// never drift — the definition of top- and bottom-of-funnel — is the part that
+// is shared, and a source test asserts both prompts reach for it.
+const FUNNEL_STAGE_INFERENCE = [
+  'Infer the FUNNEL STAGE from the asset type + brief: organic social / brand awareness is',
+  'TOP-of-funnel (a cold, scrolling audience that does not trust you yet); a demo email or',
+  'landing-page CTA is BOTTOM-of-funnel.',
+];
+const FUNNEL_STAGE_FOR_REVIEW = 'Funnel stage shapes which doorway fits.';
+const FUNNEL_STAGE_FOR_DRAFT = 'Funnel stage shapes what this copy has to do.';
+
 // THE BRIEF, AND WHICH OF THE THREE CAMPAIGN SOURCES OUTRANKS WHICH.
 //
 // A draft prompt can carry three descriptions of the same campaign, and until the
@@ -191,16 +224,51 @@ const MAX_BRIEF_CHARS = 6000;
 //
 // 6000 characters puts a long brief at roughly a third of the prompt, which is a
 // lot and is the point: it is the only part that is about THIS campaign.
-function briefBlock(brief) {
+//
+// `enriched` SAYS WHICH OF TWO DIFFERENT SITUATIONS THIS IS, AND IT IS NOT A
+// REFINEMENT — the unconditional sentence is FALSE on the reference path.
+//
+// When a brief carries references, `enrichWithReferences` does not merely
+// annotate: it REWRITES summary and writerPrompt from the reference content, and
+// both adapters overwrite the originals with them. So on that path the summary
+// is a read of the brief AND of the linked material, and can legitimately hold a
+// statistic, a persona or a competitive frame that appears nowhere in the brief.
+// "Where it and the summary below differ, follow the brief" then instructs the
+// model to discard exactly the material that was fetched at real cost to produce.
+//
+// The model is TOLD which case it is in rather than left to infer it. Inferring
+// would mean guessing whether an unfamiliar specific came from a source it
+// cannot see or from nowhere — and "came from nowhere" is the failure this whole
+// block exists to prevent.
+//
+// The unenriched branch is BYTE-IDENTICAL to what shipped, which is why the
+// sentence is swapped by rewriting the group rather than by appending to it: the
+// common path must not move at all.
+function briefBlock(brief, enriched) {
   const raw = String(brief == null ? '' : brief).trim();
   if (!raw) return [];
   const truncated = raw.length > MAX_BRIEF_CHARS;
   const text = truncated ? raw.slice(0, MAX_BRIEF_CHARS).trimEnd() : raw;
+  const head = enriched
+    ? [
+        'THE BRIEF — the client\'s own words, verbatim. This is the AUTHORITATIVE source for',
+        'what this campaign is, what it offers, and the vocabulary it uses. Prefer ITS phrasing',
+        'and ITS words over any paraphrase — if it says "about a minute", do not write',
+        '"60 seconds".',
+        'The direction and summary below were written from this brief AND from reference material',
+        'the client linked and which you cannot see. They may therefore carry specifics — a',
+        'statistic, a persona, a competitor frame — that the brief itself does not contain. Those',
+        'came from the linked sources, not from nowhere: keep them. Where the two genuinely',
+        'conflict about what the campaign IS or how it is worded, follow the brief.',
+      ]
+    : [
+        'THE BRIEF — the client\'s own words, verbatim. This is the AUTHORITATIVE source for',
+        'what this campaign is, what it offers, and the vocabulary it uses. Where it and the',
+        'summary below differ, follow the brief. Prefer ITS phrasing and ITS words over any',
+        'paraphrase — if it says "about a minute", do not write "60 seconds".',
+      ];
   return [
-    'THE BRIEF — the client\'s own words, verbatim. This is the AUTHORITATIVE source for',
-    'what this campaign is, what it offers, and the vocabulary it uses. Where it and the',
-    'summary below differ, follow the brief. Prefer ITS phrasing and ITS words over any',
-    'paraphrase — if it says "about a minute", do not write "60 seconds".',
+    ...head,
     '"""',
     text,
     truncated
@@ -209,6 +277,81 @@ function briefBlock(brief) {
     '"""',
     '',
   ].filter((l) => l !== '');
+}
+
+// The two DERIVED campaign lines, labelled by what they ACTUALLY are on this
+// path. Same reason as briefBlock's conditional head, and they have to move
+// together with it: telling the model the summary was written from the linked
+// material and then labelling it "a read of the ask — the brief above is the
+// source" two lines later re-opens the contradiction the head just closed.
+//
+// Both draft builders call this, so a field rescued out of a failed batch is not
+// told a different story about where the direction came from.
+function derivedCampaignLines(summary, writerPrompt, enriched) {
+  return enriched
+    ? [
+        `Creative direction (a directive extracted from the brief and the linked reference material): ${writerPrompt}`,
+        `Campaign summary (a read of the brief and the linked reference material): ${summary}`,
+      ]
+    : [
+        `Creative direction (a directive extracted from the brief): ${writerPrompt}`,
+        `Campaign summary (a read of the ask — the brief above is the source): ${summary}`,
+      ];
+}
+
+// How many extracted figures reach one prompt. Three stats per source is the
+// enrich pass's own ceiling, so 12 is four sources' worth — past the 1-3 links a
+// real brief carries, and short of a link dump crowding out the brief. Anything
+// dropped is LOGGED rather than announced in the prompt: briefBlock announces its
+// cut because a severed sentence reads as the end of the ask, and a bullet list
+// has no such misreading available to it.
+const MAX_REFERENCE_STATS = 12;
+
+// FIGURES REPORTED IN THE LINKED MATERIAL.
+//
+// `stats` is [{ text, source }] recovered from the doc's Reference Insights
+// section — the enrich pass's per-source extraction, which its own prompt
+// constrains to "verbatim from source only — no inferred or generated stats".
+//
+// THE FRAMING IS ATTRIBUTION, NOT TRUTH, AND THAT IS DELIBERATE. There is no
+// validator possible here and there never will be: the raw reference content is
+// capped at 6000 chars per source, used once for the enrich call, and never
+// persisted — so by draft time there is nothing left to check a figure against.
+// "Verbatim" is a prompt instruction to a model, and no instruction in this
+// system has ever had a compliance rate of 1.0. A block that called these
+// verbatim would be asserting a guarantee nothing provides, on the one class of
+// output where being wrong is a false factual claim in published copy rather
+// than a weak headline. Naming the source and calling them REPORTED says exactly
+// as much as is actually known.
+//
+// The two prohibitions earn their lines from the measured failure this block
+// exists to correct: with no figures available the drafter invented one ("in 60
+// seconds", present in no input, from a brief that said "about a minute"). The
+// risk of handing it real ones is not that it ignores them — it is that it
+// rounds, combines or sharpens them into a number no source published.
+function referenceStatsBlock(stats) {
+  const rows = (Array.isArray(stats) ? stats : [])
+    .map((s) => ({
+      text: String((s && s.text) || '').trim(),
+      source: String((s && s.source) || '').trim(),
+    }))
+    .filter((s) => s.text);
+  if (rows.length === 0) return [];
+  const shown = rows.slice(0, MAX_REFERENCE_STATS);
+  if (rows.length > shown.length) {
+    console.warn(
+      `[gemini] reference stats capped: ${shown.length} of ${rows.length} sent (MAX_REFERENCE_STATS=${MAX_REFERENCE_STATS})`
+    );
+  }
+  return [
+    'FIGURES REPORTED IN THE LINKED MATERIAL — taken from the reference documents the client',
+    'linked, each shown with the source it came from. They are REPORTED, not verified: nothing',
+    'in this system has checked them against their source. Use one only where it earns its',
+    'place, and only as that source\'s claim. Do NOT invent a figure, and do NOT round, combine',
+    'or sharpen one of these into a number no source stated.',
+    ...shown.map((s) => (s.source ? `- ${s.text} — ${s.source}` : `- ${s.text}`)),
+    '',
+  ];
 }
 
 // Prompt lines for the craft + brand sections, scoped to the asset's medium.
@@ -1417,6 +1560,13 @@ async function generateFieldDraft({
   // caller that has none — briefBlock emits nothing, and the prompt is then
   // byte-identical to before except for the two relabelled lines.
   brief,
+  // Whether summary/writerPrompt were written from linked reference material as
+  // well as from the brief. Recovered from the doc (the Reference Insights
+  // section's presence), so it is false on every brief that linked nothing —
+  // which is nearly all of them, and their prompt does not move.
+  enrichedFromReferences,
+  // [{ text, source }] — figures the enrich pass pulled out of those references.
+  referenceStats,
   summary,
   writerPrompt,
   direction,
@@ -1438,14 +1588,21 @@ async function generateFieldDraft({
     // Both draft builders use the identical block and ordering: a field rescued
     // out of a failed batch must not be told a different story about which source
     // outranks which. See briefBlock.
-    ...briefBlock(brief),
-    `Creative direction (a directive extracted from the brief): ${writerPrompt}`,
-    `Campaign summary (a read of the ask — the brief above is the source): ${summary}`,
+    ...briefBlock(brief, enrichedFromReferences),
+    ...derivedCampaignLines(summary, writerPrompt, enrichedFromReferences),
+    // AFTER the campaign block, because these are figures FROM it and read as
+    // house boilerplate anywhere above it.
+    ...referenceStatsBlock(referenceStats),
     `Asset: ${assetType}`,
     assetDirection ? `Asset creative direction (apply to ALL fields): ${assetDirection}` : '',
     channel ? `Channel: ${channel}` : '',
     `Field: ${fieldName}`,
+    // A STORED stage still wins — nothing populates it today (pipeline.js sets
+    // '') but a column or a per-brief value would, and an inference instruction
+    // must not talk over a value somebody set. Inference is the fallback, placed
+    // here so the evidence it names (the brief, the asset) is already above it.
     funnelStage ? `Funnel stage: ${funnelStage}` : '',
+    ...(funnelStage ? [] : [...FUNNEL_STAGE_INFERENCE, FUNNEL_STAGE_FOR_DRAFT]),
     toneNotes ? `Tone notes: ${toneNotes}` : '',
     fieldGuidance ? `Field guidance: ${fieldGuidance}` : '',
     direction
@@ -1531,6 +1688,11 @@ async function generateAssetDrafts({
   // caller that has none — briefBlock emits nothing, and the prompt is then
   // byte-identical to before except for the two relabelled lines.
   brief,
+  // See generateFieldDraft — both builders take the identical pair, and the
+  // rescue below passes them on, so a field that falls out of a failed batch is
+  // told the same story about its sources as the batch was.
+  enrichedFromReferences,
+  referenceStats,
   summary,
   writerPrompt,
   fields,
@@ -1596,13 +1758,19 @@ async function generateAssetDrafts({
     // Both draft builders use the identical block and ordering: a field rescued
     // out of a failed batch must not be told a different story about which source
     // outranks which. See briefBlock.
-    ...briefBlock(brief),
-    `Creative direction (a directive extracted from the brief): ${writerPrompt}`,
-    `Campaign summary (a read of the ask — the brief above is the source): ${summary}`,
+    ...briefBlock(brief, enrichedFromReferences),
+    ...derivedCampaignLines(summary, writerPrompt, enrichedFromReferences),
+    ...referenceStatsBlock(referenceStats),
     `Asset: ${assetType}`,
     assetDirection ? `Asset creative direction (apply to ALL fields): ${assetDirection}` : '',
     channel ? `Channel: ${channel}` : '',
     toneNotes ? `Tone notes: ${toneNotes}` : '',
+    // ASSET-LEVEL, NOT PER-FIELD. The batch drafts every field of one asset in
+    // one call, and funnel stage is a property of the campaign and the asset —
+    // the per-field `funnel:` slot in the field list below stays exactly as it
+    // was, for a stored value that still nothing writes.
+    ...FUNNEL_STAGE_INFERENCE,
+    FUNNEL_STAGE_FOR_DRAFT,
     '',
     'For each field, write a COMPLETE, self-contained thought that fits within its',
     'character limit. The limit is a hard MAXIMUM to compose within, not a target to',
@@ -1733,6 +1901,11 @@ async function generateAssetDrafts({
           // fell out of a failed batch would be the ONE field in the asset drafted
           // without the campaign's own words — silently, and only sometimes.
           brief,
+          // Same rule, same reason: the rescued field must not be the only one in
+          // the asset drafted without the reference figures, or told a different
+          // story about where its direction came from.
+          enrichedFromReferences,
+          referenceStats,
           channel,
           fieldName: f.fieldName,
           charMax: f.charMax,
@@ -2705,9 +2878,8 @@ function buildVariantReviewPrompt({ assetType, fieldName, charMax, fieldType, va
     `Asset: ${assetType}`,
     `Field: ${fieldName}`,
     limitLine,
-    'Infer the FUNNEL STAGE from the asset type + brief: organic social / brand awareness is',
-    'TOP-of-funnel (a cold, scrolling audience that does not trust you yet); a demo email or',
-    'landing-page CTA is BOTTOM-of-funnel. Funnel stage shapes which doorway fits.',
+    ...FUNNEL_STAGE_INFERENCE,
+    FUNNEL_STAGE_FOR_REVIEW,
     '',
     'ASSESS EACH OPTION ON TWO AXES — STRATEGY FIRST, THEN CRAFT:',
     '1. STRATEGY — is this DOORWAY the right ANGLE for this asset type, audience, and funnel',
@@ -2945,6 +3117,16 @@ module.exports = {
   // The labelled brief block and its cap. Exported for tests only.
   briefBlock,
   MAX_BRIEF_CHARS,
+  derivedCampaignLines,
+  // The attributed figures block and its cap. Exported for tests only.
+  referenceStatsBlock,
+  MAX_REFERENCE_STATS,
+  // The ONE definition of funnel stage, shared by the draft and review prompts,
+  // plus each prompt's own consequence clause. Exported so a test can assert
+  // both prompts carry the same definition rather than two that have drifted.
+  FUNNEL_STAGE_INFERENCE,
+  FUNNEL_STAGE_FOR_DRAFT,
+  FUNNEL_STAGE_FOR_REVIEW,
   siblingContextBlock,
   overLimit,
   assignDoorways,

@@ -737,10 +737,43 @@ function paragraphText(paragraph) {
 }
 
 // Walks the document and reconstructs the campaign context needed to draft copy.
+//
+// REFERENCE INSIGHTS ARE RECOVERED FROM THE DOC, NOT FROM THE PROJECT ROW — the
+// opposite of the decision taken for `brief_raw`, and the two cases genuinely
+// differ rather than one being inconsistent with the other.
+//
+// The brief went on the project row because a Docs round-trip is lossy for the
+// one value whose exactness is the product claim, and because parseDoc takes
+// only the FIRST paragraph after a HEADING_2, so a multi-paragraph brief needed
+// a parser change. Neither applies here. A stat is already a model extraction of
+// at most ten words, already rendered as its own bullet, and a bullet list
+// round-trips exactly.
+//
+// And the difference that decides it: a figure here is REPORTED, never verified,
+// and cannot be — the raw reference content is used once for the enrich call and
+// never persisted, so by draft time there is nothing to check against. Reading
+// them back out of the doc means the only check available is the one that
+// actually exists: the human looking at the page. A wrong number can be deleted
+// from Reference Insights before Generate First Draft is pressed, and it will
+// not reach the prompt. On the project row it would be unreachable.
+//
+// The cost, recorded rather than discovered later: a source that yielded no
+// stats still renders its "From:" line, but a run where the enrich pass returned
+// NO insights at all (references read, zero produced — pipeline.js already warns
+// about it) leaves no section, so `enrichedFromReferences` reads false and the
+// prompt keeps the wording it has today. That is the status quo, not a
+// regression, and it is the only case where the flag understates.
 function parseDoc(doc) {
   const summary = { value: '' };
   const writer = { value: '' };
   const assets = [];
+  // Figures from the Reference Insights section: [{ text, source }]. Key
+  // messages are deliberately NOT collected — see the note on the branch below.
+  const referenceStats = [];
+  let enrichedFromReferences = false;
+  let inInsights = false;
+  let insightSource = null;
+  let insightStats = false; // inside a source's "Stats:" run, vs "Key messages:"
   let current = null;
   let currentField = null; // last field whose copy region we're scanning
   let notesSeen = false; // whether the current field's italic notes line was seen
@@ -779,7 +812,21 @@ function parseDoc(doc) {
       continue;
     }
 
+    // Any OTHER HEADING_2 ends whatever section we were in and starts the next.
+    // Reference Insights is the only one whose contents we read; Reference
+    // Materials (the link list) and anything a writer adds by hand fall through
+    // to `inInsights = false`, which is what keeps their paragraphs out of both
+    // the stat list and the field scan below.
+    if (named === 'HEADING_2') {
+      inInsights = text === 'Reference Insights';
+      if (inInsights) enrichedFromReferences = true;
+      insightSource = null;
+      insightStats = false;
+      if (inInsights) continue;
+    }
+
     if (named === 'HEADING_3') {
+      inInsights = false;
       // `assetType` is always the LIBRARY name, never the rendered heading: an
       // instance-suffixed heading is decomposed back so downstream lookups
       // (asset_direction, craft slicing, the tenant library) keep matching on the
@@ -795,6 +842,42 @@ function parseDoc(doc) {
       assets.push(current);
       currentField = null; // a new asset ends the previous field's copy region
       notesSeen = false;
+      continue;
+    }
+
+    // Inside Reference Insights. appendBody lays each source out as an italic
+    // "From: <source> (<type>)" line, then optional "Stats:" and "Key messages:"
+    // label lines each followed by their bullets. Matching the LABEL lines and
+    // tracking which run we are in is what separates the two lists; a bullet
+    // carries nothing that distinguishes it from the other kind.
+    //
+    // ONLY STATS ARE COLLECTED. Key messages are a source's positioning
+    // compressed to headline length — for a competitor page, the competitor's
+    // own copy — and the drafter has no way to tell one source's kind from
+    // another's, because `type` records the file format and nothing records the
+    // purpose. The enrich pass has already had the full source text and an
+    // explicit instruction to pull competitive framing, and its considered
+    // extract is the one "Competitive Framing:" line in the writer direction.
+    // That is the controlled channel; this would be the uncontrolled one beside
+    // it. They stay in the doc, where the human reading them is informed rather
+    // than primed.
+    if (inInsights) {
+      if (!text) continue;
+      const from = text.match(/^From:\s*(.*?)\s*(?:\(([^()]*)\))?$/);
+      if (from) {
+        insightSource = (from[1] || '').trim() || null;
+        insightStats = false;
+        continue;
+      }
+      if (/^stats:$/i.test(text)) {
+        insightStats = true;
+        continue;
+      }
+      if (/^key messages:$/i.test(text)) {
+        insightStats = false;
+        continue;
+      }
+      if (insightStats) referenceStats.push({ text, source: insightSource });
       continue;
     }
 
@@ -905,7 +988,15 @@ function parseDoc(doc) {
     }
   }
 
-  return { summary: summary.value, writerPrompt: writer.value, assets };
+  // The two new keys are ADDITIVE. Every existing caller destructures
+  // { summary, writerPrompt, assets } and is unaffected by their presence.
+  return {
+    summary: summary.value,
+    writerPrompt: writer.value,
+    assets,
+    referenceStats,
+    enrichedFromReferences,
+  };
 }
 
 // Lookup key for matching a doc field back to its Sheet row.
@@ -994,7 +1085,14 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   const { docs } = clients || (await getClients());
 
   const doc = (await docs.documents.get({ documentId: id })).data;
-  const { summary, writerPrompt, assets } = parseDoc(doc);
+  // `referenceStats` / `enrichedFromReferences` come off the same parse — the
+  // doc IS the store for both (see parseDoc). A doc with no Reference Insights
+  // section yields [] and false, and every prompt below is then byte-identical
+  // to what it was.
+  const { summary, writerPrompt, assets, referenceStats, enrichedFromReferences } = parseDoc(doc);
+  console.log(
+    `[googleDocs] draft references → enriched=${enrichedFromReferences} stats=${referenceStats.length}`
+  );
 
   // SCOPED generation/regeneration: when `scopedFields` (a list of {assetType,
   // fieldName}) is present, draft ONLY those fields. Everything else — header,
@@ -1142,6 +1240,8 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
               const c = await generateFieldDraft({
                 assetType: a.assetType,
                 brief,
+                enrichedFromReferences,
+                referenceStats,
                 fieldName: f.fieldName,
                 charMax: f.charMax,
                 charMin: f.charMin,
@@ -1184,6 +1284,8 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
         drafts = await generateAssetDrafts({
           assetType: a.assetType,
           brief,
+          enrichedFromReferences,
+          referenceStats,
           assetDirection: a.assetDirection,
           summary,
           writerPrompt,

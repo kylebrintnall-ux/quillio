@@ -884,19 +884,69 @@ is informed rather than primed. Reopening this needs a way to record a
 reference's PURPOSE, not a change of mind about volume.
 
 **The block is framed as ATTRIBUTION, never as truth**, and the exact wording
-matters: "FIGURES REPORTED IN THE LINKED MATERIAL … They are REPORTED, not
-verified: nothing in this system has checked them against their source. Use one
-only where it earns its place, and only as that source's claim. Do NOT invent a
-figure, and do NOT round, combine or sharpen one of these into a number no source
-stated." A test asserts the word **verbatim** never appears in it. The enrich
-prompt does say "verbatim from source only" — but that is an instruction to a
-model, and no instruction in this system has ever had a compliance rate of 1.0.
-Asserting a guarantee nothing provides is worst on this class of output, where
-being wrong is a false factual claim in published copy rather than a weak
-headline. The two prohibitions are there because the measured failure was
-*invention* ("in 60 seconds", from a brief that said "about a minute"); the risk
-of handing over real figures is not that they are ignored but that they are
-sharpened.
+matters: "FIGURES REPORTED IN THE LINKED MATERIAL — taken from the reference
+documents the client linked. They are REPORTED, not verified: nothing in this
+system has checked them against their source. Use one only where it earns its
+place. Do NOT invent a figure, do NOT round or sharpen one of these into a number
+no source stated, and do NOT combine two of them into a single figure." A test
+asserts the word **verbatim** never appears in it. The enrich prompt does say
+"verbatim from source only" — but that is an instruction to a model, and no
+instruction in this system has ever had a compliance rate of 1.0. Asserting a
+guarantee nothing provides is worst on this class of output, where being wrong is
+a false factual claim in published copy rather than a weak headline.
+
+### THE SOURCE NAME IS WITHHELD FROM THE PROMPT — measured, not precautionary
+
+`source` arrives on every row and is **never rendered**. The first version sent
+`- <figure> — <source>` and produced a failure worse than the invention it was
+written to prevent.
+
+**What `statsAB` found on Demand Gen Nurture Email.** The model turned the source
+NAME into a lead magnet the client was offering. Five of five Offer 2 bodies
+pitched "B2B Content Ops Benchmark 2026"; four of five Offer 2 headlines were
+"Get the 2026 Content Ops Benchmark"; the CTA moved to "Get the Report" four
+times in five. Quillio does not have that report — it is somebody else's citation
+— so the copy offered a prospect a document that does not exist. Separately, a
+source hostname appeared by name in three drafts of customer-facing copy.
+
+**Every rule involved was correct on its own terms, and that is what decides the
+fix.** `craft.md` is always injected. Its CTA section states "The CTA must match
+the destination", its approved library contains a destination category named
+"Gated content (whitepaper, report, guide)" whose entries include the literal
+string "Get the Report", and it says a secondary offer should "read as lighter".
+Demand Gen Nurture Email has fields NAMED `Headline (Offer 2)` / `Offer Body 2` /
+`CTA Text (Offer 2)`, so the prompt asks outright what the second, lighter offer
+is — and a named report was the only object in the prompt that could be one.
+
+**So wording cannot carry this**, for three reasons and not one:
+
+- A prohibition has to name what it prohibits, and this file's own measured
+  history is that a named shape gets reproduced.
+- **The careful clause already lost once.** "…and only as that source's claim"
+  was written to constrain how a figure was *asserted*; read as copy direction it
+  says attribute this in the copy, and that is the hostname leak. It was removed
+  with the source name.
+- A new prohibition would have to beat an always-injected rule that is right.
+  Plenty of campaigns really do offer a report, so the gated-content category
+  cannot be deleted. The one comparable case on record — §1.4 against the §2
+  punctuation permission — measured 0/12.
+
+Withholding differs in **kind**: there is no object in the prompt, so there is
+nothing to reason about and no compliance rate to fall below 1.0.
+
+**Per-field gating was considered and refused.** It keeps the object and aims it.
+The failure appeared in a **twenty-character** field (`CTA Text (Offer 2)`), so it
+is not about length or room. Offer-shaped fields are common across the library and
+nothing records which they are — and Event Landing Page has literal
+`Stat 1`/`Stat 2`/`Stat 3` fields, which want a figure more than anything in the
+product and would be the last ones anybody would gate.
+
+**Nothing the drafter needs was lost.** The figure is what fills `craft.md`'s
+specificity slot, and the LinkedIn Single Image Ad arm — zero invention, zero
+fabricated offers — is the evidence that the numbers alone are the gain. The
+human's attribution is untouched: it lives in the doc's Reference Insights
+section as "From: <source> (<type>)", which is where it is read and where a wrong
+figure can be deleted before Generate First Draft.
 
 **PROVENANCE GAP, and it is an ARTEFACT rather than a decision.** The raw
 reference content is fetched, capped at `REF_CONTENT_MAX` (6000/source), used for
@@ -1169,6 +1219,55 @@ that changed (2.81 in both arms).
 
 This outranks any individual prompt rule: it is how you find out whether the next
 one paid for itself.
+
+#### The rule is narrower than "read the copy" — name the failure FIRST
+
+**Name the failure you are watching for BEFORE the run, then read the copy for
+the ones you did not name.** Both halves are load-bearing, and the third instance
+is what forced the narrowing.
+
+| Run | The count said | What was actually true |
+| --- | --- | --- |
+| `cohesionAB` | every field in band, before and after | redundancy left — **a gain** |
+| `floorAB` | Subhead **5/5 in band in BOTH arms** | range left, and the best line went — **a cost** |
+| `statsAB` | 13 invented figures | **most of the 13 was the counter's own arithmetic**, and a *different* fabrication sat unflagged in five of five bodies |
+
+The first two missed a **verdict** — the change happened, the count could not say
+which way it went. The third is worse in kind: the number was **actively
+misleading about which risk had materialised**. It reported a fabrication problem
+that was largely its own bug (2026 came from the source name the prompt itself
+carried; 6 was the digit form of the brief's spelled "six") while the copy
+offered a prospect a document that does not exist — in five of five Offer 2
+bodies, in a column no numeric check can have.
+
+**A corrected counter does not close this.** "Get the 2026 Content Ops Benchmark"
+contains no invented number at all; every digit in it was supplied. A *perfect*
+numeric counter reports that line clean. The failure was not in the figures, it
+was in what the copy claimed the client could give the reader — and that question
+has no numeric form.
+
+So pre-registering the failure is what earns the right to trust a green column:
+it says which question the number answers. Everything else is still found by
+reading, and the fields to read are the ones whose NAMES ask for something the
+brief did not supply.
+
+`statsAB` now carries two tripwires, and they are labelled as tripwires:
+
+- **A — source leak.** Any distinctive token of a source name in the output.
+  The source is no longer sent, so this **must read 0 forever**; it is a
+  regression alarm, not coverage. It would have caught both first-run failures.
+- **B — artefact noun** (report, benchmark, whitepaper, guide, …). A **hint with
+  deliberate false positives**: "Get the Guide" is an approved `craft.md` CTA and
+  appeared legitimately. It prints every candidate line, because the question it
+  raises — *does the client actually have this?* — can only be answered by a
+  human who knows.
+
+The counter's allowlist was wrong in **both** directions and both are fixed:
+`2026` and `6` were false positives, while `3` and `2` were silently whitelisted
+out of "Q3" and "B2B", so a real invention of "3 ways" would have passed clean.
+Junk in an allowlist is worse than junk in a count — one is visible noise, the
+other is a hole. Spelled-out inventions remain invisible, so the column is a
+**floor on invention, not a census**.
 
 ### Stating the floor works — measured, and the prediction was backwards
 

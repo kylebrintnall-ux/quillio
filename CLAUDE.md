@@ -1230,7 +1230,8 @@ is what forced the narrowing.
 | --- | --- | --- |
 | `cohesionAB` | every field in band, before and after | redundancy left — **a gain** |
 | `floorAB` | Subhead **5/5 in band in BOTH arms** | range left, and the best line went — **a cost** |
-| `statsAB` | 13 invented figures | **most of the 13 was the counter's own arithmetic**, and a *different* fabrication sat unflagged in five of five bodies |
+| `statsAB` run 1 | 13 invented figures | **most of the 13 was the counter's own arithmetic**, and a *different* fabrication sat unflagged in five of five bodies |
+| `statsAB` run 2 | Headline (Offer 1) spread **12 → 19** | two of five lines were **byte-identical**. The metric moved the reassuring way while the copy got more repetitive |
 
 The first two missed a **verdict** — the change happened, the count could not say
 which way it went. The third is worse in kind: the number was **actively
@@ -1250,6 +1251,44 @@ So pre-registering the failure is what earns the right to trust a green column:
 it says which question the number answers. Everything else is still found by
 reading, and the fields to read are the ones whose NAMES ask for something the
 brief did not supply.
+
+##### The fourth instance is the sharpest: a metric that pointed the WRONG WAY
+
+The first three cases were a count being *blind*. Run 2's spread was **actively
+reassuring while the thing it was watching got worse**, and that is a different
+and worse failure.
+
+`Headline (Offer 1)`, five samples, figures supplied: spread **12 → 19** —
+wider, which every rule in this file reads as range being preserved — while
+`Get 4.5 hours back every week` came back **byte-identical twice** at
+temperature 0.8.
+
+Both facts are true, and the explanation is that the distribution **split**:
+some samples lock onto the figure's template and the rest range further, which
+widens min–max while concentrating probability mass. **Spread measures RANGE.
+Templating is a property of MODE. A range metric cannot see a mode forming** —
+so it did not merely fail to help, it pointed at the answer we wanted.
+
+A blind metric invites you to look elsewhere. A metric pointing the wrong way
+tells you to stop looking. That is why `statsAB` now reports, **alongside spread
+and never instead of it**:
+
+| | |
+| --- | --- |
+| `distinct` | unique strings. Two identical lines at temperature 0.8 is itself the signal |
+| `shapes` | unique strings with every number masked to `#`, so "Get 4.5 hours back every week" and "Get 71 hours back every week" are ONE shape |
+
+`shapes` is the one that matters and `distinct` cannot replace it: a frame reused
+with a *different* figure each time reads as 5/5 distinct and is exactly the "in
+60 seconds" failure. In the stub verification the two disagreed on the same
+data — `distinct 2/3`, `shapes 1/3` — which is the case the second metric exists
+for.
+
+**Spread is not retired.** `floorAB` measured a real cost with it (the 54-char
+Subhead that disappeared), and that finding stands. The rule is that spread
+answers "did the range move" and nothing else, so a run watching for
+**uniformity** needs a mode metric beside it or it will be told the opposite of
+what happened.
 
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 

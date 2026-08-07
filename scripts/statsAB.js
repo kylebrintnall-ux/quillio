@@ -33,19 +33,63 @@
 // counts above are safety checks, not a result. Every sample is printed with its
 // length and the extremes marked.
 //
-// MAKES REAL MODEL CALLS — 2 assets x 2 arms x N runs, one batch call each.
+// MAKES REAL MODEL CALLS — 4 assets x 2 arms x N runs, one batch call each.
 // Writes NOTHING. Read-only against Gemini, safe to run in production.
 //
-//   node scripts/statsAB.js        # 5 runs per arm (20 calls)
-//   node scripts/statsAB.js 3      # fewer
+//   node scripts/statsAB.js        # 5 runs per arm (40 calls)
+//   node scripts/statsAB.js 3      # fewer (24 calls)
 
 const { generateAssetDrafts } = require('../src/services/gemini');
 const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
 
 const RUNS = Number(process.argv[2]) || 5;
 
-// Headline-heavy assets, because the fabrication failure was a HEADLINE failure.
-const CASES = ['LinkedIn Single Image Ad', 'Demand Gen Nurture Email'];
+// THE SEPARATING TEST — a 2x2 that makes the two hypotheses disagree.
+//
+// Run 1 found "Get 4.5 hours back every week" byte-identical twice in Demand Gen
+// Nurture Email's Headline (Offer 1), and nothing like it in LinkedIn Single
+// Image Ad. Two candidate mechanisms, and five samples could not separate them:
+//
+//   (a) CHARACTER BUDGET. The field is [0-60]; the figure plus a verb IS the
+//       line, so there is one natural construction. (The "sibling context cannot
+//       help a 20-25 character CTA" finding, generalised.)
+//   (b) THE PROOF RULE. craft.md's `### Email` subsection — sliced IN for email
+//       assets, OUT for paid social — says "Proof before pitch. Earn the right to
+//       ask. A result, a name, A NUMBER … SOMETHING THAT SHOWS YOU DID THE WORK."
+//       That tells the email to LEAD with the number, and it is also the rule
+//       that produced "We surveyed mid-market B2B teams and found that 71%…".
+//
+// The grid, with the headline budget and whether the proof rule is injected —
+// both VERIFIED against a real prompt build, not assumed:
+//
+//   Demand Gen Nurture Email   Headline (Offer 1) [0-60]  email        proof: YES  COLLAPSED
+//   Event Reminder Email       Headline           [0-60]  email        proof: YES  ← new
+//   Meta Single Image Ad       Headline           [0-40]  paid social  proof: NO   ← new
+//   LinkedIn Single Image Ad   Headline           [0-70]  paid social  proof: NO   clean
+//
+// META IS THE DECISIVE CELL, because its headline is TIGHTER than the field that
+// collapsed. The two hypotheses predict opposite things there:
+//   budget  → Meta [0-40] should collapse MORE than Demand Gen [0-60]
+//   medium  → Meta should stay clean despite being the shortest field in the grid
+// Event Reminder is the matched pair: identical budget to the collapsed field,
+// identical medium.
+//
+// FOUR READABLE OUTCOMES:
+//   Event Reminder collapses, Meta clean  → THE PROOF RULE. Questions 1 and 3
+//                                            share a root cause and one fix does both.
+//   both collapse                         → CHARACTER BUDGET. Separate causes; the
+//                                            ownership question stands alone.
+//   Event Reminder clean, Meta collapses  → budget, and run 1's collapse was
+//                                            something else. Rethink.
+//   neither collapses                     → the mechanism is specific to Demand Gen's
+//                                            Offer 1 / Offer 2 structure, not medium
+//                                            and not budget.
+const CASES = [
+  { asset: 'LinkedIn Single Image Ad', medium: 'paid social', proofRule: false, watch: 'Headline' },
+  { asset: 'Meta Single Image Ad', medium: 'paid social', proofRule: false, watch: 'Headline' },
+  { asset: 'Demand Gen Nurture Email', medium: 'email', proofRule: true, watch: 'Headline (Offer 1)' },
+  { asset: 'Event Reminder Email', medium: 'email', proofRule: true, watch: 'Headline' },
+];
 
 const BRIEF = {
   brief:
@@ -215,6 +259,53 @@ function stats(ns) {
   };
 }
 
+// --- TEMPLATING: MEASURED ALONGSIDE SPREAD, NEVER INSTEAD OF IT -------------
+//
+// SPREAD POINTED THE WRONG WAY, and that is why these exist. In run 1 Headline
+// (Offer 1) went spread 12 -> 19 while two of five lines were BYTE-IDENTICAL.
+// Both facts are true: the distribution split, so some samples locked onto the
+// figure template and the rest ranged further, which widens min-max while
+// concentrating probability mass.
+//
+// Spread measures RANGE. Templating is a property of MODE. A range metric cannot
+// see a mode forming — so on this failure spread did not merely fail to help, it
+// reported the reassuring direction while the copy got more repetitive. That is
+// worse than a blind metric, because a blind one invites you to look elsewhere.
+//
+// `distinct` counts unique strings — two identical lines at temperature 0.8 is
+// itself the signal. `shapes` masks every number to # first, so "Get 4.5 hours
+// back every week" and "Get 9 hours back every week" collapse to ONE shape: that
+// is the frame being reused even when the figure changes, which is exactly the
+// "in 60 seconds" failure mode and is invisible to a distinct-string count.
+function shapeOf(t) {
+  return String(t)
+    .toLowerCase()
+    .replace(NUM_RE, '#')
+    .replace(/[^\w#\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function templating(texts) {
+  const real = texts.filter((t) => t && !t.startsWith('ERROR:'));
+  if (!real.length) return null;
+  const byShape = new Map();
+  for (const t of real) {
+    const k = shapeOf(t);
+    byShape.set(k, (byShape.get(k) || 0) + 1);
+  }
+  let modalShape = null;
+  let modalCount = 0;
+  for (const [k, n] of byShape) if (n > modalCount) { modalShape = k; modalCount = n; }
+  return {
+    n: real.length,
+    distinct: new Set(real).size,
+    shapes: byShape.size,
+    modalShape,
+    modalCount,
+  };
+}
+
 (async () => {
   if (!process.env.GEMINI_API_KEY) {
     console.error('GEMINI_API_KEY is not set — this makes real model calls and cannot be faked.');
@@ -225,12 +316,22 @@ function stats(ns) {
   for (const s of STATS) console.log(`  - ${s.text} — ${s.source}`);
   console.log(`Numbers the model may legitimately use: ${[...KNOWN].join(', ') || '(none)'}`);
 
-  for (const name of CASES) {
-    const asset = DEFAULT_ASSETS.find((x) => x.name === name);
-    if (!asset) throw new Error(`asset not in the bundled library: ${name}`);
+  // Collected per asset+arm for the 2x2 grid printed at the end — the whole
+  // point of this run is reading those four cells against each other.
+  const grid = [];
+
+  for (const c of CASES) {
+    const asset = DEFAULT_ASSETS.find((x) => x.name === c.asset);
+    if (!asset) throw new Error(`asset not in the bundled library: ${c.asset}`);
+    const watchField = asset.fields.find((f) => f.field_name === c.watch);
+    if (!watchField) throw new Error(`watched field not on ${c.asset}: ${c.watch}`);
 
     console.log(`\n${'='.repeat(78)}`);
     console.log(`${asset.name}   ${RUNS} runs per arm`);
+    console.log(
+      `medium: ${c.medium}   proof-before-pitch injected: ${c.proofRule ? 'YES' : 'NO'}`
+      + `   watched: ${c.watch} [${watchField.char_min}-${watchField.char_max}]`
+    );
     console.log('='.repeat(78));
 
     for (const withStats of [false, true]) {
@@ -245,11 +346,20 @@ function stats(ns) {
         const s = stats(lens);
         all.push(...copies.filter((x) => x && !x.startsWith('ERROR:')));
 
-        console.log(`\n  ${f.field_name}  [${f.char_min}-${f.char_max}]`);
+        const tpl = templating(copies);
+        const watched = f.field_name === c.watch ? '   <<< WATCHED FIELD' : '';
+        console.log(`\n  ${f.field_name}  [${f.char_min}-${f.char_max}]${watched}`);
         console.log(
           `    lengths: ${lens.join(', ')}`
           + (s ? `   median ${s.median}   SPREAD ${s.spread} (${s.min}-${s.max})` : '')
         );
+        // Alongside spread, never instead of it — spread cannot see a mode form.
+        if (tpl) {
+          console.log(
+            `    distinct ${tpl.distinct}/${tpl.n}   shapes ${tpl.shapes}/${tpl.n}`
+            + (tpl.modalCount > 1 ? `   MODAL SHAPE x${tpl.modalCount}: "${tpl.modalShape}"` : '')
+          );
+        }
         copies.forEach((t, i) => {
           const n = lens[i];
           const mark = s && n === s.min ? ' <- MIN' : s && n === s.max ? ' <- MAX' : '';
@@ -295,8 +405,54 @@ function stats(ns) {
         console.log('    client actually HAVE this thing? Read them:');
         for (const t of artefacts) console.log(`      ${t}`);
       }
+
+      // The watched headline's templating numbers, for the grid below.
+      const watchCopies = runs.map((r) => (r.__error ? `ERROR: ${r.__error}` : (r[c.watch] || '')));
+      grid.push({
+        asset: asset.name,
+        medium: c.medium,
+        proofRule: c.proofRule,
+        budget: `${watchField.char_min}-${watchField.char_max}`,
+        arm: withStats ? 'AFTER' : 'BEFORE',
+        tpl: templating(watchCopies),
+        samples: watchCopies,
+      });
     }
   }
+
+  // --- THE 2x2 -------------------------------------------------------------
+  //
+  // This is what the run is for. Compare the AFTER rows: if templating tracks
+  // `proof` and not `budget`, the proof rule is the mechanism and the ownership
+  // failure and the collapse are the same problem.
+  console.log(`\n${'='.repeat(78)}`);
+  console.log('THE SEPARATING GRID — watched headline field, AFTER arm vs BEFORE');
+  console.log('='.repeat(78));
+  console.log(
+    `${'asset'.padEnd(26)}${'medium'.padEnd(13)}${'proof'.padEnd(7)}${'budget'.padEnd(8)}`
+    + `${'arm'.padEnd(7)}${'distinct'.padEnd(10)}shapes`
+  );
+  for (const g of grid) {
+    if (!g.tpl) continue;
+    console.log(
+      `${g.asset.padEnd(26)}${g.medium.padEnd(13)}${(g.proofRule ? 'YES' : 'no').padEnd(7)}`
+      + `${g.budget.padEnd(8)}${g.arm.padEnd(7)}`
+      + `${`${g.tpl.distinct}/${g.tpl.n}`.padEnd(10)}${g.tpl.shapes}/${g.tpl.n}`
+      + (g.tpl.modalCount > 1 ? `   modal x${g.tpl.modalCount}` : '')
+    );
+  }
+  console.log('');
+  console.log('READ IT LIKE THIS:');
+  console.log('  Event Reminder collapses, Meta clean  -> THE PROOF RULE. One fix does both.');
+  console.log('  both collapse                         -> CHARACTER BUDGET. Separate causes.');
+  console.log('  Event Reminder clean, Meta collapses  -> budget, and run 1 was something else.');
+  console.log('  neither collapses                     -> specific to Demand Gen Offer 1/Offer 2.');
+  console.log('');
+  console.log('Meta is the decisive cell: its headline is TIGHTER (40) than the field that');
+  console.log('collapsed (60), so budget predicts MORE collapse there and medium predicts none.');
+  console.log('');
+  console.log('AND READ THE WATCHED SAMPLES, not just the ratios — a shape count is still a');
+  console.log('count. Every one is printed above under its field.');
 
   console.log(`\n${'='.repeat(78)}`);
   console.log('THE COUNTS ARE SAFETY CHECKS, NOT THE RESULT. If figure-led rose sharply,');

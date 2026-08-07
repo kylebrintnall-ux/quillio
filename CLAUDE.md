@@ -1575,3 +1575,44 @@ describe **intent, including work that was never built or was later removed** �
 they are not a description of the current code. Use them for the "why"; verify
 the "what" against the source. The live character limits actually enforced come
 from the Postgres asset library, not from any table in a doc file.
+
+### Measuring these two changes — the scripts exist, the runs have not happened
+
+`scripts/funnelAB.js` and `scripts/statsAB.js`, built to the same shape as
+`cohesionAB` / `floorAB`: real model calls, no writes, safe in production, and
+every sample printed with the extremes marked. **Neither has been run** — this
+repo has no `GEMINI_API_KEY`, and both refuse to start without one. Nothing below
+is a result; they are the questions each run is set up to answer.
+
+**`funnelAB`** puts one brief through a TOP-of-funnel asset (`Organic Social —
+LinkedIn`, a cold scroller) and a BOTTOM-of-funnel one (`Event Reminder Email`,
+a reader who already registered), each with and without the inference block. The
+prediction being tested is directional and per-asset: the top-of-funnel copy
+should stop assuming trust, the bottom-of-funnel copy should stop re-selling a
+decision already made. "The copy changed" is not the finding — any instruction
+achieves that.
+
+**`statsAB`** supplies two figures whose numbers appear nowhere in the brief, and
+counts three things per arm: figure-led openings, use of a supplied figure, and
+**numbers that are in neither the brief nor the stats**. The third is the one
+that matters. `craft.md` demonstrates a number-led opening twice and the measured
+consequence was ten invented "60 seconds"; two real figures beside those two
+examples is the same setup with live ammunition. A rise in the invented column is
+a reason to reword the block whatever else improved, because an invented figure
+in published copy is a false factual claim rather than a weak headline. Spelled
+numbers are not detected, so that column is a **floor on invention, not a census**.
+
+**`funnelInference` exists for the A/B and for nothing else.** Default on; `false`
+reproduces the pre-change prompt byte for byte through the same call. `floorAB`
+needed no such flag only because `char_min: 0` happened to be a real production
+value that did the job; there is no lucky equivalent here, and the alternative
+was editing the builder or checking out old code at measurement time.
+
+**The stubbed-transport pass earned its keep before either real run.** Driving
+`funnelAB` with a fake `fetch` showed the BEFORE arm emitting the inference block
+on calls 4 and 5: `generateAssetDrafts`'s rescue reaches `generateFieldDraft`
+separately and was not threading the flag, so any field the batch dropped came
+back with the block while the arm still called itself a control. A run would have
+reported a mixture as a clean comparison. **Drive a measurement script with a
+stub before trusting a number out of it** — the arms are code too, and a
+contaminated control fails silently and looks exactly like a result.

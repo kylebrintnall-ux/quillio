@@ -1261,6 +1261,42 @@ test('funnel stage: the draft prompts infer it, and a stored value still wins', 
   for (const line of FUNNEL_STAGE_INFERENCE) assert.ok(batch.includes(line), 'and the batch prompt');
 });
 
+test('the funnelInference control suppresses the block on EVERY call, rescue included', async () => {
+  // scripts/funnelAB.js's BEFORE arm is only a control if it holds for the whole
+  // asset. The rescue reaches generateFieldDraft separately, and the first
+  // version of this did NOT thread the flag — so a batch that dropped one field
+  // put the inference block back for that field, and the arm measured a mixture
+  // while reporting a control. Found by running the script against a stubbed
+  // transport, which is the only reason it is a test rather than a bad number.
+  const args = {
+    assetType: 'Organic Social — LinkedIn', summary: 'S', writerPrompt: 'W', funnelInference: false,
+    fields: [{ fieldName: 'Post Copy', charMax: 200 }],
+  };
+
+  // Batch parses cleanly: one call, no block.
+  const clean = await geminiWith(() => '{"Post Copy":"Short line."}', (g) => g.generateAssetDrafts(args));
+  assert.strictEqual(clean.prompts.length, 1);
+
+  // Batch fails to parse: the rescue runs, and it must be suppressed too.
+  const failed = await geminiWith(
+    (_p, n) => (n === 1 ? 'not json' : 'Short line.'),
+    (g) => g.generateAssetDrafts(args)
+  );
+  assert.strictEqual(failed.prompts.length, 2, 'the rescue ran');
+  for (const p of [...clean.prompts, ...failed.prompts]) {
+    assert.ok(!/Infer the FUNNEL STAGE/.test(p), 'no call in the arm carries the block');
+  }
+
+  // And the default is ON — omitting the flag is production behaviour, so a
+  // caller that never heard of it is unaffected.
+  const dflt = await geminiWith(
+    (_p, n) => (n === 1 ? 'not json' : 'Short line.'),
+    (g) => g.generateAssetDrafts({ ...args, funnelInference: undefined })
+  );
+  assert.strictEqual(dflt.prompts.length, 2);
+  for (const p of dflt.prompts) assert.match(p, /Infer the FUNNEL STAGE/);
+});
+
 test('reference stats reach BOTH draft builders, and the rescue too', async () => {
   const stats = [{ text: '4 hours saved per week', source: 'Ops Benchmark 2026' }];
   const args = {

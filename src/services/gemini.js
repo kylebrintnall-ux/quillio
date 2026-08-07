@@ -1567,6 +1567,18 @@ async function generateFieldDraft({
   enrichedFromReferences,
   // [{ text, source }] — figures the enrich pass pulled out of those references.
   referenceStats,
+  // THE A/B CONTROL, AND IT EXISTS FOR THAT ALONE — see scripts/funnelAB.js.
+  // Default on; `false` omits the inference block and reproduces the prompt as
+  // it was before the block existed, byte for byte, through this same call.
+  //
+  // floorAB.js needed no such flag only because `char_min: 0` happened to be a
+  // real production value that reproduced the old prompt. There is no lucky
+  // equivalent here: nothing a caller can legitimately pass makes the block
+  // vanish, so re-measuring this change later would otherwise mean editing the
+  // builder or checking out old code — and the repo's own standing rule is that
+  // finding out whether a prompt rule paid for itself outranks the rule.
+  // No production caller passes it.
+  funnelInference,
   summary,
   writerPrompt,
   direction,
@@ -1602,7 +1614,7 @@ async function generateFieldDraft({
     // must not talk over a value somebody set. Inference is the fallback, placed
     // here so the evidence it names (the brief, the asset) is already above it.
     funnelStage ? `Funnel stage: ${funnelStage}` : '',
-    ...(funnelStage ? [] : [...FUNNEL_STAGE_INFERENCE, FUNNEL_STAGE_FOR_DRAFT]),
+    ...(funnelStage || funnelInference === false ? [] : [...FUNNEL_STAGE_INFERENCE, FUNNEL_STAGE_FOR_DRAFT]),
     toneNotes ? `Tone notes: ${toneNotes}` : '',
     fieldGuidance ? `Field guidance: ${fieldGuidance}` : '',
     direction
@@ -1693,6 +1705,8 @@ async function generateAssetDrafts({
   // told the same story about its sources as the batch was.
   enrichedFromReferences,
   referenceStats,
+  // The A/B control — see generateFieldDraft. No production caller passes it.
+  funnelInference,
   summary,
   writerPrompt,
   fields,
@@ -1769,8 +1783,7 @@ async function generateAssetDrafts({
     // one call, and funnel stage is a property of the campaign and the asset —
     // the per-field `funnel:` slot in the field list below stays exactly as it
     // was, for a stored value that still nothing writes.
-    ...FUNNEL_STAGE_INFERENCE,
-    FUNNEL_STAGE_FOR_DRAFT,
+    ...(funnelInference === false ? [] : [...FUNNEL_STAGE_INFERENCE, FUNNEL_STAGE_FOR_DRAFT]),
     '',
     'For each field, write a COMPLETE, self-contained thought that fits within its',
     'character limit. The limit is a hard MAXIMUM to compose within, not a target to',
@@ -1906,6 +1919,12 @@ async function generateAssetDrafts({
           // story about where its direction came from.
           enrichedFromReferences,
           referenceStats,
+          // Threaded for the same reason, and it is not only tidiness: without it
+          // the A/B's BEFORE arm silently gets the inference block back on every
+          // field the batch missed, so the arm measures a mixture and reports it
+          // as a control. Caught by running the script against a stubbed
+          // transport before trusting a single number out of it.
+          funnelInference,
           channel,
           fieldName: f.fieldName,
           charMax: f.charMax,

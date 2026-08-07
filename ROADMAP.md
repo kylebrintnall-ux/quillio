@@ -974,6 +974,34 @@ The doc feedback feature requires a comment adapter per doc platform. The Slack/
 **Job queue** — BullMQ for pipeline resilience under load
 **Demo video** — 90-second screen recording, most important sales asset
 
+### Stat provenance — make a reference figure checkable without retaining the source
+
+A figure extracted from a linked reference now reaches the drafter and can reach
+published copy. It is **reported, never verified**, and today the whole of its
+provenance is the source's *name*: the raw reference content is capped at 6000
+chars per source, used once for the enrich call, and never persisted, so by draft
+time there is nothing left to check it against. No validator is possible even in
+principle.
+
+The obvious repair — retain the fetched content — is a **privacy and retention
+decision**, not a schema one: it means holding a customer's linked material as
+Quillio data. That is why it is not built.
+
+**The cheaper half is the better answer, and it is this item.** At enrich time,
+store each stat's *surrounding sentence* or its *offset* in the source — a few
+hundred bytes per figure instead of 6000 per source. A human can then open the
+source themselves and land on the sentence the number came from. The figure
+becomes checkable; the source is never retained.
+
+It is worth more than the expensive version on its own terms: a stored copy of
+the source would let a machine compare strings, but the claim a figure makes is a
+claim about a *document a person can open*, and a pointer into that document is
+what settles it. The expensive version also ages — a retained blob and a live URL
+disagree the moment the page changes, and the pointer at least fails visibly.
+
+Scope: a column or JSONB on the project row, written where `enrichWithReferences`
+already has both the extract and the source text in hand. Nothing else moves.
+
 -----
 
 ## Website

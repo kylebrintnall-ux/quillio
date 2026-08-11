@@ -1360,6 +1360,43 @@ was "we cannot know until this has run on both arms", not two priced fixes.
 The grid was still worth building — it ruled a hypothesis out cleanly, which is
 what it was for. What it ruled out happened to be mine.
 
+##### THE DENOMINATOR MOVED: an aggregate over a changed field set
+
+The next entry, and the first where the metric measured the right thing and
+still lied — because the population it divided by was not the same population.
+
+`eventTimeAB`, silent-brief arm, before and after the note:
+
+| | invented | fields | what the ratio suggests |
+| --- | --- | --- | --- |
+| no date field | 10/30 | 6 | |
+| field + note | 9/35 | 7 | "barely moved" |
+
+Read as a rate that is 33% → 26%, which reads as a weak result. Read per field
+it is two separate outcomes pointing opposite ways:
+
+- **The transcription field went 5/5 → 0/5.** Every `Date / Location Line` came
+  back a placeholder — `[Date] at [Time] — Live on Zoom`, `Live online — [Insert
+  Date and Time]`. It had been fabricating two different times and an invented
+  timezone. **Nobody specified a bracket convention**; being told the line waits
+  was enough to produce the honest form, which is the strongest evidence in this
+  file that stating an absence beats prohibiting an act.
+- **The generative fields did not move at all.** All 9 remaining inventions are
+  Subject Line, Headline or Body Copy — "today", "tomorrow", "in 1 hour". The
+  note is field-scoped guidance and reaches one field's `Field guidance:` line,
+  so it could not have touched them.
+
+**The aggregate averaged a fixed field with six unchanged ones and a seventh
+appeared in the denominator.** A per-field count would have shown a clean fix and
+an untouched problem side by side; the ratio showed a mediocre one.
+
+So the rule gains a clause: **when a change alters the field SET, an aggregate
+over fields is not comparable across arms.** Report per field, or report over the
+fields that existed in both arms. This is distinct from the four cases above —
+those were metrics watching the wrong property. This one watched the right
+property and divided by the wrong population, which is harder to notice because
+the number looks well-formed.
+
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 
 - **A — source leak.** Any distinctive token of a source name in the output.

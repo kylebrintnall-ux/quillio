@@ -10577,6 +10577,46 @@ test('a review headline is a sentence on both surfaces', () => {
   assert.match(html, /\|\| 'Review complete\.'/, "the web's fallback headline follows the same rule");
 });
 
+test('craft.md carries no FACT-SHAPED example — a tripwire, not coverage', () => {
+  // A TRIPWIRE. It cannot tell a good example from a bad one; it holds the line
+  // on five specific strings that were each measured producing a false claim in
+  // customer-facing copy. Re-adding any of them should fail loudly rather than
+  // be rediscovered by a fifth A/B run.
+  //
+  // The rule they came from is in craft.md's own maintainer block (stripped
+  // before the file reaches a prompt): an example WILL be reproduced, as syntax
+  // and sometimes literally, so what matters is whether it demonstrates a FORM
+  // (asserts nothing — free to reproduce) or a FACT (asserts a quantity,
+  // duration, date, price or named deliverable — reproducing it is a false
+  // claim the model cannot know is false).
+  const craft = fs.readFileSync(path.join(__dirname, '..', 'craft.md'), 'utf8');
+  const body = craft.replace(/<!--[\s\S]*?-->/g, ''); // the maintainer note names them on purpose
+
+  const REMOVED = [
+    ['Save 4 hours a week', 'a duration; §1.7 — implicated in the invented "in 60 seconds"'],
+    ['3 ways', 'a quantity; §2.54 — reproduced as "3 practical frameworks"'],
+    ['in 10 minutes', 'a duration; §2.54 — reproduced VERBATIM as an event arrival time'],
+    ['Get the 2026 Benchmark', 'a named deliverable + a year; §2 — reproduced as "Get the 2026 Content Ops Benchmark" in 4 of 5 drafts'],
+    ['Get the Guide', 'a named deliverable; §4 gloss — 4 of 5 drafts with NO reference material'],
+  ];
+  for (const [str, why] of REMOVED) {
+    assert.ok(!body.includes(str), `fact-shaped example is back: ${JSON.stringify(str)} — ${why}`);
+  }
+
+  // THE CTA LIBRARY IS NOT COVERED BY THIS and must survive. It is a menu, not an
+  // illustration: every entry sits under a heading naming the DESTINATION it is
+  // valid for, so reaching one means first believing that destination exists.
+  // The §4 gloss was the unconditioned one, and that is why it went alone.
+  assert.match(body, /Approved CTA Library by Destination/);
+  assert.match(body, /Gated content \(whitepaper, report, guide\)/);
+  assert.match(body, /Download the Guide · Get the Report/);
+
+  // FORM examples are the point of the distinction and must NOT be swept up.
+  // They have been in the file just as long and have never produced anything.
+  assert.match(body, /"We built this" not "this was built\."/);
+  assert.match(body, /Start\s+where\s+the\s+work\s+is/);
+});
+
 test('craft.md rules headline terminal punctuation, universally', () => {
   const craft = fs.readFileSync(path.join(__dirname, '..', 'craft.md'), 'utf8');
 
@@ -10598,10 +10638,17 @@ test('craft.md rules headline terminal punctuation, universally', () => {
   assert.match(head, /CTAs are not headlines either/);
 
   // THE CONTRADICTION THAT WAS THERE. The ultra-short example carried a period,
-  // which is exactly the convention the rule rejects. It is now unpunctuated,
-  // and the punctuated form survives only as the counter-example.
-  assert.match(head, /No setup\. "Get the 2026 Benchmark"\n/);
-  assert.strictEqual((head.match(/"Get the 2026 Benchmark\."/g) || []).length, 1, 'punctuated only as the counter-example');
+  // which is exactly the convention the rule rejects. That example is now GONE
+  // for a different and larger reason — it was "Get the 2026 Benchmark", a
+  // fully-formed offer for a document no client has, and the model reproduced it
+  // as "Get the 2026 Content Ops Benchmark" in 4 of 5 drafts. The rule needs an
+  // example (you cannot show a punctuation contrast without a string) so it now
+  // uses one that asserts nothing.
+  assert.match(head, /No setup\.\n/, 'the ultra-short bullet carries no example at all');
+  // The line wraps in the file, so match whitespace-flexibly rather than pinning
+  // the wrap point — reflowing the paragraph must not fail this.
+  assert.match(head, /"Start\s+where\s+the\s+work\s+is" — not "Start\s+where\s+the\s+work\s+is\."/);
+  assert.strictEqual((head.match(/"Start where the work is\."/g) || []).length, 1, 'punctuated only as the counter-example');
 
   // It sits OUTSIDE the mediums section, so gemini's per-asset slicing treats it
   // as universal craft and injects it for every asset — not just the one whose

@@ -15,6 +15,49 @@
   Rename either and you must update mediumKeywordsForAsset too. Keep the CTA
   library and the universal words-to-cut list outside the mediums section so
   they stay universal.
+
+  ==========================================================================
+  BEFORE YOU ADD AN EXAMPLE: FORM OR FACT?
+  ==========================================================================
+
+  An example in this file WILL be reproduced — as syntax, and sometimes as the
+  literal string. That is measured, not feared. What decides whether that is
+  harmless or harmful is WHAT THE EXAMPLE DEMONSTRATES:
+
+    FORM   — a transformation, a structure, a punctuation contrast. Reproducing
+             it verbatim asserts nothing, so the cost of reproduction is zero.
+             "We built this" not "this was built."  (active voice)
+             "Start where the work is" — not "…is."  (terminal punctuation)
+
+    FACT   — a quantity, a duration, a date, a price, a named deliverable.
+             Reproducing it asserts something, and the model has no way to know
+             the assertion is false. THESE DO NOT BELONG IN THIS FILE.
+
+  The four that were removed, and what each produced in a measured run:
+
+    "Save 4 hours a week"        §1.7   \
+    "3 ways," "in 10 minutes"    §2.54  /  → "in 60 seconds" (a duration in no
+                                            input), "Starting in 10 minutes"
+                                            about a real event with no stated
+                                            time, "3 practical frameworks"
+    "Get the 2026 Benchmark"     §2 by-length, and twice more in the terminal-
+                                 punctuation bullet → "Get the 2026 Content Ops
+                                 Benchmark", a document the client does not have,
+                                 in 4 of 5 drafts
+    "Get the Guide"              §4 gloss → "Get the Guide" in 4 of 5 drafts with
+                                 no reference material anywhere in the prompt
+
+  Note the asymmetry that makes this worth a rule rather than a habit: the FORM
+  examples have been in the file just as long and have never produced anything.
+
+  THE CTA LIBRARY IS NOT AN ILLUSTRATION AND IS NOT COVERED BY THIS. It is a
+  menu, and every entry sits under a heading naming the DESTINATION it is valid
+  for, so reaching one means first believing that destination exists. The §4
+  gloss was unconditioned — a named artefact presented as the winner of a general
+  contrast — which is why the gloss went and the library stayed.
+
+  If a rule cannot be stated without a fact-shaped example, that is a signal
+  about the rule, not a reason to keep the example.
 -->
 
 > **How good copy works** — universal craft, independent of any one brand:
@@ -36,7 +79,7 @@
 1. **One idea per line.** Especially in short formats. Don't cram.
 1. **Front-load the important words.** First 3-5 words do the heavy lifting — every format truncates eventually.
 1. **Write to one person.** "You," singular. Not "users" or "customers."
-1. **Specifics beat generalities.** "Save 4 hours a week" beats "save time."
+1. **Specifics beat generalities.** Name the thing the reader would recognise — "the Monday reforecast" beats "your workflow."
 1. **Read it aloud.** If you stumble or run out of breath, rewrite it.
 1. **Cut the throat-clear.** Delete openers like "In today's world…" or "We're excited to announce…"
 1. **No jargon unless the audience speaks it.** Match the reader's vocabulary, not your internal one.
@@ -50,8 +93,7 @@
 **Best practices:**
 
 - Make a promise, ask a question, or create a curiosity gap
-- Concrete and specific over vague and aspirational
-- Numbers and specifics earn attention ("3 ways," "in 10 minutes")
+- Concrete and specific over vague and aspirational. A number is the sharpest specific of all — when you were given one.
 - Avoid setup-and-punchline where the limit is too tight to land the payoff — a
   truncated joke is worse than none. That is a constraint on structure, not on
   punctuation: a mark that makes a line turn is not a setup.
@@ -59,7 +101,7 @@
 
 **By length:**
 
-- **Ultra-short (≤30 chars, e.g. Google Display, Meta headline):** One idea. One benefit. No setup. "Get the 2026 Benchmark"
+- **Ultra-short (≤30 chars, e.g. Google Display, Meta headline):** One idea. One benefit. No setup.
 - **Short (40-70 chars, e.g. LinkedIn headline):** Benefit + light context. Room for a value prop.
 - **Medium (90+ chars, e.g. Google long headline):** Can stand alone as a complete thought; make full use of it.
 
@@ -70,8 +112,8 @@ full stop**:
 
 - **No terminal period** on ad headlines, display headlines, social headlines,
   banner and OOH headlines, subject lines, pre-headers, eyebrows, section
-  headings, or any headline that is a fragment or a single clause. "Get the 2026
-  Benchmark" — not "Get the 2026 Benchmark."
+  headings, or any headline that is a fragment or a single clause. "Start where
+  the work is" — not "Start where the work is."
 - **A question mark or exclamation mark still applies** where the headline
   genuinely is a question or an exclamation. The rule removes the period, not
   punctuation that carries meaning. Use exclamation marks sparingly.
@@ -134,7 +176,7 @@ nothing where it does not.
 
 - Action verb first ("Get," "See," "Start," "Download")
 - Set expectation for what's on the other side
-- Specific beats generic — "Get the Guide" beats "Click Here"
+- Specific beats generic — name the action and where it lands, never "Click Here"
 - First person can lift response ("Start my trial") — test it
 - Keep it short; most CTA fields cap at 15-25 chars
 
@@ -203,7 +245,7 @@ These weaken copy in any voice. Cutting them is craft, not brand preference — 
 - "We're excited to announce…" / "We're thrilled to share…" (lead with the news, not your excitement)
 - "As you know…" / "It goes without saying…" (then don't say it)
 
-**Hedges that drain a claim:** "may help," "can potentially," "one of the leading," "arguably," "we believe" — either make the claim or cut the sentence.
+**Hedges that drain a claim:** "may help," "can potentially," "one of the leading," "arguably," "we believe" — either make the claim or cut the sentence. A hedge weakens a claim you could state plainly. Saying less than you know is a hedge; saying only what you know is not — if you were never given the number, "starts soon" is the accurate line, not the weak one.
 
 **Prefer:**
 

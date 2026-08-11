@@ -1086,6 +1086,49 @@ not just its point.** If that would be a bad house style, describe the quality
 instead of demonstrating it — and if a rule cannot be stated without an example,
 that is a signal about the rule.
 
+#### FORM versus FACT — the rule that generalises all of it
+
+"Avoid examples" is wrong and untestable. The measured distinction is what the
+example DEMONSTRATES, and it is testable on any future edit:
+
+| | | Cost of reproduction |
+| --- | --- | --- |
+| **FORM** | a transformation, a structure, a punctuation contrast | **zero.** Reproducing it asserts nothing |
+| **FACT** | a quantity, duration, date, price, or named deliverable | **a false claim** the model cannot know is false |
+
+The asymmetry is the evidence, and it is why this is a rule rather than a habit.
+`craft.md`'s FORM examples — `"We built this" not "this was built."` and the
+terminal-punctuation contrast — have been in the file since its first commit and
+have produced **nothing**. Every one of its FACT examples produced a false claim
+in a measured run:
+
+| Removed | Section | What it produced |
+| --- | --- | --- |
+| `"Save 4 hours a week"` | §1.7 | the invented `"in 60 seconds"` |
+| `"3 ways," "in 10 minutes"` | §2.54 | `"in 60 seconds"`; `"3 practical frameworks"`; **`"Starting in 10 minutes"` about a real event with no stated time** |
+| `"Get the 2026 Benchmark"` | §2 by-length, ×3 | `"Get the 2026 Content Ops Benchmark"` in 4 of 5 drafts — a document no client has |
+| `"Get the Guide"` | §4 gloss | `"Get the Guide"` in 4 of 5 drafts **with no reference material in the prompt** |
+
+**`"Get the 2026 Benchmark"` invalidates the account of run 1 that this file
+carried for four rounds.** The fabricated lead magnet was attributed to the
+reference block's source name plus the CTA library's gated-content category. It
+was neither: a fully-formed fake-offer headline, carrying the current year, was
+sitting in the ALWAYS-INJECTED block from the first commit and appearing in every
+prompt twice. The source name only filled a slot in a shape `craft.md` already
+supplied — so withholding it removed a filler, not the mechanism.
+
+**The CTA library is NOT an illustration and is not covered by this.** It is a
+menu: every entry sits under a heading naming the DESTINATION it is valid for, so
+reaching one means first asserting that destination exists. The §4 gloss was the
+unconditioned one — a named artefact presented as the winner of a general
+contrast — which is why the gloss went and the library stayed. Evidence: the
+literal string `"Get the Guide"` appeared in the file exactly once, at the gloss,
+and is absent from the library row (`Download the Guide · Get the Report · …`).
+
+A tripwire test holds the five strings out. It is labelled a tripwire, not
+coverage: it cannot tell a good example from a bad one, it only stops these five
+returning.
+
 **Editing `craft.md` — mind the structural coupling.** To save tokens,
 `gemini.js` slices it per asset: everything *except* the
 `## … Writing Across Mediums` section is treated as universal craft and always

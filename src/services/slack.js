@@ -45,7 +45,7 @@ function formatAssetList(assets) {
 // "Saved to <folder>" line, and two buttons (Generate First Draft / Skip for now).
 // folderUrl/folderName are optional — the folder link renders only when a project
 // folder was made. `notice` is optional advisory context (see below).
-function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice, unmatchedNotice, templateDocs = [] }) {
+function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folderName, notice, unmatchedNotice, missingFactNotice, templateDocs = [] }) {
   // Punctuation rule for every user-facing string in the Slack surface:
   // in-progress → ellipsis, terminal sentence → period, HEADER BLOCK → period
   // (it is a line of copy the reader reads as a sentence, not a control),
@@ -92,6 +92,15 @@ function buildResultBlocks({ title, webViewLink, assets, docId, folderUrl, folde
   // Like `notice` this is CONTEXT, not an error: the doc above was built.
   if (unmatchedNotice) {
     blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: unmatchedNotice }] });
+  }
+
+  // The third, and it is a THIRD for the same reason the second is: the brief
+  // planned a field whose job is to carry a date or time it never supplied. A
+  // brief can hit the ceiling, miss a name, be missing a date, any combination or
+  // none — three independent conditions, so three blocks. Also CONTEXT: the doc
+  // was built and the field is in it, waiting.
+  if (missingFactNotice) {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: missingFactNotice }] });
   }
 
   // Folder + doc links as Slack hyperlinks, below the asset list. The doc link

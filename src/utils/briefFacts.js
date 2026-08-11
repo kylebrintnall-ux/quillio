@@ -142,11 +142,48 @@ function briefStatesLocation(brief) {
 const MISSING_DATETIME_NOTE =
   'The brief does not state a date or time — this line waits for them.';
 
+// THE SURFACE SENTENCE FOR THE SAME CONDITION, and it lives here rather than in
+// either adapter for one reason: it has to keep agreeing with the note above.
+// The two say the same thing to two readers — the note tells the DRAFTER the
+// value is not available, this tells the WRITER it is theirs to supply — and a
+// reworded trigger that moved only one of them is exactly the drift that left the
+// review overlay speaking two languages on one screen.
+//
+// THE FIELD NAME IS READ OFF THE ROW THE TRIGGER FIRED ON, never hardcoded. It is
+// what the writer will actually see as a bold label in the document, so a tenant
+// renaming the field fixes this sentence with no code change — and a tenant who
+// has no such field never sees it, because there is no row to read.
+//
+// One sentence about the world, one about what to do, in that order. It carries
+// no fault: a brief that has not fixed the time yet is ordinary, and drafting a
+// reminder before the time is confirmed is an ordinary thing to do.
+//
+// Returns null for an empty list, which is the whole of the "say nothing" case —
+// a brief that stated a time, a brief with no transcription field, and a tenant
+// whose library predates `fact_kind` all arrive here with nothing and get null.
+function missingDateTimeNotice(fieldNames) {
+  const names = [];
+  for (const n of fieldNames || []) {
+    const name = String(n || '').trim();
+    if (name && !names.includes(name)) names.push(name);
+  }
+  if (names.length === 0) return null;
+  // Today this is always one name — both Event assets call the field
+  // `Date / Location Line`. The join is here so two differently-named fields in
+  // one brief read as a list rather than silently reporting only the first.
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `The brief does not state a date or time for this event. Add them to the ${list} before sending.`;
+}
+
 module.exports = {
   briefFacts,
   briefStatesDateTime,
   briefStatesLocation,
   MISSING_DATETIME_NOTE,
+  missingDateTimeNotice,
   TEMPORAL,
   LOCATION,
 };

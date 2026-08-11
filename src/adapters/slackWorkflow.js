@@ -414,7 +414,7 @@ async function buildAndPost(ctx) {
       }
       throw err;
     }
-    const { doc, assetSpecs, projectFolderUrl, templateDocs = [] } = docResult;
+    const { doc, assetSpecs, projectFolderUrl, templateDocs = [], missingFactNotice } = docResult;
     // `doc` is null on a template-only brief — the brief named a document
     // template and no assets, so there is no copy doc to create. The card below
     // renders the template document as the artifact and offers no draft button,
@@ -456,6 +456,10 @@ async function buildAndPost(ctx) {
       // Separate from `notice` because the two are independent: a brief can hit
       // the ceiling, miss an asset name, both, or neither.
       unmatchedNotice: partialMissNotice(unmatchedAssets, vocabularySource),
+      // "The brief does not state a date or time …" when the plan carries a
+      // transcription field and the brief supplied nothing for it. A third
+      // independent condition, so a third block rather than a longer sentence.
+      missingFactNotice: missingFactNotice || null,
     };
     const resultBlocks = buildResultBlocks(result).blocks;
     await emit(`${emoji('quillio-doc-done')} Your ${doc ? 'doc' : 'document'} is ready — ${primary.title}.`, resultBlocks, () =>

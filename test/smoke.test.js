@@ -12172,7 +12172,7 @@ test('both surfaces show both documents, and the copy doc stays first', () => {
   const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
   assert.match(web, /templateDocs: \(templateDocs \|\| \[\]\)\.map/);
   const sw = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
-  assert.match(sw, /templateDocs = \[\] \} = docResult/);
+  assert.match(sw, /templateDocs = \[\][\s\S]{0,40}\} = docResult/); // the destructure has grown; templateDocs is still in it
 
   // And the project view has a second button, hidden unless there is one.
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
@@ -16565,4 +16565,281 @@ test('the shortfall notice does not sit flush against the copy list', () => {
   // CTAs that bring their own spacing, and must not move.
   assert.match(html, /\.notice \{\n\s*margin-top: 14px;\n\s*padding: 10px 12px;/);
   assert.ok(!/\.notice \{[^}]*margin-bottom/.test(html), 'the shared rule is unchanged');
+});
+
+// === THE 189th CANNOT BE WRITTEN =============================================
+//
+// The 188 existing `src.slice(src.indexOf(a), src.indexOf(b))` sites are left
+// alone deliberately — converting them is churn on tests that currently pass and
+// would touch nearly every structural assertion in this file at once. What is
+// NOT left alone is the count going up. A new one is a new place for the failure
+// documented above: indexOf returns -1, slice reads it as an offset, and the
+// assertion silently checks a different region and passes.
+//
+// test/indexof-slice-baseline.json is the frozen set. It may SHRINK freely —
+// converting a site to sliceBetween is always welcome and never fails this. It
+// may not grow, and it may not gain a member it did not have.
+//
+// The one friction to expect, and it is intended: editing an anchor string in an
+// existing site changes its expression text, which reads as a new member. The fix
+// is to convert that site to sliceBetween while you are in it, not to re-freeze
+// the file. Re-freezing is what turns a tripwire into a rubber stamp.
+// ONE PASS OVER THE SOURCE, blanking the contents of every comment, string,
+// template literal and regex literal while preserving length and newlines — so
+// the scan below sees code and only code. Three things depend on it:
+//
+//   1. a '(' inside a quoted anchor — indexOf('async function f(a, b)') — must
+//      not push the paren depth;
+//   2. this test's own synthetic fixtures are slice-with-indexOf expressions
+//      written inside strings, and must not count as sites;
+//   3. an apostrophe in a trailing comment ("the field's") must not open a
+//      phantom string. That one is not hypothetical: it desynchronised the first
+//      version of this scanner across the whole file, silently.
+//
+// Regex-vs-division is the standard heuristic (a '/' after an identifier, digit,
+// ')' or ']' is division; otherwise a literal). It is APPROXIMATE, and the
+// approximation is made safe rather than trusted: a desync produces syntactically
+// invalid JavaScript, and the test compiles the masked output to prove it did not
+// happen. So this cannot silently under-report — it either agrees with the
+// baseline or it fails loudly.
+function maskNonCode(code) {
+  const CLOSERS = /[\w$)\]]/;
+  let out = '';
+  let i = 0;
+  let lastCode = '';
+  const blank = (c) => (c === '\n' ? '\n' : ' ');
+  while (i < code.length) {
+    const c = code[i];
+    const next = code[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < code.length && code[i] !== '\n') { out += ' '; i++; }
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      const close = code.indexOf('*/', i + 2);
+      const to = close === -1 ? code.length : close + 2;
+      while (i < to) { out += blank(code[i]); i++; }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      out += c;
+      i++;
+      while (i < code.length) {
+        if (code[i] === '\\') { out += '  '; i += 2; continue; }
+        if (code[i] === c) { out += c; i++; break; }
+        out += blank(code[i]);
+        i++;
+      }
+      lastCode = c;
+      continue;
+    }
+    if (c === '/' && !CLOSERS.test(lastCode)) {
+      out += c;
+      i++;
+      let klass = false;
+      while (i < code.length && code[i] !== '\n') {
+        if (code[i] === '\\') { out += '  '; i += 2; continue; }
+        if (code[i] === '[') klass = true;
+        else if (code[i] === ']') klass = false;
+        else if (code[i] === '/' && !klass) { out += '/'; i++; break; }
+        out += ' ';
+        i++;
+      }
+      lastCode = '/';
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) lastCode = c;
+    i++;
+  }
+  return out;
+}
+
+function indexOfSliceBounds(src) {
+  const masked = maskNonCode(src); // same length, so indices are shared
+  const out = [];
+  const re = /\.slice\(/g;
+  let m;
+  while ((m = re.exec(masked))) {
+    let depth = 1;
+    let i = re.lastIndex;
+    while (i < masked.length && depth > 0) {
+      const c = masked[i];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      i++;
+    }
+    // Detected on the masked text (code only), reported from the ORIGINAL, so
+    // the frozen identity keeps its anchor strings and stays legible.
+    if (masked.slice(re.lastIndex, i - 1).includes('.indexOf(')) {
+      out.push(src.slice(re.lastIndex, i - 1).replace(/\s+/g, ' ').trim());
+    }
+  }
+  return out.sort();
+}
+
+test('no NEW indexOf is used as a slice bound without sliceBetween', () => {
+  const vm = require('node:vm');
+  const self = fs.readFileSync(__filename, 'utf8');
+  const baseline = JSON.parse(fs.readFileSync(path.join(__dirname, 'indexof-slice-baseline.json'), 'utf8'));
+
+  // THE SCANNER IS PROVED BEFORE IT IS BELIEVED, three ways — a tripwire that
+  // parses nothing reports zero and looks exactly like a clean file.
+  //
+  // 1. Synthetic positives and negatives.
+  assert.deepStrictEqual(
+    indexOfSliceBounds("const a = s.slice(s.indexOf('x'), s.indexOf('y'));"),
+    ["s.indexOf('x'), s.indexOf('y')"]
+  );
+  assert.deepStrictEqual(
+    indexOfSliceBounds("s.slice(s.indexOf('function f(a, b)'), 9);"), // paren inside the anchor
+    ["s.indexOf('function f(a, b)'), 9"]
+  );
+  assert.deepStrictEqual(indexOfSliceBounds('const a = list.slice(0, 20);'), []);
+  assert.deepStrictEqual(indexOfSliceBounds("// s.slice(s.indexOf('x'), 1)\n"), []);
+  assert.deepStrictEqual(indexOfSliceBounds("t(\"s.slice(s.indexOf('x'), 1)\");"), []); // in a string
+  // An apostrophe in a trailing comment must not open a phantom string — the
+  // desync that made the first version of this silently under-report.
+  assert.deepStrictEqual(
+    indexOfSliceBounds("const a = 1; // the field's own note\nb.slice(b.indexOf('z'), 3);"),
+    ["b.indexOf('z'), 3"]
+  );
+
+  // 2. THE MASK IS LENGTH-PRESERVING, which is what lets a site be DETECTED on
+  //    the masked text and REPORTED from the original.
+  const masked = maskNonCode(self);
+  assert.strictEqual(masked.length, self.length, 'the mask preserves indices');
+
+  // 3. AND IT DID NOT DESYNCHRONISE. Blanking the contents of a comment, string,
+  //    template or regex leaves valid JavaScript; losing track of where one ends
+  //    does not. Compiling the masked output is an exact check on an otherwise
+  //    heuristic scan, so this test cannot silently under-report — it either
+  //    agrees with the baseline or it fails here.
+  assert.doesNotThrow(() => new vm.Script(masked), 'the mask left valid JS — no desync');
+
+  const found = indexOfSliceBounds(self);
+  assert.ok(found.length > 100, 'the scanner is finding the existing sites');
+
+  // Multiset containment: every occurrence must be accounted for in the frozen
+  // list, counted, so a second copy of an expression that already appears once is
+  // caught too.
+  const left = baseline.slice();
+  const added = [];
+  for (const site of found) {
+    const at = left.indexOf(site);
+    if (at === -1) added.push(site);
+    else left.splice(at, 1);
+  }
+  assert.deepStrictEqual(
+    added,
+    [],
+    'new indexOf-as-slice-bound site(s) — use sliceBetween(src, start, end):\n  ' + added.join('\n  ')
+  );
+  assert.ok(found.length <= baseline.length, 'the frozen set may shrink, never grow');
+});
+
+// === The missing-date notice reaches the person who can fix it ===============
+//
+// The italic note on the field addresses the DRAFTER and is invisible until
+// somebody opens the document. This is the same condition said to the WRITER, on
+// the card and on the result screen, at the moment they are looking at what was
+// built. Both come off the same loop over the same rows, so they cannot disagree
+// about whether the condition holds.
+
+test('the notice names the field it is about, read off the row', () => {
+  const { missingDateTimeNotice, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
+
+  assert.strictEqual(
+    missingDateTimeNotice(['Date / Location Line']),
+    'The brief does not state a date or time for this event. '
+      + 'Add them to the Date / Location Line before sending.'
+  );
+
+  // BOTH EVENT ASSETS IN ONE BRIEF is the common case, and the field is called
+  // the same thing on both — one name, said once, not twice.
+  assert.strictEqual(
+    missingDateTimeNotice(['Date / Location Line', 'Date / Location Line']),
+    missingDateTimeNotice(['Date / Location Line'])
+  );
+
+  // Two DIFFERENTLY named fields read as a list. Not reachable on the seeded
+  // library today; here so the second one is not silently dropped if it becomes
+  // reachable through a tenant's own rename.
+  assert.match(
+    missingDateTimeNotice(['Date / Location Line', 'Session Time']),
+    /Add them to the Date \/ Location Line and Session Time before sending\./
+  );
+
+  // NULL IS THE WHOLE OF THE "SAY NOTHING" CASE — a brief that stated a time, a
+  // plan with no transcription field, and a library predating fact_kind all
+  // arrive with nothing.
+  for (const empty of [[], null, undefined, [''], ['  ']]) {
+    assert.strictEqual(missingDateTimeNotice(empty), null);
+  }
+
+  // NO FIELD NAME IS HARDCODED anywhere in the sentence — a tenant renaming the
+  // field fixes this with no code change, which is the point of reading it off
+  // the row.
+  const src = fs.readFileSync(require.resolve('../src/utils/briefFacts'), 'utf8');
+  const fn = sliceBetween(src, 'function missingDateTimeNotice', 'module.exports')
+    .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n'); // the comment names it to explain why the code does not
+  assert.ok(!/Date \/ Location/.test(fn), 'the field name is never spelled out in code');
+
+  // The notice and the field note describe the SAME condition and must keep
+  // agreeing about it. Neither claims a venue is missing: the trigger fires on a
+  // venue-only brief, so saying so would be false.
+  assert.ok(!/venue/i.test(MISSING_DATETIME_NOTE));
+  assert.ok(!/venue/i.test(missingDateTimeNotice(['X'])));
+  // And it carries no fault — a brief that has not fixed the time yet is
+  // ordinary.
+  assert.ok(!/error|failed|missing from|forgot|should have/i.test(missingDateTimeNotice(['X'])));
+});
+
+test('one loop produces the field note and the surface notice together', () => {
+  const src = fs.readFileSync(require.resolve('../src/core/pipeline'), 'utf8');
+  const fn = sliceBetween(src, 'const briefHasDateTime = briefStatesDateTime', '[pipeline] asset specs source');
+
+  // The names are COLLECTED IN THE SAME LOOP that attaches the note, so a field
+  // that got a note is exactly a field named in the notice. Deriving the notice
+  // from a second pass over the specs would let the two drift apart on any
+  // future change to the condition.
+  assert.match(fn, /if \(field\.factKind !== 'datetime'\) continue;/);
+  assert.match(fn, /field\.specNote = \[field\.specNote, MISSING_DATETIME_NOTE\]/);
+  assert.match(fn, /notedFieldNames\.push\(field\.fieldName\);/);
+  assert.match(fn, /const missingFactNotice = missingDateTimeNotice\(notedFieldNames\);/);
+
+  // Inside the `if (!briefHasDateTime)` guard: a brief that supplied the time
+  // must produce neither.
+  const guard = fn.indexOf('if (!briefHasDateTime)');
+  assert.ok(guard >= 0 && guard < fn.indexOf('notedFieldNames.push'), 'the collection is behind the guard');
+});
+
+test('the notice gets its own slot on both surfaces, never composed', () => {
+  const slack = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'slack.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  const sw = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+
+  // Slack: a THIRD context block. Three independent conditions — the per-asset
+  // ceiling, an unmatched name, a missing date — so three blocks. One sentence
+  // carrying two of them would make either imply the other.
+  assert.match(slack, /missingFactNotice, templateDocs = \[\] \}\) \{/);
+  assert.match(
+    slack,
+    /if \(missingFactNotice\) \{\n\s*blocks\.push\(\{ type: 'context', elements: \[\{ type: 'mrkdwn', text: missingFactNotice \}\] \}\);/
+  );
+  // And it is never concatenated into either of the other two.
+  assert.ok(!/unmatchedNotice[^\n]*\+[^\n]*missingFactNotice/.test(slack));
+  assert.ok(!/missingFactNotice[^\n]*\+[^\n]*unmatchedNotice/.test(slack));
+
+  // Web: its own host and its own renderNotice call, set both ways so a rerun
+  // that supplies a time clears it.
+  assert.ok(html.includes('<div id="out-missing-fact" class="notice hidden"></div>'), 'the host exists');
+  assert.match(html, /renderNotice\('out-missing-fact', data\.missingFactNotice\);/);
+
+  // Threaded through both adapters off the same pipeline key.
+  assert.match(web, /missingFactNotice: missingFactNotice \|\| null,/);
+  assert.match(sw, /missingFactNotice: missingFactNotice \|\| null,/);
+  const pipe = fs.readFileSync(require.resolve('../src/core/pipeline'), 'utf8');
+  assert.match(pipe, /\n {4}missingFactNotice,\n {2}\};/);
 });

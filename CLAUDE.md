@@ -1672,8 +1672,28 @@ case and not the first — and 192 `.indexOf(` calls in that file do not carry o
 asserts each anchor was found and that the end follows the start, then slices. It
 has its own test, which pins the two silent-pass behaviours above as the reason
 it exists. The rule for anything new: **an `indexOf` used as a slice bound is an
-assertion — write it as one.** Converting all 192 was not done; the helper is
-there and the sites touched since use it.
+assertion — write it as one.**
+
+**The 134 existing sites were NOT swept, and a tripwire is what makes the sweep
+unnecessary.** `test/indexof-slice-baseline.json` freezes them; a test scans this
+file and fails if the multiset grows. The set may **shrink** freely — converting
+a site is always welcome. Editing an anchor string in an existing site reads as a
+new member, which is intended friction: convert that site while you are in it
+rather than re-freezing the file, because re-freezing turns a tripwire into a
+rubber stamp.
+
+**The scanner is heuristic and the heuristic is made SAFE rather than trusted**,
+which is the part worth copying. It masks the contents of every comment, string,
+template and regex, preserving length so a site can be *detected* on the masked
+text and *reported* from the original. Regex-versus-division is the standard
+lookback guess. A desync there would make the tripwire silently under-report —
+which is the exact failure this whole entry is about — so the test **compiles the
+masked output** (`new vm.Script`) before believing it: blanking contents leaves
+valid JavaScript, losing track of where a literal ends does not. Plus six
+synthetic fixtures, including the one that actually bit: an apostrophe in a
+trailing comment (`// the field's own note`) opened a phantom string and
+desynchronised the first version across the whole file, which is why the first
+count read 104 and the correct one is 134.
 
 The generalisation worth carrying: a structural test asserts something about a
 REGION, and the region is as much part of the claim as the pattern is. A test
@@ -1802,6 +1822,38 @@ touched**; the problem is the missing fact, not the instruction to be urgent.
 Shipping 2/5 is a deliberate partial fix on the `is_copy` precedent: a visible
 slot holding a placeholder tells the writer a fact is missing, and no slot tells
 them nothing.
+
+**AND THE SAME CONDITION NOW REACHES THE WRITER, which is the half the note could
+never do.** The note addresses the DRAFTER and is invisible until somebody opens
+the document. `missingDateTimeNotice` (`src/utils/briefFacts.js`, beside the note
+so the two wordings cannot drift) says it to the person who can actually fix it,
+on the Slack card and the web result screen: *"The brief does not state a date or
+time for this event. Add them to the Date / Location Line before sending."*
+
+Three things about it worth keeping:
+
+- **The field name is read off the row the trigger fired on**, never hardcoded —
+  it is the bold label the writer will see in the document, so a tenant renaming
+  the field fixes the sentence with no code change, and a tenant with no such
+  field never sees it because there is no row to read. A test asserts the string
+  `Date / Location` appears nowhere in that function's code.
+- **Both come off ONE loop.** The names are collected in the same pass that
+  attaches the note, so a field that got a note is exactly a field named in the
+  notice. A second pass over the specs would let the two disagree on any future
+  change to the condition.
+- **Its own slot on both surfaces, never composed.** A third Slack `context`
+  block and a third notice host on the web. A brief can hit the per-asset
+  ceiling, miss an asset name, be missing a date, any combination or none — three
+  independent conditions, so three blocks. One sentence carrying two of them
+  would make either imply the other.
+
+Measured at 390px: the fact notice and the unmatched notice together are **142px
+with a 14px gap**, both above the CTA bar, no button covered and no horizontal
+overflow. That was the open question about stacking advisories, and the answer is
+that it reads fine.
+
+**It does not change the 2/5.** This is a second reader for the same finding, not
+a stronger fix — the generative fields still invent a time, for the reason above.
 
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 

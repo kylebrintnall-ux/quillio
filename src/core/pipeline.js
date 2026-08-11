@@ -24,7 +24,7 @@ const { instanceCounter } = require('../utils/instanceKey');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
 const { getAssetDirections, getTenantAssets } = require('../db/assets');
-const { briefStatesDateTime, MISSING_DATETIME_NOTE } = require('../utils/briefFacts');
+const { briefStatesDateTime, MISSING_DATETIME_NOTE, missingDateTimeNotice } = require('../utils/briefFacts');
 const { saveProject, getProjectByDocId, getProjectByAnyDocId } = require('../db/projects');
 const { getDocTemplate, listDocTemplates } = require('../db/docTemplates');
 const { listTemplateMarkers } = require('../db/templateMarkers');
@@ -1180,21 +1180,31 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   // The note joins `spec_note` through fieldHint, so it renders as part of the
   // same italic line and parseDoc recovers it into `notes` → `Field guidance:` in
   // both draft prompts. That channel already exists; nothing new is plumbed.
+  // AND THE SAME CONDITION REACHES THE WRITER, on the card and on the result
+  // screen. The note above addresses the drafter and is invisible until somebody
+  // opens the document; the notice addresses the person who can actually fix it,
+  // at the moment they are looking at what was built. Both are derived from this
+  // one loop, from the same rows, so they cannot disagree about whether the
+  // condition holds.
   const briefHasDateTime = briefStatesDateTime(spec.brief);
   let notesAttached = 0;
+  const notedFieldNames = [];
   if (!briefHasDateTime) {
     for (const group of assetSpecs) {
       for (const field of group.fields) {
         if (field.factKind !== 'datetime') continue;
         field.specNote = [field.specNote, MISSING_DATETIME_NOTE].filter(Boolean).join(' ');
+        notedFieldNames.push(field.fieldName);
         notesAttached++;
       }
     }
   }
+  const missingFactNotice = missingDateTimeNotice(notedFieldNames);
   if (notesAttached > 0 || assetSpecs.some((g) => g.fields.some((f) => f.factKind))) {
     console.log(
       `[pipeline] datetime facts: brief ${briefHasDateTime ? 'STATES one' : 'states none'}`
       + ` — ${notesAttached} transcription field(s) noted`
+      + `, notice ${missingFactNotice ? 'shown' : 'none'}`
     );
   }
 
@@ -1429,7 +1439,13 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   // idempotency on copy_doc_id, both surfaces link to it, copy review runs
   // against it, and drafting happens in it. A template document is a second,
   // independent deliverable — already drafted, because its fields are its own.
-  return { doc, assetSpecs, copyDocSpecs, templateDocs, refusedTemplates, copyDocSkipped, projectFolderUrl, projectId };
+  return {
+    doc, assetSpecs, copyDocSpecs, templateDocs, refusedTemplates, copyDocSkipped,
+    projectFolderUrl, projectId,
+    // Advisory, and null on every brief that stated a time or planned no
+    // transcription field — which is every brief that reached here before this.
+    missingFactNotice,
+  };
 }
 
 // A DOCUMENT TEMPLATE IS BUILT IN TWO HALVES, ON TWO DIFFERENT PATHS.

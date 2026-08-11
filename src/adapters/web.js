@@ -214,7 +214,7 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
   }
   // Project persistence now lives in the shared pipeline (generateDoc), so both
   // the web and Slack adapters record history identically — nothing to save here.
-  const { doc, assetSpecs, projectFolderUrl, projectId, templateDocs = [] } = docResult;
+  const { doc, assetSpecs, projectFolderUrl, projectId, templateDocs = [], missingFactNotice } = docResult;
   // Null on a template-only brief — see pipeline.generateDoc. The result screen
   // reads docId/docUrl null as "there is nothing to draft here".
   const built = doc || (templateDocs || []).find((t) => t && t.id) || null;
@@ -264,6 +264,11 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
     // the brief named matched, which is every run that reached here before.
     unmatchedAssets,
     unmatchedNotice: partialMissNotice(unmatchedAssets, vocabularySource),
+    // ITS OWN KEY, never folded into unmatchedNotice. The two are independent —
+    // a brief can miss an asset name, be missing a date, both, or neither — and
+    // merging them would make either one imply the other. Same rule the Slack
+    // card already follows for its two context blocks.
+    missingFactNotice: missingFactNotice || null,
   };
 }
 

@@ -232,12 +232,23 @@ const RAW = [
     ['Date / Location Line', 0, 80],
     ['CTA Text', 0, 25],
   ]],
+  // A REMINDER NEEDS A PLACE TO PUT THE TIME. This asset shipped with a field
+  // list byte-identical to Event Follow-Up / Recap Email — which genuinely needs
+  // no date, because the event is over — and that shared shape is the follow-up's.
+  // The consequence was measured: with nowhere to say when the event is, and an
+  // asset_direction demanding urgency, drafts invented arrival times ("Starting
+  // in 10 minutes", "We start in 24 hours") that disagreed with each other by a
+  // full day. A reminder email with a wrong time makes the reader miss the event
+  // — the only failure in this system that harms the READER rather than the
+  // client. Named exactly as Event Invitation Email names it: a reminder and an
+  // invitation must not disagree about what the field is called.
   ['Event Reminder Email', 'Email', [
     ['Subject Line 1', FROM_CLASS, FROM_CLASS],
     ['Subject Line 2', FROM_CLASS, FROM_CLASS],
     ['Preheader', FROM_CLASS, FROM_CLASS],
     ['Headline', 0, 60],
     ['Body Copy', 25, 75],
+    ['Date / Location Line', 0, 80],
     ['CTA Text', 0, 25],
   ]],
   ['Event Follow-Up / Recap Email', 'Email', [

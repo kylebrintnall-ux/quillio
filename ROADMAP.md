@@ -974,6 +974,55 @@ The doc feedback feature requires a comment adapter per doc platform. The Slack/
 **Job queue** — BullMQ for pipeline resilience under load
 **Demo video** — 90-second screen recording, most important sales asset
 
+### Transcription fields — seven fields whose job is to CARRY a fact, in a pipeline with no concept of one
+
+**Deliberately not folded into the Event Reminder date-field fix.** That fix
+gives one asset somewhere to put the time. This is the structural finding
+underneath it, and it is larger.
+
+Every field in the asset library is drafted by one generative path:
+`generateAssetDrafts` writes copy that did not exist, against a character band,
+judged on craft. **Seven fields are not doing that job.** Their content already
+exists somewhere, and the model's task is to FIND it and SET IT OUT —
+transcription plus formatting, not generation:
+
+| Asset | Field | Carries |
+| --- | --- | --- |
+| Event Invitation Email | `Date / Location Line` [0-80] | date, time, timezone, venue — **four facts in one field** |
+| Event Reminder Email | `Date / Location Line` [0-80] | the same four (added Aug 2026) |
+| Event Landing Page | `Stat 1/2/3` [0-60] + Labels | figures |
+| On-Site Signage — Session Title Card | `Speaker Name(s)` [0-60] | named people |
+| On-Site Signage — Session Title Card | `Speaker Title / Company` [0-80] | named people, named employers |
+| On-Site Signage — Directional | `Location Label` [0-30] | a place |
+| One-Pager | `Proof Point / Stat` [0-80] | a figure |
+| Battle Card | `Proof Points` [0-200] | figures, usually a competitor's |
+
+**The seed shows the mismatch in one detail: every one of them carries a
+character band.** A band is a *creative* constraint — it tells a writer how much
+room they have to invent. A transcription field does not want a band, it wants
+the facts. `Date / Location Line` asking for four facts in ≤80 characters is the
+clearest case: a formatting budget being read as a writing brief.
+
+**Why this is the failure mode it is.** A generative field that invents is doing
+its job badly. A transcription field that invents is doing a *different job* —
+and nothing in the pipeline distinguishes them, so a field whose only correct
+output is the truth gets drafted by a prompt optimised for persuasion. Every
+craft.md specificity rule then applies to it, correctly, and produces a confident
+false fact.
+
+**The data path is not what is missing.** The raw brief reaches the drafter
+verbatim — a stated date, time and venue are in the prompt today, verified by
+building one. So a structured input surface (event metadata as data) is the
+obvious repair and also the most expensive: the brief is free text on BOTH
+surfaces, so it needs new input UI, a parse contract, or both.
+
+**The open question, and it deserves its own report rather than a decision from
+this note:** whether a transcription field should be drafted by the model at all.
+Candidates — a per-field flag in the asset library (`is_transcription`); a
+separate prompt path handed the facts and asked only to format; or leaving it
+generative and gating on whether the brief supplied the facts. Very different
+costs, and only the third is cheap.
+
 ### Stat provenance — make a reference figure checkable without retaining the source
 
 A figure extracted from a linked reference now reaches the drafter and can reach

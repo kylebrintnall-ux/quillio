@@ -23,10 +23,31 @@
 // of 5 across the two runs. The empty slot is the problem; the aggregate was not
 // evidence of it.
 //
-// The note that makes the silent case safe is attached per campaign by
+// The note that makes the silent case SAFER is attached per campaign by
 // pipeline.generateDoc, and it finds its field through fact_kind. So the field
-// without the column is a regression for every tenant, and the column without
-// the field leaves the reminder with nowhere to put a time it was given.
+// without the column is worse for every tenant, and the column without the field
+// leaves the reminder with nowhere to put a time it was given.
+//
+// THIS IS A PARTIAL FIX, CHOSEN DELIBERATELY. Say the number rather than let a
+// future reader assume the problem is solved:
+//
+//   • the note takes the empty Date / Location Line from 4/5 fabricated to 2/5.
+//     NOT to zero. The remaining two invent a time in the slot built to hold one.
+//   • it does NOTHING for the subject line, the headline or the preheader. Three
+//     wordings were measured — naming a line 6/35, one fact 10/35, naming no line
+//     15/35 — and the version naming NO line was WORSE than the shipped one, so
+//     the theory that its grammar was confining it is dead.
+//   • the best wording buys its 6/35 at the cost of five identical subject-line
+//     openings ("Starting soon"). Invention traded for uniformity, which this
+//     project has now measured three times.
+//
+// SHIPPED ANYWAY, on the is_copy precedent: a visible slot holding a placeholder
+// tells the writer a fact is missing; no slot tells them nothing. The generative
+// fields invent a time because the asset direction asks for urgency and, with no
+// real time, a fake one is the most available form of it — a sentence about
+// absence does not remove that pressure, and the campaign wording made it worse
+// because naming the hole makes the model reach harder. That is not a wording
+// problem and it is not this migration's to fix.
 //
 // WHY. Event Reminder Email shipped with a field list byte-identical to Event
 // Follow-Up / Recap Email. The follow-up genuinely needs no date — the event is

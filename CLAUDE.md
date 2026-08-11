@@ -1622,6 +1622,23 @@ soon". That is the pre-registered flatness, arriving exactly where it was
 predicted: invention traded for uniformity, with the count reading it as an
 improvement. It is the `char_min` floor result a third time.
 
+**SO THE NOTE SHIPS AS A FIELD INSTRUMENT AND NOTHING MORE**, and the limit is
+stated rather than left to be rediscovered: it takes the empty
+`Date / Location Line` from 4/5 fabricated to **2/5, not to zero**, and it does
+nothing for the Subject Line, Headline or Preheader.
+
+The mechanism, which is why no wording fixed it: the generative fields invent a
+time because `Event Reminder Email`'s `asset_direction` asks for "urgency without
+panic" and, with no real time, a fake one is the most available form of urgency.
+A sentence about the absence does not remove that pressure — and `campaign` at
+15/35 is what you would predict if naming the hole makes the model reach harder
+for a substitute. **The asset direction is correct guidance and must not be
+touched**; the problem is the missing fact, not the instruction to be urgent.
+
+Shipping 2/5 is a deliberate partial fix on the `is_copy` precedent: a visible
+slot holding a placeholder tells the writer a fact is missing, and no slot tells
+them nothing.
+
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 
 - **A — source leak.** Any distinctive token of a source name in the output.

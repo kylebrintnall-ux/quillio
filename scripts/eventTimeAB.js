@@ -46,6 +46,9 @@
 
 const { generateAssetDrafts } = require('../src/services/gemini');
 const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+// The SAME definitions the pipeline reads the brief with — one source, so the
+// measurement and the behaviour cannot drift apart silently.
+const { briefStatesDateTime, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
 
 const RUNS = Number(process.argv[2]) || 5;
 const ASSET = 'Event Reminder Email';
@@ -115,7 +118,12 @@ function inventedIn(text, brief) {
   return temporalIn(text).filter((t) => !b.includes(t.text.toLowerCase()));
 }
 
-function fieldsFor(asset, withDateField) {
+// `withNote` reproduces what pipeline.generateDoc does when a fact_kind:'datetime'
+// field meets a brief that states no date: the note joins the field's spec_note,
+// renders in the doc's italic line, and reaches the prompt as that field's
+// `Field guidance:`. Passing it here goes through the same prompt builder, so the
+// arm is the real thing rather than an imitation of it.
+function fieldsFor(asset, withDateField, withNote) {
   return (asset.fields || [])
     .filter((f) => withDateField || f.field_name !== DATE_FIELD)
     .map((f) => ({
@@ -123,11 +131,11 @@ function fieldsFor(asset, withDateField) {
       charMin: f.char_min || 0,
       charMax: f.char_max || 0,
       fieldType: f.field_type === 'words' ? 'words' : 'text',
-      notes: '',
+      notes: withNote && f.fact_kind === 'datetime' ? MISSING_DATETIME_NOTE : '',
     }));
 }
 
-async function cell(asset, brief, withDateField) {
+async function cell(asset, brief, withDateField, withNote) {
   const runs = [];
   for (let i = 0; i < RUNS; i++) {
     try {
@@ -137,7 +145,7 @@ async function cell(asset, brief, withDateField) {
         brief,
         summary: SUMMARY,
         writerPrompt: WRITER_PROMPT,
-        fields: fieldsFor(asset, withDateField),
+        fields: fieldsFor(asset, withDateField, withNote),
         voiceGuide: '',
       });
       const byName = {};
@@ -173,15 +181,36 @@ async function cell(asset, brief, withDateField) {
 
   const summary = [];
 
+  // THREE cells per arm, not two. The third is the one this run exists for: the
+  // field present AND carrying the note. In arm B the note is absent by design —
+  // pipeline.generateDoc only attaches it when the brief states nothing — so that
+  // cell is skipped rather than faked.
+  const CELLS = [
+    { field: false, note: false, label: `${DATE_FIELD}: absent` },
+    { field: true, note: false, label: `${DATE_FIELD}: PRESENT, no note` },
+    { field: true, note: true, label: `${DATE_FIELD}: PRESENT + NOTE` },
+  ];
+
   for (const [armName, brief] of [['A  brief SILENT', BRIEF_SILENT], ['B  brief STATES the time', BRIEF_STATED]]) {
-    for (const withField of [false, true]) {
-      const label = `${armName}   |   ${DATE_FIELD}: ${withField ? 'PRESENT' : 'absent'}`;
+    const briefStates = briefStatesDateTime(brief);
+    console.log(`\n\n### ${armName} — briefStatesDateTime() says ${briefStates}`);
+    if (armName.startsWith('A') === briefStates) {
+      console.error('  !! the detector disagrees with the fixture — the arms are not what they claim.');
+      process.exit(1);
+    }
+
+    for (const c of CELLS) {
+      // The note only exists when the brief is silent. Faking it in arm B would
+      // measure a state production never produces.
+      if (c.note && briefStates) continue;
+      const withField = c.field;
+      const label = `${armName}   |   ${c.label}`;
       console.log(`\n${'='.repeat(78)}\n${label}\n${'='.repeat(78)}`);
 
-      const runs = await cell(asset, brief, withField);
+      const runs = await cell(asset, brief, withField, c.note);
       const all = [];
 
-      for (const f of fieldsFor(asset, withField)) {
+      for (const f of fieldsFor(asset, withField, c.note)) {
         const copies = runs.map((r) => (r.__error ? `ERROR: ${r.__error}` : (r[f.fieldName] || '')));
         console.log(`\n  ${f.fieldName}  [${f.charMin}-${f.charMax}]`);
         copies.forEach((t) => {
@@ -214,17 +243,17 @@ async function cell(asset, brief, withDateField) {
       }
 
       summary.push({
-        arm: armName.split(' ')[0], field: withField ? 'present' : 'absent',
+        arm: armName.split(' ')[0], field: c.label.replace(`${DATE_FIELD}: `, ''),
         invented: invented.length, used: usedSupplied.length, vague: vague.length, n: all.length,
       });
     }
   }
 
   console.log(`\n${'='.repeat(78)}\nTHE 2x2\n${'='.repeat(78)}`);
-  console.log(`${'arm'.padEnd(6)}${'date field'.padEnd(13)}${'INVENTED'.padEnd(11)}${'used brief'.padEnd(13)}vague-safe`);
+  console.log(`${'arm'.padEnd(6)}${'date field'.padEnd(24)}${'INVENTED'.padEnd(11)}${'used brief'.padEnd(13)}vague-safe`);
   for (const r of summary) {
     console.log(
-      `${r.arm.padEnd(6)}${r.field.padEnd(13)}${`${r.invented}/${r.n}`.padEnd(11)}`
+      `${r.arm.padEnd(6)}${r.field.padEnd(24)}${`${r.invented}/${r.n}`.padEnd(11)}`
       + `${`${r.used}/${r.n}`.padEnd(13)}${r.vague}/${r.n}`
     );
   }
@@ -238,6 +267,10 @@ async function cell(asset, brief, withDateField) {
   console.log('     invention persists          correct in the slot, invented in the subject.');
   console.log('  A2 invents MORE than A1     -> the empty slot is an invitation. The field');
   console.log('                                 made the silent case worse. That is a result.');
+  console.log('');
+  console.log('THE CELL THIS RUN EXISTS FOR: A, PRESENT + NOTE. It was 15/35 with the empty');
+  console.log('field. If the note does not take it to near zero, the note is not carrying it');
+  console.log('and the FIELD SHOULD COME BACK OUT — the migration is held for exactly this.');
   console.log('');
   console.log('AND READ THE LINES, not the ratios. No numeric counter catches "Thursday",');
   console.log('and this detector misses spelled clock times and loose ranges by design.');

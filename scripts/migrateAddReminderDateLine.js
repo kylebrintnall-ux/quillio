@@ -1,7 +1,25 @@
 'use strict';
 
-// August 2026 migration: give Event Reminder Email a `Date / Location Line`
-// field, matching src/data/defaultAssets.js and Event Invitation Email.
+// August 2026 migration, THREE THINGS IN ONE TRANSACTION because shipping any of
+// them alone makes the product worse:
+//
+//   1. `copy_fields.fact_kind` — a nullable column naming which supplied fact a
+//      field CARRIES rather than generates. One value today: 'datetime'.
+//   2. That value seeded onto the four transcription fields.
+//   3. `Date / Location Line` on Event Reminder Email, matching
+//      src/data/defaultAssets.js and Event Invitation Email.
+//
+// WHY THEY CANNOT SHIP SEPARATELY. Measured with scripts/eventTimeAB.js: the
+// field is correct when the brief SUPPLIES a time (0 of 30 invented, 21 of 30
+// transcribed — the model does not override an available fact) and HARMFUL when
+// it does not (15 of 35 invented with the field, against 9 of 35 without it,
+// with the field itself fabricating 5 of 5 including a timezone nobody
+// mentioned). An empty transcription slot is a blank the model always fills.
+//
+// The note that makes the silent case safe is attached per campaign by
+// pipeline.generateDoc, and it finds its field through fact_kind. So the field
+// without the column is a regression for every tenant, and the column without
+// the field leaves the reminder with nowhere to put a time it was given.
 //
 // WHY. Event Reminder Email shipped with a field list byte-identical to Event
 // Follow-Up / Recap Email. The follow-up genuinely needs no date — the event is
@@ -41,11 +59,33 @@
 //
 //   node scripts/migrateAddReminderDateLine.js            # report only
 //   node scripts/migrateAddReminderDateLine.js --commit   # write
+//
+// A dry run DOES execute the ALTER inside the transaction it then rolls back —
+// otherwise the statements below could not read the column and the report would
+// be empty. Nothing survives the rollback.
+
 
 const ASSET = 'Event Reminder Email';
 const FIELD = 'Date / Location Line';
 const CHAR_MIN = 0;
 const CHAR_MAX = 80;
+
+// ADDITIVE AND NULLABLE, with no default. NULL is load-bearing — it MEANS "this
+// field generates rather than transcribes", which is every field but four — and
+// a NOT NULL DEFAULT would make the absence unrepresentable. Same rule the
+// override columns follow.
+const COLUMN_SQL =
+  "ALTER TABLE copy_fields ADD COLUMN IF NOT EXISTS fact_kind text";
+
+// Matched by field NAME here and only here: this is the one moment the seed's
+// names are authoritative. Everything downstream reads the COLUMN, so a tenant
+// who renames the field or adds their own keeps the flag on the row — which is
+// the whole reason the column exists rather than a name match in the pipeline.
+const FACT_KIND_FIELDS = [
+  ['Date / Location Line', 'datetime'],
+  ['Location Label', 'datetime'],
+  ['Track / Room Label', 'datetime'],
+];
 
 // The canonical order after the insert. Also the field list, so a tenant who
 // added their own fields keeps them (they simply are not reordered).
@@ -82,11 +122,31 @@ async function main() {
   }
 
   const client = new Client({ connectionString: url, ssl: sslFor(url) });
-  const stats = { types: 0, wouldInsert: 0, alreadyPresent: 0, reordered: 0 };
+  const stats = { types: 0, wouldInsert: 0, alreadyPresent: 0, reordered: 0, factKindSet: 0 };
 
   try {
     await client.connect();
     await client.query('BEGIN');
+
+    // 1. THE COLUMN. Idempotent, so re-running is a no-op. Run even on a dry run
+    //    — inside a transaction that rolls back — because every statement below
+    //    reads it, and a dry run that cannot see the column would report nothing.
+    console.log(`  ${COMMIT ? 'ALTER' : 'would alter'}: ${COLUMN_SQL}`);
+    await client.query(COLUMN_SQL);
+
+    // 2. THE VALUES. By field name, across every tenant, only where unset — so a
+    //    tenant who has already been marked (or marked something themselves) is
+    //    left alone. Guarded on the value being NULL rather than blind, per the
+    //    house rule for any migration that writes a value.
+    for (const [fieldName, kind] of FACT_KIND_FIELDS) {
+      const r = await client.query(
+        `UPDATE copy_fields SET fact_kind = $2
+          WHERE field_name = $1 AND fact_kind IS NULL`,
+        [fieldName, kind]
+      );
+      stats.factKindSet += r.rowCount;
+      console.log(`  ${COMMIT ? 'SET' : 'would set'} fact_kind='${kind}' on ${r.rowCount} row(s) named ${JSON.stringify(fieldName)}`);
+    }
 
     const typesRes = await client.query('SELECT id, tenant_id FROM asset_types WHERE name = $1', [ASSET]);
     if (typesRes.rows.length === 0) {
@@ -144,13 +204,15 @@ async function main() {
       await client.query('COMMIT');
       console.log(
         `[migrate-reminder-date] COMMITTED — asset_types touched=${stats.types}, `
-        + `inserted=${stats.wouldInsert}, alreadyPresent=${stats.alreadyPresent}, reordered=${stats.reordered}`
+        + `inserted=${stats.wouldInsert}, alreadyPresent=${stats.alreadyPresent}, `
+        + `reordered=${stats.reordered}, factKindSet=${stats.factKindSet}`
       );
     } else {
       await client.query('ROLLBACK');
       console.log(
         `[migrate-reminder-date] DRY RUN — asset_types=${stats.types}, `
-        + `wouldInsert=${stats.wouldInsert}, alreadyPresent=${stats.alreadyPresent}. `
+        + `wouldInsert=${stats.wouldInsert}, alreadyPresent=${stats.alreadyPresent}, `
+        + `factKindWouldSet=${stats.factKindSet}. `
         + 'Nothing was written. Re-run with --commit to apply.'
       );
     }
@@ -164,4 +226,8 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { COLUMN_SQL, FACT_KIND_FIELDS, FIELD, ASSET, CHAR_MIN, CHAR_MAX, ORDER };

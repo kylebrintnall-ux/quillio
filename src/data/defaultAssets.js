@@ -142,6 +142,23 @@ function classBand(assetName, fieldName) {
   return cls[key];
 }
 
+// WHICH FIELDS CARRY A SUPPLIED FACT rather than generating one. Keyed by field
+// NAME here because the seed is the only place a name is authoritative; the
+// column exists precisely so nothing downstream has to match on names — a tenant
+// who renames a field, or adds their own, keeps the flag on the row.
+//
+// One kind today, deliberately. `datetime` covers a date, a clock time and a
+// venue, because "Date / Location Line" is one field carrying all three and a
+// brief supplying only the venue still has something for it. The other candidate
+// classes (prices, named customers, deliverables, statistics) are enumerated in
+// ROADMAP.md and NOT started — this column takes one value and commits to
+// nothing else.
+const FACT_KIND_FIELDS = new Map([
+  ['Date / Location Line', 'datetime'],
+  ['Location Label', 'datetime'],
+  ['Track / Room Label', 'datetime'],
+]);
+
 const RAW = [
   ['LinkedIn Single Image Ad', 'Paid Social', [
     ['Intro Text', 0, 150],
@@ -721,6 +738,7 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
     spec_note: fieldSpecNote(name, field_name),
     spec_type: fieldSpecType(name, field_name),
     spec_source: fieldSpecSource(name, field_name),
+    fact_kind: FACT_KIND_FIELDS.get(field_name) || null,
   })),
 }));
 

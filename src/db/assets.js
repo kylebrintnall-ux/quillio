@@ -129,35 +129,53 @@ async function getTenantAssets(tenantId) {
   // auto-deploys `main` on merge, so this runs against a database without them
   // first (CLAUDE.md: either deploy order is safe). The fallback is the exact
   // pre-migration query and reports nothing overridden — which is true.
-  let fieldsRes;
-  try {
-    fieldsRes = await pool.query(
-      `SELECT asset_type_id, field_name,
-              COALESCE(char_min_override, char_min) AS char_min,
+  // PROGRESSIVE FALLBACK, because two independent migrations add columns here and
+  // Railway auto-deploys `main` on merge — so this code runs against a database
+  // missing either, or both (CLAUDE.md: either deploy order is safe). Each
+  // variant drops exactly one optional group and reports the honest default for
+  // it: nothing overridden, no fact kind. Ordered most-complete first, so a
+  // fully migrated database takes the first query and never pays for the rest.
+  //
+  // It is a LIST rather than nested try/catch because the two groups are
+  // independent: the override columns shipped first and are already in
+  // production, so the realistic gap is fact_kind alone, and a nested catch
+  // would have made that case fall back past the overrides it does have.
+  const OVERRIDE_COLS = `COALESCE(char_min_override, char_min) AS char_min,
               COALESCE(char_max_override, char_max) AS char_max,
-              field_type, sort_order, spec_source, spec_version, group_label,
               COALESCE(spec_note_override, spec_note) AS spec_note,
-              spec_type,
               (char_min_override IS NOT NULL
                 OR char_max_override IS NOT NULL
-                OR spec_note_override IS NOT NULL) AS spec_overridden
-         FROM copy_fields
-        WHERE asset_type_id = ANY($1::bigint[])
-        ORDER BY sort_order, id`,
-      [typeIds]
-    );
-  } catch (err) {
-    if (!isUndefinedColumn(err)) throw err;
-    warnMissingSchema('copy_fields.char_max_override', 'getTenantAssets', err);
-    fieldsRes = await pool.query(
-      `SELECT asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note, spec_type,
-              false AS spec_overridden
-         FROM copy_fields
-        WHERE asset_type_id = ANY($1::bigint[])
-        ORDER BY sort_order, id`,
-      [typeIds]
-    );
+                OR spec_note_override IS NOT NULL) AS spec_overridden`;
+  const NO_OVERRIDE_COLS = 'char_min, char_max, spec_note, false AS spec_overridden';
+  const variants = [
+    ['copy_fields.fact_kind', OVERRIDE_COLS, 'fact_kind'],
+    ['copy_fields.fact_kind', NO_OVERRIDE_COLS, 'fact_kind'],
+    ['copy_fields.char_max_override', OVERRIDE_COLS, 'NULL AS fact_kind'],
+    [null, NO_OVERRIDE_COLS, 'NULL AS fact_kind'],
+  ];
+
+  let fieldsRes = null;
+  let lastErr = null;
+  for (const [missing, valueCols, factCol] of variants) {
+    try {
+      fieldsRes = await pool.query(
+        `SELECT asset_type_id, field_name,
+                ${valueCols},
+                field_type, sort_order, spec_source, spec_version, group_label,
+                spec_type, ${factCol}
+           FROM copy_fields
+          WHERE asset_type_id = ANY($1::bigint[])
+          ORDER BY sort_order, id`,
+        [typeIds]
+      );
+      break;
+    } catch (err) {
+      if (!isUndefinedColumn(err)) throw err;
+      lastErr = err;
+      if (missing) warnMissingSchema(missing, 'getTenantAssets', err);
+    }
   }
+  if (!fieldsRes) throw lastErr;
 
   const fieldsByType = new Map();
   for (const row of fieldsRes.rows) {
@@ -171,6 +189,9 @@ async function getTenantAssets(tenantId) {
       spec_source: row.spec_source,
       spec_version: row.spec_version,
       group_label: row.group_label || null,
+      // Which supplied fact this field CARRIES, if any ('datetime' today). NULL on
+      // every generative field and on any database predating the column.
+      fact_kind: row.fact_kind || null,
       // An override of '' is the tenant DELETING the note, and COALESCE already
       // returned it. `|| null` folds '' to null here exactly as it always has for
       // an empty base note — the renderer treats both as "no note".

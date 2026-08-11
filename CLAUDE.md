@@ -1290,6 +1290,33 @@ answers "did the range move" and nothing else, so a run watching for
 **uniformity** needs a mode metric beside it or it will be told the opposite of
 what happened.
 
+##### A NEW METRIC'S FIRST RUN ESTABLISHES A BASELINE AND ANSWERS NOTHING
+
+The fifth instance, and the case is a **wrong prediction of mine** — recorded
+because it is more useful to the next reader than a correct one would be.
+
+Run 2 showed `Headline (Offer 1)` byte-identical twice. I proposed two mechanisms
+(character budget vs the Email-only proof rule), built a 2×2 to separate them,
+and put 70/30 on the proof rule. Run 3 came back **outcome four: neither**. Event
+Reminder AFTER 5/5 clean, Meta AFTER 5/5 clean at a *tighter* 40-char budget than
+the field that collapsed, and LinkedIn's headline collapsing in the **BEFORE**
+arm with no figures in the prompt at all. At n=5 the whole thing was noise.
+
+**The error was not overconfidence, it was sequencing.** `distinct`/`shapes` did
+not exist when run 2 produced the observation, so "2 of 5 byte-identical" had
+**no baseline** — no BEFORE-arm figure for that field, none for any other field,
+nothing to say what this model's duplication rate is at temperature 0.8 when
+nothing is wrong. I proposed the metric and the mechanism in the same breath and
+then reasoned as though the metric had already reported.
+
+So: **a mode metric needs a control arm exactly as much as a range metric does.**
+The first run of any new metric is a baseline run and settles nothing; the
+earliest a mechanism claim can be made is the second. The correct output of run 2
+was "we cannot know until this has run on both arms", not two priced fixes.
+
+The grid was still worth building — it ruled a hypothesis out cleanly, which is
+what it was for. What it ruled out happened to be mine.
+
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 
 - **A — source leak.** Any distinctive token of a source name in the output.

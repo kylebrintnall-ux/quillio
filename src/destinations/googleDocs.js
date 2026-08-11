@@ -314,7 +314,36 @@ const NOTE_SOURCE_LINKS = [
 // reach Gemini as this field's `Field guidance:` on 144 seeded fields.
 const HOUSE_DEFAULT_LINE = 'House default — set your own in Settings.';
 const HOUSE_DEFAULT_LINE_SET = 'House default — yours, set in Settings.';
-const HOUSE_DEFAULT_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET];
+
+// ONE RULE, APPLIED TWICE. The test is the one already stated above: does this
+// sentence address the READER OF THE DOC or the WRITER OF THE COPY? The Settings
+// pointer fails it, and so does this — "not a hard limit, adjust" is advice to a
+// human deciding whether to respect a number, and read as writing guidance it
+// contradicts the ceiling stated in the same prompt bullet:
+//
+//   - "Headline" — character limit 40 — stay within this limit; guidance:
+//     Recommended by Meta. Not a hard limit — adjust for your brand and goal.
+//
+// The character limit is the one constraint CLAUDE.md says always wins, and this
+// arrives on 10 fields telling the model it does not.
+const NOT_A_HARD_LIMIT = 'Not a hard limit — adjust for your brand and goal.';
+const READER_ONLY_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET, NOT_A_HARD_LIMIT];
+
+// The recommended tier's ATTRIBUTION clause — "Recommended by Meta.",
+// "Recommended by Constant Contact (2.1M customers, small-business campaigns)."
+// Removed for the reason the reference-stats block withholds a source name: a
+// source's NAME in a drafting prompt is an object the model can reason about and
+// reach for, and this project has already measured what that costs. Provenance is
+// the doc's job; guidance is the prompt's.
+//
+// The FINDING survives — "Longer bodies click less." is writing guidance and stays.
+// The lookahead requires whitespace or end after the stop, so the period inside
+// "2.1M" cannot end the match early.
+//
+// The trade, stated: a tenant note whose own sentence begins "Recommended by …"
+// loses that sentence. The cost is one sentence of guidance, not a harmful line,
+// and the alternative — anchoring to end-of-string — would eat the finding.
+const RECOMMENDED_ATTRIBUTION = /\s*Recommended(?: by .{1,120}?)?\.(?=\s|$)/g;
 
 // Remove the house-default sentence from a recovered italic line, leaving the
 // tenant's own spec_note (which IS writing guidance and must survive).
@@ -325,9 +354,10 @@ const HOUSE_DEFAULT_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET];
 // that only worked in one position would quietly start shipping the sentence to
 // Gemini the first time that happened. Both wordings are matched, so a doc built
 // before an override still strips after one.
-function stripHouseDefaultLine(text) {
+function stripReaderOnlyLines(text) {
   let out = String(text == null ? '' : text);
-  for (const line of HOUSE_DEFAULT_LINES) out = out.split(line).join(' ');
+  for (const line of READER_ONLY_LINES) out = out.split(line).join(' ');
+  out = out.replace(RECOMMENDED_ATTRIBUTION, ' ');
   return out.replace(/\s+/g, ' ').trim();
 }
 
@@ -974,7 +1004,7 @@ function parseDoc(doc) {
       // string shared across a module boundary and no import for gemini.js to
       // grow (it is already required by this file — the other direction would be
       // a cycle). The doc still shows the line; the drafter never sees it.
-      currentField.notes = stripHouseDefaultLine(text);
+      currentField.notes = stripReaderOnlyLines(text);
       currentField.insertIndex = item.endIndex;
       continue;
     }
@@ -1151,6 +1181,16 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
         fieldType: field.fieldType === 'words' ? 'words' : 'text',
         insertIndex: field.insertIndex,
         deleteEnd: field.deleteEnd,
+        // THE FIELD'S OWN GUIDANCE, WHICH THIS MAPPING USED TO DROP. parseDoc
+        // recovers the italic line into `notes` and this rebuild silently left it
+        // behind, so the gemini-side field-guidance composer got undefined on every
+        // copy-doc draft — no tenant spec_note, no seeded note, nothing. Only
+        // builtInFieldGuidance ever fired, because it keys on the field NAME.
+        //
+        // It went unnoticed because the A/B that proved the mechanism called
+        // generateAssetDrafts DIRECTLY with notes, so the measurement was clean
+        // and the wire between it and production was not.
+        notes: field.notes || '',
         // Highest existing "Riff N" batch number under this field (append uses +1).
         maxRiffN: field.maxRiffN || 0,
       })),
@@ -1226,6 +1266,9 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
                 charMax: f.charMax,
                 charMin: f.charMin,
                 fieldType: f.fieldType,
+                // Same drop, same fix: a scoped redraft was the other path that
+                // sent no per-field guidance at all.
+                notes: f.notes,
                 assetDirection: a.assetDirection,
                 summary,
                 writerPrompt,
@@ -1600,7 +1643,11 @@ async function getDocContent(id, clients) {
     // Per-field guidance: the italic line right after a label, before any copy.
     // Capture it for display, but never count it as drafted copy.
     if (field && italic && text && !field.copy && !field.notes) {
-      field.notes = text;
+      // SAME STRIP AS parseDoc. Nothing renders this today — routes/app.js and
+      // app.html never read it, and copyReview builds its prompts from `copy` —
+      // but an undocumented asymmetry one call site from shipping a Settings
+      // pointer into a review prompt is the shape of every silent failure here.
+      field.notes = stripReaderOnlyLines(text);
       continue;
     }
 
@@ -1881,7 +1928,8 @@ module.exports = {
   // interface (see the table in CLAUDE.md).
   HOUSE_DEFAULT_LINE,
   HOUSE_DEFAULT_LINE_SET,
-  stripHouseDefaultLine,
+  stripReaderOnlyLines,
+  NOT_A_HARD_LIMIT,
   appendBody,
   buildVariantBlock,
   // The composite (asset, field, instance) lookup key — exposed so its DEFAULT

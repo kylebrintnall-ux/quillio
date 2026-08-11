@@ -1044,6 +1044,49 @@ bullets rather than three boxes.
 So: fixing the asymmetry is cheap on its own and cheap alongside the datetime
 line, but doing both without collapsing them is the thing not to do.
 
+**STATUS: the datetime line has SHIPPED, so the web is now at two.** Remeasured
+at 390px on the real page: `out-unmatched` and `out-missing-fact` together are
+**142px with a 14px gap**, both above the CTA bar, nothing covered, no
+horizontal overflow. (The 149px in the paragraph above was a different pair
+measured earlier; 142 is this one.) The table above is otherwise unchanged — the
+clamp notice is still built on the web path and still thrown away, and Slack now
+renders three advisory blocks to the web's two.
+
+The trigger point is unchanged and is the thing to hold on to: **the third web
+advisory is where three boxes should collapse into one "a few things to check"
+block with bullets.** Adding the clamp notice to the web is what takes it there.
+
+### The Slack card's three context blocks have never been seen render — UNVERIFIED
+
+`buildResultBlocks` (`src/services/slack.js`) now pushes up to three `context`
+blocks under the asset list: `notice` (per-asset ceiling clamp),
+`unmatchedNotice` (a named asset that did not map), and `missingFactNotice` (the
+brief planned a field whose job is to carry a date or time it never supplied).
+
+What is proved and what is not:
+
+| | |
+| --- | --- |
+| the wording | shared with the web, unit-tested, identical string on both surfaces |
+| the block structure | structural tests assert three separate `context` blocks and that none is concatenated into another |
+| **how it LOOKS in Slack** | **nobody has looked.** No Slack workspace was available when it was built |
+
+Three `context` blocks stacked under a header, a title, an asset list and two
+link lines is a tall card, and Slack renders `context` in small grey type — which
+is right for one advisory and may read as a wall for three. That is the same
+judgement the web side already reached a decision about (collapse at three), and
+Slack is now AT three while the web is at two, so Slack hits the wall first.
+
+**Worth a glance on the next real brief that plans an Event asset with no date in
+it** — `Event Reminder Email` or `Event Invitation Email` is the trigger, and the
+line to look for names the `Date / Location Line`. All three at once needs a
+brief that also over-counts an asset and misnames another; one is enough to
+judge the type size and spacing.
+
+Nothing is broken and nothing is blocked on this. It is recorded because "check
+the Slack card some time" is exactly the kind of thing that gets remembered until
+it does not.
+
 ### Transcription fields — seven fields whose job is to CARRY a fact, in a pipeline with no concept of one
 
 **Deliberately not folded into the Event Reminder date-field fix.** That fix

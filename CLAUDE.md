@@ -1241,6 +1241,90 @@ project row. Same condition, surfaced on one document and silent on the other.
 Not fixed; recorded so the asymmetry is not mistaken for the copy-doc path being
 unable to produce it.
 
+### An outage drafted 1 of 40 and both surfaces called it ready
+
+August 2026, production: a prepaid Gemini balance ran out mid-brief. Every call
+came back 429, every field came back blank, and the two things the system said
+were each wrong in their own way.
+
+| What it said | Why it was wrong |
+| --- | --- |
+| `First draft ready — *Title* (1 field drafted).` | a true number under a false claim, with **no denominator** — so a run that lost 39 of 40 fields is indistinguishable from a one-field brief |
+| `All field drafts failed (Gemini timeout or error).` | named the two causes it was **not**, and implied a retry that was guaranteed to fail identically |
+
+**The denominator was never computed.** `fieldCount` is `inserts.length` — what
+was WRITTEN — and nothing beside it ever counted what was TRIED.
+`googleDocs.generateDraft` now returns `fieldsAttempted` and `failureReason`
+alongside it, and a short run loses the success headline on both surfaces:
+`⚠️ Draft incomplete — *Title* (1 of 40 fields drafted). <cause>` on Slack,
+`⚠ Draft incomplete — 1 of 40 fields drafted` in the web toast with the cause in
+an amber `copydone-shortfall` notice. **A complete run is byte-identical to what
+it always was** — the denominator appears only when it is not the whole story.
+
+**THE CAUSES WERE NEVER REACHABLE, AND THAT IS THE PART WORTH KNOWING.**
+`generateAssetDrafts` catches BOTH the batch call and the per-field rescue, so
+it never throws on a model failure — during the outage it returned a full set of
+empty drafts and `googleDocs`'s per-asset catch never fired once. Every asset
+logged `done: … (0 fields)`. So the class now rides out on the draft ENTRY
+(`entry.failure`), and `generateDraft` reads it **before** the
+`.filter((r) => … && r.copy)` that drops every blank — read it after and there
+is nothing left to read.
+
+**The class is attached in `callGemini`, not derived from the message later.**
+Four downstream places would otherwise need a regex over Google's wording. The
+attach point is also the only place still holding the HTTP status and the
+structured body.
+
+**The hard case is 429, and it is the case that happened.** Google returns it
+for a per-minute rate limit (wait) *and* a spent quota (pay), with
+`RESOURCE_EXHAUSTED` on both. `exhaustedKind` reads the QuotaFailure violation's
+`quotaId`: every violation on a per-minute/second clock → `rate_limit`,
+otherwise → `quota`. **An unparseable or detail-free body reads as `quota`,
+deliberately** — telling someone to check billing when it was a blip costs one
+look at a dashboard; telling them to wait when the balance is gone costs every
+retry after that, which is exactly what happened.
+
+`GEMINI_FAILURE_SENTENCES` is the **one** wording, rendered by both surfaces —
+the review-overlay duplication is the lesson not to repeat. `worstGeminiKind`
+reduces a run's classes by a fixed priority rather than by frequency: a spent
+balance shows up as timeouts and 5xx on the way down, and counting would let
+thirty symptoms outvote the one cause that explains them.
+
+**FAIL-FAST IS HELD, NOT REJECTED.** Nothing stops the run after the first
+`quota`, so a six-asset brief still fires roughly `1 + 2N` doomed calls per asset
+(the batch, each field's rescue, and the corrective rewrite when a rescue returns
+over-limit) — about 90 calls that cannot succeed. Held on purpose: a circuit
+breaker keyed on one class of one response is the kind of thing that trips on a
+transient and turns a recoverable run into an empty document, and there is
+exactly **one** recorded outage to design it against. The cost of waiting is
+latency and log noise on an already-failed run; the cost of getting it wrong is a
+run that would have succeeded. Revisit on the second occurrence, with two
+observations rather than one.
+
+### Nothing is written for a failed field — because blank is the only "still to do"
+
+The reason no placeholder, marker, or apology goes into the doc on a field that
+failed to draft, stated on its own because it will look like an omission to
+whoever meets it next.
+
+`parseDoc` recovers a field's draft from **the blank paragraph right after its
+bold label**, and reads any second paragraph there as drafted copy. That single
+convention is what makes the whole no-persisted-doc-state design work: it is how
+Regenerate knows what exists, how a scoped redraft finds its target, and how the
+web's `computeBlankFields` decides which chips are still empty.
+
+So writing *anything* into a failed field's slot marks it **done**. A
+`[draft failed]` line would survive the next Regenerate untouched, count toward
+`fieldCount`, and show up on the copy-done screen as a field that has copy. The
+blank is not an absence of a report — it **is** the report, in the one vocabulary
+every consumer already reads. The report of the failure belongs on the surfaces,
+which is what the entry above is about.
+
+The corollary, for anything added here later: a doc-level notice must go in its
+own paragraph away from a field label, or `parseDoc` will read it as somebody's
+copy. This is the same constraint that keeps `fieldHint` to exactly one
+paragraph.
+
 ### The batch-failure rescue gets siblings — FIXED, with an ordering limit
 
 `generateAssetDrafts` writes every field of an asset in ONE call so they can

@@ -526,7 +526,7 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
     tenantId: tenant && tenant.id,
     userId: actingUserId,
   });
-  const { title, fieldCount, url } = await pipeline.generateDraft(
+  const { title, fieldCount, fieldsAttempted, failureReason, url } = await pipeline.generateDraft(
     docId,
     direction,
     clients,
@@ -548,10 +548,24 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
     console.warn('[workflow] campaign folder lookup failed — doc link only:', err.message);
   }
 
-  const headline = isRegen ? 'Draft regenerated' : 'First draft ready';
-  const completionText = `${emoji('quillio-copy-done')} ${headline} — *${title}* (${fieldCount} field${
-    fieldCount === 1 ? '' : 's'
-  } drafted).`;
+  // A SHORT RUN DOES NOT GET THE SUCCESS HEADLINE. "First draft ready" above
+  // "1 field drafted" was true in its number and false in its claim — the count
+  // had no total beside it, so a run that lost 39 of 40 fields to an outage read
+  // as a small brief. The denominator appears only when it is not the whole
+  // story; a complete run keeps the wording it has always had, byte for byte.
+  const short = fieldsAttempted != null && fieldsAttempted > 0 && fieldCount < fieldsAttempted;
+  let completionText;
+  if (short) {
+    const cause = failureReason ? ` ${failureReason}` : '';
+    completionText =
+      `⚠️ ${isRegen ? 'Regeneration incomplete' : 'Draft incomplete'} — *${title}* ` +
+      `(${fieldCount} of ${fieldsAttempted} fields drafted).${cause}`;
+  } else {
+    const headline = isRegen ? 'Draft regenerated' : 'First draft ready';
+    completionText = `${emoji('quillio-copy-done')} ${headline} — *${title}* (${fieldCount} field${
+      fieldCount === 1 ? '' : 's'
+    } drafted).`;
+  }
 
   if (canLive) {
     await updateLive(channel, messageTs, completionText, copyCompleteBlocks(completionText, url, docId, folderUrl), tokens.slack_bot, runSeq);

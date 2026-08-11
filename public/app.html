@@ -1040,6 +1040,10 @@
         <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">
       </div>
       <div id="copydone-fallback" class="note hidden">Open in Drive to view the copy ↗</div>
+      <!-- Amber, not red: the doc exists and holds whatever was drafted, so this
+           is a shortfall to act on rather than a failure. Set both ways by
+           renderNotice on every draft, so a recovered rerun clears it. -->
+      <div id="copydone-shortfall" class="notice hidden"></div>
       <div id="copydone-assets"></div>
       <div id="copydone-error" class="error hidden"></div>
 
@@ -2682,8 +2686,31 @@
       if (docKind === 'template') body.doc = 'template'; // review the template document, not the copy doc
       return runJob('/api/review', body, '/api/review');
     }
-    function draftedLabel(n) {
-      return '✓ First draft ready' + (n != null ? ' — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted' : '');
+    // A SHORT RUN DOES NOT GET THE SUCCESS LABEL. The count used to arrive with
+    // no total beside it, so "1 field drafted" under "First draft ready" read as
+    // a small brief rather than a run that lost 39 fields to an outage. The
+    // denominator and the cause appear only when the run fell short; a complete
+    // run keeps the label it has always had. Same wording as the Slack card, off
+    // the same server-side sentence.
+    function draftIsShort(data) {
+      return !!(data && data.fieldsAttempted > 0 && data.fieldCount < data.fieldsAttempted);
+    }
+    function draftedLabel(n, attempted) {
+      if (n == null) return '✓ First draft ready';
+      if (attempted != null && attempted > 0 && n < attempted) {
+        return '⚠ Draft incomplete — ' + n + ' of ' + attempted + ' fields drafted';
+      }
+      return '✓ First draft ready — ' + n + ' field' + (n === 1 ? '' : 's') + ' drafted';
+    }
+    // The toast carries the headline and the notice carries the cause, because
+    // the toast dismisses itself after two seconds and a sentence telling someone
+    // their billing is spent should not. Both are set on every draft — the notice
+    // clears itself when the run was complete, so a good rerun removes it.
+    function reportDraftOutcome(data, okLabel) {
+      var short = draftIsShort(data);
+      renderNotice('copydone-shortfall', short && data.failureReason ? data.failureReason : '');
+      if (!short) { showToast(okLabel); return; }
+      showToast(draftedLabel(data.fieldCount, data.fieldsAttempted));
     }
 
     // Fetch the project's parsed doc content. Returns the content object, or
@@ -2836,6 +2863,10 @@
       document.getElementById('copydone-title').textContent = state.campaignTitle || 'Your copy is ready';
       var fallback = document.getElementById('copydone-fallback');
       clearError(document.getElementById('copydone-error'));
+      // Cleared here as well as by reportDraftOutcome, so the recovery paths —
+      // which reload the screen without a result object to read a shortfall from
+      // — cannot leave a previous run's cause showing over new copy.
+      renderNotice('copydone-shortfall', '');
       clearFieldSelection(); // fresh screen → no stale selection
       copydoneBlankFields = []; // recomputed once content loads
       refreshCopyDonePrimary();
@@ -2867,7 +2898,7 @@
         await loadCopyDone();
         if (state.projectId != null) patchStatus(state.projectId, 'in_progress');
         showScreen('copydone');
-        showToast(draftedLabel(data.fieldCount));
+        reportDraftOutcome(data, draftedLabel(data.fieldCount, data.fieldsAttempted));
       } catch (e) {
         stopGenerating();
         var content = await fetchDocContent();
@@ -2933,7 +2964,7 @@
         input.value = '';
         await loadCopyDone();
         showScreen('copydone');
-        showToast('✓ Draft updated');
+        reportDraftOutcome(data, '✓ Draft updated');
       } catch (e) {
         console.error('[app] regenerate /api/draft failed: ' + (e && e.name) + ' ' + (e && e.message));
         stopGenerating();

@@ -501,7 +501,15 @@ router.post('/api/draft', draftLimiter, requireAuth, (req, res) => {
   const jobId = startJob(`draft ${docKind} doc=${docId} ${mode}`, sessionTenant, async () => {
     const tenantContext = await resolveTenant(sessionTenant, null, sessionUserId);
     const out = await runWebDraft(docId, tenantContext, direction, scoped ? scopedFields : undefined, append, docKind);
-    return { docId: out.docId, fieldCount: out.fieldCount };
+    // fieldsAttempted + failureReason are how the toast tells "40 of 40" from
+    // "1 of 40" and says why. Absent on the template path, which has its own
+    // written/skipped/missing report.
+    return {
+      docId: out.docId,
+      fieldCount: out.fieldCount,
+      fieldsAttempted: out.fieldsAttempted,
+      failureReason: out.failureReason || null,
+    };
   });
   console.log(`[web] /api/draft start → job=${jobId} ${docKind} doc=${docId} tenant=${sessionTenant} mode=${mode}`);
   return res.status(202).json({ success: true, jobId });

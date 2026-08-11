@@ -1699,6 +1699,95 @@ test('the batch prompt states the floor too — the same omission had to be fixe
 // the prompt for every tenant on day one, not just for anyone who has opted in
 // through Settings. Asserted so the blast radius is a number in the repo rather
 // than a memory.
+test('per-field guidance survives the WHOLE copy-doc draft path, not just the builder', async () => {
+  // THE DROP THIS PINS. parseDoc recovered each field's italic line into `notes`
+  // and generateDraft's assetTargets rebuilt the field without it, so the gemini
+  // composer got undefined on every copy-doc draft — no tenant spec_note, no
+  // seeded note, nothing; only the name-keyed built-ins ever fired.
+  //
+  // A STRUCTURAL TEST WOULD NOT HAVE CAUGHT IT and neither did the A/B, because
+  // the A/B called generateAssetDrafts DIRECTLY with notes. The measurement was
+  // clean and the wire between it and production was not. So this drives the real
+  // entry point with a stubbed transport and reads the prompt.
+  const gd = require('../src/destinations/googleDocs');
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  let prompt = null;
+  cfg.GEMINI_API_KEY = 'test-key';
+  global.fetch = async (_u, o) => {
+    prompt = JSON.parse(o.body).contents[0].parts[0].text;
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"Subject Line 1":"x"}' }] } }] }) };
+  };
+
+  try {
+    let idx = 1;
+    const paras = [
+      { text: 'Campaign Summary', style: 'HEADING_2' }, { text: 'S', italic: true },
+      { text: 'Writer Direction', style: 'HEADING_2' }, { text: 'W', italic: true },
+      { text: 'Demand Gen Nurture Email', style: 'HEADING_3' },
+      { text: 'Subject Line 1 [130]', bold: true },
+      // As fieldHint composes it: the seeded note, then the reader-only tier line.
+      { text: 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus) House default — set your own in Settings.', italic: true },
+      { text: '' },
+    ];
+    const content = paras.map((p) => {
+      const raw = (p.text || '') + '\n';
+      const start = idx; idx += raw.length;
+      return { startIndex: start, endIndex: idx, paragraph: {
+        paragraphStyle: p.style ? { namedStyleType: p.style } : {},
+        elements: [{ textRun: { content: raw, textStyle: { bold: !!p.bold, italic: !!p.italic } } }],
+      } };
+    });
+    const clients = { docs: { documents: {
+      get: async () => ({ data: { body: { content } } }),
+      batchUpdate: async () => ({ data: {} }),
+    } } };
+
+    await gd.generateDraft('doc', null, clients, null, null, null, false, 'brief');
+
+    assert.ok(prompt, 'a prompt was built');
+    assert.match(prompt, /front-load the first 40/, 'the seeded note reaches the drafter');
+    assert.match(prompt, /guidance: Mobile inboxes cut around 40 characters/,
+      'and arrives as that field\'s guidance, not loose text');
+    // AND THE READER-ONLY SENTENCE DOES NOT. Stripped at recovery, so restoring
+    // notes cannot ship a Settings pointer as creative direction.
+    assert.ok(!/set your own in Settings/.test(prompt), 'the Settings pointer stays out');
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+  }
+});
+
+test('one strip, two rules: reader-facing sentences out, writing guidance in', () => {
+  const { stripReaderOnlyLines, NOT_A_HARD_LIMIT, HOUSE_DEFAULT_LINE } = require('../src/destinations/googleDocs');
+
+  // THE TEST IS THE ONE ALREADY IN THE CODE: does this sentence address the
+  // READER OF THE DOC or the WRITER OF THE COPY? The Settings pointer fails it.
+  // So does "not a hard limit, adjust" — advice to a human deciding whether to
+  // respect a number, which read as writing guidance CONTRADICTS the ceiling
+  // stated in the same prompt bullet, on the one constraint that always wins.
+  assert.strictEqual(stripReaderOnlyLines(`Recommended by Meta. ${NOT_A_HARD_LIMIT}`), '');
+  assert.strictEqual(stripReaderOnlyLines(`Keep it short. ${HOUSE_DEFAULT_LINE}`), 'Keep it short.');
+
+  // THE FINDING SURVIVES — it is writing guidance, unlike the attribution. The
+  // source NAME goes for the same reason the reference-stats block withholds one:
+  // a name in a drafting prompt is an object the model can reach for.
+  assert.strictEqual(
+    stripReaderOnlyLines('One of two body blocks. Recommended by Constant Contact (2.1M customers, small-business campaigns). Longer bodies click less.'),
+    'One of two body blocks. Longer bodies click less.'
+  );
+
+  // ENFORCED IS LEFT ALONE. Redundant with the limit clause beside it, but it is
+  // the one tier line that AGREES with the prompt. Logged, not stripped.
+  assert.strictEqual(
+    stripReaderOnlyLines('Platform limit (LinkedIn). Stay within this count.'),
+    'Platform limit (LinkedIn). Stay within this count.'
+  );
+  // And real craft is untouched.
+  assert.match(stripReaderOnlyLines('Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)'), /front-load/);
+});
+
 test('briefFacts: a date, a time or a venue in the brief — and the safe direction on a miss', () => {
   const { briefStatesDateTime, briefFacts, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
 
@@ -1929,7 +2018,7 @@ test('both draft prompts build their guidance through fieldGuidanceFor', () => {
 test('the composed fallback changes no seeded field: none carries both a note and a built-in rule', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { builtInFieldGuidance, fieldGuidanceFor } = require('../src/services/gemini');
-  const { fieldHint, stripHouseDefaultLine } = require('../src/destinations/googleDocs');
+  const { fieldHint, stripReaderOnlyLines } = require('../src/destinations/googleDocs');
 
   const both = [];
   let builtIn = 0;
@@ -1949,7 +2038,7 @@ test('the composed fallback changes no seeded field: none carries both a note an
         specType: f.spec_type,
         specSource: f.spec_source || a.spec_source,
       });
-      const notes = stripHouseDefaultLine(hint ? hint.text : '');
+      const notes = stripReaderOnlyLines(hint ? hint.text : '');
       if (notes) both.push(`${a.name} / ${f.field_name}`);
       // The composed value equals the old `||` result for every seeded field.
       assert.strictEqual(
@@ -10963,7 +11052,7 @@ test('a seeded asset is read-only apart from is_active, decided by NAME', () => 
 // and the sentence that does it must not become drafting instructions.
 test('the house-default line reaches the doc and never reaches a prompt', () => {
   const {
-    fieldHint, parseDoc, stripHouseDefaultLine, HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET,
+    fieldHint, parseDoc, stripReaderOnlyLines, HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET,
   } = require('../src/destinations/googleDocs');
 
   // It is in the doc.
@@ -10973,27 +11062,27 @@ test('the house-default line reaches the doc and never reaches a prompt', () => 
   // becomes the field's `Field guidance:` (gemini.fieldGuidanceFor). "Set your
   // own in Settings" is addressed to the TENANT, not the writer, and on 144
   // seeded fields it would be the only guidance most of them carry.
-  assert.strictEqual(stripHouseDefaultLine(HOUSE_DEFAULT_LINE), '');
-  assert.strictEqual(stripHouseDefaultLine(HOUSE_DEFAULT_LINE_SET), '', 'both wordings');
+  assert.strictEqual(stripReaderOnlyLines(HOUSE_DEFAULT_LINE), '');
+  assert.strictEqual(stripReaderOnlyLines(HOUSE_DEFAULT_LINE_SET), '', 'both wordings');
   // The tenant's own note IS writing guidance and must survive intact.
   assert.strictEqual(
-    stripHouseDefaultLine(`Lead with the outcome. ${HOUSE_DEFAULT_LINE}`),
+    stripReaderOnlyLines(`Lead with the outcome. ${HOUSE_DEFAULT_LINE}`),
     'Lead with the outcome.'
   );
   // A doc built before an override still strips after one — the wording changed
   // under it and the old sentence is still on the page.
   assert.strictEqual(
-    stripHouseDefaultLine(`Lead with the outcome. ${HOUSE_DEFAULT_LINE_SET}`),
+    stripReaderOnlyLines(`Lead with the outcome. ${HOUSE_DEFAULT_LINE_SET}`),
     'Lead with the outcome.'
   );
   // Position-independent: fieldHint always appends, but a doc is a document and
   // somebody will reorder the line by hand.
-  assert.strictEqual(stripHouseDefaultLine(`${HOUSE_DEFAULT_LINE} Lead with it.`), 'Lead with it.');
+  assert.strictEqual(stripReaderOnlyLines(`${HOUSE_DEFAULT_LINE} Lead with it.`), 'Lead with it.');
   // An authority line is NOT stripped — it is a real constraint on the writing.
   const enf = 'Platform limit (LinkedIn). Stay within this count.';
-  assert.strictEqual(stripHouseDefaultLine(enf), enf);
-  assert.strictEqual(stripHouseDefaultLine(''), '');
-  assert.strictEqual(stripHouseDefaultLine(null), '');
+  assert.strictEqual(stripReaderOnlyLines(enf), enf);
+  assert.strictEqual(stripReaderOnlyLines(''), '');
+  assert.strictEqual(stripReaderOnlyLines(null), '');
 
   // AND IT IS WIRED: parseDoc, the only producer of prompt-facing notes, applies
   // it. Asserted through the parser rather than the helper, because a helper

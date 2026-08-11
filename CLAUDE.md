@@ -1162,6 +1162,74 @@ Subhead (do not echo the headline) — mechanics, invisible in the doc when they
 stop being sent, and nothing errors. It never fired only because all 20 seeded
 instances are `house_default` with a NULL note.
 
+**AND ON THE COPY DOC IT NEVER FIRED AT ALL, BECAUSE `notes` NEVER ARRIVED.**
+`parseDoc` recovered each field's italic line into `notes` and `generateDraft`'s
+`assetTargets` rebuilt the field without it, so the composer got `undefined` on
+every copy-doc draft — no tenant `spec_note`, no seeded note, no tier line. Only
+`builtInFieldGuidance` ever ran, because it keys on the field NAME. Fixed August
+2026; the paragraphs above describe what the code intended, this one what it did.
+
+**How it survived: the A/B that proved the mechanism called `generateAssetDrafts`
+DIRECTLY with notes.** The measurement was clean and the wire between it and
+production was not. So beside "drive a measurement script with a stub" now sits:
+**check the measurement calls the entry point production calls.** A regression
+test drives `generateDraft` itself with a stubbed transport and reads the prompt,
+because no structural test can see a field rebuilt without a key.
+
+**What restoring it switched on: 25 of 173 seeded fields.** 12 × the Litmus
+"front-load the first 40" line on every email Subject Line and Preheader, 5 × the
+LinkedIn Carousel Lead-Gen-Form caveat, plus the Organic Social hook note, the
+Offer Body 1 split note and the Sales Basho first-touch note. 128 fields carry a
+house-default line only and strip to nothing, so they stay silent.
+
+### The strip is ONE RULE APPLIED TWICE — reader of the doc, or writer of the copy
+
+`stripReaderOnlyLines` (was `stripHouseDefaultLine`) removes a sentence when it
+addresses the **reader of the document** rather than the **writer of the copy**:
+
+| Removed | Why |
+| --- | --- |
+| `House default — set your own in Settings.` (both wordings) | a UI pointer |
+| `Not a hard limit — adjust for your brand and goal.` | advice to a human deciding whether to respect a number — read as writing guidance it **contradicts the ceiling in the same bullet** |
+| `Recommended by <source>.` | a source NAME in a drafting prompt, whose cost this project has already measured |
+
+The contradiction is the one that mattered. Composed, the bullet read:
+
+    - "Headline" — character limit 40 — stay within this limit; guidance:
+      Recommended by Meta. Not a hard limit — adjust for your brand and goal.
+
+on **10 fields** (Meta Single ×3, Meta Carousel ×7), telling the model the one
+constraint this file says always wins is negotiable.
+
+**The research FINDING survives** — "Longer bodies click less." is writing
+guidance; the attribution around it goes. If a finding is worth sending it belongs
+in `spec_note`, the writing-guidance channel; `spec_type` is the provenance
+channel, and keeping them apart is the rule.
+
+**`enforced` is deliberately NOT stripped, and it IS redundant.** "Platform limit
+(LinkedIn). Stay within this count." sits beside "character limit 70 — stay within
+this limit" in the same bullet, on ~9 fields. Not wrong — it is the one tier line
+that agrees with the prompt — so it is logged rather than fixed. **If a
+before/after ever shows flatness on LinkedIn, X or Google Display assets, a
+duplicated constraint is a candidate cause and this is where to look.**
+
+**`getDocContent` strips identically now.** It had set `field.notes` raw. Nothing
+renders it — `routes/app.js` and `app.html` never read it, `copyReview` builds
+prompts from `copy` — but an undocumented asymmetry one call site from shipping a
+Settings pointer into a review prompt is the shape of every silent failure here.
+
+**The template path was never affected.** `core/pipeline.js` passes
+`notes: m.spec_note` raw from the marker, so it has always had per-field guidance
+and has no composed tier line to strip.
+
+**`scripts/notesAB.js` measures whether any of it helps**, and adds an OPENINGS
+metric beside `distinct` and `shapes`: how many samples share their first four
+words. "Front-load the first 40" acts on the opening, so five lines that begin
+identically and diverge after read as **5/5 distinct AND 5/5 shapes** — verified
+against a stub, where the openings column read 1/5 while both others read 5/5.
+Range, mode and opening are three different properties and the first two cannot
+see the third.
+
 **Known gap — a copy-doc draft kept OVER its limit is invisible.**
 `generateAssetDrafts` marks a field `unenforced` when the single-field rescue
 fails or returns long: the draft is kept and written, but its limit was never
@@ -1359,6 +1427,43 @@ was "we cannot know until this has run on both arms", not two priced fixes.
 
 The grid was still worth building — it ruled a hypothesis out cleanly, which is
 what it was for. What it ruled out happened to be mine.
+
+##### THE DENOMINATOR MOVED: an aggregate over a changed field set
+
+The next entry, and the first where the metric measured the right thing and
+still lied — because the population it divided by was not the same population.
+
+`eventTimeAB`, silent-brief arm, before and after the note:
+
+| | invented | fields | what the ratio suggests |
+| --- | --- | --- | --- |
+| no date field | 10/30 | 6 | |
+| field + note | 9/35 | 7 | "barely moved" |
+
+Read as a rate that is 33% → 26%, which reads as a weak result. Read per field
+it is two separate outcomes pointing opposite ways:
+
+- **The transcription field went 5/5 → 0/5.** Every `Date / Location Line` came
+  back a placeholder — `[Date] at [Time] — Live on Zoom`, `Live online — [Insert
+  Date and Time]`. It had been fabricating two different times and an invented
+  timezone. **Nobody specified a bracket convention**; being told the line waits
+  was enough to produce the honest form, which is the strongest evidence in this
+  file that stating an absence beats prohibiting an act.
+- **The generative fields did not move at all.** All 9 remaining inventions are
+  Subject Line, Headline or Body Copy — "today", "tomorrow", "in 1 hour". The
+  note is field-scoped guidance and reaches one field's `Field guidance:` line,
+  so it could not have touched them.
+
+**The aggregate averaged a fixed field with six unchanged ones and a seventh
+appeared in the denominator.** A per-field count would have shown a clean fix and
+an untouched problem side by side; the ratio showed a mediocre one.
+
+So the rule gains a clause: **when a change alters the field SET, an aggregate
+over fields is not comparable across arms.** Report per field, or report over the
+fields that existed in both arms. This is distinct from the four cases above —
+those were metrics watching the wrong property. This one watched the right
+property and divided by the wrong population, which is harder to notice because
+the number looks well-formed.
 
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 

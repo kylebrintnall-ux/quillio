@@ -38,14 +38,21 @@
 // built here, so no migration is needed to measure either arm and nothing is
 // written anywhere.
 //
-// MAKES REAL MODEL CALLS — 4 cells x N runs, one batch call each. Writes
-// NOTHING. Read-only against Gemini, safe to run in production.
+// MAKES REAL MODEL CALLS — 5 cells x N runs, THROUGH generateDraft. Writes
+// NOTHING: documents.get returns a synthetic doc, documents.batchUpdate is a
+// no-op. Read-only against Gemini, safe to run in production.
 //
 //   node scripts/eventTimeAB.js        # 5 runs per cell (20 calls)
 //   node scripts/eventTimeAB.js 3      # 12 calls
 
-const { generateAssetDrafts } = require('../src/services/gemini');
 const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+// THROUGH THE REAL PATH. This script used to call generateAssetDrafts directly,
+// and that is how it reported the Date / Location Line going 5/5 -> 0/5 on a wire
+// production did not use: generateDraft's assetTargets rebuilt every field
+// without notes, so the note never reached the model. Fixed August 2026, and this
+// harness exists so the arms cannot drift off the path again. Each note cell
+// asserts its own guidance arrived (wireOk) before its number means anything.
+const { draftOnce, noteLineFor, wireOk } = require('./lib/realDraftPath');
 // The SAME definitions the pipeline reads the brief with — one source, so the
 // measurement and the behaviour cannot drift apart silently.
 const { briefStatesDateTime, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
@@ -123,39 +130,35 @@ function inventedIn(text, brief) {
 // renders in the doc's italic line, and reaches the prompt as that field's
 // `Field guidance:`. Passing it here goes through the same prompt builder, so the
 // arm is the real thing rather than an imitation of it.
-function fieldsFor(asset, withDateField, withNote) {
-  return (asset.fields || [])
-    .filter((f) => withDateField || f.field_name !== DATE_FIELD)
-    .map((f) => ({
-      fieldName: f.field_name,
-      charMin: f.char_min || 0,
-      charMax: f.char_max || 0,
-      fieldType: f.field_type === 'words' ? 'words' : 'text',
-      notes: withNote && f.fact_kind === 'datetime' ? MISSING_DATETIME_NOTE : '',
-    }));
+function fieldsFor(asset, withDateField) {
+  return (asset.fields || []).filter((f) => withDateField || f.field_name !== DATE_FIELD);
 }
 
 async function cell(asset, brief, withDateField, withNote) {
+  const fields = fieldsFor(asset, withDateField);
   const runs = [];
+  let wired = 0;
   for (let i = 0; i < RUNS; i++) {
     try {
-      const drafts = await generateAssetDrafts({
-        assetType: asset.name,
-        assetDirection: asset.asset_direction || '',
-        brief,
+      const { copy, prompts } = await draftOnce({
+        assetName: asset.name,
+        fields,
         summary: SUMMARY,
         writerPrompt: WRITER_PROMPT,
-        fields: fieldsFor(asset, withDateField, withNote),
-        voiceGuide: '',
+        brief,
+        assetDirection: asset.asset_direction || '',
+        noteFor: (f) => noteLineFor(f, withNote && f.fact_kind === 'datetime' ? MISSING_DATETIME_NOTE : null),
       });
-      const byName = {};
-      for (const d of drafts || []) byName[d.fieldName] = String(d.copy || '').trim();
-      runs.push(byName);
+      // THE WIRE CHECK. An arm that cannot show its own guidance reached a prompt
+      // is not a control, and its number describes nothing. This is the exact
+      // failure that made the first 0/5 meaningless.
+      if (!withNote || wireOk(prompts, MISSING_DATETIME_NOTE)) wired++;
+      runs.push(copy);
     } catch (err) {
       runs.push({ __error: err.message });
     }
   }
-  return runs;
+  return { runs, wired };
 }
 
 (async () => {
@@ -207,10 +210,16 @@ async function cell(asset, brief, withDateField, withNote) {
       const label = `${armName}   |   ${c.label}`;
       console.log(`\n${'='.repeat(78)}\n${label}\n${'='.repeat(78)}`);
 
-      const runs = await cell(asset, brief, withField, c.note);
+      const { runs, wired } = await cell(asset, brief, withField, c.note);
+      if (c.note && wired !== RUNS) {
+        console.error(`  !! THE NOTE REACHED ONLY ${wired}/${RUNS} PROMPTS — this cell is not a control.`);
+        process.exit(1);
+      }
+      if (c.note) console.log(`  wire check: the note reached ${wired}/${RUNS} prompts`);
       const all = [];
 
-      for (const f of fieldsFor(asset, withField, c.note)) {
+      for (const seed of fieldsFor(asset, withField)) {
+        const f = { fieldName: seed.field_name, charMin: seed.char_min || 0, charMax: seed.char_max || 0 };
         const copies = runs.map((r) => (r.__error ? `ERROR: ${r.__error}` : (r[f.fieldName] || '')));
         console.log(`\n  ${f.fieldName}  [${f.charMin}-${f.charMax}]`);
         copies.forEach((t) => {

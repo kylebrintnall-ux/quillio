@@ -1465,6 +1465,48 @@ those were metrics watching the wrong property. This one watched the right
 property and divided by the wrong population, which is harder to notice because
 the number looks well-formed.
 
+##### A COUNT MISSING A GAIN — and the rule generalises in BOTH directions
+
+The last entry, and the first where **every column read clean and the change was
+real and good**. `notesAB`, Subject Line 1, per-field guidance arriving for the
+first time:
+
+| | spread | distinct | shapes | openings |
+| --- | --- | --- | --- | --- |
+| BEFORE | 6 | 4/5 | 4/5 | 4/5 |
+| AFTER | 19 | 5/5 | 5/5 | 4/5 |
+
+Nothing collapsed. The pre-registered failure — "front-load the first 40"
+converging five openings — did not happen, and the `openings` column built for it
+answered no. All correct, and all beside the point.
+
+**What actually happened was visible only in the copy.** Median length went
+**55 → 44**, and the AFTER lines are 39/41/44/48/58 — four of five at or near the
+40-character mobile cut, where NONE of the BEFORE lines were. The note did not
+flatten the field; it moved the field inside the constraint the note describes,
+which is the thing the field is FOR.
+
+**No column measured the note's own claim.** So `notesAB` now pulls the number out
+of the note — "front-load the first 40", "~35–40 characters" — and reports how
+many samples fall inside it, in BOTH arms. Verified against the observed lengths:
+`WITHIN 1/5 → 4/5`. That would have led the read instead of following it.
+
+**THE RULE, RESTATED.** Four earlier instances were counts missing a COST, and it
+would be easy to read this file as "a count hides regressions". It does not: a
+count cannot tell you whether the copy got **better or worse**. It is not
+directional. The only instrument that has ever answered that question in this
+project is reading the copy.
+
+**THE TRADE, recorded because it is real.** BEFORE's best line — "Six templates
+for one campaign brief is five too many", 53 characters — is better than anything
+in AFTER. The guidance trades wit for visibility. That is the correct trade for a
+subject line, AND it is a judgement a writer should make knowingly: the note now
+renders in the doc beside the field, so the constraint is visible rather than
+silent, and a writer who wants the 53-character line can take it.
+
+All 25 notes stay. They act on the constraint they name without costing variety,
+which is the opposite of what the `char_min` floor did.
+
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 
 - **A — source leak.** Any distinctive token of a source name in the output.

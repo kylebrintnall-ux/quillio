@@ -642,105 +642,38 @@ The script is worth keeping rather than deleting: it is the repair for a state
 another tenant's database could still be in, and the guard if the three inserting
 migrations are ever re-run against a database that has since been backfilled.
 
-## NO COMMENT QUILLIO POSTS IS ANCHORED — and "cell" was the wrong diagnosis
+## Review comments are UNANCHORED — the explanation lives in the source
 
-Every review comment on a copy doc rendered in the Docs UI as **"Original content
-deleted"**, for as long as the feature has existed. The cause was not table cells,
-not offsets, not a stale revision. `addReviewComment` sent `quotedFileContent` and
-no `anchor`, and a quote that cannot resolve to a region is precisely what produces
-that banner.
+Nothing Quillio posts to a Google Doc is anchored, and nothing can be: Drive
+publishes no text-anchor format for native Docs. Every review comment used to
+render as **"Original content deleted"** because `addReviewComment` sent
+`quotedFileContent` with no `anchor`.
 
-**`quotedFileContent` is not an anchor and never was.** It is the quoted TEXT of a
-comment; Drive does not search the document for it. Anchoring is the separate
-`anchor` field, Google publishes no text-anchor format for native Google Docs, and
-`documents.batchUpdate` has no comment request type — **there is no supported way
-to create an anchored comment on a Doc at all.** Reverse-engineering one is
-silent-breakage risk and was explicitly declined.
+**The full account is in the code, and deliberately only there** — the previous
+version of this file carried a second copy, which is the exact failure mode that
+produced the bug (a comment claiming anchoring was "verified" while the source did
+something else). Read, in this order:
 
-**The template-document note was right for the wrong reason, and this correction is
-the point of this section.** `googleDocs.addUnanchoredComment` and
-`services/templateReview.js` both record the probe's six "Original content deleted"
-results as a fact about **table cells** — "every cell of a template document is a
-table cell, so there is no anchored path here to fall back FROM". The conclusion
-(post unanchored) was correct. The attribution was not: paragraphs behave
-identically, which is why the copy doc had the same banner on every comment it ever
-posted. **There was never an anchored path to fall back from anywhere.** Those two
-source comments still carry the cell wording and are a known-stale follow-up.
+- `destinations/googleDocs.js`, the `--- Copy-review comments ---` header — the
+  cause, and how a false "(verified)" survived.
+- `services/copyReview.js`, "The comment LOCATOR" — what carries the location now,
+  and why matching is looser than what it displays.
+- `services/copyReview.js` `orphanSweepIds` — which comments get swept, and why a
+  human's comment can never be one of them.
 
-**How it survived four months.** Two independent gaps, and both are the reusable
-lesson:
+Two things that are NOT in the source, because neither belongs to one file:
 
-| | |
-| --- | --- |
-| The "(verified)" was never a verification | It traced to `scripts/testDocComment.js`, which prints the create response and then **asks a human to open the doc and report back**. No result was ever recorded — and the create response is identical either way, because Drive returns 200 and an id whether or not it anchored anything |
-| The read-back could not see it | `listReviewComments` requested `quotedFileContent/value` and **not `anchor`** — the one field that says whether Drive pinned anything. `scripts/probeCellCommentAnchor.js` names the trap outright: *"'the quote came back' is the result that would be easiest to mistake for success."* |
-
-`anchor` is now requested and surfaced (expect `''` on every row) so the next person
-can read the answer instead of inferring it.
-
-### The location lives in the comment TEXT now — the locator line
-
-`services/copyReview.js` composes every comment as three parts:
-
-```
-Headline (Offer 1) [50] · option 2 (Proof) — Demand Gen Nurture Email
-“Get hours back every week without changing your…”
-
-<the model's note, byte-for-byte unchanged>
-```
-
-- **Line 1 is the LOCATOR** and does two jobs: a reader can find the field, and
-  re-review can find its own previous comment without an anchor.
-- The label is the doc's bold paragraph **verbatim** — `getDocContent` now carries
-  `field.label`. Reconstructing it from `fieldName` + `charMin`/`charMax` would be
-  a second renderer of `fieldLabel`, free to drift from the one that wrote the
-  page, and the whole claim of the line is that it matches what the reader sees.
-- **The asset is on the line because the label is not unique** — two assets can
-  both have `Headline [50]`. It carries `instanceTag`, so two instances of one
-  asset differ too.
-- Line 2 is a **short verbatim fragment** (≤8 words, ≤60 chars, whitespace
-  collapsed), not a reconstruction of the field. A whole-field quote is exactly
-  what the anchor used to carry and exactly what could not be kept faithful —
-  `getDocContent` joins paragraphs with `\n`, `stripSoloLabel` removes the doorway
-  tag, and everything is trimmed.
-
-### Matching moved off the quote, and that was the risk worth checking
-
-`reconcileComments` matched on comment CONTENT first and fell back to the **quote
-read back from Drive**. Nothing sends a quote now, so `c.quote` is `''` on every
-row — left alone, the fallback would have collapsed every comment onto one key,
-matched nothing, and **re-posted every note on every review pass.**
-
-The fallback is the LOCATOR instead, and it is strictly better at the job: it
-identifies the review UNIT rather than its copy, so it does not change when the
-writer edits the field. That is why the old *two* quote lookups (current copy, then
-prior copy) collapse to one.
-
-**Two things stopped being true, both of them improvements:**
-
-- **State now carries `note` beside `comment`.** `comment` is the posted body (what
-  Drive holds, what `byContent` matches); `note` is the model's words. The digest
-  and the "here is what you said last time" prompt input read `note`, so no reader
-  or prompt ever sees a locator line. `priorNote()` falls back to `comment` for
-  state written before this change, so **no migration is needed** — a legacy
-  comment is still found by content, and is left in place rather than duplicated.
-- **The duplicate-copy guard is gone as a limit.** It was keyed on the copy text
-  because two comments quoting the same string would have made Drive pick one; the
-  second field's note was silently dropped. Nothing is quoted now, so it is keyed on
-  the locator, and two fields holding identical copy each keep their own note. The
-  test that recorded this as a "KNOWN LIMIT" now asserts the opposite.
-
-**Known and unchanged: a lost `doc_reviews` row churns comments.** With no prior
-state there is no prior copy, so every field reads as new and takes the changed
-branch — the existing comment is deleted and re-posted rather than kept. Net one
-comment, never two, and **byte-for-byte what the quote-matching version did** (it
-was checked against the pre-change code, not assumed). The locator makes it fixable
-where an orphaned quote did not; it was left alone because it is not a regression.
-
-**Not verified in a browser.** Everything above is reasoning plus stubbed runs
-against the real entry point. Whether the Docs UI actually stops showing the banner
-is a claim about Google's renderer, and per the rule below only the device can
-settle it: post a comment on a real doc and look at it.
+- **The drift matrix.** A posted comment's locator can go stale two ways: the
+  field's limit changes (`Headline [50]` → `[55]`) or the asset heading is renamed.
+  Measured across whole-doc and scoped review, with review state present and lost:
+  **all six cases end with exactly one comment.** The limit change is matched
+  (matching ignores the bracket); the rename is swept and replaced. If you change
+  the locator format or the sweep, re-run that matrix — a duplicate that survives
+  every pass is the failure this design is built to avoid, and it is invisible
+  until a tenant has a doc full of them.
+- **None of it is browser-verified.** Whether the banner actually stops appearing
+  is a claim about Google's renderer, and per "Running & checking" only the device
+  settles that. Post a review on a real doc and look at it.
 
 ## The review overlay's wording lives in two places — keep them in step
 

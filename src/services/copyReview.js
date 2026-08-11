@@ -245,6 +245,71 @@ function composeComment(locator, copy, note) {
   return `${frag ? `${locator}\n“${frag}”` : locator}\n\n${note}`;
 }
 
+// THE LOCATOR IS DISPLAYED VERBATIM AND MATCHED LOOSELY, and the split is the
+// point. The line a reader sees has to carry the limit exactly as the document
+// shows it; the string we MATCH on must survive that limit changing. LiveSpecs
+// approving a new character limit turns "Headline [50]" into "Headline [55]", and
+// on the strict string that is a comment nothing can find — so the note would be
+// posted a second time beside the one already there.
+//
+// Only the FIRST bracket goes: it is the field label's, and a field has exactly
+// one per asset, so nothing collides once it is dropped.
+function normLocator(locator) {
+  return String(locator || '').replace(/\s*\[[^\]]*\]/, '').trim();
+}
+
+// Does this comment body carry a locator at all — i.e. did WE compose it in this
+// format? Structural, not a guess: composeComment always puts a curly-quoted
+// fragment on line 2 and a blank line 3, and both sides of that are ours.
+//
+// It exists to protect comments posted BEFORE the unanchoring, whose first line is
+// the note itself. Without this check the scoped sweep below would read that note
+// as a locator, find it inactive, and delete a comment on a field the writer never
+// selected.
+function hasLocatorShape(content) {
+  const lines = String(content || '').split('\n');
+  return lines.length >= 3 && lines[2] === '' && /^“.*”$/.test(lines[1]);
+}
+
+// Collector output → review UNITS: one per single field, one per stack variation,
+// each carrying the LOCATOR its comment will lead with. Built here because this is
+// the only place holding the doc's own label, the asset and (for a stack) the
+// option number at once — and used twice, for the units being reviewed and for the
+// sweep's set of every locator still live in the document, so the two can never
+// disagree about how a locator is spelled.
+function buildUnits(singles, stacks) {
+  const units = [];
+  for (const f of singles || []) {
+    units.push({
+      assetType: f.assetType,
+      instance: f.instance,
+      fieldName: f.fieldName,
+      charMax: f.charMax,
+      fieldType: f.fieldType,
+      copy: f.copy,
+      locator: composeLocator(f.label || fallbackLabel(f), f.assetType, f.instance),
+    });
+  }
+  for (const st of stacks || []) {
+    for (const v of st.variations || []) {
+      units.push({
+        assetType: st.assetType,
+        instance: st.instance,
+        fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
+        charMax: st.charMax,
+        fieldType: st.fieldType,
+        copy: v.line,
+        locator: composeLocator(
+          `${st.label || fallbackLabel(st)}${optionSuffix(v.index, v.doorway)}`,
+          st.assetType,
+          st.instance
+        ),
+      });
+    }
+  }
+  return units;
+}
+
 // Choose the review targets. Whole-doc (scopeKeys null) → every single + stack,
 // no sibling context. Scoped → only the selected fields, each carrying its ASSET
 // CONTEXT (its sibling fields' current copy) so the review can judge it in place
@@ -252,7 +317,11 @@ function composeComment(locator, copy, note) {
 function selectReviewTargets(content, scopeKeys) {
   const singles = collectCopyFields(content);
   const stacks = collectVariationStacks(content);
-  if (!scopeKeys) return { singles, stacks, scoped: false };
+  // `all` is the UNFILTERED set. The orphan sweep needs every unit's locator, not
+  // just the selected ones, to tell a comment whose field is gone from a comment
+  // whose field simply was not selected this time.
+  const all = { singles, stacks };
+  if (!scopeKeys) return { singles, stacks, all, scoped: false };
 
   // Per-asset list of every non-empty field's { fieldName, copy } (for siblings).
   //
@@ -282,6 +351,7 @@ function selectReviewTargets(content, scopeKeys) {
   const inScope = (assetType, fieldName, instance) => scopeKeys.has(fieldKey(assetType, fieldName, instance));
   return {
     scoped: true,
+    all,
     singles: singles
       .filter((f) => inScope(f.assetType, f.fieldName, f.instance))
       .map((f) => ({ ...f, siblings: siblingsFor(f.assetType, f.fieldName, f.instance) })),
@@ -304,19 +374,47 @@ function keyInScope(key, scopeKeys) {
 
 // Comment ids to sweep. Whole-doc: any live Quillio comment bound to no current
 // unit is a true orphan. Scoped: sweep ONLY orphans that belonged to an in-scope
-// field/variation (matched via prior state by content) — so an unselected field's
-// comment from a previous whole-doc review is never touched.
-function orphanSweepIds({ liveComments, claimedIds, toDelete, scopeKeys, priorFields }) {
+// field/variation — so an unselected field's comment from a previous whole-doc
+// review is never touched.
+//
+// EVERY CANDIDATE HERE IS ALREADY KNOWN TO BE QUILLIO'S. `liveComments` comes from
+// listReviewComments, which keeps a comment only if its content starts with
+// REVIEW_PREFIX; a human's comment never enters this list and so can never be
+// swept. That prefix filter is the whole of the authorship test, and it is the
+// reason this function can delete by id without re-checking.
+//
+// `activeLocatorKeys` is the normalized locator of EVERY unit in the document —
+// not just the in-scope ones. It closes the case the content rule cannot see: a
+// comment whose locator changed underneath it (the asset heading was renamed, or
+// state was lost and the field label moved) belongs to no current unit at all, so
+// it is stale regardless of scope. Without it, a scoped review left the old
+// comment sitting beside the new one, and only a later WHOLE-DOC review cleaned up.
+//
+// Guarded two ways, because "no active locator" is also true of things we must not
+// touch: the comment must carry a locator in the first place (hasLocatorShape —
+// a comment from before the unanchoring does not, and its note text must never be
+// read as a locator), and a unit that still exists keeps its comment because its
+// locator is still active.
+function orphanSweepIds({ liveComments, claimedIds, toDelete, scopeKeys, priorFields, activeLocatorKeys }) {
   const claimed = new Set(claimedIds);
   const deleting = new Set(toDelete);
   const candidates = (liveComments || []).filter((c) => !claimed.has(c.id) && !deleting.has(c.id));
   if (!scopeKeys) return candidates.map((c) => c.id);
-  // Prior comments that belonged to in-scope keys — only these may be swept.
+  // Prior comments that belonged to in-scope keys — these may be swept.
   const inScopePriorComments = new Set();
   for (const [key, entry] of Object.entries(priorFields || {})) {
     if (entry && entry.comment && keyInScope(key, scopeKeys)) inScopePriorComments.add(String(entry.comment));
   }
-  return candidates.filter((c) => inScopePriorComments.has(String(c.content))).map((c) => c.id);
+  // ABSENT MEANS OFF, NOT EMPTY — the drift sweep is a DELETE keyed on a negative
+  // ("no unit claims this"), so a missing set must disable it rather than make it
+  // vacuously true of everything. Defaulting to an empty Set deleted every
+  // locator-shaped comment on the doc; a test pins it.
+  const active = activeLocatorKeys instanceof Set ? activeLocatorKeys : null;
+  const strandedByDrift = (c) =>
+    !!active && hasLocatorShape(c.content) && !active.has(normLocator(locatorOf(c.content)));
+  return candidates
+    .filter((c) => inScopePriorComments.has(String(c.content)) || strandedByDrift(c))
+    .map((c) => c.id);
 }
 
 // A supportive, non-numeric read of overall quality (never a grade/score).
@@ -391,7 +489,8 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
   for (const c of liveComments || []) {
     if (typeof c.content === 'string' && !byContent.has(c.content)) byContent.set(c.content, c);
     const loc = locatorOf(c.content);
-    if (loc && !byLocator.has(loc)) byLocator.set(loc, c);
+    const norm = loc ? normLocator(loc) : null;
+    if (norm && !byLocator.has(norm)) byLocator.set(norm, c);
   }
 
   const toAdd = [];
@@ -438,7 +537,7 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
     // Match this field's existing comment. Content first (exact, and what legacy
     // state holds), then the locator for state-loss cases. Never bind one comment
     // to two fields.
-    let existing = (priorComment && byContent.get(priorComment)) || byLocator.get(locator) || null;
+    let existing = (priorComment && byContent.get(priorComment)) || byLocator.get(normLocator(locator)) || null;
     if (existing && claimed.has(existing.id)) existing = null;
     if (existing) claimed.add(existing.id);
 
@@ -520,7 +619,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
     Array.isArray(scopedFields) && scopedFields.length > 0
       ? new Set(scopedFields.map((t) => fieldKey(t.assetType, t.fieldName, t.instance)))
       : null;
-  const { singles: singleFields, stacks, scoped } = selectReviewTargets(content, scopeKeys);
+  const { singles: singleFields, stacks, all, scoped } = selectReviewTargets(content, scopeKeys);
 
   if (singleFields.length === 0 && stacks.length === 0) {
     const digest = scoped
@@ -567,35 +666,11 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // Each unit also carries its LOCATOR — the line the comment leads with, built
   // here because this is the only place holding the doc's own label, the asset and
   // (for a stack) the option number at the same time.
-  const units = [];
-  for (const f of singleFields) {
-    units.push({
-      assetType: f.assetType,
-      instance: f.instance,
-      fieldName: f.fieldName,
-      charMax: f.charMax,
-      fieldType: f.fieldType,
-      copy: f.copy,
-      locator: composeLocator(f.label || fallbackLabel(f), f.assetType, f.instance),
-    });
-  }
-  for (const st of stacks) {
-    for (const v of st.variations) {
-      units.push({
-        assetType: st.assetType,
-        instance: st.instance,
-        fieldName: variationFieldName(st.fieldName, v.index, v.doorway),
-        charMax: st.charMax,
-        fieldType: st.fieldType,
-        copy: v.line,
-        locator: composeLocator(
-          `${st.label || fallbackLabel(st)}${optionSuffix(v.index, v.doorway)}`,
-          st.assetType,
-          st.instance
-        ),
-      });
-    }
-  }
+  const units = buildUnits(singleFields, stacks);
+  // Every unit in the DOCUMENT, in scope or not — the sweep's "does this comment
+  // still belong to something" test. Built through buildUnits so a locator here is
+  // produced by the same line of code as the locator on a posted comment.
+  const activeLocatorKeys = new Set(buildUnits(all.singles, all.stacks).map((u) => normLocator(u.locator)));
 
   // --- Verdicts. Single fields → the batch review; each stack → its own focused
   // variant review, run concurrently. ---
@@ -673,6 +748,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
     toDelete: recon.toDelete,
     scopeKeys,
     priorFields,
+    activeLocatorKeys,
   });
   let swept = 0;
   for (const id of sweepIds) {
@@ -735,6 +811,9 @@ module.exports = {
   composeLocator,
   unitLocator,
   locatorOf,
+  normLocator,
+  hasLocatorShape,
+  buildUnits,
   copyFragment,
   composeComment,
   priorNote,

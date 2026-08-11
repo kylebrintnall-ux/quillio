@@ -1983,17 +1983,24 @@ async function readTemplateCells(documentId, { markers } = {}, clients) {
 
 // Post ONE branded review comment with NO ANCHOR.
 //
-// WHY UNANCHORED, AND WHY THIS IS NOT A DEGRADED addReviewComment. The anchoring
-// probe settled it: a Drive comment whose quotedFileContent is text inside a
-// TABLE CELL does not resolve. All six probe cases came back with Google
-// rendering "Original content deleted" — the comment exists, carries its text,
-// and points nowhere. Every cell of a template document is a table cell, so
-// there is no anchored path here to fall back FROM.
+// WHY UNANCHORED, AND WHY THIS IS NOT A DEGRADED addReviewComment. Because
+// addReviewComment is not anchored either — nothing on a Google Doc can be.
 //
-// Which makes the field name load-bearing: it is the only thing tying the
-// comment to a cell. A matrix is already a lookup table with a Field column, so
-// naming the field in the body text is not a workaround — it is the same way a
-// human would refer to a row.
+// This comment used to read the probe's six "Original content deleted" results as
+// a fact about TABLE CELLS. They were not. quotedFileContent is the quoted TEXT of
+// a comment, never a position: Drive does not search the document for it.
+// Anchoring is the separate `anchor` field, and Google publishes no text-anchor
+// format for native Docs, so a quote resolves nowhere in a PARAGRAPH either. The
+// copy doc carried the same banner on every comment it ever posted, which is what
+// finally disproved the cell reading. See the review-section header above.
+//
+// So there was never an anchored path to fall back FROM, anywhere. What is true
+// and specific to this path is the consequence: the field name is load-bearing,
+// because it is the only thing tying the comment to a cell. A matrix is already a
+// lookup table with a Field column, so naming the field in the body text is not a
+// workaround — it is the same way a human would refer to a row. The copy doc
+// reaches the same conclusion by a different route (services/copyReview.js
+// composes a locator line), for the same reason.
 async function addUnanchoredComment(docId, content, clients) {
   if (!content || !String(content).trim()) return null;
   const { drive } = clients || (await getClients());

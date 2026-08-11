@@ -6,15 +6,21 @@
 // judge craft and anchors each note to the text it is about. Neither half
 // transfers:
 //
-//   THE ANCHOR DOES NOT WORK HERE. The anchoring probe settled it — a Drive
-//   comment quoting text inside a TABLE CELL does not resolve. All six probe
-//   cases came back with Google rendering "Original content deleted": the
-//   comment exists, carries its text, and points nowhere. Every cell of a
-//   template document is a table cell, so there is no anchored path to degrade
-//   from. Comments here are unanchored and NAME THEIR FIELD, which makes
-//   marker_name load-bearing: it is the only thing tying a note back to a cell.
-//   That is not a workaround. A matrix is already a lookup table with a Field
-//   column, so naming the row is how a human refers to it too.
+//   THE ANCHOR DOES NOT WORK ANYWHERE — not here, and not on a copy doc. The
+//   probe's six "Original content deleted" results were read at the time as a
+//   fact about TABLE CELLS. They were not. quotedFileContent is the quoted TEXT
+//   of a comment, never a position; Drive does not search the document for it,
+//   anchoring is the separate `anchor` field, and Google publishes no
+//   text-anchor format for native Docs. A quote resolves nowhere in a PARAGRAPH
+//   either — the copy doc carried the same banner on every comment it ever
+//   posted, which is what disproved the cell reading.
+//
+//   So there is no anchored path to degrade from, and there never was one.
+//   Comments here are unanchored and NAME THEIR FIELD, which makes marker_name
+//   load-bearing: it is the only thing tying a note back to a cell. That is not
+//   a workaround. A matrix is already a lookup table with a Field column, so
+//   naming the row is how a human refers to it too. copyReview now does the
+//   equivalent for the copy doc — a locator line leading each comment.
 //
 //   THE JUDGEMENT IS DELIBERATELY ABSENT. Every note below is MEASURABLE —
 //   over a character limit, over a word limit, or still showing a {{marker}}

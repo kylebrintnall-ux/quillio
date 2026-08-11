@@ -3434,6 +3434,85 @@ test('getDocContent carries the field label VERBATIM, so the locator is not a re
   assert.strictEqual(f.copy, 'Some drafted preheader copy');
 });
 
+// --- Locator DRIFT: the label or the asset name changes under a posted comment --
+
+test('a limit change is MATCHED, not orphaned — display is verbatim, matching is not', () => {
+  const { reconcileComments, normLocator, composeComment } = require('../src/services/copyReview');
+  // LiveSpecs approves 50 -> 55, so the doc's label moves under a comment already
+  // posted against "Headline [50]".
+  assert.strictEqual(normLocator('Headline [50] — Nurture Email'), 'Headline — Nurture Email');
+  assert.strictEqual(normLocator('Headline [55] — Nurture Email'), 'Headline — Nurture Email');
+  // Only the FIRST bracket goes — the field label's.
+  assert.strictEqual(normLocator('Headline [50] · option 2 (Proof) — Email'), 'Headline · option 2 (Proof) — Email');
+
+  const old = composeComment('Headline [50] — Nurture Email', 'Ship faster', 'Cut the hedge.');
+  const r = reconcileComments({
+    fields: [{ assetType: 'Nurture Email', fieldName: 'Headline', copy: 'Ship faster', locator: 'Headline [55] — Nurture Email' }],
+    priorFields: {}, // state lost, so content matching cannot help either
+    verdicts: [{ assetType: 'Nurture Email', fieldName: 'Headline', comment: 'Cut the hedge.' }],
+    liveComments: [{ id: 'c1', content: old, resolved: false, quote: '', anchor: '' }],
+  });
+  assert.deepStrictEqual(r.claimedIds, ['c1'], 'found across the limit change');
+  assert.deepStrictEqual(r.toDelete, ['c1']);
+  assert.strictEqual(r.toAdd.length, 1, 'replaced — never two notes on one field');
+});
+
+test('scoped sweep: a comment whose unit no longer exists is deleted, one whose unit does is not', () => {
+  const { orphanSweepIds, fieldKey, composeComment, normLocator } = require('../src/services/copyReview');
+  const scopeKeys = new Set([fieldKey('Nurture Email', 'Headline')]);
+
+  // Renamed asset: the comment's locator matches NO unit in the document.
+  const stranded = { id: 'stale', content: composeComment('Headline [50] — Nurture Email', 'Ship faster', 'note'), resolved: false };
+  // A different field the writer did NOT select — its unit is alive and well.
+  const unselected = { id: 'other', content: composeComment('CTA [20] — Nurture Email', 'Get started', 'note'), resolved: false };
+  // Posted before the unanchoring: no locator line at all, just the note.
+  const legacy = { id: 'legacy', content: 'Tighten this.', resolved: false };
+
+  const activeLocatorKeys = new Set(
+    ['Headline [50] — Nurture Email (Q3)', 'CTA [20] — Nurture Email'].map(normLocator)
+  );
+  const swept = orphanSweepIds({
+    liveComments: [stranded, unselected, legacy],
+    claimedIds: [], toDelete: [], scopeKeys, priorFields: {}, activeLocatorKeys,
+  });
+  assert.deepStrictEqual(swept, ['stale'], 'only the one bound to nothing');
+});
+
+test('scoped sweep without activeLocatorKeys is the old, narrower behaviour', () => {
+  const { orphanSweepIds, fieldKey, composeComment } = require('../src/services/copyReview');
+  // A caller that has not been updated must not start deleting things.
+  const c = { id: 'x', content: composeComment('Headline [50] — E', 'copy', 'note'), resolved: false };
+  const swept = orphanSweepIds({
+    liveComments: [c], claimedIds: [], toDelete: [],
+    scopeKeys: new Set([fieldKey('E', 'Headline')]), priorFields: {},
+  });
+  assert.deepStrictEqual(swept, [], 'no active set → no drift sweep');
+});
+
+test('hasLocatorShape tells our comments from a bare note', () => {
+  const { hasLocatorShape, composeComment } = require('../src/services/copyReview');
+  assert.ok(hasLocatorShape(composeComment('CTA [20] — Email', 'Get started', 'Weak verb.')));
+  assert.ok(!hasLocatorShape('Tighten this.'), 'a legacy one-line note');
+  // A multi-paragraph legacy note must not be mistaken for one either: line 2 has
+  // to be a curly-quoted fragment, which is ours and not prose.
+  assert.ok(!hasLocatorShape('Tighten this.\nAnd cut the hedge.\n\nMore.'));
+  assert.ok(!hasLocatorShape(''));
+});
+
+// A human's comment can never reach the sweep, because it never reaches the list.
+test('listReviewComments is the authorship gate — only REVIEW_PREFIX comments are returned', async () => {
+  const g = require('../src/destinations/googleDocs');
+  const comments = [
+    { id: 'ours', content: `${g.REVIEW_PREFIX}CTA [20] — Email\n“Get started”\n\nWeak verb.`, resolved: false },
+    { id: 'human', content: 'Can we try a different angle here?', resolved: false },
+    { id: 'human2', content: '🪶 Quillio Review is great but this is not one', resolved: false },
+  ];
+  const drive = { comments: { list: async () => ({ data: { comments } }) } };
+  const out = await g.listReviewComments('doc1', { drive });
+  assert.deepStrictEqual(out.map((c) => c.id), ['ours'], 'a human comment is never a sweep candidate');
+  assert.strictEqual(out[0].content, 'CTA [20] — Email\n“Get started”\n\nWeak verb.', 'prefix stripped');
+});
+
 // TRIPWIRE, not coverage: a source scan cannot tell whether Drive anchored a
 // comment. It only stops the read-back losing the one field that could say.
 test('listReviewComments asks Drive for `anchor`, though nothing sends one', () => {

@@ -123,6 +123,29 @@ const shapeOf = (t) => String(t).toLowerCase().replace(NUM, '#').replace(/[^\w#\
 // `distinct` counts those as 5 distinct and `shapes` as 5 shapes; only this sees it.
 const openingOf = (t) => shapeOf(t).split(' ').slice(0, 4).join(' ');
 
+// THE NOTE'S OWN CLAIM, MEASURED. Added after the first run, where every column
+// read clean and the real change was invisible to all of them: Subject Line 1's
+// median went 55 -> 44 and four of five AFTER lines landed at or near the
+// 40-character mobile cut, where NONE of the BEFORE lines had. "Front-load the
+// first 40" did not collapse the opening — it moved the whole field inside the
+// constraint it describes, which is the thing the field is FOR.
+//
+// No column saw it because none of them measured what the note actually says. So
+// when a note carries a number, this pulls it out and reports how many samples
+// fall inside it. It leads the read instead of following it.
+//
+// Deliberately crude: the FIRST number in a "first N" or "N-M characters" phrase.
+// A note with no number yields null and this reports nothing rather than guessing.
+function noteThreshold(note) {
+  const t = String(note || '');
+  const window = t.match(/(\d{1,3})\s*[–-]\s*(\d{1,3})\s*characters/i);
+  if (window) return Number(window[2]);
+  const first = t.match(/first\s+(\d{1,3})/i);
+  if (first) return Number(first[1]);
+  const chars = t.match(/(\d{1,3})\s*characters/i);
+  return chars ? Number(chars[1]) : null;
+}
+
 function modeOf(values) {
   const by = new Map();
   for (const v of values) by.set(v, (by.get(v) || 0) + 1);
@@ -159,6 +182,15 @@ function modeOf(values) {
       const watched = f.fieldName === WATCH ? '   <<< WATCHED' : '';
       console.log(`\n  ${f.fieldName}  [${f.charMin}-${f.charMax}]${watched}`);
       console.log(`    lengths: ${lens.join(', ')}` + (s ? `   median ${s.median}   SPREAD ${s.spread} (${s.min}-${s.max})` : ''));
+      // THE NOTE'S OWN CLAIM. Reported in BOTH arms — the threshold comes from
+      // the AFTER note but the BEFORE arm is measured against it too, or there is
+      // nothing to compare the improvement with.
+      const th = noteThreshold(noteFor(asset.fields.find((x) => x.field_name === f.fieldName)));
+      if (th) {
+        const real = lens.filter((x) => typeof x === 'number');
+        const within = real.filter((x) => x <= th).length;
+        console.log(`    threshold ${th} (from the note) — WITHIN ${within}/${real.length}`);
+      }
       copies.forEach((t, i) => {
         const mark = s && lens[i] === s.min ? ' <- MIN' : s && lens[i] === s.max ? ' <- MAX' : '';
         console.log(`      ${String(lens[i]).padStart(4)}  ${t}${mark}`);

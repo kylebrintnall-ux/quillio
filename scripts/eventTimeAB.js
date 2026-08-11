@@ -115,6 +115,18 @@ const BRIEF_STATED =
   + 'teams stop rewriting the same brief into six different asset templates. '
   + 'Get them to show up.';
 
+// THE CASE THE OR WAS SUPPRESSING. `briefStatesDateTime` used to be
+// `datetime || location`, so this brief — a venue and no time — reported "the
+// brief states a time", no note was attached, and the empty field fabricated.
+// It is the case the note most needs to fire on, and it is its own arm because a
+// fix that improves the silent case and does nothing here has not closed the hole.
+const BRIEF_VENUE_ONLY =
+  'Reminder email for our product launch webinar. Join us on Zoom. '
+  + 'The audience already registered. '
+  + 'Quillio turns a campaign brief into a formatted, on-brand copy doc, so marketing '
+  + 'teams stop rewriting the same brief into six different asset templates. '
+  + 'Get them to show up.';
+
 const SUMMARY = 'Remind registrants to attend the Quillio product launch webinar.';
 const WRITER_PROMPT =
   'Speak to someone who already registered. Reinforce the decision, do not re-sell it. '
@@ -276,10 +288,17 @@ async function cell(asset, brief, withDateField, note) {
     ...NOTE_VARIANTS.map((v) => ({ field: true, note: v.text, label: `${DATE_FIELD}: PRESENT + note:${v.id}` })),
   ];
 
-  for (const [armName, brief] of [['A  brief SILENT', BRIEF_SILENT], ['B  brief STATES the time', BRIEF_STATED]]) {
+  for (const [armName, brief] of [
+    ['A  brief SILENT', BRIEF_SILENT],
+    ['B  brief STATES the time', BRIEF_STATED],
+    ['C  brief states a VENUE and no time', BRIEF_VENUE_ONLY],
+  ]) {
     const briefStates = briefStatesDateTime(brief);
     console.log(`\n\n### ${armName} — briefStatesDateTime() says ${briefStates}`);
-    if (armName.startsWith('A') === briefStates) {
+    // A and C must report FALSE (no date/time stated), B must report TRUE. C is
+    // the whole point of this run: under the old OR it reported true.
+    const expected = armName.startsWith('B');
+    if (expected !== briefStates) {
       console.error('  !! the detector disagrees with the fixture — the arms are not what they claim.');
       process.exit(1);
     }
@@ -394,10 +413,18 @@ async function cell(asset, brief, withDateField, note) {
   console.log('     invention persists          correct in the slot, invented in the subject.');
   console.log('  A2 invents MORE than A1     -> the empty slot is an invitation. The field');
   console.log('                                 made the silent case worse. That is a result.');
+  console.log('  C note cell still invents   -> the OR fix reached the trigger but not the');
+  console.log('                                 behaviour. The hole is open by another route.');
   console.log('');
-  console.log('THE CELL THIS RUN EXISTS FOR: A, PRESENT + NOTE. It was 15/35 with the empty');
-  console.log('field. If the note does not take it to near zero, the note is not carrying it');
-  console.log('and the FIELD SHOULD COME BACK OUT — the migration is held for exactly this.');
+  console.log('PRE-REGISTERED, AND THE NUMBER TO BEAT IS 2/5 — NOT ZERO.');
+  console.log('  The shipped wording took the silent-brief Date / Location Line from 4/5');
+  console.log('  fabricated to 2/5 on the real path. That is the honest baseline for the');
+  console.log('  wording replacing it. Zero was the bar for the ORIGINAL claim and it was');
+  console.log('  never cleared; pretending 2/5 is the bar now would be moving it downward.');
+  console.log('');
+  console.log('AND ARM C IS THE ONE THAT DECIDES WHETHER THE HOLE IS CLOSED. Under the old');
+  console.log('OR a venue-only brief got NO note at all. If C with the note does not beat C');
+  console.log('without it, the trigger was fixed and the behaviour was not.');
   console.log('');
   console.log('AND READ THE LINES, not the ratios. No numeric counter catches "Thursday",');
   console.log('and this detector misses spelled clock times and loose ranges by design.');

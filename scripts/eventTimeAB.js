@@ -57,6 +57,44 @@ const { draftOnce, noteLineFor, wireOk } = require('./lib/realDraftPath');
 // measurement and the behaviour cannot drift apart silently.
 const { briefStatesDateTime, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
 
+// THE NOTE WORDINGS UNDER TEST — a variant arm, not a second sentence.
+//
+// The shipped note took the silent-brief Date / Location Line from 4/5 fabricated
+// to 2/5 on the real path, with three clean placeholders and no bracket
+// instruction. Real, and short of the near-zero bar that was pre-registered.
+//
+// WHAT THE RE-RUN IS FOR, and it rests on a delivery fact that was got wrong the
+// first time: the BATCH prompt composes every field's bullet into ONE call, so
+// the note is present in the same prompt that writes Subject Line 1. The model
+// read "The brief does not state a date, time or venue" and wrote "We start in 10
+// minutes" in the subject line of that same call. The generative fields are not
+// MISSING the string. They are reading it as a statement about one line.
+//
+// So two hypotheses, and neither is answerable by argument:
+//
+//   `line`      the shipped wording. "this line waits for them" names a LINE, so
+//               its scope may be grammatical — true of that field, silent about
+//               the others.
+//   `campaign`  names no line at all. If grammar is what scopes it, this one
+//               should reach the generative fields; if it does not, placement was
+//               never the mechanism.
+//   `single`    one fact instead of three. "Today at [Time] | Live Stream" is
+//               partial compliance to an ENUMERATION — the model placeholder'd
+//               the time, invented the date and invented the venue, complying on
+//               exactly one of the three it was offered. That is the specificity
+//               finding's shape: a rule that enumerates hands over a menu. This
+//               variant removes the menu.
+//
+// Run together so one pass separates grammar from enumeration. Nothing is added
+// anywhere until this says which wording holds.
+const NOTE_VARIANTS = [
+  // Read from src, not retyped, so the arm cannot test a wording production is
+  // not sending.
+  { id: 'line', text: MISSING_DATETIME_NOTE },
+  { id: 'campaign', text: 'The brief does not state when or where this event happens.' },
+  { id: 'single', text: 'The brief does not state when this event starts.' },
+];
+
 const RUNS = Number(process.argv[2]) || 5;
 const ASSET = 'Event Reminder Email';
 const DATE_FIELD = 'Date / Location Line';
@@ -93,7 +131,21 @@ const WRITER_PROMPT =
 // Everything it does match is printed, so the ratio is never the whole answer.
 const TEMPORAL = [
   [/\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b/gi, 'weekday'],
-  [/\b(?:jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\b/gi, 'month'],
+  // FIXED — this was `(?:jan|feb|mar|...)[a-z]*`, which is not a month pattern at
+  // all: [a-z]* swallows any word with those three letters at the front. It
+  // matched MARKETING, marked, marketers, decision, decline, deck, separate,
+  // novel, junior, augment and march. "marketing" is in every brief this project
+  // has ever measured with, so the pattern fired constantly — and because
+  // inventedIn filters against the brief, every one of those landed in the
+  // "from the brief" column rather than the invented one. It inflated the tally
+  // that was already the least trustworthy (see the note on it below).
+  //
+  // Now: a full month NAME, or a three-letter abbreviation adjacent to a day.
+  // "may" stays out of the abbreviation list on purpose — it is a verb far more
+  // often than a month, and "May 24" is caught by the day-adjacent form anyway.
+  [/\b(?:january|february|march|april|june|july|august|september|october|november|december)\b/gi, 'month'],
+  [/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)\.?\s+\d{1,2}\b/gi, 'month + day'],
+  [/\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\b/gi, 'day + month'],
   [/\b\d{1,2}\s*(?::\s*\d{2})?\s*(?:am|pm)\b/gi, 'clock time'],
   [/\b\d{1,2}:\d{2}\b/g, 'clock time'],
   [/\bin\s+\d+\s+(?:second|minute|hour|day|week)s?\b/gi, 'relative duration'],
@@ -120,9 +172,34 @@ function temporalIn(text) {
 // An expression is INVENTED when it does not appear in the brief. Compared
 // case-insensitively on the raw substring, which is deliberately strict: "Friday"
 // against a brief saying "Thursday" is invented, and so is "3 PM" against "12 PM".
+//
+// BRIEF FIDELITY IS NOT FACTUAL ACCURACY, AND THIS CANNOT TELL THEM APART.
+//
+// Measured, in the no-note cell: four fields — Subject Line 1, Subject Line 2,
+// Headline and Preheader — said the event starts "in about a minute". That is the
+// brief's phrase VERBATIM, and in the brief it describes how fast the DEMO is.
+// Attached to the event's start time it is a false claim, and every check below
+// scores it CLEAN and files it under "matched the brief".
+//
+// It cannot be fixed here. Deciding that "in about a minute" is true of the
+// product and false of the start time requires knowing what the phrase REFERS to,
+// which is a semantic question a substring comparison cannot ask. A longer
+// pattern list makes it worse, not better: the phrase is already an exact match.
+//
+// So the column below is renamed to what it actually measures — a temporal
+// phrase that ALSO OCCURS IN THE BRIEF — and it is explicitly NOT a correctness
+// signal. Every matched phrase is printed, because the only thing that can judge
+// whether a borrowed phrase is being applied to the right fact is a human reading
+// the line.
 function inventedIn(text, brief) {
   const b = String(brief).toLowerCase();
   return temporalIn(text).filter((t) => !b.includes(t.text.toLowerCase()));
+}
+
+// The complement: temporal phrases lifted from the brief. NOT a clean bill.
+function borrowedIn(text, brief) {
+  const b = String(brief).toLowerCase();
+  return temporalIn(text).filter((t) => b.includes(t.text.toLowerCase()));
 }
 
 // `withNote` reproduces what pipeline.generateDoc does when a fact_kind:'datetime'
@@ -134,7 +211,7 @@ function fieldsFor(asset, withDateField) {
   return (asset.fields || []).filter((f) => withDateField || f.field_name !== DATE_FIELD);
 }
 
-async function cell(asset, brief, withDateField, withNote) {
+async function cell(asset, brief, withDateField, note) {
   const fields = fieldsFor(asset, withDateField);
   const runs = [];
   let wired = 0;
@@ -147,12 +224,12 @@ async function cell(asset, brief, withDateField, withNote) {
         writerPrompt: WRITER_PROMPT,
         brief,
         assetDirection: asset.asset_direction || '',
-        noteFor: (f) => noteLineFor(f, withNote && f.fact_kind === 'datetime' ? MISSING_DATETIME_NOTE : null),
+        noteFor: (f) => noteLineFor(f, note && f.fact_kind === 'datetime' ? note : null),
       });
       // THE WIRE CHECK. An arm that cannot show its own guidance reached a prompt
       // is not a control, and its number describes nothing. This is the exact
       // failure that made the first 0/5 meaningless.
-      if (!withNote || wireOk(prompts, MISSING_DATETIME_NOTE)) wired++;
+      if (!note || wireOk(prompts, note)) wired++;
       runs.push(copy);
     } catch (err) {
       runs.push({ __error: err.message });
@@ -189,9 +266,9 @@ async function cell(asset, brief, withDateField, withNote) {
   // pipeline.generateDoc only attaches it when the brief states nothing — so that
   // cell is skipped rather than faked.
   const CELLS = [
-    { field: false, note: false, label: `${DATE_FIELD}: absent` },
-    { field: true, note: false, label: `${DATE_FIELD}: PRESENT, no note` },
-    { field: true, note: true, label: `${DATE_FIELD}: PRESENT + NOTE` },
+    { field: false, note: null, label: `${DATE_FIELD}: absent` },
+    { field: true, note: null, label: `${DATE_FIELD}: PRESENT, no note` },
+    ...NOTE_VARIANTS.map((v) => ({ field: true, note: v.text, label: `${DATE_FIELD}: PRESENT + note:${v.id}` })),
   ];
 
   for (const [armName, brief] of [['A  brief SILENT', BRIEF_SILENT], ['B  brief STATES the time', BRIEF_STATED]]) {
@@ -236,30 +313,58 @@ async function cell(asset, brief, withDateField, withNote) {
       }
 
       const invented = all.filter((x) => inventedIn(x.text, brief).length > 0);
-      const usedSupplied = all.filter((x) => {
-        const t = temporalIn(x.text);
-        return t.length > inventedIn(x.text, brief).length;
-      });
+      const borrowed = all.filter((x) => borrowedIn(x.text, brief).length > 0);
       const vague = all.filter((x) => (String(x.text).match(VAGUE_SAFE) || []).length > 0);
 
       console.log(`\n  INVENTED a time or date:      ${invented.length}/${all.length}`);
-      console.log(`  used a time FROM the brief:   ${usedSupplied.length}/${all.length}`);
+      console.log(`  BORROWED a phrase from the brief (NOT a clean bill): ${borrowed.length}/${all.length}`);
       console.log(`  vague-safe ("soon" etc):      ${vague.length}/${all.length}`);
       if (invented.length) {
         console.log('  ↑ each of these is a time the brief did not state. On a reminder email');
         console.log('    that is the reader missing the event. Read them:');
         for (const x of invented) console.log(`      ${x.field}: ${x.text}`);
       }
+      if (borrowed.length) {
+        console.log('  ↑ these reuse a temporal phrase that IS in the brief — which does NOT');
+        console.log('    make them true. "in about a minute" is the brief\'s phrase for how');
+        console.log('    fast the DEMO is; on the start time it is a false claim, and every');
+        console.log('    check here scores it clean. Only reading decides. Read them:');
+        for (const x of borrowed) console.log(`      ${x.field}: ${x.text}`);
+      }
+
+      // THE TRANSCRIPTION FIELD, WHERE ONE DISTINCT VALUE IS THE GOAL.
+      //
+      // Every other variance metric in this project treats collapse as the
+      // failure — the char_min floor cost the punchiest Subhead, and `shapes`
+      // exists to catch a frame being reused. This field inverts all of it. In
+      // the B/present cell the Date / Location Line came back BYTE-IDENTICAL five
+      // times — "Thursday, August 24 at 12 PM PT | Moscone West" — and that is
+      // correct: there is one true answer, and five renderings of it would be the
+      // defect. It is the only cell in this work where zero variance is the win.
+      //
+      // Read the opposite way, therefore: on a fact_kind field whose fact the
+      // brief SUPPLIED, anything above 1 means the model is paraphrasing a value
+      // it was handed.
+      const dateCopies = runs
+        .map((r) => (r.__error ? '' : String(r[DATE_FIELD] || '').trim()))
+        .filter(Boolean);
+      if (withField && dateCopies.length) {
+        const uniq = new Set(dateCopies).size;
+        const verdict = briefStates
+          ? (uniq === 1 ? 'correct — one true answer, rendered once' : 'PARAPHRASING A SUPPLIED VALUE')
+          : 'brief supplied nothing, so variance is not the question here';
+        console.log(`\n  ${DATE_FIELD}: ${uniq} distinct of ${dateCopies.length} — ${verdict}`);
+      }
 
       summary.push({
         arm: armName.split(' ')[0], field: c.label.replace(`${DATE_FIELD}: `, ''),
-        invented: invented.length, used: usedSupplied.length, vague: vague.length, n: all.length,
+        invented: invented.length, used: borrowed.length, vague: vague.length, n: all.length,
       });
     }
   }
 
   console.log(`\n${'='.repeat(78)}\nTHE 2x2\n${'='.repeat(78)}`);
-  console.log(`${'arm'.padEnd(6)}${'date field'.padEnd(24)}${'INVENTED'.padEnd(11)}${'used brief'.padEnd(13)}vague-safe`);
+  console.log(`${'arm'.padEnd(6)}${'date field'.padEnd(24)}${'INVENTED'.padEnd(11)}${'borrowed*'.padEnd(13)}vague-safe`);
   for (const r of summary) {
     console.log(
       `${r.arm.padEnd(6)}${r.field.padEnd(24)}${`${r.invented}/${r.n}`.padEnd(11)}`

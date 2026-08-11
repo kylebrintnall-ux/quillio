@@ -10,11 +10,18 @@
 //      src/data/defaultAssets.js and Event Invitation Email.
 //
 // WHY THEY CANNOT SHIP SEPARATELY. Measured with scripts/eventTimeAB.js: the
-// field is correct when the brief SUPPLIES a time (0 of 30 invented, 21 of 30
-// transcribed — the model does not override an available fact) and HARMFUL when
-// it does not (15 of 35 invented with the field, against 9 of 35 without it,
-// with the field itself fabricating 5 of 5 including a timezone nobody
-// mentioned). An empty transcription slot is a blank the model always fills.
+// field is correct when the brief SUPPLIES a time — 0 of 30 invented, and the
+// Date / Location Line itself byte-identical five times, which is the RIGHT
+// outcome for a transcription field. The model does not override an available
+// fact; it transcribes it.
+//
+// CORRECTED AFTER A SECOND RUN. This header used to claim the field made the
+// SILENT case worse in aggregate (15/35 against 9/35). That did not replicate —
+// the re-run gave 8/35 against 12/30, reversing it — so at n=5 the aggregate was
+// noise and should not have been written down as a finding. What DID replicate is
+// the field-level number: the empty Date / Location Line fabricated 4 of 5 and 5
+// of 5 across the two runs. The empty slot is the problem; the aggregate was not
+// evidence of it.
 //
 // The note that makes the silent case safe is attached per campaign by
 // pipeline.generateDoc, and it finds its field through fact_kind. So the field

@@ -867,6 +867,12 @@
     #screen-project .loading { color: rgba(26,26,46,0.7); }
 
     /* ── TOAST (v8) — brief auto-dismissing confirmation ── */
+    /* `bottom` is a FALLBACK here — showToast measures the visible CTA bar and
+       overrides it, because that bar's height depends on how many buttons the
+       screen has (copy-done carries four) and 120px sat squarely on top of the
+       first one. A toast covering the button you want to press is a defect on a
+       success message and worse on an incomplete-draft warning, which is exactly
+       when both need to be readable at once. */
     .toast {
       position: fixed; left: 50%; bottom: 120px; z-index: 300; max-width: 360px;
       transform: translateX(-50%) translateY(12px);
@@ -1020,6 +1026,11 @@
       <p class="field-select-hint" id="out-assets-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
       <div id="out-assets"></div>
       <div id="out-unmatched" class="notice hidden"></div>
+      <!-- ITS OWN SLOT, never composed with out-unmatched. A brief can miss an
+           asset name, be missing a date, both, or neither, and one sentence
+           carrying both would make either imply the other. Same rule the Slack
+           card follows for its two context blocks. -->
+      <div id="out-missing-fact" class="notice hidden"></div>
       <div id="output-error" class="error hidden"></div>
 
       <div class="output-ctas">
@@ -2144,6 +2155,12 @@
       // WAS built — this says what it doesn't contain, which used to be silent.
       renderNotice('out-unmatched', data.unmatchedNotice);
 
+      // The brief planned a field whose job is to carry a date or time it never
+      // supplied. Advisory: the doc WAS built, the field is there, and its own
+      // italic note says the same thing — this is the copy of it that reaches
+      // the person who can go and fill it in.
+      renderNotice('out-missing-fact', data.missingFactNotice);
+
       // THE COPY DOC'S AFFORDANCES, only when there is a copy doc. On a
       // template-only brief this screen's spec preview has no assets to show and
       // its two copy-doc buttons have nothing to open or draft; the template
@@ -2840,9 +2857,20 @@
 
     // Brief auto-dismissing confirmation toast.
     var toastTimer = null;
+    // Sit ABOVE the fixed CTA bar, measured rather than guessed: the bar is
+    // position:fixed with a variable button count, so any constant is wrong on
+    // some screen. Only the ACTIVE screen's bar counts — the others are in
+    // display:none sections and report a height of 0. A screen with no bar (or a
+    // measurement of 0) keeps the stylesheet's 120px.
+    function toastBottom() {
+      var bar = document.querySelector('.screen.active .output-ctas');
+      var h = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
+      return h > 0 ? h + 12 : 120;
+    }
     function showToast(msg) {
       var t = document.getElementById('toast');
       t.textContent = msg;
+      t.style.bottom = toastBottom() + 'px';
       t.classList.add('show');
       if (toastTimer) clearTimeout(toastTimer);
       toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2000);

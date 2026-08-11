@@ -255,6 +255,29 @@ async function cell(asset, brief, withDateField, note) {
   return { runs, wired };
 }
 
+// PRINTED AFTER EVERY CELL, NOT ONLY AT THE END.
+//
+// Two long runs have now died partway — one on a harness bug masking a 429, one
+// as credit ran out mid-arm — and both lost every completed cell because the grid
+// was assembled at the end. The cells are INDEPENDENT: each is its own set of
+// model calls against its own brief, so a stall should cost the remaining cells
+// and not the run.
+//
+// Reprinting the whole grid each time (rather than one line per cell) means the
+// last block on screen is always the complete picture so far, which is what
+// survives a dropped stream or a scrollback limit. It costs a few lines of
+// output and removes the failure mode entirely.
+function printGrid(rows, label) {
+  console.log(`\n${'='.repeat(78)}\nRESULTS SO FAR (${label}) — ${rows.length} cell(s) complete\n${'='.repeat(78)}`);
+  console.log(`${'arm'.padEnd(6)}${'date field'.padEnd(24)}${'INVENTED'.padEnd(11)}${'borrowed*'.padEnd(13)}vague-safe`);
+  for (const r of rows) {
+    console.log(
+      `${r.arm.padEnd(6)}${r.field.padEnd(24)}${`${r.invented}/${r.n}`.padEnd(11)}`
+      + `${`${r.used}/${r.n}`.padEnd(13)}${r.vague}/${r.n}`
+    );
+  }
+}
+
 (async () => {
   if (!process.env.GEMINI_API_KEY) {
     console.error('GEMINI_API_KEY is not set — this makes real model calls and cannot be faked.');
@@ -392,17 +415,11 @@ async function cell(asset, brief, withDateField, note) {
         arm: armName.split(' ')[0], field: c.label.replace(`${DATE_FIELD}: `, ''),
         invented: invented.length, used: borrowed.length, vague: vague.length, n: all.length,
       });
+      printGrid(summary, `after ${armName.split(' ')[0]}/${c.label.replace(`${DATE_FIELD}: `, '')}`);
     }
   }
 
-  console.log(`\n${'='.repeat(78)}\nTHE 2x2\n${'='.repeat(78)}`);
-  console.log(`${'arm'.padEnd(6)}${'date field'.padEnd(24)}${'INVENTED'.padEnd(11)}${'borrowed*'.padEnd(13)}vague-safe`);
-  for (const r of summary) {
-    console.log(
-      `${r.arm.padEnd(6)}${r.field.padEnd(24)}${`${r.invented}/${r.n}`.padEnd(11)}`
-      + `${`${r.used}/${r.n}`.padEnd(13)}${r.vague}/${r.n}`
-    );
-  }
+  printGrid(summary, 'FINAL');
   console.log('');
   console.log('READ IT LIKE THIS:');
   console.log('  B invents anyway            -> the model OVERRIDES an available fact. A');

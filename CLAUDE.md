@@ -1571,6 +1571,24 @@ There is one true answer and five renderings of it would be the defect.
 as the failure**. Any future metric run across fields has to exclude these or it
 will report the correct behaviour as flatness.
 
+**And it did not hold on the second run: 3 distinct of 5.** Two drafts varied the
+PUNCTUATION of a supplied value — "Thursday August 24" without the comma, an em
+dash where the others used a pipe. Trivial in effect and the facts were right
+every time, so nothing a reader would notice.
+
+It is logged rather than fixed because of what it IS rather than what it costs: a
+transcription field paraphrasing instead of copying, which is the one thing that
+field should never do. The gap between reformatting a date and altering one is a
+matter of degree in the model's behaviour and a matter of kind in the output. If a
+future run shows a supplied value coming back with a different NUMBER rather than
+a different comma, this is the entry that predicted it.
+
+**The note wording is settled by the same run.** Three wordings, second time of
+asking, silent brief, invented times: `line` **4/35**, `single` 8/35, `campaign`
+11/35 — and `campaign` is worst for the second run running, so the grammar-scoping
+hypothesis is dead twice rather than once. `line` also produced **5 of 5 clean
+placeholders** on the field itself, clearing the 2/5 bar it had to beat.
+
 ##### A TEST DOUBLE THAT IMPLEMENTS ONLY THE HAPPY PATH IS BLIND WHEN IT MATTERS
 
 `scripts/lib/realDraftPath.js` wrapped `fetch` and returned

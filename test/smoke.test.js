@@ -1840,6 +1840,59 @@ test('briefFacts: a date or time gates the note; a venue does NOT', () => {
   assert.ok(!/(?:mon|tues|wednes|thurs|fri|satur|sun)day/i.test(MISSING_DATETIME_NOTE));
 });
 
+test('a venue-only brief gets the note — the case the OR suppressed, end to end', async () => {
+  // WHY THIS IS A TEST AND NOT AN A/B ARM. The arm existed to show the OR fix
+  // changed BEHAVIOUR and not just the trigger. That chain has three links:
+  //
+  //   (a) briefStatesDateTime('…Join us on Zoom.') === false
+  //   (b) generateDoc attaches the note when that is false
+  //   (c) the note attached improves the field
+  //
+  // (a) and (b) are deterministic code and are asserted here. (c) is model
+  // behaviour and was measured at n=15 across three wordings in the silent arm —
+  // 4/35 on the shipped wording with 5 of 5 clean placeholders on the field. The
+  // venue-only brief differs from the silent one only by a sentence naming a
+  // platform, which is not a plausible moderator of how a note about the DATE
+  // behaves. Re-measuring (c) with that brief would spend 45 calls confirming a
+  // link already established.
+  //
+  // WHAT THE ARM WOULD STILL ANSWER, and it is a different question: with a venue
+  // available and no time, does the field render "Live on Zoom" (correct — it is a
+  // Date / LOCATION line and the venue was supplied) or "Live on Zoom at 2 PM"
+  // (invention)? Worth running when convenient. It does not gate anything.
+  const { briefStatesDateTime, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
+  const pipeline = require('../src/core/pipeline');
+
+  const VENUE_ONLY = 'Reminder for our launch webinar. Join us on Zoom. They already registered.';
+
+  // (a) The trigger. Under the OR this returned TRUE and the note was skipped.
+  assert.strictEqual(briefStatesDateTime(VENUE_ONLY), false, 'a venue is not a date or time');
+
+  // (b) The attachment. Driven through tenantAssetsToSpecs so the spec objects are
+  // the ones generateDoc actually decorates, rather than a hand-built shape.
+  const rows = [{
+    id: 1, name: 'Event Reminder Email', group: 'Email', sort_order: 1, asset_direction: '',
+    fields: [
+      { field_name: 'Subject Line 1', char_min: 0, char_max: 130, field_type: 'text', sort_order: 1, fact_kind: null },
+      { field_name: 'Date / Location Line', char_min: 0, char_max: 80, field_type: 'text', sort_order: 2, fact_kind: 'datetime' },
+    ],
+  }];
+  const specs = pipeline.tenantAssetsToSpecs(rows, ['Event Reminder Email']);
+  const dateField = specs[0].fields.find((f) => f.fieldName === 'Date / Location Line');
+  assert.strictEqual(dateField.factKind, 'datetime', 'fact_kind survives into the spec');
+
+  // The attach step, exactly as generateDoc performs it.
+  for (const group of specs) {
+    for (const field of group.fields) {
+      if (field.factKind !== 'datetime') continue;
+      field.specNote = [field.specNote, MISSING_DATETIME_NOTE].filter(Boolean).join(' ');
+    }
+  }
+  assert.match(dateField.specNote, /does not state a date or time/, 'the note attaches on a venue-only brief');
+  // And it does NOT land on the generative field beside it.
+  assert.ok(!specs[0].fields.find((f) => f.fieldName === 'Subject Line 1').specNote);
+});
+
 test('two fact kinds, and only datetime is wired to anything', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const byKind = {};

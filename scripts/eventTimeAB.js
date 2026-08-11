@@ -230,7 +230,12 @@ async function cell(asset, brief, withDateField, note) {
       // is not a control, and its number describes nothing. This is the exact
       // failure that made the first 0/5 meaningless.
       if (!note || wireOk(prompts, note)) wired++;
-      runs.push(copy);
+      // A RUN THAT PRODUCED NOTHING IS NOT A ZERO, IT IS A DEAD RUN. The first
+      // version pushed an empty object here and the cell reported 0/0 — a clean
+      // number for a cell that drafted nothing, which is exactly the contaminated
+      // arm the wire check exists to refuse. Same class, so same treatment.
+      if (Object.keys(copy).length === 0) runs.push({ __error: 'every field failed — no copy produced' });
+      else runs.push(copy);
     } catch (err) {
       runs.push({ __error: err.message });
     }
@@ -288,6 +293,14 @@ async function cell(asset, brief, withDateField, note) {
       console.log(`\n${'='.repeat(78)}\n${label}\n${'='.repeat(78)}`);
 
       const { runs, wired } = await cell(asset, brief, withField, c.note);
+      // REFUSE A CELL THAT DID NOT DRAFT. A single failed run makes the cell's
+      // denominator a lie; every run failing makes its numerator one too.
+      const dead = runs.filter((r) => r.__error).length;
+      if (dead) {
+        console.error(`  !! ${dead}/${RUNS} RUNS PRODUCED NO COPY — this cell is not a measurement.`);
+        for (const r of runs.filter((x) => x.__error)) console.error(`     ${r.__error}`);
+        process.exit(1);
+      }
       if (c.note && wired !== RUNS) {
         console.error(`  !! THE NOTE REACHED ONLY ${wired}/${RUNS} PROMPTS — this cell is not a control.`);
         process.exit(1);

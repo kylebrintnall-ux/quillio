@@ -1571,6 +1571,57 @@ There is one true answer and five renderings of it would be the defect.
 as the failure**. Any future metric run across fields has to exclude these or it
 will report the correct behaviour as flatness.
 
+##### A TEST DOUBLE THAT IMPLEMENTS ONLY THE HAPPY PATH IS BLIND WHEN IT MATTERS
+
+`scripts/lib/realDraftPath.js` wrapped `fetch` and returned
+`{ ok: res.ok, json: async () => json }`. `callGemini` reads a FAILED response
+with `res.text()` (`services/gemini.js:495`), which that object did not have. So
+the first non-2xx of the run — a rate limit, thirty-odd calls into a
+thirty-five-call pass — surfaced as **`res.text is not a function`** instead of
+`Gemini API error 429`, every field of the asset failed batch AND rescue, and the
+cell reported a clean `0/0`.
+
+Two defects, one cause: the shim implemented the SUCCESS path because that is the
+path a working run takes, and it called `res.json()` unconditionally, consuming
+the error body before anything could read it.
+
+**The fix is `res.clone()` for the capture and the REAL response returned
+untouched**, which removes the class rather than patching the instance — the
+production code now gets a genuine `Response` with every method it may reach for.
+
+**It could not fire in production**: real `fetch` returns a real `Response`. The
+bug was entirely in the measurement rig. But it is the same shape as the note that
+never reached the drafter — *the wire between the measurement and the thing being
+measured is code too* — and it argues for the same discipline: a harness needs its
+failure path exercised, not just its success path.
+
+**And the harness now REFUSES a dead cell.** A run that produced no copy is
+recorded as an error rather than as an empty result, and a cell with any dead run
+exits non-zero. `0/0` is not a measurement; it is a cell that did not happen, and
+reporting it as a zero is the contaminated-arm failure the wire check exists to
+prevent.
+
+##### GRAMMAR-SCOPING: A WRONG HYPOTHESIS, WITH THE NUMBER
+
+The note names a LINE — "this line waits for them" — and the theory was that its
+grammar is what confines it to one field, so a wording naming no line would
+generalise to the generative fields. Measured, silent brief, invented times:
+
+| wording | invented | |
+| --- | --- | --- |
+| `line` (shipped, names a line) | **6/35** | |
+| `single` (one fact, names no line) | 10/35 | |
+| `campaign` (names no line at all) | **15/35** | **worse than the shipped version** |
+
+Naming no line did not generalise the note. It degraded it. The theory is dead,
+and the direction is the opposite of the prediction.
+
+**And 6/35 is not a success either.** The vague-safe column went 4 → 8, and all
+five Subject Line 1 drafts in the `line` cell open "Starting soon" or "We start
+soon". That is the pre-registered flatness, arriving exactly where it was
+predicted: invention traded for uniformity, with the count reading it as an
+improvement. It is the `char_min` floor result a third time.
+
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 
 - **A — source leak.** Any distinctive token of a source name in the output.

@@ -106,14 +106,33 @@ async function draftOnce({ assetName, fields, summary, writerPrompt, noteFor, br
   const prompts = [];
   const copy = {};
   const realFetch = global.fetch;
+
+  // THE REAL RESPONSE IS HANDED BACK UNTOUCHED, VIA clone() FOR THE CAPTURE.
+  //
+  // The first version returned `{ ok: res.ok, json: async () => json }` — a shim
+  // implementing only the SUCCESS path, because that is the path a working run
+  // takes. `callGemini` reads a FAILED response with `res.text()`
+  // (services/gemini.js:495), which the shim did not have. So the moment the API
+  // returned a non-2xx — a rate limit, 30-odd calls into a 35-call run — a legible
+  // "Gemini API error 429: …" turned into "res.text is not a function", every
+  // field of the asset failed batch and rescue, and the cell reported a clean zero.
+  //
+  // It also called res.json() UNCONDITIONALLY, consuming the error body before
+  // callGemini could read it — so even adding text() would have returned empty.
+  //
+  // THE LESSON, and it is the same shape as the wire check: a test double that
+  // implements only the happy path is blind exactly when something goes wrong.
+  // clone() removes the class of bug rather than patching this instance —
+  // callGemini now gets a genuine Response with every method it may reach for.
   global.fetch = async (url, opts) => {
     const prompt = JSON.parse(opts.body).contents[0].parts[0].text;
     prompts.push(prompt);
     const res = await realFetch(url, opts);
-    // Read the body once, hand a replayable object back to the caller.
-    const json = await res.json();
-    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!res.ok) return res; // let callGemini read and report it, as production does
+
     try {
+      const json = await res.clone().json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || '';
       if (/Respond with valid JSON only/.test(prompt)) {
         const parsed = JSON.parse(String(text).replace(/^```(?:json)?|```$/gm, '').trim());
         for (const [k, v] of Object.entries(parsed)) {
@@ -127,7 +146,7 @@ async function draftOnce({ assetName, fields, summary, writerPrompt, noteFor, br
     } catch {
       /* a parse failure is the rescue's business, not the harness's */
     }
-    return { ok: res.ok, json: async () => json };
+    return res;
   };
 
   try {

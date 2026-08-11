@@ -1507,6 +1507,70 @@ silent, and a writer who wants the 53-character line can take it.
 All 25 notes stay. They act on the constraint they name without costing variety,
 which is the opposite of what the `char_min` floor did.
 
+##### THE READER MISREADS A COUNT TOO — an aggregate acted on at n=5
+
+Six entries in, and the first where the count was not the problem. `eventTimeAB`,
+re-run through the real path, against the run that decided the design:
+
+| | first run | re-run | replicated? |
+| --- | --- | --- | --- |
+| A present-no-note vs A absent, AGGREGATE | 15/35 vs 9/30 | 8/35 vs 12/30 | **no — it reversed** |
+| the Date / Location Line itself, FIELD level | 5/5 fabricated | 4/5 fabricated | **yes** |
+
+"An empty transcription slot is a blank the model always fills" was written into a
+migration header, a seed comment and this file on the strength of the aggregate.
+At n=5 the aggregate was noise, and it reversed on the second run. The FIELD-level
+claim — the empty slot itself fabricates — held both times, and that is the one
+the design actually rests on.
+
+**The lesson is not about the metric.** The per-field breakdown was in the output
+of the first run; nothing was hidden. A number that had never been reproduced was
+read as a result, by a human, and built on. Every earlier entry here is a count
+failing to see something. This one is the reader taking a single unreplicated
+figure as established — which is the same error as the `distinct`/`shapes`
+baseline entry, arriving from the other direction.
+
+So: **an aggregate at n=5 is a hypothesis, and the per-field number underneath it
+is the finding.** If a design decision rests on a ratio, the ratio needs a second
+run before the decision does.
+
+##### BRIEF FIDELITY IS NOT FACTUAL ACCURACY, and no detector here can tell them apart
+
+The re-run's no-note cell put "in about a minute" in four fields — both Subject
+Lines, the Headline and the Preheader — as the event's start time. It is the
+BRIEF'S OWN PHRASE, verbatim, where it describes how fast the **demo** is.
+
+Every check in `eventTimeAB` scores that clean and files it under "matched the
+brief". Deciding it is true of the product and false of the start time requires
+knowing what the phrase REFERS to, which a substring comparison cannot ask and a
+longer pattern list makes worse — the phrase is already an exact match.
+
+So the column is renamed to what it measures — **BORROWED: a temporal phrase that
+also occurs in the brief** — and is documented in the script as **not a
+correctness signal**. Every borrowed phrase is printed for reading. A
+"from the brief" tally that silently includes false claims is worse than no tally,
+because it reads as a clean bill.
+
+**A related detector bug, found in the same run and fixed:** the month pattern was
+`(?:jan|feb|mar|…)[a-z]*`, which matched **marketing, marked, marketers, decision,
+decline, deck, separate, novel, junior, augment and march**. "marketing" appears
+in every brief this project has measured with, and because invention is scored by
+absence from the brief, every one of those false hits landed in the borrowed
+column rather than the invented one — inflating the tally that was already the
+least trustworthy. Now a full month name, or an abbreviation adjacent to a day.
+
+##### ONE CELL WHERE ZERO VARIANCE IS THE GOAL
+
+`Date / Location Line`, brief STATES the time: byte-identical five times —
+"Thursday, August 24 at 12 PM PT | Moscone West". Every other variance metric in
+this file treats collapse as a cost; on a **transcription** field it is the win.
+There is one true answer and five renderings of it would be the defect.
+
+`eventTimeAB` reports that field separately and reads it inverted: on a
+`fact_kind` field whose fact the brief supplied, **expect 1 distinct and treat 5
+as the failure**. Any future metric run across fields has to exclude these or it
+will report the correct behaviour as flatness.
+
 `statsAB` now carries two tripwires, and they are labelled as tripwires:
 
 - **A — source leak.** Any distinctive token of a source name in the output.

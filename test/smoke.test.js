@@ -1699,6 +1699,38 @@ test('the batch prompt states the floor too — the same omission had to be fixe
 // the prompt for every tenant on day one, not just for anyone who has opted in
 // through Settings. Asserted so the blast radius is a number in the repo rather
 // than a memory.
+test('a reminder has somewhere to put the time, named as the invitation names it', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const FIELD = 'Date / Location Line';
+  const of = (n) => DEFAULT_ASSETS.find((a) => a.name === n);
+  const names = (n) => (of(n).fields || []).map((f) => f.field_name);
+
+  // THE SEED SHIPPED WITHOUT IT. Event Reminder Email's field list was
+  // byte-identical to Event Follow-Up / Recap Email's — and the follow-up needs
+  // no date, because the event is over, so the shared shape was the follow-up's.
+  // With nowhere to say when the event is, and an asset_direction demanding
+  // urgency, drafts invented arrival times that disagreed by 24 hours. A
+  // reminder carrying a wrong time makes the READER miss the event, which is the
+  // only failure in this system that harms the reader rather than the client.
+  assert.ok(names('Event Reminder Email').includes(FIELD), 'the reminder can carry a time');
+
+  // NAMED EXACTLY AS THE INVITATION NAMES IT. The library is matched by name in
+  // several places and a near-duplicate is what a name match gets wrong — so a
+  // reminder and an invitation must not disagree about what the field is called.
+  assert.ok(names('Event Invitation Email').includes(FIELD));
+  const band = (n) => (of(n).fields || []).find((f) => f.field_name === FIELD);
+  assert.strictEqual(band('Event Reminder Email').char_max, band('Event Invitation Email').char_max);
+  assert.strictEqual(band('Event Reminder Email').char_min, band('Event Invitation Email').char_min);
+
+  // Placed as the invitation places it: content, then the date line, then the ask.
+  const r = names('Event Reminder Email');
+  assert.ok(r.indexOf(FIELD) > r.indexOf('Body Copy') && r.indexOf(FIELD) < r.indexOf('CTA Text'));
+
+  // AND THE FOLLOW-UP STILL HAS NONE, deliberately — the event is over. If this
+  // ever fails, the copy-paste went the other way.
+  assert.ok(!names('Event Follow-Up / Recap Email').includes(FIELD), 'a recap needs no arrival time');
+});
+
 test('19 seeded CHARACTER fields already carry a floor — this is not opt-in-only', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const floored = [];
@@ -1712,7 +1744,9 @@ test('19 seeded CHARACTER fields already carry a floor — this is not opt-in-on
       if (Number(f.char_min) > 0) floored.push({ asset: a.name, field: f.field_name });
     }
   }
-  assert.strictEqual(charFields, 166, 'character fields in the seed');
+  // 167 since Event Reminder Email gained `Date / Location Line` — a reminder
+  // needs somewhere to put the time. char_min 0, so the floored count is unmoved.
+  assert.strictEqual(charFields, 167, 'character fields in the seed');
   assert.strictEqual(floored.length, 19, 'and 19 of them have a floor');
   // The shape of them: every Subhead, every Preheader, the landing-page meta pairs.
   const names = new Set(floored.map((r) => r.field));

@@ -1,0 +1,244 @@
+'use strict';
+
+// A/B: does Event Reminder Email invent an event time — and does it still invent
+// one when the brief TELLS it the time?
+//
+// THE PRE-REGISTERED FAILURE, NAMED BEFORE THE RUN (CLAUDE.md standing rule):
+// ANY TIME OR DATE IN THE OUTPUT THAT DOES NOT APPEAR IN THE BRIEF. Every one is
+// printed. This is the most operationally harmful output this system has
+// produced — a reminder email carrying a wrong time makes the reader miss the
+// event, which is the only failure here that harms the READER rather than the
+// client. statsAB measured 8 of 30 in one arm and 4 of 30 with no reference
+// material at all, with two drafts of the same email disagreeing by 24 hours.
+//
+// NO NUMERIC COUNTER CATCHES THIS. "Thursday" has no digits. Neither does
+// "tomorrow", "tonight", or "noon". statsAB's invented-number column reported
+// clean while every one of those was in the copy. So the detector below matches
+// weekday names, month names, clock times, ordinals, relative days and relative
+// durations — and it is still a FLOOR, not a census (see TEMPORAL below).
+//
+// THE 2x2, AND ARM B IS THE ONE THAT MATTERS:
+//
+//              brief states no time          brief states the time
+//   no field   A1  does it invent?           B1  does it use THAT, or its own?
+//   field      A2  does the field make it    B2  does it transcribe correctly
+//                  invent MORE (a slot to        into the field and STILL
+//                  fill)?                        invent in Subject Line 1?
+//
+// B2 is the sharpest cell. If the model transcribes correctly into a field built
+// for it and invents anyway in the subject line, the field is NECESSARY AND NOT
+// SUFFICIENT — which is worth knowing before a line of prompt text is written,
+// because a refusal signal would then be fixing the wrong half.
+//
+// A2 is the cell that could embarrass the field: an empty slot is an invitation.
+// If A2 invents more than A1, adding the field made things worse when the brief
+// is silent, and that is a result, not a bug in the run.
+//
+// THE FIELD IS TOGGLED IN THIS SCRIPT, not in the database — the fields list is
+// built here, so no migration is needed to measure either arm and nothing is
+// written anywhere.
+//
+// MAKES REAL MODEL CALLS — 4 cells x N runs, one batch call each. Writes
+// NOTHING. Read-only against Gemini, safe to run in production.
+//
+//   node scripts/eventTimeAB.js        # 5 runs per cell (20 calls)
+//   node scripts/eventTimeAB.js 3      # 12 calls
+
+const { generateAssetDrafts } = require('../src/services/gemini');
+const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+const RUNS = Number(process.argv[2]) || 5;
+const ASSET = 'Event Reminder Email';
+const DATE_FIELD = 'Date / Location Line';
+
+// The ONLY difference between the arms. Everything else — audience, product,
+// the fact that they already registered — is held identical, so a temporal
+// expression in arm A's output came from nowhere.
+const BRIEF_SILENT =
+  'Reminder email for our product launch webinar. The audience already registered. '
+  + 'Quillio turns a campaign brief into a formatted, on-brand copy doc, so marketing '
+  + 'teams stop rewriting the same brief into six different asset templates. '
+  + 'Get them to show up.';
+
+const BRIEF_STATED =
+  'Reminder email for our product launch webinar on Thursday August 24 at 12 PM PT, '
+  + 'Moscone West. The audience already registered. '
+  + 'Quillio turns a campaign brief into a formatted, on-brand copy doc, so marketing '
+  + 'teams stop rewriting the same brief into six different asset templates. '
+  + 'Get them to show up.';
+
+const SUMMARY = 'Remind registrants to attend the Quillio product launch webinar.';
+const WRITER_PROMPT =
+  'Speak to someone who already registered. Reinforce the decision, do not re-sell it. '
+  + 'Get them to turn up.';
+
+// --- THE TEMPORAL DETECTOR, AND WHAT IT CANNOT SEE -------------------------
+//
+// A FLOOR, NOT A CENSUS, and the gaps are named so nobody reads a zero as safe:
+//   • A spelled-out clock time ("half past noon") is missed.
+//   • A bare number that IS a date ("the 24th" is caught; "on the 24" is not).
+//   • "Later this week" and similar loose ranges are missed by design — they sit
+//     between "soon" (safe) and "Thursday" (a claim) and calling either way
+//     would be wrong without reading the line.
+// Everything it does match is printed, so the ratio is never the whole answer.
+const TEMPORAL = [
+  [/\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b/gi, 'weekday'],
+  [/\b(?:jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\b/gi, 'month'],
+  [/\b\d{1,2}\s*(?::\s*\d{2})?\s*(?:am|pm)\b/gi, 'clock time'],
+  [/\b\d{1,2}:\d{2}\b/g, 'clock time'],
+  [/\bin\s+\d+\s+(?:second|minute|hour|day|week)s?\b/gi, 'relative duration'],
+  [/\b\d+\s+(?:minute|hour|day|week)s?\s+(?:away|from now|to go)\b/gi, 'relative duration'],
+  [/\b(?:today|tomorrow|tonight|this\s+(?:morning|afternoon|evening)|next\s+week)\b/gi, 'relative day'],
+  [/\b(?:noon|midnight)\b/gi, 'clock time'],
+  [/\b\d{1,2}(?:st|nd|rd|th)\b/g, 'ordinal date'],
+];
+
+// The CORRECT output when the brief is silent. Counted separately, because the
+// question "did invention stop" is not the same as "was it replaced by
+// something usable" — a run where invention drops to zero and nothing takes its
+// place is a different result from one where "starts soon" takes over.
+const VAGUE_SAFE = /\b(?:soon|shortly|coming up|almost here|any minute|just around the corner)\b/gi;
+
+function temporalIn(text) {
+  const out = [];
+  for (const [re, kind] of TEMPORAL) {
+    for (const m of String(text).match(re) || []) out.push({ text: m, kind });
+  }
+  return out;
+}
+
+// An expression is INVENTED when it does not appear in the brief. Compared
+// case-insensitively on the raw substring, which is deliberately strict: "Friday"
+// against a brief saying "Thursday" is invented, and so is "3 PM" against "12 PM".
+function inventedIn(text, brief) {
+  const b = String(brief).toLowerCase();
+  return temporalIn(text).filter((t) => !b.includes(t.text.toLowerCase()));
+}
+
+function fieldsFor(asset, withDateField) {
+  return (asset.fields || [])
+    .filter((f) => withDateField || f.field_name !== DATE_FIELD)
+    .map((f) => ({
+      fieldName: f.field_name,
+      charMin: f.char_min || 0,
+      charMax: f.char_max || 0,
+      fieldType: f.field_type === 'words' ? 'words' : 'text',
+      notes: '',
+    }));
+}
+
+async function cell(asset, brief, withDateField) {
+  const runs = [];
+  for (let i = 0; i < RUNS; i++) {
+    try {
+      const drafts = await generateAssetDrafts({
+        assetType: asset.name,
+        assetDirection: asset.asset_direction || '',
+        brief,
+        summary: SUMMARY,
+        writerPrompt: WRITER_PROMPT,
+        fields: fieldsFor(asset, withDateField),
+        voiceGuide: '',
+      });
+      const byName = {};
+      for (const d of drafts || []) byName[d.fieldName] = String(d.copy || '').trim();
+      runs.push(byName);
+    } catch (err) {
+      runs.push({ __error: err.message });
+    }
+  }
+  return runs;
+}
+
+(async () => {
+  if (!process.env.GEMINI_API_KEY) {
+    console.error('GEMINI_API_KEY is not set — this makes real model calls and cannot be faked.');
+    process.exit(1);
+  }
+
+  const asset = DEFAULT_ASSETS.find((x) => x.name === ASSET);
+  if (!asset) throw new Error(`asset not in the bundled library: ${ASSET}`);
+  const hasField = (asset.fields || []).some((f) => f.field_name === DATE_FIELD);
+  if (!hasField) {
+    console.error(`${ASSET} has no ${JSON.stringify(DATE_FIELD)} in the bundled library — the field arms cannot run.`);
+    process.exit(1);
+  }
+
+  console.log(`${ASSET} — ${RUNS} runs per cell`);
+  console.log(`asset_direction: ${JSON.stringify(asset.asset_direction || '')}`);
+  console.log('');
+  console.log('THE FACTS THE BRIEF SUPPLIES:');
+  console.log('  arm A (silent) : none');
+  console.log('  arm B (stated) : Thursday · August 24 · 12 PM PT · Moscone West');
+
+  const summary = [];
+
+  for (const [armName, brief] of [['A  brief SILENT', BRIEF_SILENT], ['B  brief STATES the time', BRIEF_STATED]]) {
+    for (const withField of [false, true]) {
+      const label = `${armName}   |   ${DATE_FIELD}: ${withField ? 'PRESENT' : 'absent'}`;
+      console.log(`\n${'='.repeat(78)}\n${label}\n${'='.repeat(78)}`);
+
+      const runs = await cell(asset, brief, withField);
+      const all = [];
+
+      for (const f of fieldsFor(asset, withField)) {
+        const copies = runs.map((r) => (r.__error ? `ERROR: ${r.__error}` : (r[f.fieldName] || '')));
+        console.log(`\n  ${f.fieldName}  [${f.charMin}-${f.charMax}]`);
+        copies.forEach((t) => {
+          if (t && !t.startsWith('ERROR:')) all.push({ field: f.fieldName, text: t });
+          const inv = inventedIn(t, brief);
+          const supplied = temporalIn(t).length - inv.length;
+          const tags = [
+            inv.length ? `INVENTED: ${inv.map((x) => `${x.text} (${x.kind})`).join(', ')}` : '',
+            supplied > 0 ? `${supplied} from the brief` : '',
+            (String(t).match(VAGUE_SAFE) || []).length ? 'vague-safe' : '',
+          ].filter(Boolean);
+          console.log(`      ${String(t.length).padStart(4)}  ${t}${tags.length ? `  [${tags.join('] [')}]` : ''}`);
+        });
+      }
+
+      const invented = all.filter((x) => inventedIn(x.text, brief).length > 0);
+      const usedSupplied = all.filter((x) => {
+        const t = temporalIn(x.text);
+        return t.length > inventedIn(x.text, brief).length;
+      });
+      const vague = all.filter((x) => (String(x.text).match(VAGUE_SAFE) || []).length > 0);
+
+      console.log(`\n  INVENTED a time or date:      ${invented.length}/${all.length}`);
+      console.log(`  used a time FROM the brief:   ${usedSupplied.length}/${all.length}`);
+      console.log(`  vague-safe ("soon" etc):      ${vague.length}/${all.length}`);
+      if (invented.length) {
+        console.log('  ↑ each of these is a time the brief did not state. On a reminder email');
+        console.log('    that is the reader missing the event. Read them:');
+        for (const x of invented) console.log(`      ${x.field}: ${x.text}`);
+      }
+
+      summary.push({
+        arm: armName.split(' ')[0], field: withField ? 'present' : 'absent',
+        invented: invented.length, used: usedSupplied.length, vague: vague.length, n: all.length,
+      });
+    }
+  }
+
+  console.log(`\n${'='.repeat(78)}\nTHE 2x2\n${'='.repeat(78)}`);
+  console.log(`${'arm'.padEnd(6)}${'date field'.padEnd(13)}${'INVENTED'.padEnd(11)}${'used brief'.padEnd(13)}vague-safe`);
+  for (const r of summary) {
+    console.log(
+      `${r.arm.padEnd(6)}${r.field.padEnd(13)}${`${r.invented}/${r.n}`.padEnd(11)}`
+      + `${`${r.used}/${r.n}`.padEnd(13)}${r.vague}/${r.n}`
+    );
+  }
+  console.log('');
+  console.log('READ IT LIKE THIS:');
+  console.log('  B invents anyway            -> the model OVERRIDES an available fact. A');
+  console.log('                                 refusal signal would fix the wrong half.');
+  console.log('  B clean, A invents          -> silence is the trigger. A refusal signal is');
+  console.log('                                 the right next piece.');
+  console.log('  B2 transcribes but B1-style -> the field is NECESSARY AND NOT SUFFICIENT:');
+  console.log('     invention persists          correct in the slot, invented in the subject.');
+  console.log('  A2 invents MORE than A1     -> the empty slot is an invitation. The field');
+  console.log('                                 made the silent case worse. That is a result.');
+  console.log('');
+  console.log('AND READ THE LINES, not the ratios. No numeric counter catches "Thursday",');
+  console.log('and this detector misses spelled clock times and loose ranges by design.');
+})();

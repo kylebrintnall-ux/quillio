@@ -1,8 +1,15 @@
 'use strict';
 
 // Copy-review orchestration (copy-review feature). Reviews a generated copy doc
-// like a thoughtful editor and leaves inline, anchored comments only where a
-// material issue genuinely warrants it — silence is a good outcome.
+// like a thoughtful editor and leaves comments only where a material issue
+// genuinely warrants it — silence is a good outcome.
+//
+// THE COMMENTS ARE UNANCHORED. Drive cannot pin a comment to a region of a native
+// Google Doc, and pretending otherwise is what made every review comment render as
+// "Original content deleted" — see the review-section header in
+// destinations/googleDocs.js. Each comment instead LEADS with a locator line
+// naming its field and asset, then a short verbatim fragment of the copy, then the
+// note. See "The comment LOCATOR" below.
 //
 // Flow:
 //   1. getDocContent parses the doc; we evaluate ONLY fields with non-empty copy
@@ -14,8 +21,9 @@
 //   3. Load prior review state (per-field prior copy + prior comment) so Gemini
 //      can recognize the writer's improvements and not re-nag.
 //   4. Gemini returns a per-field comment or null (materiality/silence bar).
-//   5. Clear previous Quillio review comments, then post the currently-warranted
-//      ones anchored to each field's copy. Resolved issues simply disappear.
+//   5. Reconcile against the doc's existing Quillio comments (matched by content,
+//      else by locator) and post only the newly-warranted ones. Resolved issues
+//      simply disappear.
 //   6. Persist the new state; return a digest + qualitative status (no grade).
 
 const { getDestination } = require('../destinations');
@@ -106,7 +114,11 @@ function collectCopyFields(content) {
       if (!raw) continue;
       if (isNumberedStack(raw)) continue; // an unresolved stack → the variant path handles it
       const copy = stripSoloLabel(raw).trim();
-      if (copy) out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, fieldType: f.fieldType || 'text', copy });
+      // `label` rides along for the comment LOCATOR only — it is the doc's own bold
+      // label, and it never reaches a prompt (singleInputs below picks its keys
+      // explicitly). Note it carries the char MIN when the doc shows one, which the
+      // review units deliberately do not; that is safe for the same reason.
+      if (copy) out.push({ assetType: asset.name, instance, fieldName: f.fieldName, label: f.label || '', charMax: f.charMax || 0, fieldType: f.fieldType || 'text', copy });
     }
   }
   return out;
@@ -124,17 +136,113 @@ function collectVariationStacks(content) {
       if (!raw || !isNumberedStack(raw)) continue;
       const variations = parseNumberedStack(raw);
       if (variations.length >= 2) {
-        out.push({ assetType: asset.name, instance, fieldName: f.fieldName, charMax: f.charMax || 0, fieldType: f.fieldType || 'text', variations });
+        out.push({ assetType: asset.name, instance, fieldName: f.fieldName, label: f.label || '', charMax: f.charMax || 0, fieldType: f.fieldType || 'text', variations });
       }
     }
   }
   return out;
 }
 
+// The ` · option N (Doorway)` tail. ONE definition, because it is now produced in
+// two places that must agree character for character: the state key below, and the
+// comment LOCATOR. keyInScope also recognizes a variation's state key by this
+// suffix, so a drift here would silently unscope every variation.
+function optionSuffix(index, doorway) {
+  return ` · option ${index}${doorway ? ` (${doorway})` : ''}`;
+}
+
 // Stable reconcile/state key for one variation of a stack. Content-matching in
 // reconcileComments tolerates index drift; this just has to be deterministic.
 function variationFieldName(fieldName, index, doorway) {
-  return `${fieldName} · option ${index}${doorway ? ` (${doorway})` : ''}`;
+  return `${fieldName}${optionSuffix(index, doorway)}`;
+}
+
+// --- The comment LOCATOR: how an unanchored comment says where it belongs ------
+//
+// Drive cannot pin a comment to a region of a Google Doc (see the header of
+// destinations/googleDocs.js's review section). So the location travels in the
+// comment TEXT, on its own first line, and that line does two jobs:
+//
+//   1. a reader in Docs can tell which field the note is about, and scan for it;
+//   2. re-review can find its own previous comment WITHOUT the anchor, which is
+//      what keeps a second pass from posting a duplicate of every note.
+//
+// It must therefore be unique per review unit and stable across a copy edit. The
+// field label alone is neither — two assets can both have "Headline [50]" — so the
+// asset (with its instance tag) is on the line too.
+
+// Fallback when the doc's own bold label wasn't carried. Real documents always
+// supply `label` (getDocContent reads the paragraph verbatim); this covers a
+// hand-built `content` — tests, or any caller assembling asset lists itself — and
+// is deliberately the simplest thing that still names the field.
+function fallbackLabel(f) {
+  const max = Number(f && f.charMax) || 0;
+  const name = String((f && f.fieldName) || '').trim();
+  if (!max) return name;
+  return `${name} [${max}${f.fieldType === 'words' ? ' words' : ''}]`;
+}
+
+// `<field label as the doc renders it>[ · option N (Doorway)] — <Asset>[#iN]`
+function composeLocator(labelPart, assetType, instance) {
+  return `${labelPart} — ${String(assetType || '').trim()}${instanceTag(instance)}`;
+}
+
+// The locator for one review unit. Prefers the one runCopyReview built from the
+// doc's own label; falls back to reconstructing.
+function unitLocator(f) {
+  if (f && f.locator) return f.locator;
+  return composeLocator(fallbackLabel(f), f && f.assetType, f && f.instance);
+}
+
+// The model's own words for a field, out of persisted state. State written before
+// the unanchoring kept them in `comment`; state written since keeps the posted
+// BODY there and the words in `note`. Reading through this fallback is what lets an
+// existing tenant's doc_reviews row keep working with no migration — and it is why
+// the digest and the "here is what you said last time" prompt input never show a
+// reader the locator line.
+function priorNote(p, fallback) {
+  if (p && p.note != null) return p.note;
+  if (p && p.comment != null) return p.comment;
+  return fallback != null ? fallback : null;
+}
+
+// Read a locator back off a comment: its first line. A comment posted before this
+// change has a note there instead, which matches no constructed locator — so it is
+// simply not found this way, and the content matcher (which is exact, and is what
+// legacy state holds) handles it. That is the whole migration.
+function locatorOf(content) {
+  const first = String(content || '').split('\n')[0].trim();
+  return first || null;
+}
+
+// A SHORT verbatim fragment of the copy — enough to recognize the line on the
+// page, short enough to survive the trim/stripSoloLabel transformations the copy
+// has already been through. Not a reconstruction of the field: a whole-field quote
+// was what the anchor used to carry, and it is exactly the thing that could not be
+// kept faithful. Whitespace is collapsed because a fragment must not span the
+// paragraph joins getDocContent introduces.
+const FRAGMENT_WORDS = 8;
+const FRAGMENT_CHARS = 60;
+function copyFragment(copy) {
+  const flat = String(copy || '').replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  const take = [];
+  for (const w of flat.split(' ')) {
+    if (take.length >= FRAGMENT_WORDS) break;
+    if (take.length && take.join(' ').length + 1 + w.length > FRAGMENT_CHARS) break;
+    take.push(w);
+  }
+  const frag = take.join(' ');
+  return frag.length < flat.length ? `${frag}…` : frag;
+}
+
+// The posted comment body: locator, fragment, then the note EXACTLY as the model
+// wrote it. This string is also what gets persisted as the field's `comment` and
+// what listReviewComments reads back, so the three are the same bytes by
+// construction rather than by agreement.
+function composeComment(locator, copy, note) {
+  const frag = copyFragment(copy);
+  return `${frag ? `${locator}\n“${frag}”` : locator}\n\n${note}`;
 }
 
 // Choose the review targets. Whole-doc (scopeKeys null) → every single + stack,
@@ -268,35 +376,48 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
   }
   // Index live comments two ways. CONTENT is the reliable key: Google does not
   // change a comment's text when the doc is edited, so it still matches the stored
-  // priorComment after a fix. QUOTE (quotedFileContent.value) is a weak fallback
-  // only — after an edit Drive orphans/rewrites the anchor, so the readback value
-  // equals neither the new nor the old copy, which is why quote-only matching left
-  // fixed-field comments stranded. First occurrence wins for each key.
+  // priorComment after a fix.
+  //
+  // THE FALLBACK USED TO BE THE QUOTE, AND IT CANNOT BE ANY MORE. `c.quote` is
+  // quotedFileContent read back, and nothing sends one now — it is '' on every
+  // comment this code posts, so a quote index would collapse every row onto one
+  // key and match nothing. Its replacement is the LOCATOR (the comment's first
+  // line), which is strictly better at the job the quote was doing: it identifies
+  // the review unit rather than its copy, so it does not change when the writer
+  // edits the field. That is why the old two quote lookups (current copy, then
+  // prior copy) are one lookup now. First occurrence wins for each key.
   const byContent = new Map();
-  const byQuote = new Map();
+  const byLocator = new Map();
   for (const c of liveComments || []) {
     if (typeof c.content === 'string' && !byContent.has(c.content)) byContent.set(c.content, c);
-    if (!byQuote.has(c.quote)) byQuote.set(c.quote, c);
+    const loc = locatorOf(c.content);
+    if (loc && !byLocator.has(loc)) byLocator.set(loc, c);
   }
 
   const toAdd = [];
   const toDelete = [];
   const nextState = { fields: {} };
   const results = [];
-  const activeQuotes = new Set(); // quotes that will carry a live comment after reconcile
+  const activeLocators = new Set(); // locators that will carry a live comment after reconcile
   const claimed = new Set(); // comment ids already bound to a field (no double-match)
   let kept = 0;
   let added = 0;
   let removed = 0;
 
-  const planAdd = (key, quote, content) => {
-    // Don't post two comments anchored to identical copy (Drive would mis-anchor).
-    if (activeQuotes.has(quote)) {
-      console.warn('[review] duplicate copy text — skipping an added comment to avoid mis-anchoring');
+  // THIS GUARD USED TO BE KEYED ON THE COPY, and that was an anchoring workaround:
+  // two comments quoting identical text would have made Drive pick one of them, so
+  // the second was dropped. Nothing is quoted now, so identical copy in two fields
+  // is no longer a collision — and dropping the second field's note was a real
+  // loss (two instances of one asset holding the same headline each deserve their
+  // own). Keyed on the LOCATOR it keeps the invariant that still matters: never
+  // two comments for one review unit.
+  const planAdd = (key, locator, content) => {
+    if (activeLocators.has(locator)) {
+      console.warn(`[review] two comments for one review unit (${locator}) — skipping the second`);
       return false;
     }
-    toAdd.push({ key, quote, content });
-    activeQuotes.add(quote);
+    toAdd.push({ key, locator, content });
+    activeLocators.add(locator);
     added += 1;
     return true;
   };
@@ -304,58 +425,72 @@ function reconcileComments({ fields, priorFields, verdicts, liveComments } = {})
   for (const f of fields) {
     const key = fieldKey(f.assetType, f.fieldName, f.instance);
     const cur = String(f.copy || '');
+    const locator = unitLocator(f);
     const p = prior[key] || {};
     const priorCopy = p.copy != null ? String(p.copy) : null;
     const changed = priorCopy == null ? true : cur !== priorCopy;
     const verdict = verdictByKey.has(key) ? verdictByKey.get(key) : null;
+    // What Drive is holding for this field (the composed body), and the model's own
+    // words inside it. State written before the unanchoring has only the latter, in
+    // `comment` — priorNote falls back to it, which is what makes an existing
+    // tenant's stored state keep working without a migration.
     const priorComment = p.comment != null ? String(p.comment) : null;
-    // Match this field's existing comment. Content first (stable across edits, so
-    // it locates the stale comment on a FIXED field), then quote as a fallback for
-    // state-loss cases. Never bind one comment to two fields.
-    let existing =
-      (priorComment && byContent.get(priorComment)) ||
-      byQuote.get(cur) ||
-      (priorCopy != null ? byQuote.get(priorCopy) : null) ||
-      null;
+    // Match this field's existing comment. Content first (exact, and what legacy
+    // state holds), then the locator for state-loss cases. Never bind one comment
+    // to two fields.
+    let existing = (priorComment && byContent.get(priorComment)) || byLocator.get(locator) || null;
     if (existing && claimed.has(existing.id)) existing = null;
     if (existing) claimed.add(existing.id);
 
     // Manual dismissal on UNCHANGED copy → respect it; never re-add. Honor a
     // persisted dismissal too, in case the resolved comment later disappeared.
     if (!changed && ((existing && existing.resolved) || p.resolved === true)) {
-      if (existing) { activeQuotes.add(cur); kept += 1; }
-      nextState.fields[key] = { copy: cur, comment: (existing && existing.content) || p.comment || null, resolved: true };
+      if (existing) { activeLocators.add(locator); kept += 1; }
+      nextState.fields[key] = {
+        copy: cur,
+        comment: (existing && existing.content) || p.comment || null,
+        note: priorNote(p, existing && existing.content),
+        resolved: true,
+      };
       results.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, comment: null }); // dismissed → not an active note
       continue;
     }
 
-    let activeComment = null;
+    let activeComment = null; // the body in Drive
+    let activeNote = null; // the model's words, for the digest and the next prompt
     if (!changed) {
       if (existing) {
         // Leave the existing unresolved comment exactly in place.
-        activeQuotes.add(cur);
+        activeLocators.add(locator);
         kept += 1;
         activeComment = existing.content;
+        activeNote = priorNote(p, existing.content);
       } else if (verdict) {
-        if (planAdd(key, cur, verdict)) activeComment = verdict;
+        if (planAdd(key, locator, composeComment(locator, cur, verdict))) {
+          activeComment = composeComment(locator, cur, verdict);
+          activeNote = verdict;
+        }
       }
     } else {
-      // Copy changed → any matched comment is stale (anchored to old text).
+      // Copy changed → the matched comment quotes the old line and is stale.
       if (existing) {
         toDelete.push(existing.id);
         removed += 1;
       } else if (priorComment) {
         // We previously flagged this field but can't find the comment now — it may
-        // have been orphaned/renamed by the edit or lost with state. Log it so a
-        // lingering comment on a fixed field is diagnosable.
+        // have been deleted by hand or lost with state. Log it so a lingering
+        // comment on a fixed field is diagnosable.
         console.warn(`[review] changed field "${key}" had a prior comment but no live match to remove`);
       }
-      if (verdict && planAdd(key, cur, verdict)) activeComment = verdict; // replace / re-flag
+      if (verdict && planAdd(key, locator, composeComment(locator, cur, verdict))) {
+        activeComment = composeComment(locator, cur, verdict); // replace / re-flag
+        activeNote = verdict;
+      }
       // verdict null → issue fixed by the edit; stale comment already deleted.
     }
 
-    nextState.fields[key] = { copy: cur, comment: activeComment, resolved: false };
-    results.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, comment: activeComment });
+    nextState.fields[key] = { copy: cur, comment: activeComment, note: activeNote, resolved: false };
+    results.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, comment: activeNote || activeComment });
   }
 
   // claimedIds = every live comment bound to a current review unit (kept OR
@@ -428,9 +563,21 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // `copy` is what a comment anchors to and what change-detection compares: a
   // single field's copy, or a variation's full "N. (Doorway) …" doc line (unique
   // via its number). reconcile keys/persists on (assetType, instance, fieldName). ---
+  //
+  // Each unit also carries its LOCATOR — the line the comment leads with, built
+  // here because this is the only place holding the doc's own label, the asset and
+  // (for a stack) the option number at the same time.
   const units = [];
   for (const f of singleFields) {
-    units.push({ assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, fieldType: f.fieldType, copy: f.copy });
+    units.push({
+      assetType: f.assetType,
+      instance: f.instance,
+      fieldName: f.fieldName,
+      charMax: f.charMax,
+      fieldType: f.fieldType,
+      copy: f.copy,
+      locator: composeLocator(f.label || fallbackLabel(f), f.assetType, f.instance),
+    });
   }
   for (const st of stacks) {
     for (const v of st.variations) {
@@ -441,6 +588,11 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
         charMax: st.charMax,
         fieldType: st.fieldType,
         copy: v.line,
+        locator: composeLocator(
+          `${st.label || fallbackLabel(st)}${optionSuffix(v.index, v.doorway)}`,
+          st.assetType,
+          st.instance
+        ),
       });
     }
   }
@@ -449,7 +601,10 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
   // variant review, run concurrently. ---
   const singleInputs = singleFields.map((f) => {
     const p = priorFor(f.assetType, f.fieldName, f.instance);
-    return { assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, fieldType: f.fieldType, copy: f.copy, priorCopy: p.copy || null, priorComment: p.comment || null, siblings: f.siblings || [] };
+    // priorComment is what the model is told it said last time, so it is the NOTE,
+    // never the posted body — the locator and the fragment are addressed to a human
+    // reading the doc and would just be noise in the prompt.
+    return { assetType: f.assetType, instance: f.instance, fieldName: f.fieldName, charMax: f.charMax, fieldType: f.fieldType, copy: f.copy, priorCopy: p.copy || null, priorComment: priorNote(p) || null, siblings: f.siblings || [] };
   });
   const rawSingleVerdicts = singleInputs.length
     ? await reviewCopyFields({ fields: singleInputs, voiceGuide, briefContext, scoped })
@@ -467,7 +622,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
     stacks.map((st) => {
       const options = st.variations.map((v) => {
         const p = priorFor(st.assetType, variationFieldName(st.fieldName, v.index, v.doorway), st.instance);
-        return { index: v.index, doorway: v.doorway, copy: v.copy, priorComment: p.comment || null };
+        return { index: v.index, doorway: v.doorway, copy: v.copy, priorComment: priorNote(p) || null };
       });
       return reviewVariationStack({ assetType: st.assetType, fieldName: st.fieldName, charMax: st.charMax, fieldType: st.fieldType, variations: options, voiceGuide, briefContext, siblings: st.siblings || [] })
         .then((res) => ({ st, res }))
@@ -524,7 +679,7 @@ async function runCopyReview(docId, tenantId, clients, scopedFields) {
     if (await dest.deleteReviewComment(docId, id, clients)) swept += 1;
   }
   for (const a of recon.toAdd) {
-    await dest.addReviewComment(docId, { quote: a.quote, content: a.content }, clients);
+    await dest.addReviewComment(docId, { content: a.content }, clients);
   }
 
   // Persist next state. Whole-doc replaces the whole state (it saw everything).
@@ -575,4 +730,12 @@ module.exports = {
   buildDigest,
   fieldKey,
   reconcileComments,
+  optionSuffix,
+  fallbackLabel,
+  composeLocator,
+  unitLocator,
+  locatorOf,
+  copyFragment,
+  composeComment,
+  priorNote,
 };

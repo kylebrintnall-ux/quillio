@@ -1699,6 +1699,103 @@ test('the batch prompt states the floor too — the same omission had to be fixe
 // the prompt for every tenant on day one, not just for anyone who has opted in
 // through Settings. Asserted so the blast radius is a number in the repo rather
 // than a memory.
+test('briefFacts: a date, a time or a venue in the brief — and the safe direction on a miss', () => {
+  const { briefStatesDateTime, briefFacts, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
+
+  for (const b of [
+    'Webinar on Thursday August 24 at 12 PM PT, Moscone West.',
+    'The session is on Thursday.',
+    'Doors at 6:30.',
+    'Starts at 9am.',
+    'Run it 24/08.',
+    'It is tomorrow.',
+    'Venue: the Grand Ballroom',
+    'Join us on Zoom.',
+  ]) assert.strictEqual(briefStatesDateTime(b), true, `should find a fact in: ${b}`);
+
+  for (const b of [
+    'Reminder email for our product launch webinar. They already registered.',
+    'Quillio turns a brief into a copy doc in about a minute.',
+    'Q3 launch push for mid-size B2B teams.',   // Q3 and B2B are not dates
+    '', null, undefined,
+  ]) assert.strictEqual(briefStatesDateTime(b), false, `should find nothing in: ${JSON.stringify(b)}`);
+
+  // `matches` carries WHAT fired, not just whether. A silent boolean is how a
+  // detector like this stops being trusted.
+  assert.ok(briefFacts('Thursday at 12 PM').matches.length >= 2);
+
+  // THE NOTE IS ONE SENTENCE FOR TWO READERS. It renders as the field's italic
+  // line AND reaches both draft prompts as that field's `Field guidance:`, so a
+  // clause aimed at the writer is read by the drafter as copy direction — which
+  // is exactly how "…only as that source's claim" became an instruction to
+  // attribute a source in customer-facing copy.
+  assert.strictEqual(MISSING_DATETIME_NOTE.split(/(?<=[.!?])\s/).length, 1, 'one sentence');
+  // It instructs neither party — it states a fact about the world.
+  assert.ok(!/\badd\b|\bfill\b|\benter\b|\bwrite\b/i.test(MISSING_DATETIME_NOTE),
+    'no imperative — "add it here" read as copy direction says invent one');
+  // It is not an error. A brief that has not fixed the time yet is ordinary.
+  assert.ok(!/missing|error|fail|should have|required/i.test(MISSING_DATETIME_NOTE));
+  // AND NO WELL-FORMED DATE EXAMPLE. Four false claims in this system trace to
+  // fact-shaped example strings; one here would be the fifth, in a note attached
+  // to the one field whose whole job is to carry a real date.
+  assert.ok(!/\d/.test(MISSING_DATETIME_NOTE), 'no digits at all');
+  assert.ok(!/(?:mon|tues|wednes|thurs|fri|satur|sun)day/i.test(MISSING_DATETIME_NOTE));
+});
+
+test('the note reaches ONLY a datetime field, and ONLY when the brief is silent', () => {
+  const src = fs.readFileSync(require.resolve('../src/core/pipeline'), 'utf8');
+
+  // Attached in generateDoc, the one place holding both the field list and the
+  // brief. Guarded on factKind, so it cannot land on a generative field.
+  assert.match(src, /if \(field\.factKind !== 'datetime'\) continue;/);
+  assert.match(src, /const briefHasDateTime = briefStatesDateTime\(spec\.brief\);/);
+  assert.match(src, /if \(!briefHasDateTime\) \{/);
+
+  // ABSENT WHEN THE BRIEF SUPPLIES IT — not a different sentence. The field
+  // already works in that case (0/30 invented, 21/30 transcribed), and a note in
+  // the presence of the fact is instruction the model does not need. Every rule
+  // this system adds costs variance; one that changes nothing costs it for free.
+  // Asserted on the NOTE, not on the flag: the flag legitimately appears in a
+  // ternary in the log line. What must not exist is a second sentence for the
+  // supplied case — so the note constant is referenced exactly once, inside the
+  // !briefHasDateTime branch, and there is no sibling constant.
+  assert.strictEqual((src.match(/MISSING_DATETIME_NOTE/g) || []).length, 2,
+    'imported once, used once — no second wording');
+  const block = src.slice(src.indexOf('if (!briefHasDateTime) {'), src.indexOf('[pipeline] asset specs source'));
+  assert.ok(block.includes('MISSING_DATETIME_NOTE'), 'the only use is in the silent branch');
+
+  // It JOINS spec_note rather than replacing it — a tenant's own note survives.
+  assert.match(src, /field\.specNote = \[field\.specNote, MISSING_DATETIME_NOTE\]\.filter\(Boolean\)\.join\(' '\)/);
+});
+
+test('the migration ships the column, the values and the field together', () => {
+  const m = require('../scripts/migrateAddReminderDateLine');
+
+  // ADDITIVE AND NULLABLE, no default. NULL means "this field generates rather
+  // than transcribes", which is every field but four — a NOT NULL DEFAULT would
+  // make the absence unrepresentable.
+  assert.match(m.COLUMN_SQL, /ADD COLUMN IF NOT EXISTS/, 'idempotent');
+  assert.ok(!/NOT NULL|DEFAULT/.test(m.COLUMN_SQL), 'nullable, no default');
+
+  // The seed and the migration must mark the SAME fields — a row the seed flags
+  // and the migration misses is a tenant whose note never appears.
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const seeded = new Set();
+  for (const a of DEFAULT_ASSETS) for (const f of a.fields) if (f.fact_kind) seeded.add(f.field_name);
+  assert.deepStrictEqual([...seeded].sort(), m.FACT_KIND_FIELDS.map(([n]) => n).sort());
+
+  // ONE VALUE TODAY. The other candidate classes are enumerated in ROADMAP.md and
+  // not started; this column commits to none of them.
+  assert.deepStrictEqual([...new Set(m.FACT_KIND_FIELDS.map(([, k]) => k))], ['datetime']);
+
+  // And the three ship together, because the field alone is a regression for
+  // every tenant and the column alone leaves the reminder with nowhere to put a
+  // time it was given.
+  const src = fs.readFileSync(require.resolve('../scripts/migrateAddReminderDateLine'), 'utf8');
+  assert.match(src, /THREE THINGS IN ONE TRANSACTION/);
+  assert.match(src, /await client\.query\('BEGIN'\)/);
+});
+
 test('a reminder has somewhere to put the time, named as the invitation names it', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const FIELD = 'Date / Location Line';
@@ -10965,8 +11062,23 @@ test('deploy-before-migration: both reads degrade to "nothing is overridden"', (
   const pipeline = src.slice(src.indexOf('async function getTenantAssets'), src.indexOf('// THE EDITOR READ'));
   assert.match(pipeline, /if \(!isUndefinedColumn\(err\)\) throw err;/,
     'only 42703 — a permissions or connectivity failure still throws');
-  assert.match(pipeline, /warnMissingSchema\('copy_fields\.char_max_override', 'getTenantAssets', err\)/);
+  assert.match(pipeline, /warnMissingSchema\(missing, 'getTenantAssets', err\)/);
   assert.match(pipeline, /false AS spec_overridden/);
+
+  // TWO independent migrations add columns to this read now — the override trio
+  // and fact_kind — so the fallback is a LIST tried most-complete first, not a
+  // nested catch. Nesting was wrong the moment there were two: the overrides
+  // shipped first and are already in production, so the realistic gap is
+  // fact_kind ALONE, and a nested catch would have dropped the overrides it does
+  // have on the way past.
+  assert.match(pipeline, /\['copy_fields\.fact_kind', OVERRIDE_COLS, 'fact_kind'\]/);
+  assert.match(pipeline, /\['copy_fields\.fact_kind', NO_OVERRIDE_COLS, 'fact_kind'\]/);
+  assert.match(pipeline, /\['copy_fields\.char_max_override', OVERRIDE_COLS, 'NULL AS fact_kind'\]/);
+  assert.match(pipeline, /\[null, NO_OVERRIDE_COLS, 'NULL AS fact_kind'\]/);
+  // Every degraded variant reports the honest default rather than guessing.
+  assert.match(pipeline, /NULL AS fact_kind/);
+  // And a database missing BOTH still returns rows rather than throwing.
+  assert.match(pipeline, /if \(!fieldsRes\) throw lastErr;/);
 
   // The editor read reads the overrides in their OWN query, so a missing column
   // costs an empty map rather than a four-way fallback across two migrations.

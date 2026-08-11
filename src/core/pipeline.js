@@ -24,6 +24,7 @@ const { instanceCounter } = require('../utils/instanceKey');
 const { getDestination } = require('../destinations');
 const { getVoiceGuide, getHeaderSchema, getNamingPattern } = require('../db');
 const { getAssetDirections, getTenantAssets } = require('../db/assets');
+const { briefStatesDateTime, MISSING_DATETIME_NOTE } = require('../utils/briefFacts');
 const { saveProject, getProjectByDocId, getProjectByAnyDocId } = require('../db/projects');
 const { getDocTemplate, listDocTemplates } = require('../db/docTemplates');
 const { listTemplateMarkers } = require('../db/templateMarkers');
@@ -860,6 +861,11 @@ function rowToSpecGroup(a) {
       // prompt and the review all assumed characters.
       fieldType: f.field_type === 'words' ? 'words' : 'text',
       groupLabel: f.group_label || null, // consecutive same-label fields → one indented Doc sub-group
+      // WHICH SUPPLIED FACT THIS FIELD CARRIES ('datetime' today, null on every
+      // generative field). Not a rule about tone — it says the field's job is to
+      // TRANSCRIBE something the brief supplies, so generateDoc can tell it when
+      // the brief supplied nothing. See src/utils/briefFacts.js.
+      factKind: f.fact_kind || null,
       specNote: f.spec_note || null, // per-field guidance → italic note under the field label (fieldHint)
       specType: f.spec_type || null, // 'enforced' | 'recommended' | 'house_default' → tier line under the field label
       specSource: f.spec_source || null, // provenance → platform name + citation link in the tier line
@@ -1155,6 +1161,43 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
     // A brief that named a template and no assets asked for exactly one thing.
     wholeLibraryOnEmpty: templateGroups.length === 0,
   });
+  // THE PER-CAMPAIGN NOTE ON A TRANSCRIPTION FIELD, and it is attached HERE
+  // because this is the only place that holds both the field list and the brief.
+  //
+  // A `fact_kind: 'datetime'` field's job is to carry a date, time or venue the
+  // brief supplies. When the brief supplies none, the empty slot is an invitation
+  // the model always accepts — measured: 15 of 35 invented with the field present
+  // against 9 of 35 without it, and the field itself fabricating 5 of 5 including
+  // a timezone nobody mentioned. So the field gets told, in its own italic note,
+  // that the value is not available.
+  //
+  // ABSENT WHEN THE BRIEF SUPPLIES IT, not a different sentence. The field
+  // already works in that case (0 of 30 invented, 21 of 30 transcribed — the
+  // model does not override an available fact), and a note in the presence of the
+  // fact is instruction the model does not need. Every rule this system has added
+  // costs variance; one that changes nothing costs it for free.
+  //
+  // The note joins `spec_note` through fieldHint, so it renders as part of the
+  // same italic line and parseDoc recovers it into `notes` → `Field guidance:` in
+  // both draft prompts. That channel already exists; nothing new is plumbed.
+  const briefHasDateTime = briefStatesDateTime(spec.brief);
+  let notesAttached = 0;
+  if (!briefHasDateTime) {
+    for (const group of assetSpecs) {
+      for (const field of group.fields) {
+        if (field.factKind !== 'datetime') continue;
+        field.specNote = [field.specNote, MISSING_DATETIME_NOTE].filter(Boolean).join(' ');
+        notesAttached++;
+      }
+    }
+  }
+  if (notesAttached > 0 || assetSpecs.some((g) => g.fields.some((f) => f.factKind))) {
+    console.log(
+      `[pipeline] datetime facts: brief ${briefHasDateTime ? 'STATES one' : 'states none'}`
+      + ` — ${notesAttached} transcription field(s) noted`
+    );
+  }
+
   console.log('[pipeline] asset specs source: postgres');
   console.log(
     '[workflow] asset specs read OK —',

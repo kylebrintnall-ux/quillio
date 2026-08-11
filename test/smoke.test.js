@@ -1788,19 +1788,17 @@ test('one strip, two rules: reader-facing sentences out, writing guidance in', (
   assert.match(stripReaderOnlyLines('Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)'), /front-load/);
 });
 
-test('briefFacts: a date, a time or a venue in the brief — and the safe direction on a miss', () => {
-  const { briefStatesDateTime, briefFacts, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
+test('briefFacts: a date or time gates the note; a venue does NOT', () => {
+  const { briefStatesDateTime, briefStatesLocation, briefFacts, MISSING_DATETIME_NOTE } = require('../src/utils/briefFacts');
 
   for (const b of [
-    'Webinar on Thursday August 24 at 12 PM PT, Moscone West.',
+    'Webinar on Thursday August 24 at 12 PM PT.',
     'The session is on Thursday.',
     'Doors at 6:30.',
     'Starts at 9am.',
     'Run it 24/08.',
     'It is tomorrow.',
-    'Venue: the Grand Ballroom',
-    'Join us on Zoom.',
-  ]) assert.strictEqual(briefStatesDateTime(b), true, `should find a fact in: ${b}`);
+  ]) assert.strictEqual(briefStatesDateTime(b), true, `should find a date/time in: ${b}`);
 
   for (const b of [
     'Reminder email for our product launch webinar. They already registered.',
@@ -1809,26 +1807,64 @@ test('briefFacts: a date, a time or a venue in the brief — and the safe direct
     '', null, undefined,
   ]) assert.strictEqual(briefStatesDateTime(b), false, `should find nothing in: ${JSON.stringify(b)}`);
 
-  // `matches` carries WHAT fired, not just whether. A silent boolean is how a
-  // detector like this stops being trusted.
+  // THE OR WAS A HOLE, AND THIS IS THE CASE THAT PROVED IT. `briefStatesDateTime`
+  // used to be `datetime || location`, reasoning that the field is called
+  // "Date / Location Line" so a venue is something for it. True about the FIELD,
+  // false about the FAILURE: a venue does not stop the model inventing a time.
+  // The note's own trigger suppressed the note on exactly the case it exists for.
+  for (const b of ['Reminder. Join us on Zoom.', 'Venue: the Grand Ballroom', 'in Room 210']) {
+    assert.strictEqual(briefStatesLocation(b), true, `a venue: ${b}`);
+    assert.strictEqual(briefStatesDateTime(b), false, `a venue is NOT a date/time: ${b}`);
+  }
+
+  // THE VENUE NOUN IS CASE-FLEXIBLE. The pattern carries no /i — [A-Z] requires a
+  // proper noun — so a lowercase-only alternation matched "moscone center" and
+  // never "Moscone Center", which is how a venue is actually written.
+  assert.strictEqual(briefFacts('at the Moscone Center').location, true);
+  assert.strictEqual(briefFacts('at the Moscone Convention Center').location, true);
+
+  // `matches` carries WHAT fired, not just whether.
   assert.ok(briefFacts('Thursday at 12 PM').matches.length >= 2);
 
-  // THE NOTE IS ONE SENTENCE FOR TWO READERS. It renders as the field's italic
-  // line AND reaches both draft prompts as that field's `Field guidance:`, so a
-  // clause aimed at the writer is read by the drafter as copy direction — which
-  // is exactly how "…only as that source's claim" became an instruction to
-  // attribute a source in customer-facing copy.
+  // THE NOTE MOVED WITH THE TRIGGER. On this trigger a venue-only brief now GETS
+  // the note, so a sentence claiming the venue is missing would be false.
+  assert.ok(!/venue/i.test(MISSING_DATETIME_NOTE), 'no longer claims the venue is missing');
+  assert.match(MISSING_DATETIME_NOTE, /date or time/);
+
+  // Still one sentence for two readers, still no imperative, still no fault, and
+  // still no fact-shaped example.
   assert.strictEqual(MISSING_DATETIME_NOTE.split(/(?<=[.!?])\s/).length, 1, 'one sentence');
-  // It instructs neither party — it states a fact about the world.
-  assert.ok(!/\badd\b|\bfill\b|\benter\b|\bwrite\b/i.test(MISSING_DATETIME_NOTE),
-    'no imperative — "add it here" read as copy direction says invent one');
-  // It is not an error. A brief that has not fixed the time yet is ordinary.
+  assert.ok(!/\badd\b|\bfill\b|\benter\b|\bwrite\b/i.test(MISSING_DATETIME_NOTE));
   assert.ok(!/missing|error|fail|should have|required/i.test(MISSING_DATETIME_NOTE));
-  // AND NO WELL-FORMED DATE EXAMPLE. Four false claims in this system trace to
-  // fact-shaped example strings; one here would be the fifth, in a note attached
-  // to the one field whose whole job is to carry a real date.
   assert.ok(!/\d/.test(MISSING_DATETIME_NOTE), 'no digits at all');
   assert.ok(!/(?:mon|tues|wednes|thurs|fri|satur|sun)day/i.test(MISSING_DATETIME_NOTE));
+});
+
+test('two fact kinds, and only datetime is wired to anything', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const byKind = {};
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      if (f.fact_kind) (byKind[f.fact_kind] = byKind[f.fact_kind] || []).push(f.field_name);
+    }
+  }
+  // A track label carries a ROOM and a directional label carries a PLACE. The
+  // note `datetime` gates says "The brief does not state a date or time", which
+  // on those two is a sentence about the wrong fact.
+  assert.deepStrictEqual(byKind.datetime.sort(), ['Date / Location Line', 'Date / Location Line']);
+  assert.deepStrictEqual(byKind.location.sort(), ['Location Label', 'Track / Room Label']);
+
+  // THE SEED AND THE CORRECTIVE MIGRATION MUST AGREE, or a new tenant installs
+  // the kind the migration just moved every existing tenant off.
+  const m = require('../scripts/migrateFixLocationFactKind');
+  assert.deepStrictEqual(m.FIELDS.slice().sort(), byKind.location.slice().sort());
+  assert.strictEqual(m.TO, 'location');
+  assert.strictEqual(m.FROM, 'datetime');
+
+  // NOTHING FIRES ON 'location'. Every consumer gates on the explicit string, not
+  // on truthiness, so adding a second kind switches nothing on.
+  const pipeline = fs.readFileSync(require.resolve('../src/core/pipeline'), 'utf8');
+  assert.match(pipeline, /field\.factKind !== 'datetime'/);
 });
 
 test('the note reaches ONLY a datetime field, and ONLY when the brief is silent', () => {

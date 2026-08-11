@@ -974,6 +974,46 @@ The doc feedback feature requires a comment adapter per doc platform. The Slack/
 **Job queue** — BullMQ for pipeline resilience under load
 **Demo video** — 90-second screen recording, most important sales asset
 
+### Location as a fact kind — out of scope, and the detector is why
+
+`copy_fields.fact_kind = 'location'` exists and is wired to nothing.
+`On-Site Signage — Session Title Card / Track / Room Label` and
+`On-Site Signage — Directional / Location Label` carry it. Both were first tiered
+`'datetime'` by `migrateAddReminderDateLine.js` and moved by
+`migrateFixLocationFactKind.js`: all four flagged fields transcribe a supplied
+fact rather than generating one, which was right, but a track label carries a ROOM
+and the note `datetime` gates says "The brief does not state a date or time".
+
+**THE DETECTOR IS THE BLOCKER, and the misses are the useful part.** Measured
+against `briefFacts`:
+
+| brief fragment | detected |
+| --- | --- |
+| `"at Moscone West"` | **NO** — the venue in this project's own test fixture |
+| `"at the Hilton"` | **NO** |
+| `"at the Moscone Center"` | yes (after a case fix — see below) |
+| `"Venue: Moscone West"` | yes — labelled |
+| `"in Room 210"` | yes |
+| `"Join us on Zoom"` | yes |
+
+It catches LABELLED venues, rooms and virtual venues, and misses **proper-noun
+venues**, which is the common shape. That is a weakness on the ordinary case, not
+on an edge one, and it is why location is not shippable behind a warning: a
+warning that fires only when the writer already used the word "Venue:" is a
+warning for the briefs that were fine.
+
+**A bug fixed on the way past, and the wrong diagnosis is the instructive half.**
+`"at the Moscone Center"` failed while `"at the Moscone center"` matched. I called
+it greedy capture eating the venue noun; it was CASE. The pattern carries no `/i`
+— `[A-Z]` is doing real work requiring a proper noun — so a lowercase-only
+alternation never matched a venue as anyone writes one. Backtracking handles the
+greed fine. The nouns are now case-flexible explicitly.
+
+**Nothing else is needed to start**: `briefStatesLocation` is exported and works.
+What is missing is a detector worth gating a warning on, and a measured location
+invention — no On-Site Signage asset has ever appeared in an A/B, so the harm is
+assumed rather than observed. Both are prerequisites, and the second is cheaper.
+
 ### Slack and web disagree about which advisories a user sees — and nobody chose that
 
 Both surfaces build an advisory line when a brief is thin. They do not show the

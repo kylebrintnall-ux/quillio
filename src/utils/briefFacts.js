@@ -51,7 +51,16 @@ const TEMPORAL = [
 // in Denver") is not a venue, so this wants an explicit locative or a
 // venue-shaped noun rather than any capitalised place name.
 const LOCATION = [
-  [/\b(?:at|in)\s+(?:the\s+)?[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*\s+(?:centre|center|hall|hotel|theatre|theater|arena|stadium|campus|room|suite|ballroom|pavilion)\b/, 'named venue'],
+  // THE VENUE NOUN IS CASE-FLEXIBLE, and it was a bug that it was not. This
+  // pattern carries no /i flag — [A-Z] is doing real work, requiring a proper
+  // noun — so a lowercase-only alternation never matched "Moscone Center", which
+  // is how a venue is actually written. It matched "moscone center" and nothing
+  // a real brief contains.
+  //
+  // Diagnosed wrong the first time, recorded because the wrong diagnosis is the
+  // instructive part: this looked like greedy capture eating the venue noun, and
+  // it was simply case. Backtracking handles the greed fine.
+  [/\b(?:at|in)\s+(?:the\s+)?[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*?\s+(?:[Cc]entre|[Cc]enter|[Hh]all|[Hh]otel|[Tt]heatre|[Tt]heater|[Aa]rena|[Ss]tadium|[Cc]ampus|[Rr]oom|[Ss]uite|[Bb]allroom|[Pp]avilion)\b/, 'named venue'],
   [/\b(?:venue|location|address)\s*[:—-]/i, 'labelled venue'],
   [/\b(?:room|hall|suite|booth|stand)\s+\w+/i, 'room or booth'],
   [/\b(?:zoom|webex|google meet|microsoft teams|livestream|virtual|online)\b/i, 'virtual venue'],
@@ -77,13 +86,35 @@ function briefFacts(brief) {
   return { datetime, location, matches };
 }
 
-// Does the brief supply anything a `fact_kind: 'datetime'` field could carry?
-// EITHER a time or a venue counts: that field is "Date / Location Line", so a
-// brief giving only the venue still has something for it, and the note would be
-// wrong to say nothing was supplied.
+// Does the brief supply a DATE OR TIME? Nothing else.
+//
+// THIS USED TO BE `f.datetime || f.location`, AND THE OR WAS A HOLE. The
+// reasoning was that the field is "Date / Location Line", so a brief giving only
+// the venue still has something for it. That is true about the FIELD and false
+// about the FAILURE: a venue does not stop the model inventing a time. Measured —
+//
+//   brief: "Reminder. Join us on Zoom."   ->  OR said true
+//                                         ->  no note attached
+//                                         ->  the field is empty and fabricates
+//
+// which is exactly the case the note exists for, suppressed by the note's own
+// trigger. Webinar briefs naming a platform and no time are common, so it was
+// reachable rather than theoretical.
+//
+// The wording moved with it — MISSING_DATETIME_NOTE no longer says "or venue",
+// because on this trigger a venue-only brief now GETS the note and claiming the
+// venue is missing would be false. Trigger and sentence have to agree, and one
+// fewer clause is one fewer place for them to drift.
 function briefStatesDateTime(brief) {
-  const f = briefFacts(brief);
-  return f.datetime || f.location;
+  return briefFacts(brief).datetime;
+}
+
+// The location half, exported for the work that will need it. NOT wired to
+// anything: `fact_kind = 'location'` fields are deliberately out of scope until
+// the patterns above are strong enough — they miss "at Moscone West" and
+// "at the Hilton", which is the common shape of a venue. See ROADMAP.md.
+function briefStatesLocation(brief) {
+  return briefFacts(brief).location;
 }
 
 // THE NOTE, AND IT IS ONE SENTENCE FOR TWO READERS ON PURPOSE.
@@ -109,11 +140,12 @@ function briefStatesDateTime(brief) {
 // 24 at 12 PM PT" here would be the fifth, in a new place, in a note attached to
 // the one field whose whole job is to carry a real date.
 const MISSING_DATETIME_NOTE =
-  'The brief does not state a date, time or venue — this line waits for them.';
+  'The brief does not state a date or time — this line waits for them.';
 
 module.exports = {
   briefFacts,
   briefStatesDateTime,
+  briefStatesLocation,
   MISSING_DATETIME_NOTE,
   TEMPORAL,
   LOCATION,

@@ -153,10 +153,22 @@ function classBand(assetName, fieldName) {
 // classes (prices, named customers, deliverables, statistics) are enumerated in
 // ROADMAP.md and NOT started — this column takes one value and commits to
 // nothing else.
+// TWO KINDS, because one was wrong. All four fields transcribe a supplied fact
+// rather than generating one — that part was right — but a track label carries a
+// ROOM and a directional label carries a PLACE, and the note `datetime` gates
+// says "The brief does not state a date or time", which on those two is a
+// sentence about the wrong fact. scripts/migrateFixLocationFactKind.js moves the
+// rows the first migration already wrote.
+//
+// NOTHING FIRES ON 'location' YET. It is out of scope until the detector is
+// strong enough — briefFacts LOCATION misses "at Moscone West" and "at the
+// Hilton" — and until a location invention has actually been measured. Every
+// consumer gates on 'datetime' explicitly rather than on truthiness, so adding
+// the value here switches nothing on.
 const FACT_KIND_FIELDS = new Map([
   ['Date / Location Line', 'datetime'],
-  ['Location Label', 'datetime'],
-  ['Track / Room Label', 'datetime'],
+  ['Location Label', 'location'],
+  ['Track / Room Label', 'location'],
 ]);
 
 const RAW = [

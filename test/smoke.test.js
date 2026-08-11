@@ -12,6 +12,29 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
+// AN ASSERTION THAT QUIETLY RELOCATES IS WORSE THAN ONE THAT FAILS.
+//
+// Most structural tests here slice a region out of a source file with
+// `src.slice(src.indexOf(a), src.indexOf(b))` and then assert about it. A
+// missing anchor does NOT fail: indexOf returns -1, slice reads it as an offset
+// from the end, and the test goes on to check a DIFFERENT region — usually a
+// larger one — and passes. Found the hard way when a destructuring pattern used
+// as an end anchor grew two keys: the slice ran to the end of the function,
+// swallowed the code the test was written to exclude, and stayed green until the
+// code inside it happened to change.
+//
+// So a slice bound is asserted, not assumed. Use this instead of a bare
+// indexOf pair whenever the region matters — the anchors become part of what the
+// test checks, which is what they always were in intent.
+function sliceBetween(src, startAnchor, endAnchor) {
+  const from = src.indexOf(startAnchor);
+  assert.ok(from >= 0, `slice anchor not found: ${JSON.stringify(startAnchor)}`);
+  if (endAnchor == null) return src.slice(from);
+  const to = src.indexOf(endAnchor, from);
+  assert.ok(to > from, `slice end anchor not found after the start: ${JSON.stringify(endAnchor)}`);
+  return src.slice(from, to);
+}
+
 // --- Wiring: every module loads and exposes the expected public API ---
 
 test('core/pipeline exposes the expected functions', () => {
@@ -1531,7 +1554,7 @@ test('the brief is read from the project row and threaded to every draft call', 
 // response was not merely unlogged: it was out of scope in the catch.
 test('the batch parse failure logs the raw response, greppably and on one line', () => {
   const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
-  const fn = src.slice(src.indexOf('async function generateAssetDrafts'), src.indexOf('// --- Conceptual variations'));
+  const fn = sliceBetween(src, 'async function generateAssetDrafts', '// --- Conceptual variations');
   assert.ok(fn.length > 500, 'found generateAssetDrafts');
 
   // HOISTED. The declarations are above the try, and the assignment inside it.
@@ -14640,11 +14663,11 @@ test('the web adapter targets the template document on all three functions', () 
   const draft = web.slice(web.indexOf('async function runWebDraft'), web.indexOf('// Read a project\'s doc'));
   assert.match(draft, /if \(docKind === 'template'\) \{/);
   assert.match(draft, /const fieldNames = \(scopedFields \|\| \[\]\)\.map\(\(f\) => f && f\.fieldName\)\.filter\(Boolean\)/);
-  const tplBranch = draft
-    // Ends at the copy-doc call. Anchored on the CALL rather than on its
-    // destructuring pattern, which grew two keys and silently made this slice
-    // run to the end of the function.
-    .slice(draft.indexOf("if (docKind === 'template')"), draft.indexOf('pipeline.generateDraft('))
+  // Ends at the copy-doc call. Anchored on the CALL rather than on its
+  // destructuring pattern, which grew two keys and silently made this slice run
+  // to the end of the function — through sliceBetween, so a future rename fails
+  // here instead of relocating the assertion.
+  const tplBranch = sliceBetween(draft, "if (docKind === 'template')", 'pipeline.generateDraft(')
     .replace(/\/\/[^\n]*/g, ''); // the comment explains why append is absent; the CODE must not use it
   assert.ok(!/append/.test(tplBranch), 'append is not passed to the template path');
   // A whole-document draft reports `written`; a scoped regenerate reports
@@ -16240,7 +16263,7 @@ test('429 is split by the quota that was violated, not by its prose', () => {
 test('the failure class rides out on the error, and the body never rides out with it', () => {
   const gemini = require('../src/services/gemini');
   const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
-  const fn = src.slice(src.indexOf('async function callGemini'), src.indexOf('function stripJsonFences'));
+  const fn = sliceBetween(src, 'async function callGemini', 'function stripJsonFences');
   assert.ok(fn.length > 300, 'found callGemini');
 
   // Every throw in callGemini goes through geminiError, so no path out of it
@@ -16296,7 +16319,7 @@ test('a run that saw several classes is reported by the cause, not the commonest
 
 test('generateAssetDrafts carries out the reason a field is blank, and only when one exists', () => {
   const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
-  const fn = src.slice(src.indexOf('async function generateAssetDrafts'), src.indexOf('// --- Conceptual variations'));
+  const fn = sliceBetween(src, 'async function generateAssetDrafts', '// --- Conceptual variations');
 
   // NOTHING IN HERE THROWS on a model failure — the batch and the per-field
   // rescue are both caught — so an outage returns a full set of empty drafts and
@@ -16314,7 +16337,7 @@ test('generateAssetDrafts carries out the reason a field is blank, and only when
 
 test('the draft reports a denominator, and reads its causes before the filter drops them', () => {
   const src = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
-  const fn = src.slice(src.indexOf('async function generateDraft(id, direction'), src.indexOf('// Read a doc back into a structured'));
+  const fn = sliceBetween(src, 'async function generateDraft(id, direction', '// Read a doc back into a structured');
   assert.ok(fn.length > 2000, 'found generateDraft');
 
   // THE DENOMINATOR, counted the way the loop decides what to draft — a scoped
@@ -16507,4 +16530,39 @@ test('a complete run carries no denominator story at all', async () => {
     global.fetch = realFetch;
     cfg.GEMINI_API_KEY = hadKey;
   }
+});
+
+test('sliceBetween fails on a missing anchor instead of checking somewhere else', () => {
+  const src = 'AAA start MIDDLE end ZZZ';
+  assert.strictEqual(sliceBetween(src, 'start', 'end'), 'start MIDDLE ');
+
+  // THE FAILURE THIS EXISTS FOR. A bare indexOf pair with a missing END anchor
+  // returns -1, slice reads it as "one from the end", and the region silently
+  // grows — here swallowing the `end ZZ` the test meant to exclude, and passing.
+  assert.strictEqual(src.slice(src.indexOf('start'), src.indexOf('gone')), 'start MIDDLE end ZZ');
+  assert.throws(() => sliceBetween(src, 'start', 'gone'), /slice end anchor not found/);
+
+  // A missing START anchor is the same class: slice(-1, n) returns ''.
+  assert.strictEqual(src.slice(src.indexOf('gone'), src.indexOf('end')), '');
+  assert.throws(() => sliceBetween(src, 'gone', 'end'), /slice anchor not found/);
+
+  // And an end anchor that occurs BEFORE the start is not a region either.
+  assert.throws(() => sliceBetween(src, 'MIDDLE', 'AAA'), /slice end anchor not found/);
+});
+
+// TRIPWIRE, found at 390px and not by any of the 595 tests above it — labelled
+// as one, because it holds a gap the browser measured and cannot tell a good
+// layout from a bad one.
+//
+// .notice carries margin-top only, which was invisible for as long as every
+// notice was the LAST element on its panel. copydone-shortfall is the first one
+// with content directly beneath it: its bottom edge landed on the "Assets" label
+// at exactly 0px, measured in Chromium at 390 x 844.
+test('the shortfall notice does not sit flush against the copy list', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /#copydone-shortfall \{ margin-bottom: 14px; \}/);
+  // Scoped to the id on purpose — the three notices that predate it sit above
+  // CTAs that bring their own spacing, and must not move.
+  assert.match(html, /\.notice \{\n\s*margin-top: 14px;\n\s*padding: 10px 12px;/);
+  assert.ok(!/\.notice \{[^}]*margin-bottom/.test(html), 'the shared rule is unchanged');
 });

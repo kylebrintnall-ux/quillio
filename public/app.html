@@ -128,6 +128,15 @@
       border-radius: 8px;
       font-size: 14px;
     }
+    /* .notice carries margin-top only, which was invisible for as long as every
+       notice was the LAST thing on its panel — out-unmatched, picker-unmatched
+       and confirm-unmatched all sit above CTAs that bring their own spacing. The
+       shortfall notice is the first one with content directly beneath it, and at
+       390px its bottom edge landed on the "Assets" label at exactly 0px. Scoped
+       to this id rather than added to .notice, so the three existing notices do
+       not move. Hidden is display:none, so the margin cannot collapse a gap open
+       on a complete run. */
+    #copydone-shortfall { margin-bottom: 14px; }
     /* Utility: wins over component display rules regardless of source order
        (e.g. .note / .loading set display:flex below this rule). */
     .hidden { display: none !important; }

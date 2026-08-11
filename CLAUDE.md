@@ -552,6 +552,15 @@ Two more from the same pass: locked rows drawn as disabled inputs at 0.55
 opacity read as **enabled** on a phone, and the disabled unit `<select>` read as
 a dropdown failing to open.
 
+**And a fourth, from the outage work's pass, which is the cheapest instance of
+the rule on record.** `.notice` carries `margin-top` and no `margin-bottom` —
+correct for as long as every notice was the LAST element on its panel, which all
+three of the pre-existing ones are. `copydone-shortfall` is the first with
+content directly beneath it, and at 390px its bottom edge landed on the "Assets"
+label at **exactly 0px**. Nothing in the source is wrong; the rule is right,
+present, and shared. It took one measurement in a browser. The fix is scoped to
+the id, so the three older notices do not move.
+
 None of the three was reachable by a source scan, because none was a question
 about what the source SAYS:
 
@@ -1290,10 +1299,23 @@ reduces a run's classes by a fixed priority rather than by frequency: a spent
 balance shows up as timeouts and 5xx on the way down, and counting would let
 thirty symptoms outvote the one cause that explains them.
 
-**FAIL-FAST IS HELD, NOT REJECTED.** Nothing stops the run after the first
-`quota`, so a six-asset brief still fires roughly `1 + 2N` doomed calls per asset
-(the batch, each field's rescue, and the corrective rewrite when a rescue returns
-over-limit) — about 90 calls that cannot succeed. Held on purpose: a circuit
+**FAIL-FAST IS HELD, NOT REJECTED — and the number it would be decided on is
+`1 + 2N` per asset, not `1 + N`.** Written down because it is the input to that
+decision whenever it is taken, and it was recomputed once already after being
+got wrong.
+
+Per asset, on a run where every call fails: **1** batch call, **N** single-field
+rescues, and up to **N** corrective rewrites. The third is the one that is easy
+to miss — `generateFieldDraft` issues a SECOND `callGemini` when its first call
+SUCCEEDS and returns copy over the field's ceiling. Character fields only:
+`trimCeiling` is null on a word field, so nothing there triggers a rewrite. On
+the seeded library most fields are character fields, so `2N` is the right
+planning figure rather than a worst case.
+
+A six-asset brief at ~7 fields each is therefore **≈90 calls that cannot
+succeed**, not the ≈48 that `1 + N` gives.
+
+Held on purpose: a circuit
 breaker keyed on one class of one response is the kind of thing that trips on a
 transient and turns a recoverable run into an empty document, and there is
 exactly **one** recorded outage to design it against. The cost of waiting is
@@ -1617,6 +1639,46 @@ baseline entry, arriving from the other direction.
 So: **an aggregate at n=5 is a hypothesis, and the per-field number underneath it
 is the finding.** If a design decision rests on a ratio, the ratio needs a second
 run before the decision does.
+
+##### AN ASSERTION THAT QUIETLY RELOCATES — the third species, and it is in the TESTS
+
+Every entry above is about a MEASUREMENT going wrong. This one is about an
+ASSERTION going wrong, in the same family and by a mechanism neither of the other
+two shares:
+
+| | Failure | How you find out |
+| --- | --- | --- |
+| a count | measures the wrong property, or divides by the wrong population | read the copy |
+| a control arm | leaks the treatment and reports a mixture as a comparison | drive it with a stub |
+| **an assertion** | **checks a different region of the file and passes** | **nothing. It is green** |
+
+The instance: `test/smoke.test.js` sliced a region with
+`draft.slice(draft.indexOf(a), draft.indexOf('const { title, fieldCount, url }'))`
+and asserted the word `append` did not appear in it. The outage work added two
+keys to that destructuring pattern. `indexOf` returned **-1**, `slice` read -1 as
+*one character from the end*, and the region silently grew to the whole function —
+which contains the copy-doc call the test existed to exclude. It stayed green
+until the code inside the newly-swallowed region happened to change.
+
+**The mechanism is that `-1` is a valid `slice` argument.** A missing END anchor
+grows the region to almost everything; a missing START anchor collapses it to
+`''`, and every `assert.ok(!/x/.test(region))` in the file passes trivially
+against an empty string. Both directions fail open. Some slices here carry an
+`assert.ok(fn.length > 500, 'found X')` sanity check, which catches the second
+case and not the first — and 192 `.indexOf(` calls in that file do not carry one.
+
+**How to write one that cannot do this: assert the anchors, do not assume them.**
+`sliceBetween(src, startAnchor, endAnchor)` at the top of `test/smoke.test.js`
+asserts each anchor was found and that the end follows the start, then slices. It
+has its own test, which pins the two silent-pass behaviours above as the reason
+it exists. The rule for anything new: **an `indexOf` used as a slice bound is an
+assertion — write it as one.** Converting all 192 was not done; the helper is
+there and the sites touched since use it.
+
+The generalisation worth carrying: a structural test asserts something about a
+REGION, and the region is as much part of the claim as the pattern is. A test
+that names its subject only by two string literals it never checks is one rename
+away from being about something else.
 
 ##### BRIEF FIDELITY IS NOT FACTUAL ACCURACY, and no detector here can tell them apart
 

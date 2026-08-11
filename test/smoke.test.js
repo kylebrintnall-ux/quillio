@@ -12,6 +12,29 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
+// AN ASSERTION THAT QUIETLY RELOCATES IS WORSE THAN ONE THAT FAILS.
+//
+// Most structural tests here slice a region out of a source file with
+// `src.slice(src.indexOf(a), src.indexOf(b))` and then assert about it. A
+// missing anchor does NOT fail: indexOf returns -1, slice reads it as an offset
+// from the end, and the test goes on to check a DIFFERENT region — usually a
+// larger one — and passes. Found the hard way when a destructuring pattern used
+// as an end anchor grew two keys: the slice ran to the end of the function,
+// swallowed the code the test was written to exclude, and stayed green until the
+// code inside it happened to change.
+//
+// So a slice bound is asserted, not assumed. Use this instead of a bare
+// indexOf pair whenever the region matters — the anchors become part of what the
+// test checks, which is what they always were in intent.
+function sliceBetween(src, startAnchor, endAnchor) {
+  const from = src.indexOf(startAnchor);
+  assert.ok(from >= 0, `slice anchor not found: ${JSON.stringify(startAnchor)}`);
+  if (endAnchor == null) return src.slice(from);
+  const to = src.indexOf(endAnchor, from);
+  assert.ok(to > from, `slice end anchor not found after the start: ${JSON.stringify(endAnchor)}`);
+  return src.slice(from, to);
+}
+
 // --- Wiring: every module loads and exposes the expected public API ---
 
 test('core/pipeline exposes the expected functions', () => {
@@ -1531,11 +1554,16 @@ test('the brief is read from the project row and threaded to every draft call', 
 // response was not merely unlogged: it was out of scope in the catch.
 test('the batch parse failure logs the raw response, greppably and on one line', () => {
   const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
-  const fn = src.slice(src.indexOf('async function generateAssetDrafts'), src.indexOf('// --- Conceptual variations'));
+  const fn = sliceBetween(src, 'async function generateAssetDrafts', '// --- Conceptual variations');
   assert.ok(fn.length > 500, 'found generateAssetDrafts');
 
-  // HOISTED. The declaration is above the try, and the assignment inside it.
-  assert.match(fn, /let text = '';\n {2}try \{\n {4}text = await callGemini\(\{/);
+  // HOISTED. The declarations are above the try, and the assignment inside it.
+  // Two of them now: `text` (the raw response, needed in the catch) and
+  // `batchFailureKind` (the transport class, needed after it).
+  assert.match(
+    fn,
+    /let text = '';\n(?: {2}\/\/[^\n]*\n)* {2}let batchFailureKind = null;\n {2}try \{\n {4}text = await callGemini\(\{/
+  );
   assert.ok(!/const text = await callGemini/.test(fn), 'no block-scoped redeclaration survives');
 
   // A token EMITTED from exactly one place, so `grep BATCH_PARSE_FAIL` over a log
@@ -14635,8 +14663,11 @@ test('the web adapter targets the template document on all three functions', () 
   const draft = web.slice(web.indexOf('async function runWebDraft'), web.indexOf('// Read a project\'s doc'));
   assert.match(draft, /if \(docKind === 'template'\) \{/);
   assert.match(draft, /const fieldNames = \(scopedFields \|\| \[\]\)\.map\(\(f\) => f && f\.fieldName\)\.filter\(Boolean\)/);
-  const tplBranch = draft
-    .slice(draft.indexOf("if (docKind === 'template')"), draft.indexOf('const { title, fieldCount, url }'))
+  // Ends at the copy-doc call. Anchored on the CALL rather than on its
+  // destructuring pattern, which grew two keys and silently made this slice run
+  // to the end of the function — through sliceBetween, so a future rename fails
+  // here instead of relocating the assertion.
+  const tplBranch = sliceBetween(draft, "if (docKind === 'template')", 'pipeline.generateDraft(')
     .replace(/\/\/[^\n]*/g, ''); // the comment explains why append is absent; the CODE must not use it
   assert.ok(!/append/.test(tplBranch), 'append is not passed to the template path');
   // A whole-document draft reports `written`; a scoped regenerate reports
@@ -16142,4 +16173,396 @@ test('migrateAddSourceKind: defaults to platform_enforced and refuses to guess',
     assert.ok(src.includes(write), `this write runs on the transaction client, not the pool: ${write.slice(0, 60)}`);
   }
   assert.ok(!/await pool\.query\(/.test(src), 'nothing in this migration writes outside the transaction');
+});
+
+// === A run that drafts nothing, and a run that drafts almost nothing ==========
+//
+// August 2026, in production: a prepaid balance ran out mid-brief. Every Gemini
+// call returned 429, every field came back blank, and the two things the system
+// said were both wrong. The completion card read "First draft ready — (1 field
+// drafted)", which is a true number under a false claim and no denominator; and
+// the failure message read "All field drafts failed (Gemini timeout or error)",
+// which named the two causes it was NOT and implied a retry that was guaranteed
+// to fail identically.
+//
+// The tests below are BEHAVIOURAL where the behaviour is reachable without a
+// network (the classifier, the sentence table, the surface wording) and
+// STRUCTURAL where it is not (the collection points inside generateDraft, which
+// needs a Docs client). The structural ones are tripwires, in the sense this repo
+// means it: they hold the shape that a browser or an outage found, and they
+// cannot tell a good message from a bad one.
+
+test('429 is split by the quota that was violated, not by its prose', () => {
+  const { classifyGeminiStatus } = require('../src/services/gemini');
+
+  const perMinute = JSON.stringify({
+    error: {
+      code: 429,
+      status: 'RESOURCE_EXHAUSTED',
+      details: [
+        {
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [{ quotaId: 'GenerateRequestsPerMinutePerProjectPerModel' }],
+        },
+      ],
+    },
+  });
+  const perDay = JSON.stringify({
+    error: {
+      code: 429,
+      status: 'RESOURCE_EXHAUSTED',
+      details: [
+        {
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel' }],
+        },
+      ],
+    },
+  });
+
+  // The two need OPPOSITE actions from the reader and share an HTTP status and
+  // an error enum. The violated quota id is the only thing that separates them.
+  assert.strictEqual(classifyGeminiStatus(429, perMinute), 'rate_limit');
+  assert.strictEqual(classifyGeminiStatus(429, perDay), 'quota');
+
+  // A mixed violation is a spend, not a wait: one quota refilling does not help
+  // if another has run out.
+  const mixed = JSON.stringify({
+    error: {
+      details: [
+        {
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [
+            { quotaId: 'GenerateRequestsPerMinutePerProjectPerModel' },
+            { quotaId: 'GenerateRequestsPerDayPerProjectPerModel' },
+          ],
+        },
+      ],
+    },
+  });
+  assert.strictEqual(classifyGeminiStatus(429, mixed), 'quota');
+
+  // ASYMMETRIC DEFAULT, and this is the decision the test exists to pin. An
+  // unparseable body, a body with no QuotaFailure, and a violation carrying no
+  // id all read as `quota`. Telling someone to check billing when it was a blip
+  // costs one look at a dashboard; telling them to wait when the balance is gone
+  // costs every retry after this one — which is what actually happened.
+  assert.strictEqual(classifyGeminiStatus(429, 'upstream connect error'), 'quota');
+  assert.strictEqual(classifyGeminiStatus(429, JSON.stringify({ error: { code: 429 } })), 'quota');
+  assert.strictEqual(
+    classifyGeminiStatus(429, JSON.stringify({ error: { details: [{ violations: [{}] }] } })),
+    'quota'
+  );
+
+  assert.strictEqual(classifyGeminiStatus(403, ''), 'auth');
+  assert.strictEqual(classifyGeminiStatus(401, ''), 'auth');
+  assert.strictEqual(classifyGeminiStatus(503, ''), 'server');
+  assert.strictEqual(classifyGeminiStatus(400, ''), 'unknown');
+});
+
+test('the failure class rides out on the error, and the body never rides out with it', () => {
+  const gemini = require('../src/services/gemini');
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  const fn = sliceBetween(src, 'async function callGemini', 'function stripJsonFences');
+  assert.ok(fn.length > 300, 'found callGemini');
+
+  // Every throw in callGemini goes through geminiError, so no path out of it
+  // loses the class. A plain `new Error` here is the regression.
+  assert.ok(!/throw new Error\(/.test(fn), 'every throw carries a class');
+  for (const kind of ["'unconfigured'", "'timeout'", "'network'", "'empty'"]) {
+    assert.ok(fn.includes(kind), `callGemini classes ${kind}`);
+  }
+  // The non-2xx path classifies from the STATUS and the structured body, not
+  // from a phrase — the alternative was four downstream regexes over Google's
+  // wording.
+  assert.match(fn, /classifyGeminiStatus\(res\.status, text\)/);
+
+  // The raw body stays on the message. Which is fine — the message is logged;
+  // it is the SENTENCE that reaches a surface, and the sentence is keyed off the
+  // class. No sentence in the table interpolates anything.
+  for (const [kind, sentence] of Object.entries(gemini.GEMINI_FAILURE_SENTENCES)) {
+    assert.ok(!/\$\{|\bRaw:|\berror\b.*\{/.test(sentence), `${kind} carries no response detail`);
+    assert.match(sentence, /\.$/, `${kind} is a sentence`);
+  }
+
+  // The two 429 outcomes must not read the same. quota says retrying is futile;
+  // rate_limit says wait. That difference is the whole point of the split above.
+  const { quota, rate_limit: rateLimit } = gemini.GEMINI_FAILURE_SENTENCES;
+  assert.notStrictEqual(quota, rateLimit);
+  assert.match(quota, /billing/i);
+  assert.ok(!/\bwait\b/i.test(quota), 'quota never tells anyone to wait');
+  assert.match(rateLimit, /wait/i);
+  assert.ok(!/billing/i.test(rateLimit), 'a rate limit is not a billing problem');
+
+  assert.strictEqual(gemini.geminiFailureSentence('quota'), quota);
+  // An unrecognised class falls back rather than rendering `undefined`.
+  assert.strictEqual(gemini.geminiFailureSentence('nonsense'), gemini.GEMINI_FAILURE_SENTENCES.unknown);
+  assert.strictEqual(gemini.geminiErrorKind(new Error('plain')), 'unknown');
+});
+
+test('a run that saw several classes is reported by the cause, not the commonest symptom', () => {
+  const { worstGeminiKind } = require('../src/services/gemini');
+
+  assert.strictEqual(worstGeminiKind([]), null);
+  assert.strictEqual(worstGeminiKind([null, undefined]), null);
+  assert.strictEqual(worstGeminiKind(['timeout', 'timeout']), 'timeout');
+
+  // A spent balance shows up as timeouts and 5xx on the way down. Counting would
+  // let thirty timeouts outvote the one 429 that explains all of them.
+  assert.strictEqual(
+    worstGeminiKind(['timeout', 'timeout', 'timeout', 'server', 'quota', 'timeout']),
+    'quota'
+  );
+  assert.strictEqual(worstGeminiKind(['rate_limit', 'server', 'timeout']), 'rate_limit');
+  assert.strictEqual(worstGeminiKind(['unknown', 'network']), 'network');
+});
+
+test('generateAssetDrafts carries out the reason a field is blank, and only when one exists', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  const fn = sliceBetween(src, 'async function generateAssetDrafts', '// --- Conceptual variations');
+
+  // NOTHING IN HERE THROWS on a model failure — the batch and the per-field
+  // rescue are both caught — so an outage returns a full set of empty drafts and
+  // the caller's own catch never fires. Carrying the class on the entry is the
+  // only way the class leaves this function.
+  assert.match(fn, /rescueFailureKind = geminiErrorKind\(err\)/);
+  assert.match(fn, /const failure = rescueFailureKind \|\| batchFailureKind;/);
+  assert.match(fn, /if \(!copy && failure\) entry\.failure = failure;/);
+
+  // A JSON.parse failure is NOT a transport class: the call succeeded and the
+  // response was unusable. It must leave batchFailureKind null so a real rescue
+  // failure wins, rather than reporting a parse bug as a billing problem.
+  assert.match(fn, /batchFailureKind = err && err\.geminiKind \? err\.geminiKind : null;/);
+});
+
+test('the draft reports a denominator, and reads its causes before the filter drops them', () => {
+  const src = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
+  const fn = sliceBetween(src, 'async function generateDraft(id, direction', '// Read a doc back into a structured');
+  assert.ok(fn.length > 2000, 'found generateDraft');
+
+  // THE DENOMINATOR, counted the way the loop decides what to draft — a scoped
+  // run attempts only its selection, so `40 of 40` is right for a scoped redraft
+  // of two fields out of forty being `2 of 2`.
+  assert.match(fn, /const fieldsAttempted = assetTargets\.reduce\(/);
+  assert.match(fn, /scopeKeys\.has\(ctxKey\(a\.assetType, f\.fieldName, a\.instance\)\)\)\.length/);
+  assert.match(fn, /fieldsAttempted,\n {4}failureReason,/);
+
+  // ORDER IS LOad-BEARING: the per-field class rides on a draft entry whose copy
+  // is empty, and the very next statement drops those entries. Read after the
+  // filter and every cause is gone — which is exactly how an outage produced a
+  // clean-looking run with nothing in it.
+  const readAt = fn.indexOf('if (d && d.failure) failureKinds.push(d.failure)');
+  const filterAt = fn.indexOf('.filter((r) => r.insertIndex != null && r.copy)');
+  assert.ok(readAt > 0 && filterAt > 0, 'both the read and the filter are present');
+  assert.ok(readAt < filterAt, 'causes are read before the filter removes the blanks');
+
+  // The throw IS the surface string on both surfaces — Slack prefixes it, the
+  // web job hands err.message straight to the error box — so it must be the
+  // classified sentence and never the old two-causes-it-was-not wording.
+  assert.match(fn, /throw new Error\(failureReason \|\| geminiFailureSentence\('unknown'\)\);/);
+  // Comments stripped first: the comment above the throw quotes the old wording
+  // to say why it went, and counting that would be counting the documentation.
+  const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.ok(!/Gemini timeout or error/.test(code), 'the old message is emitted nowhere');
+
+  // A complete run carries no reason. `failureReason` is what the surfaces test
+  // to decide whether to say anything at all.
+  assert.match(fn, /const failureReason = failureKind \? geminiFailureSentence\(failureKind\) : null;/);
+});
+
+test('a short run loses the success headline on both surfaces', () => {
+  const slack = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'slackWorkflow.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // Slack. "First draft ready" over "1 field drafted" was true in its number and
+  // false in its claim; the short branch takes the tick emoji away with it.
+  assert.match(slack, /const short = fieldsAttempted != null && fieldsAttempted > 0 && fieldCount < fieldsAttempted;/);
+  assert.match(slack, /Regeneration incomplete' : 'Draft incomplete'/);
+  assert.match(slack, /\(\$\{fieldCount\} of \$\{fieldsAttempted\} fields drafted\)/);
+  // A COMPLETE RUN IS UNCHANGED, byte for byte — the denominator appears only
+  // when it is not the whole story.
+  assert.match(
+    slack,
+    /const headline = isRegen \? 'Draft regenerated' : 'First draft ready';\n\s*completionText = `\$\{emoji\('quillio-copy-done'\)\} \$\{headline\}/
+  );
+  // The cause is appended from the server's sentence, never composed here — one
+  // wording for two surfaces.
+  assert.match(slack, /const cause = failureReason \? ` \$\{failureReason\}` : '';/);
+
+  // Web. Same split, same source sentence. The toast carries the headline and
+  // the amber notice carries the cause, because a toast dismisses itself after
+  // two seconds and a sentence about spent billing should not.
+  assert.match(html, /function draftIsShort\(data\) \{/);
+  assert.match(html, /'⚠ Draft incomplete — ' \+ n \+ ' of ' \+ attempted \+ ' fields drafted'/);
+  assert.match(html, /renderNotice\('copydone-shortfall', short && data\.failureReason \? data\.failureReason : ''\)/);
+  assert.ok(html.includes('<div id="copydone-shortfall" class="notice hidden"></div>'), 'the notice host exists');
+  // Set both ways on every draft, and cleared again when the screen reloads, so
+  // the recovery paths cannot leave a previous run's cause over new copy.
+  assert.match(html, /renderNotice\('copydone-shortfall', ''\);/);
+
+  // And the two values have to survive the trip: adapter → route → browser.
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'app.js'), 'utf8');
+  assert.match(web, /return \{ docId, title, fieldCount, fieldsAttempted, failureReason, url \};/);
+  assert.match(route, /fieldsAttempted: out\.fieldsAttempted,/);
+  assert.match(route, /failureReason: out\.failureReason \|\| null,/);
+});
+
+// The behavioural half of the outage work: the real entry point, a stubbed
+// transport, and a REAL Response on the failure path — because the last harness
+// that returned a hand-rolled `{ ok, json }` turned a 429 into "res.text is not
+// a function" and reported the resulting dead cell as a clean zero.
+function outageDocClients(assetNames) {
+  let idx = 1;
+  const paras = [
+    { text: 'Campaign Summary', style: 'HEADING_2' }, { text: 'S', italic: true },
+    { text: 'Writer Direction', style: 'HEADING_2' }, { text: 'W', italic: true },
+  ];
+  for (const name of assetNames) {
+    paras.push({ text: name, style: 'HEADING_3' });
+    paras.push({ text: 'Subject Line 1 [130]', bold: true });
+    paras.push({ text: '' });
+    paras.push({ text: 'Preheader [100]', bold: true });
+    paras.push({ text: '' });
+  }
+  const content = paras.map((p) => {
+    const raw = (p.text || '') + '\n';
+    const start = idx; idx += raw.length;
+    return { startIndex: start, endIndex: idx, paragraph: {
+      paragraphStyle: p.style ? { namedStyleType: p.style } : {},
+      elements: [{ textRun: { content: raw, textStyle: { bold: !!p.bold, italic: !!p.italic } } }],
+    } };
+  });
+  return { docs: { documents: {
+    get: async () => ({ data: { title: 'Doc', body: { content } } }),
+    batchUpdate: async () => ({ data: {} }),
+  } } };
+}
+
+const QUOTA_429 = JSON.stringify({
+  error: { code: 429, message: 'Resource has been exhausted', status: 'RESOURCE_EXHAUSTED',
+    details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+      violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel' }] }] } });
+
+test('a total outage names the cause, and the cause is the one that happened', async () => {
+  const gd = require('../src/destinations/googleDocs');
+  const { GEMINI_FAILURE_SENTENCES } = require('../src/services/gemini');
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  cfg.GEMINI_API_KEY = 'test-key';
+  global.fetch = async () => new Response(QUOTA_429, { status: 429 });
+
+  try {
+    await assert.rejects(
+      () => gd.generateDraft('doc', null, outageDocClients(['Nurture Email']), null, null, null, false, 'brief'),
+      (err) => {
+        // THE MESSAGE IS THE SURFACE STRING. Slack prefixes it with "Draft
+        // generation failed"; the web job hands err.message to the error box.
+        assert.strictEqual(err.message, GEMINI_FAILURE_SENTENCES.quota);
+        // No raw Google JSON, no HTTP status, no quota id.
+        assert.ok(!/RESOURCE_EXHAUSTED|429|quotaId|\{/.test(err.message), 'no response detail leaks');
+        // And it does not say "try again", which is what the old wording said on
+        // the one occasion it fired — to a key that could not succeed.
+        assert.ok(!/try again/i.test(err.message));
+        return true;
+      }
+    );
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+  }
+});
+
+test('a partial outage reports the denominator and why the rest are blank', async () => {
+  const gd = require('../src/destinations/googleDocs');
+  const { GEMINI_FAILURE_SENTENCES } = require('../src/services/gemini');
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  cfg.GEMINI_API_KEY = 'test-key';
+
+  // One asset drafts, one is refused. This is the shape the outage actually
+  // took — it started mid-brief — and the shape that used to come back as
+  // "First draft ready (2 fields drafted)" with nothing said about the other two.
+  global.fetch = async (_u, o) => {
+    const prompt = JSON.parse(o.body).contents[0].parts[0].text;
+    if (prompt.includes('Refused Email')) return new Response(QUOTA_429, { status: 429 });
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"Subject Line 1":"a","Preheader":"b"}' }] } }] }),
+      { status: 200 }
+    );
+  };
+
+  try {
+    const out = await gd.generateDraft(
+      'doc', null, outageDocClients(['Drafted Email', 'Refused Email']), null, null, null, false, 'brief'
+    );
+    assert.strictEqual(out.fieldsAttempted, 4, 'the denominator is every field the run tried');
+    assert.strictEqual(out.fieldCount, 2, 'and the numerator is what was written');
+    assert.strictEqual(out.failureReason, GEMINI_FAILURE_SENTENCES.quota);
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+  }
+});
+
+test('a complete run carries no denominator story at all', async () => {
+  const gd = require('../src/destinations/googleDocs');
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  cfg.GEMINI_API_KEY = 'test-key';
+  global.fetch = async () => new Response(
+    JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"Subject Line 1":"a","Preheader":"b"}' }] } }] }),
+    { status: 200 }
+  );
+
+  try {
+    const out = await gd.generateDraft('doc', null, outageDocClients(['Nurture Email']), null, null, null, false, 'brief');
+    assert.strictEqual(out.fieldCount, 2);
+    assert.strictEqual(out.fieldsAttempted, 2);
+    // NULL, not a reassuring sentence. Both surfaces test this to decide whether
+    // to say anything, so a run with nothing wrong must not carry a reason for a
+    // shortfall it did not have.
+    assert.strictEqual(out.failureReason, null);
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+  }
+});
+
+test('sliceBetween fails on a missing anchor instead of checking somewhere else', () => {
+  const src = 'AAA start MIDDLE end ZZZ';
+  assert.strictEqual(sliceBetween(src, 'start', 'end'), 'start MIDDLE ');
+
+  // THE FAILURE THIS EXISTS FOR. A bare indexOf pair with a missing END anchor
+  // returns -1, slice reads it as "one from the end", and the region silently
+  // grows — here swallowing the `end ZZ` the test meant to exclude, and passing.
+  assert.strictEqual(src.slice(src.indexOf('start'), src.indexOf('gone')), 'start MIDDLE end ZZ');
+  assert.throws(() => sliceBetween(src, 'start', 'gone'), /slice end anchor not found/);
+
+  // A missing START anchor is the same class: slice(-1, n) returns ''.
+  assert.strictEqual(src.slice(src.indexOf('gone'), src.indexOf('end')), '');
+  assert.throws(() => sliceBetween(src, 'gone', 'end'), /slice anchor not found/);
+
+  // And an end anchor that occurs BEFORE the start is not a region either.
+  assert.throws(() => sliceBetween(src, 'MIDDLE', 'AAA'), /slice end anchor not found/);
+});
+
+// TRIPWIRE, found at 390px and not by any of the 595 tests above it — labelled
+// as one, because it holds a gap the browser measured and cannot tell a good
+// layout from a bad one.
+//
+// .notice carries margin-top only, which was invisible for as long as every
+// notice was the LAST element on its panel. copydone-shortfall is the first one
+// with content directly beneath it: its bottom edge landed on the "Assets" label
+// at exactly 0px, measured in Chromium at 390 x 844.
+test('the shortfall notice does not sit flush against the copy list', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /#copydone-shortfall \{ margin-bottom: 14px; \}/);
+  // Scoped to the id on purpose — the three notices that predate it sit above
+  // CTAs that bring their own spacing, and must not move.
+  assert.match(html, /\.notice \{\n\s*margin-top: 14px;\n\s*padding: 10px 12px;/);
+  assert.ok(!/\.notice \{[^}]*margin-bottom/.test(html), 'the shared rule is unchanged');
 });

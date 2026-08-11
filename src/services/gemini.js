@@ -465,9 +465,110 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 // with no error ever surfacing. Overridable via GEMINI_TIMEOUT_MS.
 const REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 45000;
 
+// WHY A FAILURE CARRIES ITS CLASS OUT OF HERE RATHER THAN BEING RE-DERIVED LATER.
+//
+// August 2026: a prepaid balance ran out mid-run. Every call returned 429, every
+// field came back blank, and the only thing any surface said was "All field
+// drafts failed (Gemini timeout or error)" — a sentence that names the two causes
+// it was NOT and offers "try again", which was guaranteed to fail identically.
+//
+// The class is attached at the throw because this is the only place that still
+// holds the HTTP status and the structured body. Everything downstream has a
+// string, and a string is the wrong thing to ask this question of: the callers
+// that would have to parse it are a per-field rescue, a per-asset catch and two
+// adapters, which is four places to keep a regex in step with Google's wording.
+//
+// THE ONE HARD CASE IS 429, and it is the case that happened. Google returns it
+// for BOTH a per-minute rate limit (wait) and a spent quota (pay), and the enum
+// in `error.status` is RESOURCE_EXHAUSTED for both. What separates them is the
+// QuotaFailure violation's id: a PerMinute/PerSecond quota refills on its own, a
+// PerDay/free-tier/billing one does not. An unrecognised or absent violation is
+// read as `quota`, deliberately — the costs are asymmetric. Telling someone to
+// check billing when it was a transient blip costs them one look at a dashboard;
+// telling them to wait when the balance is gone costs them every retry after
+// this one, which is exactly what happened.
+const GEMINI_FAILURE_SENTENCES = {
+  quota: "The Gemini API quota is used up. Retrying will fail the same way until the key's billing is topped up.",
+  rate_limit: 'Gemini is rate-limiting this key. Wait a few minutes and try again.',
+  auth: 'Gemini rejected the API key.',
+  server: 'Gemini is returning errors. Wait a few minutes and try again.',
+  timeout: 'Every Gemini request timed out. Wait a few minutes and try again.',
+  network: 'Gemini could not be reached. Wait a few minutes and try again.',
+  unconfigured: 'No Gemini API key is configured.',
+  empty: 'Gemini returned nothing usable.',
+  unknown:
+    'Every Gemini request failed. Wait a few minutes and try again — if it keeps failing, check the API key and its billing.',
+};
+
+// Most-actionable-first. A run that saw several classes is reported by the
+// earliest one present, not the commonest: a spent balance shows up as timeouts
+// and 5xx on the way down, so counting would let the symptom outvote the cause.
+const GEMINI_KIND_PRIORITY = [
+  'unconfigured',
+  'quota',
+  'auth',
+  'rate_limit',
+  'server',
+  'timeout',
+  'network',
+  'empty',
+  'unknown',
+];
+
+function geminiFailureSentence(kind) {
+  return GEMINI_FAILURE_SENTENCES[kind] || GEMINI_FAILURE_SENTENCES.unknown;
+}
+
+function geminiErrorKind(err) {
+  return (err && err.geminiKind) || 'unknown';
+}
+
+function worstGeminiKind(kinds) {
+  const seen = new Set((kinds || []).filter(Boolean));
+  if (seen.size === 0) return null;
+  for (const k of GEMINI_KIND_PRIORITY) if (seen.has(k)) return k;
+  return 'unknown';
+}
+
+function geminiError(message, kind, httpStatus) {
+  const err = new Error(message);
+  err.geminiKind = kind;
+  if (httpStatus != null) err.geminiStatus = httpStatus;
+  return err;
+}
+
+// 429 only. Reads the structured QuotaFailure detail rather than the prose.
+function exhaustedKind(bodyText) {
+  let json = null;
+  try {
+    json = JSON.parse(bodyText);
+  } catch (err) {
+    return 'quota';
+  }
+  const details = (json && json.error && json.error.details) || [];
+  const ids = [];
+  for (const d of details) {
+    if (!d || !Array.isArray(d.violations)) continue;
+    for (const v of d.violations) {
+      const id = (v && (v.quotaId || v.quotaMetric)) || '';
+      if (id) ids.push(String(id));
+    }
+  }
+  if (ids.length === 0) return 'quota';
+  // Every violated quota refills on a clock → a wait. One that does not → a spend.
+  return ids.every((id) => /per[_-]?(?:minute|second)/i.test(id)) ? 'rate_limit' : 'quota';
+}
+
+function classifyGeminiStatus(httpStatus, bodyText) {
+  if (httpStatus === 429) return exhaustedKind(String(bodyText || ''));
+  if (httpStatus === 401 || httpStatus === 403) return 'auth';
+  if (httpStatus >= 500) return 'server';
+  return 'unknown';
+}
+
 async function callGemini(body) {
   if (!config.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not set.');
+    throw geminiError('GEMINI_API_KEY is not set.', 'unconfigured');
   }
 
   const url = `${API_BASE}/${config.GEMINI_MODEL}:generateContent?key=${config.GEMINI_API_KEY}`;
@@ -484,22 +585,31 @@ async function callGemini(body) {
     });
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error(`Gemini request timed out after ${REQUEST_TIMEOUT_MS}ms`);
+      throw geminiError(`Gemini request timed out after ${REQUEST_TIMEOUT_MS}ms`, 'timeout');
     }
-    throw err;
+    // A fetch that rejects for any other reason never reached Gemini — DNS, TLS,
+    // a dropped socket. Classed as network so the sentence says "could not be
+    // reached" rather than blaming a key that was never presented.
+    throw geminiError(err.message || String(err), 'network');
   } finally {
     clearTimeout(timer);
   }
 
   if (!res.ok) {
+    // The body stays on the MESSAGE (which is logged) and never reaches a
+    // surface — the surfaces render the sentence keyed off geminiKind instead.
     const text = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${text}`);
+    throw geminiError(
+      `Gemini API error ${res.status}: ${text}`,
+      classifyGeminiStatus(res.status, text),
+      res.status
+    );
   }
 
   const data = await res.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
-    throw new Error('Gemini returned no text. Raw: ' + JSON.stringify(data));
+    throw geminiError('Gemini returned no text. Raw: ' + JSON.stringify(data), 'empty', 200);
   }
   return text;
 }
@@ -1857,6 +1967,12 @@ async function generateAssetDrafts({
   // failure (network, rate limit, timeout) and a JSON.parse failure, and the old
   // message called them all "parse failed". `len=0` now tells them apart.
   let text = '';
+  // THE CLASS OF THE BATCH FAILURE, KEPT. Nothing in this function throws on a
+  // model failure — both the batch and the per-field rescue are caught, so an
+  // outage returns an array of empty drafts and the caller sees a clean run with
+  // nothing in it. Carrying the class out on the entries is what lets
+  // googleDocs.generateDraft say WHY the doc is blank.
+  let batchFailureKind = null;
   try {
     text = await callGemini({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -1885,6 +2001,10 @@ async function generateAssetDrafts({
         `err=${JSON.stringify(err && err.message ? err.message : String(err))} ` +
         `len=${String(text || '').length} raw=${JSON.stringify(sampleForLog(text))}`
     );
+    // A JSON.parse failure carries no geminiKind, and must not be reported as
+    // one: the call SUCCEEDED and the response was unusable. It leaves this null
+    // so a per-field rescue failure — which is a real transport class — wins.
+    batchFailureKind = err && err.geminiKind ? err.geminiKind : null;
     parsed = {};
   }
 
@@ -1899,6 +2019,7 @@ async function generateAssetDrafts({
   for (const f of fields) {
     let copy = cleanDraft(byKey.get(f.fieldName.trim().toLowerCase()) || '');
     let unenforced = false;
+    let rescueFailureKind = null;
     // Missing from the batch, or over its limit → fall back to the robust
     // single-field generator (which rewrites and, if needed, hard-trims).
     // One field's fallback failing (a Gemini timeout / rate-limit / error) must
@@ -2008,6 +2129,7 @@ async function generateAssetDrafts({
         // exists, and it used to come back indistinguishable from a clean draft.
         // `unenforced` is what makes the difference visible to the caller.
         unenforced = Boolean(copy);
+        rescueFailureKind = geminiErrorKind(err);
         console.warn(
           `[gemini] field fallback failed for ${assetType} / ${f.fieldName}: ${err.message} — ` +
             (unenforced
@@ -2036,7 +2158,15 @@ async function generateAssetDrafts({
       );
     }
 
-    out.push(unenforced ? { fieldName: f.fieldName, copy, unenforced: true } : { fieldName: f.fieldName, copy });
+    const entry = { fieldName: f.fieldName, copy };
+    if (unenforced) entry.unenforced = true;
+    // WHY ONLY WHEN THERE IS NO COPY, AND ONLY WHEN SOMETHING ACTUALLY FAILED.
+    // A field the batch simply omitted and the rescue returned empty for is a
+    // model result, not a transport failure, and labelling it 'unknown' would put
+    // a "check your billing" sentence in front of a writer whose key is fine.
+    const failure = rescueFailureKind || batchFailureKind;
+    if (!copy && failure) entry.failure = failure;
+    out.push(entry);
   }
   return out;
 }
@@ -3167,6 +3297,16 @@ module.exports = {
   // Shared with destinations/googleDocs.js (cleanCampaignTitle) so the two
   // wrapper-stripping paths can't drift apart.
   cleanDraft,
+  // Failure classification. `geminiErrorKind` reads the class off a thrown error,
+  // `worstGeminiKind` reduces a run's worth of them, `geminiFailureSentence` is
+  // the ONE user-facing wording — Slack and the web both render this, so a
+  // reworded cause cannot say two things on two surfaces.
+  geminiErrorKind,
+  worstGeminiKind,
+  geminiFailureSentence,
+  // Exposed for unit tests only.
+  classifyGeminiStatus,
+  GEMINI_FAILURE_SENTENCES,
   // Exposed for unit tests only.
   ASSET_PHRASE_HINTS,
   REFUSAL_EXAMPLES,

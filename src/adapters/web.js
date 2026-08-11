@@ -316,8 +316,8 @@ async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, a
     return { docId, title: out.templateName || 'Template document', fieldCount, url: out.templateDocUrl || null };
   }
 
-  const { title, fieldCount, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, scopedFields, append);
-  return { docId, title, fieldCount, url };
+  const { title, fieldCount, fieldsAttempted, failureReason, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, scopedFields, append);
+  return { docId, title, fieldCount, fieldsAttempted, failureReason, url };
 }
 
 // Read a project's doc into the structured, copy-bearing shape the project view

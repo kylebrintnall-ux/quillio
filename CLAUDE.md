@@ -552,6 +552,15 @@ Two more from the same pass: locked rows drawn as disabled inputs at 0.55
 opacity read as **enabled** on a phone, and the disabled unit `<select>` read as
 a dropdown failing to open.
 
+**And a fourth, from the outage work's pass, which is the cheapest instance of
+the rule on record.** `.notice` carries `margin-top` and no `margin-bottom` —
+correct for as long as every notice was the LAST element on its panel, which all
+three of the pre-existing ones are. `copydone-shortfall` is the first with
+content directly beneath it, and at 390px its bottom edge landed on the "Assets"
+label at **exactly 0px**. Nothing in the source is wrong; the rule is right,
+present, and shared. It took one measurement in a browser. The fix is scoped to
+the id, so the three older notices do not move.
+
 None of the three was reachable by a source scan, because none was a question
 about what the source SAYS:
 
@@ -1241,6 +1250,103 @@ project row. Same condition, surfaced on one document and silent on the other.
 Not fixed; recorded so the asymmetry is not mistaken for the copy-doc path being
 unable to produce it.
 
+### An outage drafted 1 of 40 and both surfaces called it ready
+
+August 2026, production: a prepaid Gemini balance ran out mid-brief. Every call
+came back 429, every field came back blank, and the two things the system said
+were each wrong in their own way.
+
+| What it said | Why it was wrong |
+| --- | --- |
+| `First draft ready — *Title* (1 field drafted).` | a true number under a false claim, with **no denominator** — so a run that lost 39 of 40 fields is indistinguishable from a one-field brief |
+| `All field drafts failed (Gemini timeout or error).` | named the two causes it was **not**, and implied a retry that was guaranteed to fail identically |
+
+**The denominator was never computed.** `fieldCount` is `inserts.length` — what
+was WRITTEN — and nothing beside it ever counted what was TRIED.
+`googleDocs.generateDraft` now returns `fieldsAttempted` and `failureReason`
+alongside it, and a short run loses the success headline on both surfaces:
+`⚠️ Draft incomplete — *Title* (1 of 40 fields drafted). <cause>` on Slack,
+`⚠ Draft incomplete — 1 of 40 fields drafted` in the web toast with the cause in
+an amber `copydone-shortfall` notice. **A complete run is byte-identical to what
+it always was** — the denominator appears only when it is not the whole story.
+
+**THE CAUSES WERE NEVER REACHABLE, AND THAT IS THE PART WORTH KNOWING.**
+`generateAssetDrafts` catches BOTH the batch call and the per-field rescue, so
+it never throws on a model failure — during the outage it returned a full set of
+empty drafts and `googleDocs`'s per-asset catch never fired once. Every asset
+logged `done: … (0 fields)`. So the class now rides out on the draft ENTRY
+(`entry.failure`), and `generateDraft` reads it **before** the
+`.filter((r) => … && r.copy)` that drops every blank — read it after and there
+is nothing left to read.
+
+**The class is attached in `callGemini`, not derived from the message later.**
+Four downstream places would otherwise need a regex over Google's wording. The
+attach point is also the only place still holding the HTTP status and the
+structured body.
+
+**The hard case is 429, and it is the case that happened.** Google returns it
+for a per-minute rate limit (wait) *and* a spent quota (pay), with
+`RESOURCE_EXHAUSTED` on both. `exhaustedKind` reads the QuotaFailure violation's
+`quotaId`: every violation on a per-minute/second clock → `rate_limit`,
+otherwise → `quota`. **An unparseable or detail-free body reads as `quota`,
+deliberately** — telling someone to check billing when it was a blip costs one
+look at a dashboard; telling them to wait when the balance is gone costs every
+retry after that, which is exactly what happened.
+
+`GEMINI_FAILURE_SENTENCES` is the **one** wording, rendered by both surfaces —
+the review-overlay duplication is the lesson not to repeat. `worstGeminiKind`
+reduces a run's classes by a fixed priority rather than by frequency: a spent
+balance shows up as timeouts and 5xx on the way down, and counting would let
+thirty symptoms outvote the one cause that explains them.
+
+**FAIL-FAST IS HELD, NOT REJECTED — and the number it would be decided on is
+`1 + 2N` per asset, not `1 + N`.** Written down because it is the input to that
+decision whenever it is taken, and it was recomputed once already after being
+got wrong.
+
+Per asset, on a run where every call fails: **1** batch call, **N** single-field
+rescues, and up to **N** corrective rewrites. The third is the one that is easy
+to miss — `generateFieldDraft` issues a SECOND `callGemini` when its first call
+SUCCEEDS and returns copy over the field's ceiling. Character fields only:
+`trimCeiling` is null on a word field, so nothing there triggers a rewrite. On
+the seeded library most fields are character fields, so `2N` is the right
+planning figure rather than a worst case.
+
+A six-asset brief at ~7 fields each is therefore **≈90 calls that cannot
+succeed**, not the ≈48 that `1 + N` gives.
+
+Held on purpose: a circuit
+breaker keyed on one class of one response is the kind of thing that trips on a
+transient and turns a recoverable run into an empty document, and there is
+exactly **one** recorded outage to design it against. The cost of waiting is
+latency and log noise on an already-failed run; the cost of getting it wrong is a
+run that would have succeeded. Revisit on the second occurrence, with two
+observations rather than one.
+
+### Nothing is written for a failed field — because blank is the only "still to do"
+
+The reason no placeholder, marker, or apology goes into the doc on a field that
+failed to draft, stated on its own because it will look like an omission to
+whoever meets it next.
+
+`parseDoc` recovers a field's draft from **the blank paragraph right after its
+bold label**, and reads any second paragraph there as drafted copy. That single
+convention is what makes the whole no-persisted-doc-state design work: it is how
+Regenerate knows what exists, how a scoped redraft finds its target, and how the
+web's `computeBlankFields` decides which chips are still empty.
+
+So writing *anything* into a failed field's slot marks it **done**. A
+`[draft failed]` line would survive the next Regenerate untouched, count toward
+`fieldCount`, and show up on the copy-done screen as a field that has copy. The
+blank is not an absence of a report — it **is** the report, in the one vocabulary
+every consumer already reads. The report of the failure belongs on the surfaces,
+which is what the entry above is about.
+
+The corollary, for anything added here later: a doc-level notice must go in its
+own paragraph away from a field label, or `parseDoc` will read it as somebody's
+copy. This is the same constraint that keeps `fieldHint` to exactly one
+paragraph.
+
 ### The batch-failure rescue gets siblings — FIXED, with an ordering limit
 
 `generateAssetDrafts` writes every field of an asset in ONE call so they can
@@ -1533,6 +1639,46 @@ baseline entry, arriving from the other direction.
 So: **an aggregate at n=5 is a hypothesis, and the per-field number underneath it
 is the finding.** If a design decision rests on a ratio, the ratio needs a second
 run before the decision does.
+
+##### AN ASSERTION THAT QUIETLY RELOCATES — the third species, and it is in the TESTS
+
+Every entry above is about a MEASUREMENT going wrong. This one is about an
+ASSERTION going wrong, in the same family and by a mechanism neither of the other
+two shares:
+
+| | Failure | How you find out |
+| --- | --- | --- |
+| a count | measures the wrong property, or divides by the wrong population | read the copy |
+| a control arm | leaks the treatment and reports a mixture as a comparison | drive it with a stub |
+| **an assertion** | **checks a different region of the file and passes** | **nothing. It is green** |
+
+The instance: `test/smoke.test.js` sliced a region with
+`draft.slice(draft.indexOf(a), draft.indexOf('const { title, fieldCount, url }'))`
+and asserted the word `append` did not appear in it. The outage work added two
+keys to that destructuring pattern. `indexOf` returned **-1**, `slice` read -1 as
+*one character from the end*, and the region silently grew to the whole function —
+which contains the copy-doc call the test existed to exclude. It stayed green
+until the code inside the newly-swallowed region happened to change.
+
+**The mechanism is that `-1` is a valid `slice` argument.** A missing END anchor
+grows the region to almost everything; a missing START anchor collapses it to
+`''`, and every `assert.ok(!/x/.test(region))` in the file passes trivially
+against an empty string. Both directions fail open. Some slices here carry an
+`assert.ok(fn.length > 500, 'found X')` sanity check, which catches the second
+case and not the first — and 192 `.indexOf(` calls in that file do not carry one.
+
+**How to write one that cannot do this: assert the anchors, do not assume them.**
+`sliceBetween(src, startAnchor, endAnchor)` at the top of `test/smoke.test.js`
+asserts each anchor was found and that the end follows the start, then slices. It
+has its own test, which pins the two silent-pass behaviours above as the reason
+it exists. The rule for anything new: **an `indexOf` used as a slice bound is an
+assertion — write it as one.** Converting all 192 was not done; the helper is
+there and the sites touched since use it.
+
+The generalisation worth carrying: a structural test asserts something about a
+REGION, and the region is as much part of the claim as the pattern is. A test
+that names its subject only by two string literals it never checks is one rename
+away from being about something else.
 
 ##### BRIEF FIDELITY IS NOT FACTUAL ACCURACY, and no detector here can tell them apart
 

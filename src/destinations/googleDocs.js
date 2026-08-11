@@ -17,7 +17,17 @@ const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
 const { locateCells, readCells, buildCellWriteRequests } = require('./templateCells');
-const { generateAssetDrafts, generateFieldDraft, generateFieldVariations, cleanDraft, DOORWAYS, INTENSITIES } = require('../services/gemini');
+const {
+  generateAssetDrafts,
+  generateFieldDraft,
+  generateFieldVariations,
+  cleanDraft,
+  geminiErrorKind,
+  worstGeminiKind,
+  geminiFailureSentence,
+  DOORWAYS,
+  INTENSITIES,
+} = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
 // Same asset-name folding the pipeline uses to match a name to a library row, so
 // instance-heading sibling detection groups names the same way.
@@ -1104,7 +1114,10 @@ function buildVariantBlock(variations, { distance, charMax, fieldType, startInde
 }
 
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
-// each label. Returns { title, fieldCount }.
+// each label. Returns { title, fieldCount, fieldsAttempted, failureReason, url }.
+// `fieldCount` is what was WRITTEN and `fieldsAttempted` is what was tried, so a
+// surface can tell "40 of 40" from "1 of 40"; `failureReason` is the one shared
+// sentence naming why the rest are blank, or null when nothing failed.
 // `brief` is the client's own words off the project row (pipeline.generateDraft).
 // Null for a pre-migration project, a doc with no project row, or no tenant — and
 // null is the whole degradation: gemini's briefBlock emits nothing and the prompt
@@ -1223,6 +1236,27 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   const total = assetTargets.length;
   logMemory(`generateDraft start — ${total} asset(s), concurrency ${DRAFT_CONCURRENCY}${scopeKeys ? ', scoped' : ''}`);
 
+  // THE DENOMINATOR. `fieldCount` has always been the number of fields WRITTEN,
+  // reported with no total beside it — so a run that drafted one field of forty
+  // said "1 field drafted" on a card headed "First draft ready", which is a true
+  // number under a false claim. Counted the same way the loop below decides what
+  // to draft: scoped runs attempt only their selection.
+  const fieldsAttempted = assetTargets.reduce(
+    (n, a) =>
+      n +
+      (scopeKeys
+        ? a.fields.filter((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName, a.instance))).length
+        : a.fields.length),
+    0
+  );
+
+  // Why every field that came back blank did so. Collected rather than returned
+  // because the three places a cause appears — a swallowed per-field failure, a
+  // scoped per-field catch, and an asset that threw outright — are on three
+  // different code paths through the same loop. Pushes are safe: the concurrency
+  // is bounded but the runtime is single-threaded.
+  const failureKinds = [];
+
   const perAsset = await mapWithConcurrency(assetTargets, DRAFT_CONCURRENCY, async (a, idx) => {
     const fieldsToDraft = scopeKeys
       ? a.fields.filter((f) => scopeKeys.has(ctxKey(a.assetType, f.fieldName, a.instance)))
@@ -1320,6 +1354,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
               if (copy) drafts.push({ fieldName: f.fieldName, copy });
             }
           } catch (err) {
+            failureKinds.push(geminiErrorKind(err));
             console.warn(`[googleDocs] scoped field failed ${a.assetType}/${f.fieldName}: ${err.message}`);
           }
         }
@@ -1337,6 +1372,12 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
           voiceGuide,
         });
       }
+      // generateAssetDrafts swallows every model failure — the batch and the
+      // per-field rescue are both caught — so on an outage this returns a full
+      // set of empty drafts and the filter below quietly removes them all. The
+      // class rides out on the entry; read it BEFORE the filter or it is gone.
+      for (const d of drafts) if (d && d.failure) failureKinds.push(d.failure);
+
       const metaByName = new Map(
         a.fields.map((f) => [f.fieldName, { insertIndex: f.insertIndex, deleteEnd: f.deleteEnd }])
       );
@@ -1360,6 +1401,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
       console.log(`[googleDocs] asset ${idx + 1}/${total} done: ${a.assetType} (${mapped.length} fields)`);
       return mapped;
     } catch (err) {
+      failureKinds.push(geminiErrorKind(err));
       console.error(
         `[googleDocs] asset ${idx + 1}/${total} FAILED: ${a.assetType}: ${err.message}`
       );
@@ -1370,9 +1412,26 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
 
   const drafted = perAsset.flat();
 
-  const totalFields = assetTargets.reduce((n, a) => n + a.fields.length, 0);
-  if (totalFields > 0 && drafted.length === 0) {
-    throw new Error('All field drafts failed (Gemini timeout or error).');
+  const failureKind = worstGeminiKind(failureKinds);
+  // The one sentence both surfaces render. Null when nothing failed — a run that
+  // drafted everything must not carry a reason for a shortfall it did not have.
+  const failureReason = failureKind ? geminiFailureSentence(failureKind) : null;
+  if (failureKind) {
+    console.warn(
+      `[googleDocs] draft shortfall — ${drafted.length}/${fieldsAttempted} fields, ` +
+        `cause=${failureKind} (${failureKinds.length} failure(s))`
+    );
+  }
+
+  if (fieldsAttempted > 0 && drafted.length === 0) {
+    // The classified sentence IS the thrown message, because this string is what
+    // both surfaces show: Slack prefixes it with "Draft generation failed", and
+    // the web job hands err.message straight to the error box. The old wording —
+    // "All field drafts failed (Gemini timeout or error)" — named the two causes
+    // it was not on the one occasion it fired, and offered a retry that was
+    // guaranteed to fail the same way. No raw response body reaches either
+    // surface: the body stays on the per-call error, which is logged.
+    throw new Error(failureReason || geminiFailureSentence('unknown'));
   }
 
   // Regeneration is done in two phases so deletes and inserts never share a
@@ -1511,6 +1570,11 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   return {
     title: doc.title,
     fieldCount: inserts.length,
+    // Both additive, both read by the surfaces to decide whether this run can
+    // honestly be called ready. An older caller that destructures only the
+    // original three is unaffected.
+    fieldsAttempted,
+    failureReason,
     url: `https://docs.google.com/document/d/${id}/edit`,
   };
 }

@@ -974,6 +974,36 @@ The doc feedback feature requires a comment adapter per doc platform. The Slack/
 **Job queue** — BullMQ for pipeline resilience under load
 **Demo video** — 90-second screen recording, most important sales asset
 
+### Slack and web disagree about which advisories a user sees — and nobody chose that
+
+Both surfaces build an advisory line when a brief is thin. They do not show the
+same ones:
+
+| Advisory | Slack | Web |
+| --- | --- | --- |
+| `notice` — per-asset ceiling clamp ("Built 3 of 5 …") | rendered, own context block (`services/slack.js:84`) | **not rendered at all** — no `data.notice` anywhere in `app.html` |
+| `unmatchedNotice` — a named asset that did not map | rendered, own context block (`:93`) | rendered in three places (`out-`, `picker-`, `confirm-unmatched`) |
+
+The clamp notice is built on the web path and thrown away. A web user whose brief
+asked for five of an asset and got three is told nothing; the same brief through
+Slack says so.
+
+**This is drift, not a decision.** Nothing in the code or the comments argues for
+the difference, and the honest options are to match Slack or to accept the gap on
+purpose — right now it is neither, which is the state worth recording.
+
+**It is coupled to the missing-datetime notice, and the coupling is the reason
+this is written down now.** Measured at 390px with a real browser: two stacked
+advisories are 149px and read fine; three are 213px of cream boxes sitting
+directly above the primary CTA on a build that SUCCEEDED, and that reads as a wall
+of warnings. Today the web can show at most one, so adding the datetime line takes
+it to two — fine. Fixing this asymmetry as well takes it to three, which is the
+point at which they should collapse into one "a few things to check" block with
+bullets rather than three boxes.
+
+So: fixing the asymmetry is cheap on its own and cheap alongside the datetime
+line, but doing both without collapsing them is the thing not to do.
+
 ### Transcription fields — seven fields whose job is to CARRY a fact, in a pipeline with no concept of one
 
 **Deliberately not folded into the Event Reminder date-field fix.** That fix

@@ -1699,7 +1699,14 @@ async function getDocContent(id, clients) {
         charMax = Math.max(...vals);
         if (vals.length >= 2) charMin = Math.min(...vals);
       }
-      field = { fieldName, charMin, charMax, fieldType, notes: '', copy: '', riffMarks: [] };
+      // `label` is the bold paragraph VERBATIM — "Headline (Offer 1) [50]",
+      // bracket and unit included. Carried because copy review now leads each
+      // comment with it, and a comment that says it is about "Headline [50]" has
+      // to say the same thing the reader will scan the page for. Reconstructing it
+      // from fieldName + charMin/charMax would be a second renderer of fieldLabel,
+      // free to drift from the one that wrote the document. Additive: every
+      // existing consumer reads fieldName/charMin/charMax and is unaffected.
+      field = { fieldName, label: text, charMin, charMax, fieldType, notes: '', copy: '', riffMarks: [] };
       current.fields.push(field);
       continue;
     }
@@ -1725,17 +1732,52 @@ async function getDocContent(id, clients) {
 }
 
 // --- Copy-review comments (Drive API v3) ---
-// Comments are anchored to exact copy via quotedFileContent (verified). Quillio's
-// review comments are branded + identified by this prefix so re-review can clear
-// the previous ones before posting the currently-warranted set.
+//
+// REVIEW COMMENTS ARE UNANCHORED, DELIBERATELY. This header used to say they were
+// "anchored to exact copy via quotedFileContent (verified)". That claim was false,
+// and it is worth saying how it survived, because the shape recurs.
+//
+// quotedFileContent does not anchor anything. It is the quoted TEXT of a comment,
+// not a position: Drive never searches the document for it. Anchoring is the
+// separate `anchor` field, and Google publishes no text-anchor format for native
+// Google Docs — documents.batchUpdate has no comment request type either, so there
+// is no supported way to create an anchored comment on a Doc at all. A comment
+// carrying a quote it cannot resolve is exactly what the Docs UI renders as
+// "Original content deleted": the comment exists, holds its text, and points
+// nowhere. Every review comment Quillio has ever posted rendered that way.
+//
+// The "(verified)" traced to scripts/testDocComment.js, which prints the create
+// response and then asks a human to open the doc and report back. No result was
+// ever recorded. The create response looks identical either way — Drive returns
+// 200 and an id whether or not it anchored anything — which is the trap
+// scripts/probeCellCommentAnchor.js names outright: "'the quote came back' is the
+// result that would be easiest to mistake for success."
+//
+// So the location now travels INSIDE the comment text. services/copyReview.js
+// leads every comment with a locator line (the field's label exactly as the doc
+// renders it, plus its asset) and a short verbatim fragment of the copy. That is
+// also what makes re-review idempotent — see the matching note there.
+//
+// Quillio's review comments are branded + identified by this prefix so re-review
+// can find the previous ones before posting the currently-warranted set.
 const REVIEW_PREFIX = '🪶 Quillio Review — ';
 
 // List the live Quillio review comments on the doc (prefix-identified). Returns
-// [{ id, content, resolved, quote }] where `quote` is the copy the comment was
-// anchored to (quotedFileContent snapshot at post time) and `resolved` is true
-// when the user manually resolved it in Google Docs. RESOLVED COMMENTS ARE
-// INCLUDED — reconcile needs them to respect manual dismissals. `content` has the
-// REVIEW_PREFIX stripped. Non-Quillio comments are excluded by the prefix.
+// [{ id, content, resolved, quote, anchor }] and `resolved` is true when the user
+// manually resolved it in Google Docs. RESOLVED COMMENTS ARE INCLUDED — reconcile
+// needs them to respect manual dismissals. `content` has the REVIEW_PREFIX
+// stripped. Non-Quillio comments are excluded by the prefix.
+//
+// `anchor` IS REQUESTED THOUGH NOTHING SENDS ONE, and that is the point. It is the
+// only field that can ever say whether Drive pinned a comment to a region, and it
+// was the one field this reader never asked for — which is why four months of
+// comments could render as "Original content deleted" with nothing in the system
+// able to notice. It stays requested so the next person debugging this can see the
+// answer instead of inferring it. Expect '' on every row.
+//
+// `quote` likewise stays read (nothing sends one now either): comments posted
+// before the unanchoring still carry theirs, and seeing it is how you tell a
+// legacy comment from a current one.
 async function listReviewComments(docId, clients) {
   const { drive } = clients || (await getClients());
   const out = [];
@@ -1743,7 +1785,7 @@ async function listReviewComments(docId, clients) {
   do {
     const res = await drive.comments.list({
       fileId: docId,
-      fields: 'nextPageToken, comments(id, content, deleted, resolved, quotedFileContent/value)',
+      fields: 'nextPageToken, comments(id, content, anchor, deleted, resolved, quotedFileContent/value)',
       pageSize: 100,
       includeDeleted: false,
       pageToken: pageToken || undefined,
@@ -1756,6 +1798,7 @@ async function listReviewComments(docId, clients) {
         content: c.content.slice(REVIEW_PREFIX.length),
         resolved: !!c.resolved,
         quote: (c.quotedFileContent && c.quotedFileContent.value) || '',
+        anchor: typeof c.anchor === 'string' ? c.anchor : '',
       });
     }
     pageToken = res.data.nextPageToken || null;
@@ -1763,22 +1806,25 @@ async function listReviewComments(docId, clients) {
   return out;
 }
 
-// Post ONE branded review comment anchored to `quote` via quotedFileContent.
-// Returns the new comment id, or null on failure (logged). Empty quote/content
-// is a no-op (returns null).
-async function addReviewComment(docId, { quote, content } = {}, clients) {
-  const q = String(quote || '');
-  if (!q.trim() || !content) return null;
+// Post ONE branded review comment. Returns the new comment id, or null on failure
+// (logged). Empty content is a no-op (returns null).
+//
+// NO quotedFileContent — see the header above. Sending a quote that cannot resolve
+// is what produced "Original content deleted" on every comment this function has
+// ever posted, so the absence is the fix, not a degradation. `content` arrives
+// already carrying its own locator line (services/copyReview.js composeComment).
+//
+// The parameter object still ACCEPTS a `quote` key and ignores it, so a caller
+// that has not been updated posts a working comment rather than throwing.
+async function addReviewComment(docId, { content } = {}, clients) {
+  if (!content || !String(content).trim()) return null;
   const { drive } = clients || (await getClients());
   try {
     const res = await drive.comments.create({
       fileId: docId,
       fields: 'id',
       supportsAllDrives: true,
-      requestBody: {
-        content: REVIEW_PREFIX + content,
-        quotedFileContent: { mimeType: 'text/plain', value: q },
-      },
+      requestBody: { content: REVIEW_PREFIX + content },
     });
     return (res.data && res.data.id) || null;
   } catch (err) {
@@ -1937,17 +1983,24 @@ async function readTemplateCells(documentId, { markers } = {}, clients) {
 
 // Post ONE branded review comment with NO ANCHOR.
 //
-// WHY UNANCHORED, AND WHY THIS IS NOT A DEGRADED addReviewComment. The anchoring
-// probe settled it: a Drive comment whose quotedFileContent is text inside a
-// TABLE CELL does not resolve. All six probe cases came back with Google
-// rendering "Original content deleted" — the comment exists, carries its text,
-// and points nowhere. Every cell of a template document is a table cell, so
-// there is no anchored path here to fall back FROM.
+// WHY UNANCHORED, AND WHY THIS IS NOT A DEGRADED addReviewComment. Because
+// addReviewComment is not anchored either — nothing on a Google Doc can be.
 //
-// Which makes the field name load-bearing: it is the only thing tying the
-// comment to a cell. A matrix is already a lookup table with a Field column, so
-// naming the field in the body text is not a workaround — it is the same way a
-// human would refer to a row.
+// This comment used to read the probe's six "Original content deleted" results as
+// a fact about TABLE CELLS. They were not. quotedFileContent is the quoted TEXT of
+// a comment, never a position: Drive does not search the document for it.
+// Anchoring is the separate `anchor` field, and Google publishes no text-anchor
+// format for native Docs, so a quote resolves nowhere in a PARAGRAPH either. The
+// copy doc carried the same banner on every comment it ever posted, which is what
+// finally disproved the cell reading. See the review-section header above.
+//
+// So there was never an anchored path to fall back FROM, anywhere. What is true
+// and specific to this path is the consequence: the field name is load-bearing,
+// because it is the only thing tying the comment to a cell. A matrix is already a
+// lookup table with a Field column, so naming the field in the body text is not a
+// workaround — it is the same way a human would refer to a row. The copy doc
+// reaches the same conclusion by a different route (services/copyReview.js
+// composes a locator line), for the same reason.
 async function addUnanchoredComment(docId, content, clients) {
   if (!content || !String(content).trim()) return null;
   const { drive } = clients || (await getClients());

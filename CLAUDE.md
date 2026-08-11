@@ -218,7 +218,7 @@ returns data instead of posting messages.
   | `addUnanchoredComment(docId, content, clients)` | `services/templateReview` |
   | `getDocContent(id, clients)` | `pipeline.getProjectContent`, `copyReview` |
   | `listReviewComments(docId, clients)` | `copyReview` |
-  | `addReviewComment(docId, { quote, content }, clients)` | `copyReview` |
+  | `addReviewComment(docId, { content }, clients)` | `copyReview` |
   | `deleteReviewComment(docId, commentId, clients)` | `copyReview` |
   | `REVIEW_PREFIX` | `copyReview` (comment ownership) |
 
@@ -641,6 +641,39 @@ reporting those 47.
 The script is worth keeping rather than deleting: it is the repair for a state
 another tenant's database could still be in, and the guard if the three inserting
 migrations are ever re-run against a database that has since been backfilled.
+
+## Review comments are UNANCHORED — the explanation lives in the source
+
+Nothing Quillio posts to a Google Doc is anchored, and nothing can be: Drive
+publishes no text-anchor format for native Docs. Every review comment used to
+render as **"Original content deleted"** because `addReviewComment` sent
+`quotedFileContent` with no `anchor`.
+
+**The full account is in the code, and deliberately only there** — the previous
+version of this file carried a second copy, which is the exact failure mode that
+produced the bug (a comment claiming anchoring was "verified" while the source did
+something else). Read, in this order:
+
+- `destinations/googleDocs.js`, the `--- Copy-review comments ---` header — the
+  cause, and how a false "(verified)" survived.
+- `services/copyReview.js`, "The comment LOCATOR" — what carries the location now,
+  and why matching is looser than what it displays.
+- `services/copyReview.js` `orphanSweepIds` — which comments get swept, and why a
+  human's comment can never be one of them.
+
+Two things that are NOT in the source, because neither belongs to one file:
+
+- **The drift matrix.** A posted comment's locator can go stale two ways: the
+  field's limit changes (`Headline [50]` → `[55]`) or the asset heading is renamed.
+  Measured across whole-doc and scoped review, with review state present and lost:
+  **all six cases end with exactly one comment.** The limit change is matched
+  (matching ignores the bracket); the rename is swept and replaced. If you change
+  the locator format or the sweep, re-run that matrix — a duplicate that survives
+  every pass is the failure this design is built to avoid, and it is invisible
+  until a tenant has a doc full of them.
+- **None of it is browser-verified.** Whether the banner actually stops appearing
+  is a claim about Google's renderer, and per "Running & checking" only the device
+  settles that. Post a review on a real doc and look at it.
 
 ## The review overlay's wording lives in two places — keep them in step
 

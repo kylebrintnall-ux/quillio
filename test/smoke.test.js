@@ -3227,27 +3227,32 @@ test('copyReview.reconcileComments: preserve, respect-resolved, fix, add (6 rows
 
   const r = reconcileComments({ fields, priorFields, verdicts, liveComments });
 
+  // toAdd is keyed by review unit now, not by quoted copy — nothing is quoted.
+  const addedFor = (field) => r.toAdd.find((a) => a.key === k('A', field)) || null;
+
   // KEEP: unchanged flagged comment is neither deleted nor re-added.
   assert.ok(!r.toDelete.includes('c-U'), 'unchanged comment not deleted');
-  assert.ok(!r.toAdd.some((a) => a.quote === 'copy U'), 'unchanged comment not re-added');
+  assert.strictEqual(addedFor('unchanged-flagged'), null, 'unchanged comment not re-added');
 
   // RESPECT RESOLVED: dismissed comment not deleted, not re-added despite a verdict.
   assert.ok(!r.toDelete.includes('c-R'), 'resolved comment not deleted');
-  assert.ok(!r.toAdd.some((a) => a.quote === 'copy R'), 'resolved comment not resurrected');
+  assert.strictEqual(addedFor('resolved-unchanged'), null, 'resolved comment not resurrected');
 
-  // ADD new note on unchanged copy.
-  assert.ok(r.toAdd.some((a) => a.quote === 'copy N' && a.content === 'new material note'), 'new note added');
+  // ADD new note on unchanged copy. The posted body ENDS with the model's words
+  // untouched; the locator and the fragment are what precede them.
+  assert.ok(addedFor('unchanged-new').content.endsWith('new material note'), 'new note added, verbatim');
 
   // REMOVE stale on changed+fixed; nothing re-added there.
   assert.ok(r.toDelete.includes('c-X'), 'stale fixed comment removed');
-  assert.ok(!r.toAdd.some((a) => a.quote === 'copy X2'), 'fixed field gets no new comment');
+  assert.strictEqual(addedFor('changed-fixed'), null, 'fixed field gets no new comment');
 
-  // REPLACE on changed+still: delete old, add new anchored to new copy.
+  // REPLACE on changed+still: delete old, add one carrying the NEW copy's fragment.
   assert.ok(r.toDelete.includes('c-Y'), 'stale still-issue comment removed');
-  assert.ok(r.toAdd.some((a) => a.quote === 'copy Y2' && a.content === 'still an issue'), 're-flag anchored to new copy');
+  assert.ok(addedFor('changed-still').content.endsWith('still an issue'), 're-flagged');
+  assert.match(addedFor('changed-still').content, /“copy Y2”/, 'fragment is the new copy');
 
   // ADD on a brand-new field.
-  assert.ok(r.toAdd.some((a) => a.quote === 'copy Z' && a.content === 'brand new'), 'new field flagged');
+  assert.ok(addedFor('new-field').content.endsWith('brand new'), 'new field flagged');
 
   // State persists resolved flag for the dismissed field.
   assert.strictEqual(r.nextState.fields[k('A', 'resolved-unchanged')].resolved, true);
@@ -3284,6 +3289,236 @@ test('copyReview.reconcileComments: persisted dismissal survives a vanished comm
   const r = reconcileComments({ fields, priorFields, verdicts, liveComments: [] });
   assert.strictEqual(r.toAdd.length, 0, 'persisted dismissal blocks re-adding');
   assert.strictEqual(r.nextState.fields[fieldKey('A', 'f')].resolved, true);
+});
+
+// --- Unanchored comments: the locator is what replaces the anchor --------------
+
+test('copyReview: the comment LOCATOR names field, limit, option and asset', () => {
+  const { composeLocator, fallbackLabel, optionSuffix, locatorOf } = require('../src/services/copyReview');
+  assert.strictEqual(
+    composeLocator('Headline (Offer 1) [50]', 'Nurture Email', 0),
+    'Headline (Offer 1) [50] — Nurture Email'
+  );
+  // The instance tag rides along, so two instances of one asset never collide.
+  assert.strictEqual(composeLocator('Headline [50]', 'Nurture Email', 1), 'Headline [50] — Nurture Email#i1');
+  assert.strictEqual(optionSuffix(2, 'Proof'), ' · option 2 (Proof)');
+  assert.strictEqual(optionSuffix(2, null), ' · option 2');
+  // The fallback only fires for hand-built content; a real doc supplies `label`.
+  assert.strictEqual(fallbackLabel({ fieldName: 'CTA', charMax: 20 }), 'CTA [20]');
+  assert.strictEqual(fallbackLabel({ fieldName: 'Body', charMax: 125, fieldType: 'words' }), 'Body [125 words]');
+  assert.strictEqual(fallbackLabel({ fieldName: 'Plain', charMax: 0 }), 'Plain');
+  assert.strictEqual(locatorOf('CTA [20] — Email\n“Get started”\n\nnote'), 'CTA [20] — Email');
+});
+
+test('copyReview.copyFragment: short, verbatim, and never spans a paragraph join', () => {
+  const { copyFragment } = require('../src/services/copyReview');
+  assert.strictEqual(copyFragment('Get started'), 'Get started');
+  assert.strictEqual(copyFragment('  Get   started \n'), 'Get started');
+  assert.strictEqual(
+    copyFragment('one two three four five six seven eight nine'),
+    'one two three four five six seven eight…',
+    'eight words, then an ellipsis'
+  );
+  // getDocContent joins a field's paragraphs with \n — a fragment must not carry
+  // one through into the comment body.
+  assert.strictEqual(copyFragment('First para\nSecond para'), 'First para Second para');
+  // A long word run is capped by characters too, so the locator block stays short.
+  assert.ok(copyFragment(`${'a'.repeat(30)} ${'b'.repeat(30)} c`).length <= 61);
+  assert.strictEqual(copyFragment(''), '');
+});
+
+test('copyReview.composeComment: locator line, quoted fragment, then the note untouched', () => {
+  const { composeComment } = require('../src/services/copyReview');
+  const body = composeComment('Headline [50] — Nurture Email', 'Ship faster than you thought possible today', 'Cut the hedge.');
+  assert.deepStrictEqual(body.split('\n'), [
+    'Headline [50] — Nurture Email',
+    '“Ship faster than you thought possible today”',
+    '',
+    'Cut the hedge.',
+  ]);
+});
+
+// THE REGRESSION THIS WHOLE CHANGE HAD TO NOT CAUSE. Matching used to fall back to
+// the quote read back from Drive; nothing sends a quote now, so if the locator did
+// not replace it, every review pass would re-post every note.
+test('re-review does not duplicate a comment when review state is lost', () => {
+  const { reconcileComments } = require('../src/services/copyReview');
+  const fields = [
+    { assetType: 'Nurture Email', instance: 0, fieldName: 'Headline', copy: 'Ship faster than ever', locator: 'Headline [50] — Nurture Email' },
+  ];
+  const verdicts = [{ assetType: 'Nurture Email', fieldName: 'Headline', comment: 'Tighten this.' }];
+
+  const first = reconcileComments({ fields, priorFields: {}, verdicts, liveComments: [] });
+  assert.strictEqual(first.toAdd.length, 1, 'first pass posts the note');
+
+  // Exactly what listReviewComments returns for it afterwards: content, and an
+  // empty quote and anchor because nothing sends either.
+  const live = [{ id: 'c1', content: first.toAdd[0].content, resolved: false, quote: '', anchor: '' }];
+  const second = reconcileComments({ fields, priorFields: {}, verdicts, liveComments: live });
+
+  // The comment is FOUND, which is the whole point — the quote could not have done
+  // this (it comes back '' now), so without the locator this would be an unmatched
+  // field and the note would be posted a second time.
+  assert.deepStrictEqual(second.claimedIds, ['c1'], 'found and claimed, so the orphan sweep leaves it');
+  assert.strictEqual(second.toAdd.length + second.toDelete.length, 2, 'replaced, never doubled');
+  assert.deepStrictEqual(second.toDelete, ['c1']);
+  assert.strictEqual(second.toAdd.length, 1, 'net ONE comment on the doc, not two');
+
+  // WHY IT REPLACES RATHER THAN KEEPS, recorded because it looks like a defect:
+  // with no prior state there is no prior COPY, so every field reads as new and
+  // takes the changed branch. Byte-for-byte what the quote-matching version did in
+  // this case (verified against the pre-change code), so it is untouched here —
+  // but the locator now makes it fixable, which the orphaned quote did not.
+  const third = reconcileComments({
+    fields,
+    priorFields: { [require('../src/services/copyReview').fieldKey('Nurture Email', 'Headline')]: { copy: 'Ship faster than ever', comment: live[0].content, note: 'Tighten this.', resolved: false } },
+    verdicts,
+    liveComments: live,
+  });
+  assert.strictEqual(third.toAdd.length, 0, 'with state, it is simply kept');
+  assert.strictEqual(third.toDelete.length, 0);
+  assert.strictEqual(third.counts.kept, 1);
+});
+
+test('comments posted BEFORE the unanchoring still reconcile, with no state migration', () => {
+  const { reconcileComments, fieldKey } = require('../src/services/copyReview');
+  const key = fieldKey('Email', 'Headline');
+  const fields = [{ assetType: 'Email', fieldName: 'Headline', copy: 'same copy', locator: 'Headline [50] — Email' }];
+  // Legacy state: the model's words lived in `comment` and there was no `note`.
+  const priorFields = { [key]: { copy: 'same copy', comment: 'Tighten this.', resolved: false } };
+  // Legacy comment: body is the bare note, and it still carries its dead quote.
+  const live = [{ id: 'old', content: 'Tighten this.', resolved: false, quote: 'same copy', anchor: '' }];
+
+  const r = reconcileComments({ fields, priorFields, verdicts: [], liveComments: live });
+  assert.strictEqual(r.toAdd.length, 0, 'found by content — not duplicated');
+  assert.strictEqual(r.toDelete.length, 0);
+  assert.strictEqual(r.counts.kept, 1);
+  assert.strictEqual(r.results[0].comment, 'Tighten this.', 'the digest reads the note, never the body');
+});
+
+test('two assets sharing a field label keep separate comments', () => {
+  const { reconcileComments } = require('../src/services/copyReview');
+  // Same field name, same copy, different assets — indistinguishable to a quote,
+  // distinct to a locator.
+  const fields = [
+    { assetType: 'Meta Single Image Ad', fieldName: 'Headline', copy: 'Ship faster', locator: 'Headline [40] — Meta Single Image Ad' },
+    { assetType: 'LinkedIn Single Image Ad', fieldName: 'Headline', copy: 'Ship faster', locator: 'Headline [70] — LinkedIn Single Image Ad' },
+  ];
+  const verdicts = [
+    { assetType: 'Meta Single Image Ad', fieldName: 'Headline', comment: 'note M' },
+    { assetType: 'LinkedIn Single Image Ad', fieldName: 'Headline', comment: 'note L' },
+  ];
+  const r = reconcileComments({ fields, priorFields: {}, verdicts, liveComments: [] });
+  assert.strictEqual(r.toAdd.length, 2, 'both notes survive');
+});
+
+test('getDocContent carries the field label VERBATIM, so the locator is not a re-render', async () => {
+  const g = require('../src/destinations/googleDocs');
+  const para = (text, textStyle = {}, namedStyleType = undefined) => ({
+    paragraph: { paragraphStyle: namedStyleType ? { namedStyleType } : {}, elements: [{ textRun: { content: `${text}\n`, textStyle } }] },
+  });
+  const doc = {
+    title: 'T',
+    body: {
+      content: [
+        para('Nurture Email', {}, 'HEADING_3'),
+        para('Preheader [85-100]', { bold: true }),
+        para('Some drafted preheader copy'),
+      ],
+    },
+  };
+  const content = await g.getDocContent('doc1', { docs: { documents: { get: async () => ({ data: doc }) } } });
+  const f = content.assets[0].fields[0];
+  assert.strictEqual(f.label, 'Preheader [85-100]', 'the char MIN survives, because the doc shows it');
+  assert.strictEqual(f.fieldName, 'Preheader');
+  assert.strictEqual(f.copy, 'Some drafted preheader copy');
+});
+
+// --- Locator DRIFT: the label or the asset name changes under a posted comment --
+
+test('a limit change is MATCHED, not orphaned — display is verbatim, matching is not', () => {
+  const { reconcileComments, normLocator, composeComment } = require('../src/services/copyReview');
+  // LiveSpecs approves 50 -> 55, so the doc's label moves under a comment already
+  // posted against "Headline [50]".
+  assert.strictEqual(normLocator('Headline [50] — Nurture Email'), 'Headline — Nurture Email');
+  assert.strictEqual(normLocator('Headline [55] — Nurture Email'), 'Headline — Nurture Email');
+  // Only the FIRST bracket goes — the field label's.
+  assert.strictEqual(normLocator('Headline [50] · option 2 (Proof) — Email'), 'Headline · option 2 (Proof) — Email');
+
+  const old = composeComment('Headline [50] — Nurture Email', 'Ship faster', 'Cut the hedge.');
+  const r = reconcileComments({
+    fields: [{ assetType: 'Nurture Email', fieldName: 'Headline', copy: 'Ship faster', locator: 'Headline [55] — Nurture Email' }],
+    priorFields: {}, // state lost, so content matching cannot help either
+    verdicts: [{ assetType: 'Nurture Email', fieldName: 'Headline', comment: 'Cut the hedge.' }],
+    liveComments: [{ id: 'c1', content: old, resolved: false, quote: '', anchor: '' }],
+  });
+  assert.deepStrictEqual(r.claimedIds, ['c1'], 'found across the limit change');
+  assert.deepStrictEqual(r.toDelete, ['c1']);
+  assert.strictEqual(r.toAdd.length, 1, 'replaced — never two notes on one field');
+});
+
+test('scoped sweep: a comment whose unit no longer exists is deleted, one whose unit does is not', () => {
+  const { orphanSweepIds, fieldKey, composeComment, normLocator } = require('../src/services/copyReview');
+  const scopeKeys = new Set([fieldKey('Nurture Email', 'Headline')]);
+
+  // Renamed asset: the comment's locator matches NO unit in the document.
+  const stranded = { id: 'stale', content: composeComment('Headline [50] — Nurture Email', 'Ship faster', 'note'), resolved: false };
+  // A different field the writer did NOT select — its unit is alive and well.
+  const unselected = { id: 'other', content: composeComment('CTA [20] — Nurture Email', 'Get started', 'note'), resolved: false };
+  // Posted before the unanchoring: no locator line at all, just the note.
+  const legacy = { id: 'legacy', content: 'Tighten this.', resolved: false };
+
+  const activeLocatorKeys = new Set(
+    ['Headline [50] — Nurture Email (Q3)', 'CTA [20] — Nurture Email'].map(normLocator)
+  );
+  const swept = orphanSweepIds({
+    liveComments: [stranded, unselected, legacy],
+    claimedIds: [], toDelete: [], scopeKeys, priorFields: {}, activeLocatorKeys,
+  });
+  assert.deepStrictEqual(swept, ['stale'], 'only the one bound to nothing');
+});
+
+test('scoped sweep without activeLocatorKeys is the old, narrower behaviour', () => {
+  const { orphanSweepIds, fieldKey, composeComment } = require('../src/services/copyReview');
+  // A caller that has not been updated must not start deleting things.
+  const c = { id: 'x', content: composeComment('Headline [50] — E', 'copy', 'note'), resolved: false };
+  const swept = orphanSweepIds({
+    liveComments: [c], claimedIds: [], toDelete: [],
+    scopeKeys: new Set([fieldKey('E', 'Headline')]), priorFields: {},
+  });
+  assert.deepStrictEqual(swept, [], 'no active set → no drift sweep');
+});
+
+test('hasLocatorShape tells our comments from a bare note', () => {
+  const { hasLocatorShape, composeComment } = require('../src/services/copyReview');
+  assert.ok(hasLocatorShape(composeComment('CTA [20] — Email', 'Get started', 'Weak verb.')));
+  assert.ok(!hasLocatorShape('Tighten this.'), 'a legacy one-line note');
+  // A multi-paragraph legacy note must not be mistaken for one either: line 2 has
+  // to be a curly-quoted fragment, which is ours and not prose.
+  assert.ok(!hasLocatorShape('Tighten this.\nAnd cut the hedge.\n\nMore.'));
+  assert.ok(!hasLocatorShape(''));
+});
+
+// A human's comment can never reach the sweep, because it never reaches the list.
+test('listReviewComments is the authorship gate — only REVIEW_PREFIX comments are returned', async () => {
+  const g = require('../src/destinations/googleDocs');
+  const comments = [
+    { id: 'ours', content: `${g.REVIEW_PREFIX}CTA [20] — Email\n“Get started”\n\nWeak verb.`, resolved: false },
+    { id: 'human', content: 'Can we try a different angle here?', resolved: false },
+    { id: 'human2', content: '🪶 Quillio Review is great but this is not one', resolved: false },
+  ];
+  const drive = { comments: { list: async () => ({ data: { comments } }) } };
+  const out = await g.listReviewComments('doc1', { drive });
+  assert.deepStrictEqual(out.map((c) => c.id), ['ours'], 'a human comment is never a sweep candidate');
+  assert.strictEqual(out[0].content, 'CTA [20] — Email\n“Get started”\n\nWeak verb.', 'prefix stripped');
+});
+
+// TRIPWIRE, not coverage: a source scan cannot tell whether Drive anchored a
+// comment. It only stops the read-back losing the one field that could say.
+test('listReviewComments asks Drive for `anchor`, though nothing sends one', () => {
+  const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
+  assert.match(docs, /comments\(id, content, anchor, deleted, resolved, quotedFileContent\/value\)/);
+  assert.match(docs, /anchor: typeof c\.anchor === 'string' \? c\.anchor : ''/, 'and surfaces it');
 });
 
 test('siblingContextBlock: context from non-empty siblings, else empty (cohesion recovery)', () => {
@@ -5071,13 +5306,17 @@ test('duplicate asset heading: reconcileComments keeps the two instances apart',
     Object.keys(r.nextState.fields).sort(),
     [fieldKey('Email', 'Headline', 0), fieldKey('Email', 'Headline', 1)].sort()
   );
-  assert.strictEqual(r.nextState.fields[fieldKey('Email', 'Headline', 0)].comment, 'note A');
-  assert.strictEqual(r.nextState.fields[fieldKey('Email', 'Headline', 1)].comment, 'note B');
-  assert.strictEqual(r.toAdd.length, 2, 'distinct copy → both comments anchorable');
+  // `note` is the model's words; `comment` is the body Drive holds, which leads
+  // with the locator and so differs per instance.
+  assert.strictEqual(r.nextState.fields[fieldKey('Email', 'Headline', 0)].note, 'note A');
+  assert.strictEqual(r.nextState.fields[fieldKey('Email', 'Headline', 1)].note, 'note B');
+  assert.match(r.nextState.fields[fieldKey('Email', 'Headline', 1)].comment, /— Email#i1/);
+  assert.strictEqual(r.toAdd.length, 2, 'two units → two comments');
 
-  // KNOWN LIMIT, deliberately unchanged here: when both instances hold IDENTICAL
-  // copy the collision is in Drive's comment ANCHOR (quoted text), not in the key.
-  // State stays correctly separated; the second comment is still skipped.
+  // THE KNOWN LIMIT IS GONE, and this is the test that recorded it. It used to say
+  // identical copy in two instances collided "in Drive's comment ANCHOR (quoted
+  // text)", so the second note was dropped. Nothing is quoted now, and the dedupe
+  // is keyed on the LOCATOR — which carries the instance tag — so both survive.
   const same = reconcileComments({
     fields: [
       { assetType: 'Email', instance: 0, fieldName: 'Headline', copy: 'identical' },
@@ -5091,7 +5330,7 @@ test('duplicate asset heading: reconcileComments keeps the two instances apart',
     liveComments: [],
   });
   assert.strictEqual(Object.keys(same.nextState.fields).length, 2, 'state keys still distinct');
-  assert.strictEqual(same.toAdd.length, 1, 'anchor-level dedupe unchanged by this refactor');
+  assert.strictEqual(same.toAdd.length, 2, 'identical copy no longer costs the second note');
 });
 
 test('duplicate asset heading: insert indices stay per-instance (insertIndexByField fix)', () => {
@@ -13442,19 +13681,20 @@ test('the over-limit note and the drafter agree on what "over" means', () => {
   assert.deepStrictEqual(measure('one', 'words'), { n: 1, unit: 'word' }, 'singular reads as English');
 });
 
-test('review comments are posted UNANCHORED, because a cell quote cannot resolve', () => {
+test('review comments are posted UNANCHORED — no quote resolves on a Doc, cell or not', () => {
   const docs = fs.readFileSync(path.join(__dirname, '..', 'src', 'destinations', 'googleDocs.js'), 'utf8');
   const fn = docs.slice(docs.indexOf('async function addUnanchoredComment'), docs.indexOf('module.exports = {\n  name:'));
   const code = fn.replace(/\/\/[^\n]*/g, '');
 
-  // The probe settled this: a Drive comment quoting text inside a TABLE CELL
-  // does not resolve — all six cases came back with "Original content deleted".
-  // Every cell of a template document is a table cell, so sending a quote here
-  // is how you GET that banner.
+  // The probe's six cases all came back "Original content deleted". That was read
+  // at the time as a fact about TABLE CELLS; it was not. quotedFileContent is the
+  // quoted text of a comment, never a position, and Drive publishes no way to
+  // anchor a comment on a native Doc — so a quote resolves nowhere in a PARAGRAPH
+  // either, which is why the copy doc had the same banner on every comment.
   assert.ok(!/quotedFileContent/.test(code), 'no quote is sent at all');
   assert.match(code, /content: REVIEW_PREFIX \+ content/, 'still branded, so listReviewComments can find it');
-  // And the anchored one is untouched — the copy doc still anchors.
-  assert.match(docs, /quotedFileContent: \{ mimeType: 'text\/plain', value: q \}/);
+  // And now neither does the copy-doc path — nothing in this file sends a quote.
+  assert.ok(!/quotedFileContent: \{/.test(docs), 'no comment write anywhere sends a quote');
 });
 
 test('re-running the review does not double the queue, and respects a resolved note', () => {

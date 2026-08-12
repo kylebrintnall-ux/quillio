@@ -301,7 +301,7 @@
        ===================================================================== */
     @font-face {
       font-family: 'StarCrush';
-      src: url('/fonts/Star_Crush.otf') format('opentype');
+      src: url('/fonts/Star_Crush.otf?v=__BUILD__') format('opentype');
       font-weight: normal; font-style: normal; font-display: swap;
     }
     :root {
@@ -612,6 +612,20 @@
     }
     .glass-panel.list .asset-card-name { font-size: 15px; letter-spacing: 0.04em; }
     .glass-panel.list .asset-card + .asset-card { margin-top: 14px; }
+    /* WHAT FOLLOWS THE BAND, not the band itself — flattening left the first row
+       of a card hugging it. The band carries margin-bottom 4px, and a card used to
+       supply its own even padding around the direction line; flattened, the line
+       kept its own 12px BELOW and inherited only that 4px ABOVE. Measured 4px over
+       12px, a 3:1 asymmetry, which is the "sitting tight against the rule" this
+       fixes. Same cause one row down: with no direction line the first field sat
+       4 + 10 = 14px under the rule while every later field sits 10 + 10 = 20px
+       from its neighbour, so the top of a card was tighter than its body.
+       Both are corrected by adding to the FOLLOWING element, so the band's fill,
+       rules, size and tracking are untouched. */
+    /* 12, not 8: adjacent margins COLLAPSE, so this competes with the band's own
+       4px rather than adding to it — max(4,12) is the 12px that matches below. */
+    .glass-panel.list .asset-card-header + .asset-direction { margin-top: 12px; }
+    .glass-panel.list .asset-card-header + .asset-field { padding-top: 16px; }
     .glass-panel.run > *:last-child { margin-bottom: 0; }
     .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
     /* The header is its own run: title + state gif. Padding is tighter on the
@@ -1018,7 +1032,7 @@
   <div class="clouds-wrap"></div>
   <nav>
     <button type="button" class="nav-logo" id="nav-brand">
-      <img class="nav-quill-img" src="/assets/images/quillio-quill.png" alt="Quillio">
+      <img class="nav-quill-img" src="/assets/images/quillio-quill.png?v=__BUILD__" alt="Quillio">
       <span class="nav-wordmark">Quillio</span>
     </button>
     <div class="nav-links">
@@ -1048,7 +1062,7 @@
 
     <!-- SCREEN 2 — PROGRESS (pixel progress bar) -->
     <section id="screen-progress" class="screen">
-      <img id="progress-gif" class="progress-gif" src="/assets/gifs/quillio-scroll.gif" alt="">
+      <img id="progress-gif" class="progress-gif" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt="">
       <div class="progress-panel">
         <div class="progress-estimate" id="brief-progress-estimate">Estimated: ~20s</div>
         <div class="progress-track" id="brief-progress-track"></div>
@@ -1117,7 +1131,7 @@
     <section id="screen-output" class="screen">
       <div class="output-header glass-panel">
         <h2 class="output-title" id="out-title">Campaign</h2>
-        <img class="header-gif" src="/assets/gifs/quillio-doc-done.gif" alt="">
+        <img class="header-gif" src="/assets/gifs/quillio-doc-done.gif?v=__BUILD__" alt="">
       </div>
 
       <!-- WHAT THIS RUN PRODUCED. A brief can name a document template as well as
@@ -1172,7 +1186,7 @@
          estimable, so a bar would promise a completion it can't keep. The phrases
          just signal "working." -->
     <section id="screen-generating" class="screen">
-      <img class="gen-gif" src="/assets/gifs/quillio_magic_v27.gif" alt="">
+      <img class="gen-gif" src="/assets/gifs/quillio_magic_v27.gif?v=__BUILD__" alt="">
       <div class="gen-message" id="gen-message">Warming up the quill…</div>
     </section>
 
@@ -1180,7 +1194,7 @@
     <section id="screen-copydone" class="screen">
       <div class="output-header glass-panel">
         <h2 class="output-title" id="copydone-title">Your copy is ready</h2>
-        <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">
+        <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif?v=__BUILD__" alt="">
       </div>
       <div id="copydone-fallback" class="note hidden">Open in Drive to view the copy ↗</div>
       <!-- Amber, not red: the doc exists and holds whatever was drafted, so this
@@ -1620,10 +1634,10 @@
     // --- Screen 2: pixel progress bar (brief run) --------------------------
     // One GIF per stage, kept above the bar. Index matches BRIEF_STAGES.
     var STEP_GIFS = [
-      '/assets/gifs/quillio-scroll.gif',
-      '/assets/gifs/quillio-review.gif',
-      '/assets/gifs/quillio_magic_v27.gif',
-      '/assets/gifs/quillio-folder.gif'
+      '/assets/gifs/quillio-scroll.gif?v=__BUILD__',
+      '/assets/gifs/quillio-review.gif?v=__BUILD__',
+      '/assets/gifs/quillio_magic_v27.gif?v=__BUILD__',
+      '/assets/gifs/quillio-folder.gif?v=__BUILD__'
     ];
     var BRIEF_STAGES = ['Parsing brief…', 'Fetching references…', 'Building your doc…', 'Creating project folder…'];
     // The GIF list for the run in progress — the full STEP_GIFS, or (when the
@@ -3937,7 +3951,7 @@
       // face like the result heading below it (.review-status). It was in the body
       // face while the Close button underneath it was in the display face — the
       // rule exactly inverted. Close is gone; the backdrop still dismisses.
-      body.innerHTML = '<img class="review-gif" src="/assets/gifs/quillio-review.gif" alt=""><div class="review-status">Reviewing your copy…</div>';
+      body.innerHTML = '<img class="review-gif" src="/assets/gifs/quillio-review.gif?v=__BUILD__" alt=""><div class="review-status">Reviewing your copy…</div>';
       hide(openBtn);
       openProjectReviewModal();
       try {
@@ -3947,7 +3961,7 @@
           hide(openBtn);
         } else {
           body.innerHTML =
-            '<img class="review-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">' +
+            '<img class="review-gif" src="/assets/gifs/quillio-copy-done.gif?v=__BUILD__" alt="">' +
             '<div class="review-status"></div><div class="review-digest"></div>' +
             '<div class="review-note" style="margin-top:8px">Notes are inline in the doc → <b>Open in Drive</b>.</div>';
           body.querySelector('.review-status').textContent = (result && result.status) || 'Review complete.';

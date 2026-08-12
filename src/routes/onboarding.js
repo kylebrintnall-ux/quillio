@@ -15,6 +15,7 @@ const { setTenantDefaultFolder, saveVoiceGuide, getVoiceGuide, setTenantOnboardi
 const { getTenantLibrary, setActiveAssets, setActiveAssetIds } = require('../db/assets');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { generateVoiceGuide } = require('../services/gemini');
+const { renderShell } = require('../utils/shellHtml');
 
 const router = express.Router();
 
@@ -24,7 +25,9 @@ router.get('/onboarding', (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0'); // never cache the shell (no stale UI)
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
-  res.status(200).sendFile(ONBOARDING_HTML);
+  // Read and stamped rather than streamed: sendFile would ship the literal
+  // `__BUILD__` in every asset URL, which busts the cache once and never again.
+  res.status(200).type('html').send(renderShell(ONBOARDING_HTML));
 });
 
 // GET /api/onboarding/me — the signed-in user's display info for Step 2.

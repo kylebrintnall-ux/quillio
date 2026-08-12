@@ -7561,6 +7561,71 @@ test('app selection key: instance-aware, and identical to the server\'s ctxKey',
   }
 });
 
+test('brief result: assetBlocks carry the ordinal, so repeated assets are numbered', () => {
+  // THE DEFECT THIS PINS, from a real run: a brief asking for two LinkedIn
+  // Single Image Ads rendered two blocks both titled "LinkedIn Single Image Ad
+  // 1", while the count beside them correctly said 2. The doc was right the
+  // whole time — pipeline.generateDoc stamps the ordinal and writes it into the
+  // HEADING_3 — so the loss was in the brief result's assetBlocks mapping, which
+  // dropped `instance`/`instanceLabel` on the way to the browser.
+  //
+  // Driven through app.html's OWN assetDisplayName rather than asserted as a
+  // string, because the bug was a missing key rather than a wrong line: nothing
+  // in either file read incorrectly, the value simply was not there.
+  const { instanceTotals, instanceTotalFor, assetDisplayName } = appFns([
+    'instanceTotals', 'instanceTotalFor', 'assetDisplayName',
+  ]);
+
+  // The adapter's mapping, applied to assetSpecs as pipeline.generateDoc returns
+  // them. Extracted from the source so this test tracks the real shape: a
+  // hand-written literal here would keep passing after the adapter changed.
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'web.js'), 'utf8');
+  // sliceBetween INCLUDES the start anchor, so this is the map call minus its
+  // closing `}))` — dropping the `assetBlocks:` key and closing it gives back an
+  // expression. The anchors are asserted by sliceBetween, so a rename here fails
+  // loudly rather than silently measuring a different region.
+  // The end anchor is NEWLINE-anchored on purpose. The inner `fields:` map closes
+  // with `      })),` at six spaces, which CONTAINS the four-space `    })),` as a
+  // substring — so the unanchored form matched the inner close and produced an
+  // unbalanced slice. Exactly the indexOf-as-an-assertion trap CLAUDE.md records.
+  const mapSrc = sliceBetween(web, 'assetBlocks: assetSpecs.map((a) => ({', '\n    })),')
+    .replace('assetBlocks: ', '');
+  assert.ok(mapSrc.length > 100, 'found the assetBlocks mapping');
+  // eslint-disable-next-line no-new-func
+  const toBlocks = new Function('assetSpecs', `return ${mapSrc}}));`);
+
+  const assetSpecs = [
+    { assetType: 'LinkedIn Single Image Ad', instance: 0, instanceLabel: null, fields: [] },
+    { assetType: 'LinkedIn Single Image Ad', instance: 1, instanceLabel: null, fields: [] },
+    { assetType: 'Meta Single Image Ad', instance: 0, instanceLabel: null, fields: [] },
+    { assetType: 'Meta Single Image Ad', instance: 1, instanceLabel: null, fields: [] },
+    { assetType: 'Meta Single Image Ad', instance: 2, instanceLabel: null, fields: [] },
+    { assetType: 'Campaign Landing Page', instance: 0, instanceLabel: null, fields: [] },
+  ];
+  const blocks = toBlocks(assetSpecs);
+  const totals = instanceTotals(blocks);
+  const shown = blocks.map((b) => assetDisplayName(b, instanceTotalFor(totals, b)));
+
+  assert.deepStrictEqual(shown, [
+    'LinkedIn Single Image Ad 1',
+    'LinkedIn Single Image Ad 2',
+    'Meta Single Image Ad 1',
+    'Meta Single Image Ad 2',
+    'Meta Single Image Ad 3',
+    'Campaign Landing Page', // one instance → bare name, unchanged
+  ]);
+
+  // AND IT IS NOT ONLY A LABEL. app.html reads asset.instance into `aInst` and
+  // sends it as the scoped draft/riff target, and instanceTag(undefined) is ''
+  // — indistinguishable from instance 0 — so before this, selecting a field on
+  // the second block scoped the redraft to the first block's field.
+  const { instanceTag } = require('../src/utils/instanceKey');
+  assert.strictEqual(instanceTag(undefined), '', 'an absent ordinal reads as instance 0');
+  assert.deepStrictEqual(blocks.map((b) => b.instance), [0, 1, 0, 1, 2, 0], 'every block carries its own ordinal');
+  assert.notStrictEqual(instanceTag(blocks[1].instance), instanceTag(blocks[0].instance),
+    'the two LinkedIn blocks address different scoped targets');
+});
+
 test('app asset heading: shows the instance only when there IS more than one', () => {
   const { instanceTotals, instanceTotalFor, assetDisplayName } = appFns([
     'instanceTotals', 'instanceTotalFor', 'assetDisplayName',

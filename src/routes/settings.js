@@ -54,6 +54,7 @@ const {
 const { importDocxTemplate, DOCX_MIME } = require('../destinations/docTemplateImport');
 const { describeLocation, discoverPlaceholders } = require('../destinations/docPlaceholders');
 const { deriveTemplateFields } = require('../destinations/templateTableReader');
+const { renderShell } = require('../utils/shellHtml');
 const {
   listTemplateMarkers,
   saveTemplateMarkers,
@@ -99,7 +100,9 @@ router.get('/settings', requireAuth, (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0'); // never cache the shell (no stale UI)
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
-  res.status(200).sendFile(SETTINGS_HTML);
+  // Read and stamped rather than streamed: sendFile would ship the literal
+  // `__BUILD__` in every asset URL, which busts the cache once and never again.
+  res.status(200).type('html').send(renderShell(SETTINGS_HTML));
 });
 
 // GET /api/settings/voice — the tenant's saved voice guide (or null).

@@ -772,9 +772,44 @@ const ASSET_PHRASE_HINTS = [
   { target: 'Event Reminder Email', line: '- "reminder email" → Event Reminder Email' },
   { target: 'Event Follow-Up / Recap Email', line: '- "follow up" or "recap email" → Event Follow-Up / Recap Email' },
   { target: 'Sales Basho Email', line: '- "basho" or "sales email" → Sales Basho Email' },
-  { target: 'Event Landing Page', line: '- "landing page" or "event page" → Event Landing Page' },
+  // THE DEFAULT FIRST, THE SPECIALISATION SECOND — and the order is deliberate.
+  //
+  // This pair used to be the wrong way round in a way that decided every brief:
+  // a bare "landing page" routed to Event Landing Page, and Campaign Landing Page
+  // was reachable only by the literal phrase "campaign page". So a product launch
+  // asking for "a landing page" came back with the EVENT asset — 24 fields
+  // including Stat 1-3 and four benefit blocks — and nothing anywhere flagged it,
+  // because a mapped asset is not an unmatched one. The generic phrase pointed at
+  // the specialised asset and the general asset needed a password.
+  //
+  // Inverted here: the bare phrase takes the campaign asset, and the event asset
+  // requires an EVENT SIGNAL. That costs nothing on an event brief, which always
+  // carries one — a date, a venue, a registration ask — and it is the difference
+  // between the two documents.
+  //
+  // EACH LINE NAMES ONLY ITS OWN TARGET. assetPhraseHintLines filters by `target`,
+  // so a line that mentioned the other asset would survive into the prompt of a
+  // tenant who does not have it — the stale-mapping failure this table's header
+  // warns about. That is why the default is not described as "not the event one":
+  // the two lines have to stand alone, and the ordering is what relates them.
+  //
+  // Campaign is listed FIRST because the one measurement this project has on
+  // competing prompt rules (craft.md §1.4 against the §2 punctuation permission,
+  // 0/12) is that the earlier, more general rule wins. UNMEASURED HERE: no parse
+  // A/B has been run on either ordering. scripts/checkParsePlans.js carries the
+  // cases that would settle it.
+  {
+    target: 'Campaign Landing Page',
+    line: '- "landing page", "campaign page", "launch page" or "product page" → Campaign Landing Page',
+  },
+  {
+    target: 'Event Landing Page',
+    line: [
+      '- a landing page for an event the brief NAMES — it gives a date, a venue, a',
+      '  registration ask, or calls it an "event page" → Event Landing Page',
+    ].join('\n'),
+  },
   { target: 'On-Site Signage — General', line: '- "signage" or "on-site" → On-Site Signage — General' },
-  { target: 'Campaign Landing Page', line: '- "campaign page" → Campaign Landing Page' },
   // NO 'Form Confirm Page' HINT. The asset is retired (see defaultAssets.js), and
   // this line is the reason it is worth saying so here: it taught the model to
   // read "confirm page" as an ASSET at a time when the same words are how a
@@ -782,7 +817,21 @@ const ASSET_PHRASE_HINTS = [
   // against the tenant's vocabulary, so a leftover entry would have gone quiet on
   // its own — but a hint pointing at a name nothing can return is a trap for the
   // next person reading this list.
-  { target: 'Organic Social — LinkedIn', line: '- "organic social" or "organic" → Organic Social — LinkedIn' },
+  // A FALLBACK, SAID AS ONE. Three organic assets exist and this line named one
+  // of them as the answer to a phrase that names no platform — so a brief asking
+  // for "organic social across Instagram and X" was told, in the prompt, that
+  // organic means LinkedIn. Adding "with no platform named" makes the line do
+  // what it is for (answer the platformless ask) and stop overriding the ask that
+  // does name one, which "INTERPRET INTENT SEMANTICALLY" above already handles.
+  //
+  // NOT an inversion like the landing pages, and the wording reflects that: the
+  // three organic assets are siblings, none is the general case, and LinkedIn is
+  // a defensible B2B default. Behaviour on a platformless brief is UNCHANGED, so
+  // this cannot drop an ask that used to land.
+  {
+    target: 'Organic Social — LinkedIn',
+    line: '- "organic social" or "organic" with NO platform named → Organic Social — LinkedIn',
+  },
   { target: 'Organic Social — Instagram', line: '- "instagram" → Organic Social — Instagram' },
   { target: 'Direct Mail — Box / Mailer', line: '- "direct mail" or "mailer" → Direct Mail — Box / Mailer' },
   {

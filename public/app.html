@@ -384,8 +384,33 @@
     /* The phrases that hold together; the space between them is the only break point. */
     .brief-headline span { white-space: nowrap; }
     .brief-sub { font-size: 15px; font-weight: 400; line-height: 1.55; color: rgba(26,26,46,0.68); margin: 0 0 26px; text-align: center; }
+    /* 0.30, up from 0.14. THE ONLY ELEMENT THAT CARRIES THIS CLASS is the brief
+       input card below — `.glass-card` reads like a shared surface and is not one
+       (every other frosted surface is `.glass-panel`, a separate rule at 0.52), so
+       editing the rule here IS the brief-screen change. If a second consumer ever
+       appears, check it against this measurement rather than inheriting it.
+
+       WHAT IT BUYS, measured with a cloud swept across the panel in 0.1w steps and
+       the worst point of the drift taken (390 and 1130 wide):
+
+                       0.14        0.30
+         typed --ink   6.54:1  ->  7.91:1     the content that matters
+         cloud swing   1.155x  ->  1.136x     how much the surface under the text
+                                              moves as a cloud passes
+         sky falloff   0.0645  ->  0.0625     still transmits the gradient, i.e.
+                                              still glass and not an opaque box
+
+       WHAT IT CANNOT BUY, and the reason no larger number would either: the
+       placeholder is rgba(26,26,46,0.4) composited ON this panel, so lightening the
+       panel lightens the text by 0.6 of the same amount. Both terms move together
+       and the ratio is pinned — 2.06:1 at 0.14, 2.17:1 at 0.30, 2.21:1 at 0.40.
+       Against a pure white panel the placeholder still only reaches 2.51:1. So a
+       placeholder at 0.4 alpha CANNOT clear 3:1 at any fill; that is a property of
+       the alpha, not of the glass, and the alpha is deliberate — a placeholder loud
+       enough to beat a cloud reads as real content and looks wrong once someone
+       types. Do not chase the placeholder number by raising this value. */
     .glass-card {
-      background: rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.30);
       backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
       border: 1.5px solid rgba(255,255,255,0.38); border-radius: 18px; overflow: hidden;
       box-shadow: 0 8px 32px rgba(26,26,46,0.1), inset 0 1px 0 rgba(255,255,255,0.45);

@@ -1075,6 +1075,21 @@
            is a shortfall to act on rather than a failure. Set both ways by
            renderNotice on every draft, so a recovered rerun clears it. -->
       <div id="copydone-shortfall" class="notice hidden"></div>
+      <!-- CAMPAIGN SUMMARY + WRITER DIRECTION, ADDED DELIBERATELY — this was an
+           omission, not a decision. This screen never carried them: there was no
+           markup for them and renderCopyDoneAssets appended only the hint and the
+           cards, and `git log -S` finds no commit that ever removed them. Every
+           other view of a brief has them (the confirmation screen, the output
+           screen and the project detail view), and the data was already here —
+           loadCopyDone fetches the same /content object the project view reads
+           and was discarding everything but `assets`. So nothing server-side
+           changed for this.
+           Filled by renderCopyDoneBrief, which builds the SAME .section-label /
+           .section-body pair the project view builds, so the two screens read
+           identically rather than this one inventing a treatment.
+           ABOVE the field-select hint and the cards, so the brief frames the copy
+           rather than trailing it. -->
+      <div id="copydone-brief"></div>
       <div id="copydone-assets"></div>
       <div id="copydone-error" class="error hidden"></div>
 
@@ -2946,6 +2961,36 @@
       }
     }
 
+    // The brief's two sections above the copy. Same .section-label /
+    // .section-body pair renderProjectContent builds, deliberately — see the
+    // markup comment on #copydone-brief.
+    //
+    // ONE DIVERGENCE FROM THE PROJECT VIEW, AND IT IS ON PURPOSE. That view
+    // renders `content.summary || '—'`, so an absent summary still draws its
+    // label with an em-dash under it. Here an absent section is omitted whole.
+    // The pattern is the project view's OWN template branch, whose comment gives
+    // the reason: a label over an em-dash "would read as content that failed to
+    // load". On this screen that reading is worse than on the project view — it
+    // is shown the moment a draft finishes, which is exactly when a writer is
+    // looking for something to have gone wrong.
+    //
+    // Set both ways on every call, like renderNotice, so a project with no
+    // summary cannot inherit the previous project's.
+    function renderCopyDoneBrief(content) {
+      var host = document.getElementById('copydone-brief');
+      host.textContent = '';
+      var summary = String((content && content.summary) || '').trim();
+      var direction = String((content && content.writerDirection) || '').trim();
+      if (summary) {
+        host.appendChild(el('div', 'section-label', 'Campaign Summary'));
+        host.appendChild(el('div', 'section-body', summary));
+      }
+      if (direction) {
+        host.appendChild(el('div', 'section-label', 'Writer Direction'));
+        host.appendChild(el('div', 'section-body', direction));
+      }
+    }
+
     // Pull the drafted copy back from the doc and populate the Copy Done screen.
     // Returns true when copy rendered, false when it fell back to "Open in Drive".
     async function loadCopyDone() {
@@ -2962,11 +3007,16 @@
       var content = await fetchDocContent();
       if (!content) {
         document.getElementById('copydone-assets').textContent = '';
+        // Cleared on this path too: the fallback means we could not read the doc,
+        // and a previous run's summary left standing over "Open in Drive" would
+        // describe a campaign this screen is no longer showing.
+        renderCopyDoneBrief(null);
         show(fallback);
         return false;
       }
       hide(fallback);
       copydoneBlankFields = computeBlankFields(content);
+      renderCopyDoneBrief(content);
       renderCopyDoneAssets(content.assets || []);
       refreshCopyDonePrimary(); // blanks now known → correct primary label
       return true;

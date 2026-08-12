@@ -14966,8 +14966,12 @@ test('a template document shows its fields, and not the copy doc’s campaign se
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   const fn = html.slice(html.indexOf('function renderProjectContent(content)'), html.indexOf('// opts.canRiff'));
   // The SAME renderer — appendAssetCard — so the fields come up the way an
-  // asset's do rather than through a second card that will drift.
-  assert.match(fn, /appendAssetCard\(projectContentEl, a, \{/);
+  // asset's do rather than through a second card that will drift. The container
+  // moved from projectContentEl to cardHost when the Assets label and its hint
+  // were merged into the card list's own glass panel; the renderer is the claim
+  // here, not which element it appends into.
+  assert.match(fn, /appendAssetCard\(cardHost, a, \{/);
+  assert.match(fn, /listPanel\.appendChild\(cardHost\)/, 'the cards live inside the list panel');
   // Campaign Summary and Writer Direction are HEADING_2 sections of the COPY
   // doc. Drawing them over two em-dashes would read as content that failed.
   assert.match(fn, /var isTemplate = content\.kind === 'template';/);

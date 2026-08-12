@@ -479,9 +479,11 @@
     #screen-confirm { padding-bottom: 150px; }
     #screen-picker { padding-bottom: 150px; }
     /* The picker's opening line is not a HINT, it is the explanation of why this
-       screen exists — so it is body text, not the muted italic aside
-       .field-select-hint gives a tappable-fields nudge. At 12.5px, half-opacity
-       and italic it was unreadable on the sky background on a real phone. */
+       screen exists — so it is body text rather than an aside. At 12.5px,
+       half-opacity and italic it was unreadable on the sky background on a real
+       phone. .field-select-hint has since been given the same treatment for the
+       same reason, so the two now read alike; this rule stays separate because
+       the two lines still differ in ROLE, not in legibility. */
     .picker-lede { font-size: 14px; line-height: 1.6; color: var(--ink); margin: 0 0 22px; }
     /* THE ASSET PICKER. A library list, not a plan — see #screen-picker. */
     .picker-search {
@@ -586,7 +588,16 @@
     .asset-field.selectable.has-copy { padding-top: 12px; }
     /* Variation controls (Step 3b): the per-field variations matrix. Hidden until
        the field is selected + expanded (progressive disclosure). */
-    .field-select-hint { font-family: 'Frank Ruhl Libre', serif; font-size: 12.5px; line-height: 1.55; color: rgba(26,26,46,0.5); font-style: italic; margin: 0 0 14px; }
+    /* THE SAME FIX .picker-lede ALREADY GOT, FOR THE SAME REASON. This sat on the
+       sky gradient at 12.5px, half-opacity and italic — 1.98:1 against the top of
+       the gradient, where 4.5:1 is the AA floor for text this size. It is the one
+       muted-italic aside in this file that does NOT sit on a card: every other one
+       (.asset-direction, .field-no-riff, .doc-row-note, .field-char.placeholder)
+       is inside a rgba(255,255,255,0.52) surface and stays exactly as it is.
+       Full --ink and 14px takes it to 9.94:1 over most of the gradient and 3.64:1
+       against its darkest stop — see the note by .output-title, which is the same
+       token on the same background and carries the same limit. */
+    .field-select-hint { font-family: 'Frank Ruhl Libre', serif; font-size: 14px; line-height: 1.6; color: var(--ink); margin: 0 0 14px; }
     .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(201,168,76,0.4); }
     /* Progressive disclosure (Step 2): the controls are hidden behind a chevron on
        a selected field, and revealed only once the writer expands it. */
@@ -1296,8 +1307,49 @@
       // draft, a regenerate), and a folder button left showing from a previous
       // run would link to the wrong campaign.
       if (name === 'output' || name === 'copydone') paintDriveButtons();
+      syncCtaRoom();
       window.scrollTo(0, 0);
     }
+
+    // RESERVE ROOM UNDER THE FIXED CTA BAR, MEASURED FROM THE BAR ITSELF.
+    //
+    // The stylesheet gives the four bar-bearing screens a constant 150px, and its
+    // own comment says what that constant is: "the bar's TWO buttons (17px padding
+    // each) plus its 14/28px padding". Copy Done has FOUR buttons. Measured in
+    // Chromium at 390x844 the bar is 221px, so 71px of the field list sat under
+    // it permanently — with the page scrolled fully to the bottom, the last field
+    // row's bottom edge was 647px against a bar top of 624px, and there was no
+    // scroll left to bring it into view.
+    //
+    // MEASURED RATHER THAN A BIGGER CONSTANT, for the same reason toastBottom
+    // already measures: the count varies per screen, and within a screen. The
+    // regenerate button's label swaps between "Regenerate" and "Regenerate
+    // Selected (3)", which wraps to a second line at narrow widths and changes the
+    // bar's height with it — so a constant tuned to four buttons is still wrong
+    // the moment a label wraps.
+    //
+    // A ResizeObserver on the bar means no render path has to remember to call
+    // this: showing a button, changing a label, rotating the device and the
+    // keyboard opening all resize the bar and all re-run it. The resize listener
+    // is the fallback where ResizeObserver is missing.
+    function syncCtaRoom() {
+      var screens = document.querySelectorAll('.screen');
+      for (var i = 0; i < screens.length; i++) {
+        var bar = screens[i].querySelector('.output-ctas');
+        if (!bar) continue; // a screen with no bar keeps the stylesheet's padding
+        var h = Math.round(bar.getBoundingClientRect().height);
+        // An inactive screen is display:none and measures 0 — leave its padding
+        // alone rather than collapse it to nothing before it is ever shown.
+        if (h > 0) screens[i].style.paddingBottom = (h + 24) + 'px';
+      }
+    }
+    if (window.ResizeObserver) {
+      var ctaObserver = new ResizeObserver(syncCtaRoom);
+      var bars = document.querySelectorAll('.output-ctas');
+      for (var ci = 0; ci < bars.length; ci++) ctaObserver.observe(bars[ci]);
+    }
+    window.addEventListener('resize', syncCtaRoom);
+    window.addEventListener('orientationchange', syncCtaRoom);
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
     function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
     // Advisory notice (amber, not red): render when there's a message, hide when

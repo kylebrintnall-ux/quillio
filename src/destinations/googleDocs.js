@@ -1113,6 +1113,68 @@ function buildVariantBlock(variations, { distance, charMax, fieldType, startInde
   return lines.join(numbered && longField ? '\n\n' : '\n');
 }
 
+// Document-order ordinals for every parsed field — the Nth field in the
+// document, counted across assets in parse order.
+//
+// THIS IS THE IDENTITY THAT SURVIVES PHASE 1, and it is needed because
+// insertIndex does not. insertIndex uniquely identifies a field within ONE
+// parse, which is exactly what the delete ranges are built from; but the delete
+// pass shifts every index below its first deletion, so it cannot carry across to
+// the re-parse. Nothing else on a parsed field can either: fieldName is the
+// label with its bracket stripped and repeats, and charMin/charMax/fieldType/
+// notes repeat more easily still.
+//
+// Position survives, and only because of what Phase 1 removes. Every delete
+// range runs from just after a label to the end of that field's last copy
+// paragraph, so it takes COPY and nothing else — never a label, never a heading.
+// The cleaned document therefore carries the same labels under the same headings
+// in the same order, and the Nth field of the fresh parse is the Nth field of
+// the original. If that ever stops being true — a delete that can remove a label
+// — this mapping breaks silently, which is why the count is checked at the call
+// site rather than assumed.
+function fieldOrdinals(assets) {
+  const ordinalOf = new Map(); // insertIndex -> ordinal
+  const insertIndexAt = []; // ordinal -> insertIndex
+  for (const asset of assets || []) {
+    for (const f of asset.fields || []) {
+      ordinalOf.set(f.insertIndex, insertIndexAt.length);
+      insertIndexAt.push(f.insertIndex);
+    }
+  }
+  return { ordinalOf, insertIndexAt, count: insertIndexAt.length };
+}
+
+// Throw rather than issue a delete batch whose ranges overlap.
+//
+// `deletions` arrives sorted bottom-to-top; this sorts a COPY ascending because
+// overlap is a statement about the ranges, not about the order they are sent in,
+// and checking neighbours in ascending order is what makes one pass sufficient.
+// Ranges are half-open [start, end), so `next.start === prev.end` is two
+// adjacent regions and fine; only `next.start < prev.end` is an overlap. Two
+// identical ranges — the duplicate-delete defect — trip it, because the second's
+// start is strictly inside the first.
+//
+// The message names both fields and both ranges: the whole point is that a
+// person sees WHICH two fields collided, since the failure it replaces was a
+// document quietly losing a label.
+function assertDisjointDeletes(deletions) {
+  const sorted = [...deletions].sort((a, b) => a.insertIndex - b.insertIndex);
+  for (let i = 1; i < sorted.length; i += 1) {
+    const prev = sorted[i - 1];
+    const cur = sorted[i];
+    if (cur.insertIndex < prev.deleteEnd) {
+      const name = (d) => `${d.assetType || '?'} / ${d.fieldName || '?'}`;
+      throw new Error(
+        'Draft aborted before writing: two fields resolved to overlapping delete ranges — ' +
+          `[${prev.insertIndex}, ${prev.deleteEnd}) for ${name(prev)} and ` +
+          `[${cur.insertIndex}, ${cur.deleteEnd}) for ${name(cur)}. ` +
+          'The document was NOT modified. Applying both would delete content the first ' +
+          'delete had already moved, which cuts through whatever now sits at those indices.'
+      );
+    }
+  }
+}
+
 // Reads the doc, drafts copy for every field via Gemini, and inserts it under
 // each label. Returns { title, fieldCount, fieldsAttempted, failureReason, url }.
 // `fieldCount` is what was WRITTEN and `fieldsAttempted` is what was tried, so a
@@ -1350,8 +1412,11 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
             } else {
               // Destructive-replace path (unchanged): buildVariantBlock with no
               // startIndex is byte-identical to before (bare for count-1/close).
+              // Carries the field's OWN position, like the append branch above and
+              // like generateAssetDrafts now does — see the mapping below for why
+              // the field NAME cannot be the thing that resolves this.
               const copy = buildVariantBlock(variations, { distance: meta.distance, charMax: f.charMax, fieldType: f.fieldType });
-              if (copy) drafts.push({ fieldName: f.fieldName, copy });
+              if (copy) drafts.push({ fieldName: f.fieldName, copy, insertIndex: f.insertIndex, deleteEnd: f.deleteEnd });
             }
           } catch (err) {
             failureKinds.push(geminiErrorKind(err));
@@ -1378,26 +1443,49 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
       // class rides out on the entry; read it BEFORE the filter or it is gone.
       for (const d of drafts) if (d && d.failure) failureKinds.push(d.failure);
 
-      const metaByName = new Map(
-        a.fields.map((f) => [f.fieldName, { insertIndex: f.insertIndex, deleteEnd: f.deleteEnd }])
-      );
+      // EVERY DRAFT CARRIES THE POSITION OF THE FIELD IT WAS DRAFTED FOR. There
+      // is no name lookup here any more, and that is the fix rather than an
+      // optimisation.
+      //
+      // This used to be `new Map(a.fields.map((f) => [f.fieldName, …]))` — keyed
+      // on the field NAME, last wins. The name is the label with its bracket
+      // stripped (parseDoc), so "Headline [50]" and "Headline [60]" under one
+      // asset are ONE key. Both fields still produced a draft, both resolved to
+      // the second field's insertIndex/deleteEnd, and Phase 1 then issued that
+      // identical deleteContentRange twice inside a single batchUpdate. The first
+      // delete removed the range; the second reused indices computed before it and
+      // deleted whatever had slid into them — the following label, its copy, and
+      // on a long enough overrun the next asset heading. That is silent: a batch
+      // of two identical deletes is a perfectly valid request.
+      //
+      // insertIndex is a label paragraph's endIndex, so it is distinct for every
+      // field in the document without composing anything. Nothing else on the
+      // parsed field is unique — fieldName, charMin/charMax, fieldType and notes
+      // can all repeat — so this is the identity, not a convenience.
       const mapped = drafts
-        .map((d) => {
-          const meta = metaByName.get(d.fieldName) || {};
-          // Append items carry their own insertIndex (= deleteEnd position) and an
-          // explicit deleteEnd:null; everything else uses the parsed field meta.
-          return {
-            assetType: a.assetType,
-            instance: a.instance,
-            fieldName: d.fieldName,
-            insertIndex: d.insertIndex != null ? d.insertIndex : meta.insertIndex,
-            deleteEnd: Object.prototype.hasOwnProperty.call(d, 'deleteEnd') ? d.deleteEnd : meta.deleteEnd,
-            copy: d.copy,
-            // Append batches carry their Riff header number (undefined otherwise).
-            riffN: d.riffN,
-          };
-        })
-        .filter((r) => r.insertIndex != null && r.copy);
+        .map((d) => ({
+          assetType: a.assetType,
+          instance: a.instance,
+          fieldName: d.fieldName,
+          insertIndex: d.insertIndex,
+          deleteEnd: d.deleteEnd != null ? d.deleteEnd : null,
+          copy: d.copy,
+          // Append batches carry their Riff header number (undefined otherwise).
+          riffN: d.riffN,
+        }))
+        // A draft with no position is DROPPED and named, rather than falling back
+        // to a lookup that can put it on top of another field. Nothing produces
+        // one today — all three producers set it — so this firing means a fourth
+        // has appeared without carrying its field's identity.
+        .filter((r) => {
+          if (r.insertIndex == null) {
+            console.warn(
+              `[googleDocs] draft for ${a.assetType} / ${r.fieldName} carries no insertIndex — dropped`
+            );
+            return false;
+          }
+          return Boolean(r.copy);
+        });
       console.log(`[googleDocs] asset ${idx + 1}/${total} done: ${a.assetType} (${mapped.length} fields)`);
       return mapped;
     } catch (err) {
@@ -1444,11 +1532,28 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   // 1 and the re-parse are skipped — inserts run against the original parse,
   // identical to the previous behavior.
 
+  // Ordinals over the ORIGINAL parse, taken from `assets` rather than from
+  // `assetTargets` — the latter is filtered (empty assets dropped, scoped runs
+  // narrowed) and its positions would not line up with a full re-parse.
+  const originalOrdinals = fieldOrdinals(assets);
+
   // Phase 1 — delete existing copy, bottom-to-top (reverse-order deletes are
   // index-safe: a deletion at a higher index never shifts lower indices).
   const deletions = drafted
     .filter((d) => d.deleteEnd != null && d.deleteEnd > d.insertIndex)
     .sort((a, b) => b.insertIndex - a.insertIndex);
+
+  // REFUSE THE WHOLE BATCH IF ANY TWO RANGES OVERLAP. Deletes inside one
+  // batchUpdate are applied in sequence against a document that each one shrinks,
+  // so the bottom-to-top ordering above is only index-safe while the ranges are
+  // DISJOINT. Two that overlap mean the second is addressing indices that no
+  // longer hold what its parse said they held, and Google will carry it out
+  // anyway — that is the corruption this guard exists to stop being silent.
+  //
+  // Nothing should reach it now that a draft resolves by position rather than by
+  // name, so treat it firing as a defect upstream of here and not as a document
+  // problem. It is a tripwire, not the fix.
+  assertDisjointDeletes(deletions);
 
   let insertIndexByField = null;
   if (deletions.length > 0) {
@@ -1463,35 +1568,62 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
 
     // Re-parse the cleaned doc to recover fresh, correct insertion indices.
     //
-    // Keyed WITH parseDoc's stamped instance ordinal. Entries have always been
-    // pushed one per HEADING_3 with no dedupe, so a doc carrying the same asset
-    // heading twice (today only reachable by hand-editing — pasting an asset
-    // section) used to collapse here: the second occurrence's indices overwrote
-    // the first's, and every drafted field for BOTH headings then resolved to the
-    // second one's positions, so instance 1's copy landed inside instance 2.
-    // The ordinals match the original parse's because the delete pass removed copy
-    // paragraphs only — never a heading — so this re-parse sees the same headings
-    // in the same order.
+    // RESOLVED BY DOCUMENT-ORDER ORDINAL, NOT BY NAME. This used to key on
+    // ctxKey(assetType, fieldName, instance), which fixed the cross-INSTANCE
+    // collapse (the same asset heading twice) and left the within-asset one:
+    // fieldName is the label with its bracket stripped, so "Headline [50]" and
+    // "Headline [60]" under one asset are ONE key, last wins. Both fields' copy
+    // then resolved to the second one's position — the first label was left
+    // empty and the second got both blocks stacked under it. That is the same
+    // root cause as the duplicate delete range, on the insert side, and it
+    // survived the two-phase fix because the re-parse map inherited the name.
+    //
+    // See fieldOrdinals for why position is the identity that crosses a parse
+    // and insertIndex is not.
     const freshDoc = (await docs.documents.get({ documentId: id })).data;
     const fresh = parseDoc(freshDoc);
-    insertIndexByField = new Map();
-    for (const asset of fresh.assets) {
-      for (const f of asset.fields) {
-        // Two fields sharing a name WITHIN one instance still last-wins, matching
-        // metaByName above; only the cross-instance collapse is fixed here.
-        insertIndexByField.set(ctxKey(asset.assetType, f.fieldName, asset.instance), f.insertIndex);
-      }
+    const freshOrdinals = fieldOrdinals(fresh.assets);
+
+    // THE INVARIANT THE ORDINAL RESTS ON, CHECKED RATHER THAN ASSUMED. Phase 1
+    // deletes copy only, so the cleaned document must hold exactly the same
+    // fields in the same order. A different count means a delete removed a label
+    // — at which point every ordinal below it is off by one and the inserts would
+    // land under the wrong labels, silently. Refusing here costs a failed draft;
+    // not refusing costs a document.
+    if (freshOrdinals.count !== originalOrdinals.count) {
+      throw new Error(
+        'Draft aborted after clearing old copy: the document changed shape during the delete pass ' +
+          `(${originalOrdinals.count} field(s) before, ${freshOrdinals.count} after). ` +
+          'Field positions can no longer be resolved safely, so no new copy was written. ' +
+          'The previous copy has been removed and the labels are intact — re-run the draft.'
+      );
     }
+    insertIndexByField = freshOrdinals.insertIndexAt;
   }
 
   // Resolve each drafted field's insertion index: the re-parsed value after a
   // delete pass, otherwise the original parse (first draft). Drop any field we
   // can't place (shouldn't happen, but never insert at a stale/unknown index).
+  //
+  // After a delete pass the draft's own insertIndex is stale by construction, so
+  // it is used ONLY to identify which field this is (it was unique in the
+  // original parse) and then discarded for the fresh position at the same
+  // ordinal. An append batch never reaches this branch: appendMode sets every
+  // deleteEnd to null, so `deletions` is empty and insertIndexByField stays null
+  // — which matters, because an append writes BELOW existing copy and the fresh
+  // label position would put it above.
   const inserts = drafted
     .map((d) => {
-      const idx = insertIndexByField
-        ? insertIndexByField.get(ctxKey(d.assetType, d.fieldName, d.instance))
-        : d.insertIndex;
+      let idx = d.insertIndex;
+      if (insertIndexByField) {
+        const ordinal = originalOrdinals.ordinalOf.get(d.insertIndex);
+        idx = ordinal != null ? insertIndexByField[ordinal] : null;
+        if (idx == null) {
+          console.warn(
+            `[googleDocs] could not place ${d.assetType} / ${d.fieldName} after the delete pass — skipped`
+          );
+        }
+      }
       return idx != null ? { insertIndex: idx, copy: d.copy, riffN: d.riffN } : null;
     })
     .filter(Boolean)
@@ -2040,6 +2172,10 @@ module.exports = {
   fieldLabel,
   fieldHint,
   parseDoc,
+  // The delete-range disjointness guard. Unit tests only — it is called from
+  // inside generateDraft and is exported so its refusal can be exercised
+  // directly as well as through a replay.
+  assertDisjointDeletes,
   // The house-default sentences and the strip that keeps them out of a prompt.
   // Unit tests only, like the four around them — not part of the destination
   // interface (see the table in CLAUDE.md).

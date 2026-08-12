@@ -15,6 +15,99 @@ const { getPool, isUndefinedTable, isUndefinedColumn, warnMissingSchema } = requ
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { normalize } = require('../utils/normalize');
 
+// The copy_fields INSERT, most-complete first.
+//
+// EVERY COLUMN THE SEED COMPUTES HAS TO BE NAMED HERE, and `fact_kind` was not.
+// defaultAssets.js computes it for three fields (Date / Location Line →
+// 'datetime'; Location Label and Track / Room Label → 'location') and this
+// statement listed eleven columns without it, so every tenant seeded since the
+// column shipped got NULL on all three. Nothing errored: the note that tells a
+// drafter a date is missing gates on `factKind === 'datetime'`
+// (core/pipeline.js), and missingDateTimeNotice reads the same rows, so both
+// simply never fired for a new tenant. The two migrations that DO write
+// fact_kind are backfills matched by field name — they reach the tenants that
+// existed when they ran, and nobody since.
+//
+// The lesson is in the test that missed it: it compared the seed constant to the
+// migration constant, and both were right. Nothing looked at this statement.
+// test/smoke.test.js drives seedTenantAssets against a fake pool and rebuilds
+// the inserted rows from the SQL and its params, so a column dropped from here
+// fails there — for any column, not just this one.
+//
+// TWO VARIANTS, because Railway auto-deploys `main` on merge and this runs
+// against a database that has not had scripts/migrateAddReminderDateLine.js run
+// yet (CLAUDE.md: either deploy order is safe). The fallback is the exact
+// pre-fact_kind statement. Losing the note until someone runs the migration is a
+// silence; losing the INSERT is a tenant with NO asset library at all, and
+// seedTenantAssets is called best-effort from both install paths — so the
+// failure would be logged, sign-in would continue, and the first brief would
+// fail the Postgres asset-library check with a message about something else.
+const COPY_FIELD_INSERTS = [
+  {
+    factKind: true,
+    sql: `INSERT INTO copy_fields
+             (asset_type_id, field_name, char_min, char_max, field_type, sort_order,
+              spec_source, spec_version, group_label, spec_note, spec_type, fact_kind)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+  },
+  {
+    factKind: false,
+    sql: `INSERT INTO copy_fields
+             (asset_type_id, field_name, char_min, char_max, field_type, sort_order,
+              spec_source, spec_version, group_label, spec_note, spec_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+  },
+];
+
+// Insert the whole bundled library for one tenant, in one transaction, using one
+// of the variants above. Throws on any failure with the transaction rolled back.
+async function insertDefaultLibrary(client, tenantId, variant) {
+  await client.query('BEGIN');
+  try {
+    for (const asset of DEFAULT_ASSETS) {
+      const typeRes = await client.query(
+        `INSERT INTO asset_types (tenant_id, name, "group", is_active, sort_order, asset_direction, spec_note)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [
+          tenantId,
+          asset.name,
+          asset.group,
+          asset.is_active,
+          asset.sort_order,
+          asset.asset_direction || null,
+          asset.spec_note || null,
+        ]
+      );
+      const assetTypeId = typeRes.rows[0].id;
+
+      for (const field of asset.fields) {
+        const params = [
+          assetTypeId,
+          field.field_name,
+          field.char_min,
+          field.char_max,
+          field.field_type,
+          field.sort_order,
+          field.spec_source || asset.spec_source,
+          asset.spec_version,
+          field.group_label || null,
+          field.spec_note || null,
+          field.spec_type || null,
+        ];
+        // NULL for every generative field, which is nearly all of them — the
+        // absence is the value, so it is passed rather than skipped.
+        if (variant.factKind) params.push(field.fact_kind || null);
+        await client.query(variant.sql, params);
+      }
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  }
+}
+
 // Seed the default asset library into a tenant. Idempotent: if the tenant
 // already has any asset_types rows we skip entirely (there's no unique
 // (tenant_id, name) constraint to ON CONFLICT against, so we guard at the
@@ -45,51 +138,30 @@ async function seedTenantAssets(tenantId) {
       return false;
     }
 
-    await client.query('BEGIN');
-    for (const asset of DEFAULT_ASSETS) {
-      const typeRes = await client.query(
-        `INSERT INTO asset_types (tenant_id, name, "group", is_active, sort_order, asset_direction, spec_note)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id`,
-        [
-          tenantId,
-          asset.name,
-          asset.group,
-          asset.is_active,
-          asset.sort_order,
-          asset.asset_direction || null,
-          asset.spec_note || null,
-        ]
-      );
-      const assetTypeId = typeRes.rows[0].id;
-
-      for (const field of asset.fields) {
-        await client.query(
-          `INSERT INTO copy_fields
-             (asset_type_id, field_name, char_min, char_max, field_type, sort_order, spec_source, spec_version, group_label, spec_note, spec_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [
-            assetTypeId,
-            field.field_name,
-            field.char_min,
-            field.char_max,
-            field.field_type,
-            field.sort_order,
-            field.spec_source || asset.spec_source,
-            asset.spec_version,
-            field.group_label || null,
-            field.spec_note || null,
-            field.spec_type || null,
-          ]
+    // RETRIED AT THE TRANSACTION LEVEL, not per statement. A failed INSERT aborts
+    // the surrounding transaction, so every later statement comes back 25P02 and
+    // a per-statement catch has nothing left to recover with — the whole seed has
+    // to be replayed on the reduced variant. That costs one rollback, once per
+    // tenant, and only in the window before the migration has run.
+    for (let i = 0; i < COPY_FIELD_INSERTS.length; i++) {
+      const variant = COPY_FIELD_INSERTS[i];
+      const last = i === COPY_FIELD_INSERTS.length - 1;
+      try {
+        await insertDefaultLibrary(client, tenantId, variant);
+        console.log(
+          `[db/assets] seeded ${DEFAULT_ASSETS.length} asset types for tenant ${tenantId}` +
+            (variant.factKind ? '' : ' (without fact_kind — pre-migration database)')
         );
+        return true;
+      } catch (err) {
+        // Only a missing column is recoverable, and only while a reduced variant
+        // remains. Anything else — a permissions failure, a lost connection —
+        // is the caller's to see.
+        if (last || !isUndefinedColumn(err)) throw err;
+        warnMissingSchema('copy_fields.fact_kind', 'scripts/migrateAddReminderDateLine.js');
       }
     }
-    await client.query('COMMIT');
-    console.log(`[db/assets] seeded ${DEFAULT_ASSETS.length} asset types for tenant ${tenantId}`);
-    return true;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
+    return false;
   } finally {
     client.release();
   }

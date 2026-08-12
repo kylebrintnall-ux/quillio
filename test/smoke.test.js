@@ -2182,6 +2182,208 @@ test('db/assets degrades gracefully with no database', async () => {
   assert.strictEqual(await getTenantAssets('T0B8LPRDKHR'), null);
 });
 
+// === WHAT THE SEED ACTUALLY SENDS ===========================================
+//
+// These drive the REAL seedTenantAssets against a fake pool and rebuild the rows
+// it inserted from the SQL and its parameters. That shape is the point.
+//
+// `fact_kind` was computed by defaultAssets.js and absent from the INSERT in
+// db/assets.js for as long as the column existed, so every tenant seeded in that
+// window got NULL and the missing-date-time note never fired for them. The test
+// that was supposed to cover it asserted the SEED CONSTANT and the MIGRATION
+// CONSTANT marked the same fields — and they did. Both sides of that comparison
+// were correct; the statement between them was not, and nothing read it.
+//
+// So the assertion has to be made against the ROWS, which is the only artefact
+// that can disagree with both constants at once.
+
+// A pool whose client records every (sql, params) pair, and which answers the two
+// reads seedTenantAssets makes: the idempotency probe (no rows → not yet seeded)
+// and the asset_types INSERT ... RETURNING id.
+//
+// `rejectFactKind` reproduces a database where migrateAddReminderDateLine.js has
+// not run: the 12-column statement comes back 42703, exactly as Postgres would
+// answer it, and every statement after it in that transaction is refused the way
+// a real aborted transaction refuses them.
+function fakeSeedPool({ rejectFactKind = false } = {}) {
+  const queries = [];
+  let nextId = 1;
+  let aborted = false;
+  const run = async (sql, params) => {
+    queries.push({ sql, params });
+    if (/^\s*BEGIN/i.test(sql)) { aborted = false; return { rows: [] }; }
+    if (/^\s*ROLLBACK/i.test(sql)) { aborted = false; return { rows: [] }; }
+    if (aborted) {
+      const err = new Error('current transaction is aborted, commands ignored until end of transaction block');
+      err.code = '25P02';
+      throw err;
+    }
+    if (rejectFactKind && /INSERT INTO copy_fields/i.test(sql) && /fact_kind/i.test(sql)) {
+      aborted = true;
+      const err = new Error('column "fact_kind" of relation "copy_fields" does not exist');
+      err.code = '42703';
+      throw err;
+    }
+    if (/^\s*SELECT 1 FROM asset_types/i.test(sql)) return { rows: [] };
+    if (/INSERT INTO asset_types/i.test(sql)) return { rows: [{ id: nextId++ }] };
+    return { rows: [] };
+  };
+  return { queries, query: run, connect: async () => ({ query: run, release() {} }) };
+}
+
+// Run the real seed against a fake pool and return the rows it tried to write.
+// db/assets destructures getPool at require time, so the module is evicted and
+// re-required inside the patch rather than assigned to.
+async function seedIntoFakePool(opts) {
+  const db = require('../src/db');
+  const realGetPool = db.getPool;
+  const assetsPath = require.resolve('../src/db/assets');
+  const pool = fakeSeedPool(opts);
+  db.getPool = () => pool;
+  delete require.cache[assetsPath];
+  let seeded;
+  try {
+    seeded = await require(assetsPath).seedTenantAssets('T_SEED_TEST');
+  } finally {
+    db.getPool = realGetPool;
+    delete require.cache[assetsPath];
+  }
+
+  // ONLY THE TRANSACTION THAT COMMITTED. An attempt that was rolled back sent
+  // statements too — on the pre-migration path the first one is a copy_fields
+  // INSERT naming a column the database does not have — and those rows do not
+  // exist afterwards. Counting them would have this report the rejected shape as
+  // though it had been written.
+  const committed = pool.queries.slice(pool.queries.map((q) => /^\s*BEGIN/i.test(q.sql)).lastIndexOf(true));
+
+  // Rebuild each INSERT as an object: column names come from the statement, values
+  // from the parameters it was given. Reading both off the captured query is what
+  // makes this a test of the statement rather than of the constants around it.
+  const rowsFor = (table) =>
+    committed
+      .filter((q) => new RegExp(`INSERT INTO ${table}\\b`, 'i').test(q.sql))
+      .map((q) => {
+        const cols = q.sql.match(/INSERT INTO \w+\s*\(([\s\S]*?)\)/i)[1]
+          .split(',')
+          .map((c) => c.trim().replace(/^"|"$/g, ''));
+        assert.strictEqual(
+          cols.length,
+          (q.params || []).length,
+          `${table}: ${cols.length} columns named but ${(q.params || []).length} parameters passed`
+        );
+        return Object.fromEntries(cols.map((c, i) => [c, q.params[i]]));
+      });
+
+  return { seeded, queries: pool.queries, assetTypes: rowsFor('asset_types'), copyFields: rowsFor('copy_fields') };
+}
+
+test('the seed WRITES fact_kind — asserted on the rows, not on the constants', async () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { seeded, copyFields, assetTypes } = await seedIntoFakePool();
+
+  assert.strictEqual(seeded, true);
+  assert.strictEqual(assetTypes.length, DEFAULT_ASSETS.length, 'every asset type inserted');
+  assert.strictEqual(
+    copyFields.length,
+    DEFAULT_ASSETS.reduce((n, a) => n + a.fields.length, 0),
+    'every field inserted'
+  );
+
+  // The three fields that carry a supplied fact, read back out of what was SENT.
+  const sentKinds = new Map();
+  for (const row of copyFields) {
+    if (row.fact_kind) sentKinds.set(row.field_name, row.fact_kind);
+  }
+  assert.deepStrictEqual(
+    [...sentKinds.entries()].sort(),
+    [
+      ['Date / Location Line', 'datetime'],
+      ['Location Label', 'location'],
+      ['Track / Room Label', 'location'],
+    ],
+    'the fact-carrying fields reach the database with their kind'
+  );
+
+  // The one the notice depends on, named explicitly: core/pipeline.js gates the
+  // drafter's note on factKind === 'datetime' and utils/briefFacts reads the same
+  // rows for the writer-facing notice. A NULL here is silent on both surfaces.
+  const dateRows = copyFields.filter((r) => r.field_name === 'Date / Location Line');
+  assert.strictEqual(dateRows.length, 2, 'Event Invitation and Event Reminder both have one');
+  for (const r of dateRows) assert.strictEqual(r.fact_kind, 'datetime');
+
+  // And every generative field passes NULL rather than omitting the parameter —
+  // the absence is the value.
+  const generative = copyFields.filter((r) => !sentKinds.has(r.field_name));
+  assert.ok(generative.length > 100, 'most fields generate rather than transcribe');
+  for (const r of generative) {
+    assert.ok('fact_kind' in r, `${r.field_name} names the column`);
+    assert.strictEqual(r.fact_kind, null, `${r.field_name} passes NULL`);
+  }
+});
+
+test('every column the seed computes is named in the INSERT', async () => {
+  // THE GENERALISATION, and the reason this block exists rather than one more
+  // fact_kind assertion. `fact_kind` was not a special case — it was a value
+  // defaultAssets.js computed and the statement did not name, which is a shape
+  // any future column can arrive in. Comparing the keys of the seed's own field
+  // objects against the columns the statement names catches all of them.
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { copyFields, assetTypes } = await seedIntoFakePool();
+
+  const fieldCols = new Set(Object.keys(copyFields[0]));
+  const seedFieldKeys = new Set();
+  for (const a of DEFAULT_ASSETS) for (const f of a.fields) for (const k of Object.keys(f)) seedFieldKeys.add(k);
+  const droppedFields = [...seedFieldKeys].filter((k) => !fieldCols.has(k));
+  assert.deepStrictEqual(droppedFields, [], 'copy_fields INSERT drops no computed field value');
+
+  // Same question of the asset row. `spec_source` / `spec_version` are asset-level
+  // in the seed shape but stored per FIELD, so they are expected on the other
+  // statement rather than this one — named here so the exemption is deliberate
+  // rather than a hole the assertion happens not to look through.
+  const ASSET_KEYS_STORED_ON_FIELDS = new Set(['fields', 'spec_source', 'spec_version']);
+  const typeCols = new Set(Object.keys(assetTypes[0]));
+  const droppedTypes = Object.keys(DEFAULT_ASSETS[0]).filter(
+    (k) => !ASSET_KEYS_STORED_ON_FIELDS.has(k) && !typeCols.has(k)
+  );
+  assert.deepStrictEqual(droppedTypes, [], 'asset_types INSERT drops no computed asset value');
+  for (const k of ASSET_KEYS_STORED_ON_FIELDS) {
+    if (k === 'fields') continue;
+    assert.ok(fieldCols.has(k), `${k} is stored on the field row`);
+  }
+});
+
+test('deploy-before-migration: a database without fact_kind still gets a full library', async () => {
+  // Railway auto-deploys `main` on merge, so this code runs against a database
+  // that has not had scripts/migrateAddReminderDateLine.js run yet. The seed must
+  // fall back rather than fail: a silent date note is recoverable by running the
+  // migration, a tenant with NO asset library is a first brief that fails on
+  // something unrelated.
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { seeded, copyFields, queries } = await seedIntoFakePool({ rejectFactKind: true });
+
+  assert.strictEqual(seeded, true, 'the seed still reports success');
+  assert.strictEqual(
+    copyFields.filter((r) => 'fact_kind' in r).length,
+    0,
+    'the retry drops the column rather than passing it positionally'
+  );
+  assert.strictEqual(
+    copyFields.filter((r) => !('fact_kind' in r)).length,
+    DEFAULT_ASSETS.reduce((n, a) => n + a.fields.length, 0),
+    'and every field is still written'
+  );
+
+  // The aborted transaction is rolled back before the replay, so the retry starts
+  // clean. Without this the second attempt runs inside a transaction Postgres has
+  // already refused and every statement comes back 25P02.
+  const shape = queries.map((q) => q.sql.trim().split(/\s+/).slice(0, 3).join(' '));
+  const firstRollback = shape.indexOf('ROLLBACK');
+  const lastBegin = shape.lastIndexOf('BEGIN');
+  assert.ok(firstRollback > 0, 'the failed attempt rolls back');
+  assert.ok(lastBegin > firstRollback, 'and the replay opens its own transaction');
+  assert.strictEqual(shape.filter((s) => s === 'COMMIT').length, 1, 'exactly one commit');
+});
+
 test('db exposes getPool', () => {
   const db = require('../src/db');
   assert.strictEqual(typeof db.getPool, 'function');

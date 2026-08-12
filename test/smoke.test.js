@@ -4049,7 +4049,14 @@ test('append: additive write inserts below, never deletes (deleteEnd:null guaran
   // insert at the field's current copy end (deleteEnd, or insertIndex when empty).
   assert.ok(/const insertAt = f\.deleteEnd != null \? f\.deleteEnd : f\.insertIndex;/.test(gd), 'insert index = end of current copy block');
   assert.ok(/drafts\.push\(\{ fieldName: f\.fieldName, copy: block, insertIndex: insertAt, deleteEnd: null, riffN \}\)/.test(gd), 'append pushes deleteEnd:null (+ riffN for the batch header)');
-  assert.ok(/startIndex: 1, labeled: true/.test(gd), 'append batch numbered from 1 and always labeled');
+  // Always labeled, and force-numbered — but numbered from the field's highest
+  // EXISTING option, not from 1. The hardcoded `startIndex: 1` restarted every
+  // batch, so three riffs wrote "1.", "1.", "1." and two options sharing a
+  // doorway collided on one copyReview key. The numbering itself is proved
+  // behaviourally in test/generateDraft.replay.test.js; this only pins that the
+  // base is computed rather than constant.
+  assert.ok(/startIndex: maxOption \+ 1, labeled: true/.test(gd), 'append batch force-numbered and always labeled');
+  assert.ok(/parseNumberedStack\(existingCopy\)/.test(gd), 'the base comes from the field\'s existing options');
   // Step 3: the batch is prefaced by a faint "Riff N" HEADING_6 header; N = max+1.
   assert.ok(/const riffN = \(f\.maxRiffN \|\| 0\) \+ 1;/.test(gd), 'riff batch number is max existing +1');
   // …and the deletions filter keys on deleteEnd != null, so a deleteEnd:null field

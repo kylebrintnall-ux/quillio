@@ -32,6 +32,11 @@ const { instanceTag, instanceCounter } = require('../utils/instanceKey');
 // Same asset-name folding the pipeline uses to match a name to a library row, so
 // instance-heading sibling detection groups names the same way.
 const { normalize } = require('../utils/normalize');
+// The stack parser, so an appended batch can number from the field's highest
+// EXISTING option rather than restarting at 1. Same module copyReview reads the
+// option number back with, so the two cannot disagree about what a numbered
+// option line is.
+const { parseNumberedStack } = require('../utils/variants');
 
 // Allowed matrix names (Variations Matrix, Step 3), sourced from gemini so there's
 // one taxonomy. Used to validate a scoped field's `variations` rows.
@@ -1403,7 +1408,32 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
               // this field cannot enter the deletions list — existing copy is
               // never touched. The batch is prefaced by a faint "Riff N" header in
               // Phase 2; N = the field's highest existing Riff batch + 1 (max+1).
-              const block = buildVariantBlock(variations, { charMax: f.charMax, fieldType: f.fieldType, startIndex: 1, labeled: true });
+              // NUMBERED FROM THE FIELD'S HIGHEST EXISTING OPTION, NOT FROM 1.
+              //
+              // This was a hardcoded `startIndex: 1`, so every appended batch
+              // restarted its numbering: three separate riffs on one field wrote
+              // "1.", "1.", "1." rather than 1, 2, 3. Within a single batch the
+              // numbering was always right, which is why it reads as a display
+              // quirk — but it is not only display.
+              //
+              // The option number is the only thing distinguishing two variations
+              // of a field once they are in the document. copyReview parses it
+              // back out (utils/variants.parseNumberedStack) and composes the
+              // review unit key AND the comment locator from it —
+              // `Headline · option 1 (Proof)`. Two options that share a doorway
+              // therefore collide on an identical key, so one variation's review
+              // comment is reconciled against the other's. Measured: three riffed
+              // options, two of them Proof, gave 2 distinct keys instead of 3.
+              //
+              // MAX, not count, for the same reason maxRiffN uses max: deleting a
+              // middle option must not let the next batch reuse a number that a
+              // survivor still holds. Read off the field's current copy, which the
+              // scoped path already fetched for sibling context — so this needs no
+              // change to parseDoc and no new document state.
+              const existingCopy = copyByKey.get(ctxKey(a.assetType, f.fieldName, a.instance)) || '';
+              const maxOption = parseNumberedStack(existingCopy)
+                .reduce((m, o) => Math.max(m, Number(o.index) || 0), 0);
+              const block = buildVariantBlock(variations, { charMax: f.charMax, fieldType: f.fieldType, startIndex: maxOption + 1, labeled: true });
               const insertAt = f.deleteEnd != null ? f.deleteEnd : f.insertIndex;
               if (block && insertAt != null) {
                 const riffN = (f.maxRiffN || 0) + 1;

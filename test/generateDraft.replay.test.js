@@ -250,6 +250,76 @@ test('replay: an append batch deletes nothing and lands BELOW the existing copy'
   }
 });
 
+// Riff one field N times, one option each, and return the doc's option lines.
+async function riffTimes(doorways) {
+  const paras = [
+    ...HEADER,
+    H3('LinkedIn Single Image Ad'), ITALIC('Punchy'),
+    LABEL('Headline [70]'), TEXT('Existing headline copy.'), BLANK(),
+  ];
+  const doc = Doc.from(paras);
+  const { clients } = simClients(doc);
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  cfg.GEMINI_API_KEY = 'test-key';
+  try {
+    for (const door of doorways) {
+      global.fetch = async () => ({
+        ok: true,
+        text: async () => '',
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: JSON.stringify([{ doorway: door, copy: `Copy ${door}` }]) }] } }],
+        }),
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await gd.generateDraft('doc', null, clients, null, null,
+        [{ assetType: 'LinkedIn Single Image Ad', fieldName: 'Headline', instance: 0,
+           variations: [{ angle: door, count: 1, intensity: 'Safe' }] }], true, null);
+    }
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+  }
+  return doc.paragraphs().filter((p) => /^\d+\.\s/.test(p));
+}
+
+test('replay: successive riffs number continuously, so no two options collide', async () => {
+  // THE DEFECT: the append call hardcoded startIndex 1, so every batch restarted
+  // its numbering — three riffs on one field wrote "1.", "1.", "1.". Within one
+  // batch the numbering was always right, which is why it looked cosmetic.
+  const lines = await riffTimes(['Proof', 'Pain', 'Reframe']);
+  assert.deepStrictEqual(lines, [
+    '1. (Proof) Copy Proof',
+    '2. (Pain) Copy Pain',
+    '3. (Reframe) Copy Reframe',
+  ]);
+});
+
+test('replay: the option number is what keeps two same-doorway riffs apart', async () => {
+  // NOT COSMETIC. copyReview parses the option number back out of the document
+  // and composes the review unit key and the comment locator from it, so two
+  // options sharing a doorway collided on an identical key — one variation's
+  // review comment reconciled against the other's. Driven through the real
+  // parser and the real key builder rather than asserted on the rendered text.
+  const { parseNumberedStack } = require('../src/utils/variants');
+  const { variationFieldName } = require('../src/services/copyReview');
+
+  const lines = await riffTimes(['Proof', 'Pain', 'Proof']); // two Proofs on purpose
+  const opts = parseNumberedStack(lines.join('\n'));
+  assert.strictEqual(opts.length, 3, 'all three options parse');
+  assert.deepStrictEqual(opts.map((o) => o.index), [1, 2, 3], 'indices are distinct and in order');
+
+  const keys = opts.map((o) => variationFieldName('Headline', o.index, o.doorway));
+  assert.strictEqual(new Set(keys).size, 3, `review keys must be distinct, got ${JSON.stringify(keys)}`);
+  // The exact collision this fixes: with the old numbering both Proofs were
+  // "Headline · option 1 (Proof)".
+  assert.strictEqual(
+    new Set([1, 1, 1].map((i, n) => variationFieldName('Headline', i, opts[n].doorway))).size,
+    2,
+    'sanity: restarting at 1 really would have collided'
+  );
+});
+
 // ---------------------------------------------------------------------------
 // The guard, exercised directly. It should be unreachable through generateDraft
 // now, so a replay cannot cover it — which is exactly why it is also a unit.

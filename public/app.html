@@ -536,7 +536,32 @@
     .picker-row input { width: 20px; height: 20px; flex: none; accent-color: var(--gold); margin: 0; }
     .picker-row-name { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 14.5px; color: var(--ink); overflow-wrap: anywhere; }
     .picker-row.checked { background: rgba(201,168,76,0.16); border-color: rgba(201,168,76,0.7); }
+    /* THE GLASS SURFACE, EXTRACTED — not a new treatment. These four
+       declarations are the ones .asset-card and .doc-row already carry, verbatim;
+       this class exists so the text that used to sit on raw sky can join the same
+       surface instead of getting a panel of its own invention.
+       WHY IT EXISTS: --ink on the sky gradient is 3.64:1 at the darkest stop and
+       the two alpha'd rules (.section-label at opacity .75, .section-body at
+       rgba(...,.78)) are 2.76 and 2.87 — under the 4.5:1 AA floor for text this
+       size. Darkening --ink cannot fix it: pure black on that stop is 4.49:1.
+       Lightening the gradient cannot either, short of washing it out. Composited
+       on this surface the same text is 5.04-13.03:1 with --ink and the gradient
+       both untouched.
+       ONE PANEL PER CONTIGUOUS RUN, not one per element. Boxing each label and
+       each body separately turns a page that is already a card stack into a wall
+       of nine boxes, with "DOCUMENTS" alone in its own panel. */
+    .glass-panel {
+      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px;
+    }
+    /* A run's own padding; the last child's margin is collapsed so the panel does
+       not carry a hole under its final line. */
+    .glass-panel.run { padding: 16px 18px; margin-bottom: 14px; }
+    .glass-panel.run > *:last-child { margin-bottom: 0; }
     .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
+    /* The header is its own run: title + state gif. Padding is tighter on the
+       right so the gif keeps its optical position. */
+    .output-header.glass-panel { padding: 14px 16px; margin-bottom: 16px; }
     .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--ink); letter-spacing: 0.02em; flex: 1; margin: 0; }
     .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
     .section-label, .assets-label {
@@ -1035,7 +1060,7 @@
 
     <!-- SCREEN 3 — DOC OUTPUT (pre-draft spec view) -->
     <section id="screen-output" class="screen">
-      <div class="output-header">
+      <div class="output-header glass-panel">
         <h2 class="output-title" id="out-title">Campaign</h2>
         <img class="header-gif" src="/assets/gifs/quillio-doc-done.gif" alt="">
       </div>
@@ -1046,21 +1071,27 @@
            document's own detail view, where it can be generated, regenerated and
            reviewed. One document → one row: nothing is drawn for a document the
            brief never asked for. -->
-      <div class="assets-label">Documents</div>
-      <p class="field-select-hint">Tap a document to generate, regenerate or review it.</p>
+      <div class="glass-panel run">
+        <div class="assets-label">Documents</div>
+        <p class="field-select-hint">Tap a document to generate, regenerate or review it.</p>
+      </div>
       <div id="out-docs"></div>
 
-      <div class="section-label">Campaign Summary</div>
-      <p class="section-body" id="out-summary"></p>
+      <div class="glass-panel run">
+        <div class="section-label">Campaign Summary</div>
+        <p class="section-body" id="out-summary"></p>
 
-      <div class="section-label">Writer Direction</div>
-      <p class="section-body" id="out-direction"></p>
+        <div class="section-label">Writer Direction</div>
+        <p class="section-body" id="out-direction"></p>
+      </div>
 
       <!-- The copy doc's spec preview. Hidden on a brief that named only a
            template: there are no assets, and an "Assets" heading over nothing
            reads as a failure. -->
-      <div class="assets-label" id="out-assets-label">Assets</div>
-      <p class="field-select-hint" id="out-assets-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
+      <div class="glass-panel run" id="out-assets-head">
+        <div class="assets-label" id="out-assets-label">Assets</div>
+        <p class="field-select-hint" id="out-assets-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
+      </div>
       <div id="out-assets"></div>
       <div id="out-unmatched" class="notice hidden"></div>
       <!-- ITS OWN SLOT, never composed with out-unmatched. A brief can miss an
@@ -1092,7 +1123,7 @@
 
     <!-- SCREEN 5 — COPY DONE (drafted view) -->
     <section id="screen-copydone" class="screen">
-      <div class="output-header">
+      <div class="output-header glass-panel">
         <h2 class="output-title" id="copydone-title">Your copy is ready</h2>
         <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif" alt="">
       </div>
@@ -2973,7 +3004,10 @@
     function renderCopyDoneAssets(assets) {
       var wrap = document.getElementById('copydone-assets');
       wrap.textContent = '';
-      wrap.appendChild(fieldSelectHint({ hasCopy: assetsHaveCopy(assets), hasBlank: assetsHaveBlank(assets) }));
+      // The hint is rendered by renderCopyDoneBrief, INSIDE the brief's panel —
+      // it and the two brief sections are one contiguous run of text on the sky,
+      // and one panel around the run reads as a page section where three panels
+      // read as three boxes.
       var totals = instanceTotals(assets);
       (assets || []).forEach(function (a) {
         appendAssetCard(wrap, a, { badge: '✓ Drafted', drafted: true, showPlaceholder: true, selectable: true, onSelectionChange: refreshCopyDonePrimary,
@@ -3005,6 +3039,7 @@
     function renderCopyDoneBrief(content) {
       var host = document.getElementById('copydone-brief');
       host.textContent = '';
+      host.className = ''; // no empty panel when there is nothing to put in it
       var summary = String((content && content.summary) || '').trim();
       var direction = String((content && content.writerDirection) || '').trim();
       if (summary) {
@@ -3015,6 +3050,13 @@
         host.appendChild(el('div', 'section-label', 'Writer Direction'));
         host.appendChild(el('div', 'section-body', direction));
       }
+      // The tappable-fields nudge belongs to this run, not to the card list — see
+      // renderCopyDoneAssets. Added last so it reads as the instruction that
+      // follows the brief.
+      var assets = (content && content.assets) || [];
+      var hint = fieldSelectHint({ hasCopy: assetsHaveCopy(assets), hasBlank: assetsHaveBlank(assets) });
+      if (hint) host.appendChild(hint);
+      if (host.firstChild) host.className = 'glass-panel run';
     }
 
     // Pull the drafted copy back from the doc and populate the Copy Done screen.
@@ -3709,21 +3751,30 @@
       // the matrix — so the labels are left out rather than drawn over two
       // em-dashes, which would read as content that failed to load.
       var isTemplate = content.kind === 'template';
+      // ONE PANEL PER CONTIGUOUS RUN. The brief's two sections, the Assets label
+      // and the tappable-fields nudge are all text on the raw sky gradient, where
+      // --ink measures 3.64:1 and the alpha'd label/body 2.76 and 2.87 — under
+      // the 4.5:1 floor. They join the same glass surface the cards below already
+      // use. Grouped rather than one panel each: separately boxed, this screen
+      // becomes a wall of small panels above a card stack.
+      var brief = el('div', 'glass-panel run');
       if (!isTemplate) {
-        projectContentEl.appendChild(el('div', 'section-label', 'Campaign Summary'));
-        projectContentEl.appendChild(el('div', 'section-body', content.summary || '—'));
+        brief.appendChild(el('div', 'section-label', 'Campaign Summary'));
+        brief.appendChild(el('div', 'section-body', content.summary || '—'));
 
-        projectContentEl.appendChild(el('div', 'section-label', 'Writer Direction'));
-        projectContentEl.appendChild(el('div', 'section-body', content.writerDirection || '—'));
+        brief.appendChild(el('div', 'section-label', 'Writer Direction'));
+        brief.appendChild(el('div', 'section-body', content.writerDirection || '—'));
       }
 
-      projectContentEl.appendChild(el('div', 'assets-label', isTemplate ? 'Fields' : 'Assets'));
+      brief.appendChild(el('div', 'assets-label', isTemplate ? 'Fields' : 'Assets'));
       var passets = content.assets || [];
-      projectContentEl.appendChild(fieldSelectHint({
+      var phint = fieldSelectHint({
         hasCopy: assetsHaveCopy(passets),
         hasBlank: assetsHaveBlank(passets),
         canRiff: assetsCanRiff(passets),
-      }));
+      });
+      if (phint) brief.appendChild(phint);
+      projectContentEl.appendChild(brief);
       var assets = passets;
       var ptotals = instanceTotals(assets);
       assets.forEach(function (a) {

@@ -557,6 +557,40 @@
     /* A run's own padding; the last child's margin is collapsed so the panel does
        not carry a hole under its final line. */
     .glass-panel.run { padding: 16px 18px; margin-bottom: 14px; }
+    /* A MERGED LIST: the label, its hint and the list itself are ONE surface.
+       The rows inside therefore DROP their own glass. Left on, two 52% white
+       layers stack to about 77% and two 1.5px borders meet a few pixels apart —
+       a lighter box floating inside a box, which is what the label-panel-above-a-
+       list arrangement looked like and the reason for merging in the first place.
+       Rows become flat, full-bleed to the panel's padding, separated by a
+       hairline. The panel keeps the radius; the rows have none to clip. */
+    .glass-panel.list { padding: 16px 18px 6px; margin-bottom: 14px; }
+    .glass-panel.list .doc-row,
+    .glass-panel.list .asset-card {
+      background: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+      border: none; border-radius: 0; box-shadow: none;
+      margin: 0; padding-left: 0; padding-right: 0;
+    }
+    /* A hairline between siblings, and one under the hint so the heading reads as
+       a heading rather than as the list's first line. Never above the first row
+       on its own — that would draw a rule with nothing above it. */
+    .glass-panel.list .doc-row + .doc-row,
+    .glass-panel.list .asset-card + .asset-card,
+    .glass-panel.list .field-select-hint + div > :first-child {
+      border-top: 1px solid rgba(255,255,255,0.6);
+    }
+    .glass-panel.list .field-select-hint { margin-bottom: 12px; }
+    .glass-panel.list .doc-row { padding-top: 12px; padding-bottom: 12px; }
+    .glass-panel.list .asset-card { padding-top: 14px; padding-bottom: 8px; }
+    /* AN ASSET BOUNDARY MUST OUTRANK A FIELD BOUNDARY. Flattened, an asset card
+       loses the border that used to say where it started, and .asset-field draws
+       its own hairline between every field — so at equal weight the line between
+       two ASSETS read the same as the line between two FIELDS and the grouping
+       went soft. The between-asset rule is brighter and carries real space; the
+       field rules inside a card stay as they are. */
+    .glass-panel.list .asset-card + .asset-card {
+      border-top-color: rgba(255,255,255,0.9); padding-top: 22px; margin-top: 8px;
+    }
     .glass-panel.run > *:last-child { margin-bottom: 0; }
     .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
     /* The header is its own run: title + state gif. Padding is tighter on the
@@ -1071,11 +1105,11 @@
            document's own detail view, where it can be generated, regenerated and
            reviewed. One document → one row: nothing is drawn for a document the
            brief never asked for. -->
-      <div class="glass-panel run">
+      <div class="glass-panel list">
         <div class="assets-label">Documents</div>
         <p class="field-select-hint">Tap a document to generate, regenerate or review it.</p>
+        <div id="out-docs"></div>
       </div>
-      <div id="out-docs"></div>
 
       <div class="glass-panel run">
         <div class="section-label">Campaign Summary</div>
@@ -1088,11 +1122,11 @@
       <!-- The copy doc's spec preview. Hidden on a brief that named only a
            template: there are no assets, and an "Assets" heading over nothing
            reads as a failure. -->
-      <div class="glass-panel run" id="out-assets-head">
+      <div class="glass-panel list" id="out-assets-head">
         <div class="assets-label" id="out-assets-label">Assets</div>
         <p class="field-select-hint" id="out-assets-hint">Generate a whole first draft — or tap specific fields to generate just those.</p>
+        <div id="out-assets"></div>
       </div>
-      <div id="out-assets"></div>
       <div id="out-unmatched" class="notice hidden"></div>
       <!-- ITS OWN SLOT, never composed with out-unmatched. A brief can miss an
            asset name, be missing a date, both, or neither, and one sentence
@@ -3766,19 +3800,28 @@
         brief.appendChild(el('div', 'section-body', content.writerDirection || '—'));
       }
 
-      brief.appendChild(el('div', 'assets-label', isTemplate ? 'Fields' : 'Assets'));
+      if (brief.firstChild) projectContentEl.appendChild(brief);
+
+      // THE LIST IS ONE SURFACE WITH ITS OWN HEADING. The label and hint used to
+      // sit in a panel ABOVE a stack of glass cards — a box above boxes. They are
+      // now the top of the card list's own panel, and the cards inside drop their
+      // glass (see .glass-panel.list) so nothing is nested.
+      var listPanel = el('div', 'glass-panel list');
+      listPanel.appendChild(el('div', 'assets-label', isTemplate ? 'Fields' : 'Assets'));
       var passets = content.assets || [];
       var phint = fieldSelectHint({
         hasCopy: assetsHaveCopy(passets),
         hasBlank: assetsHaveBlank(passets),
         canRiff: assetsCanRiff(passets),
       });
-      if (phint) brief.appendChild(phint);
-      projectContentEl.appendChild(brief);
+      if (phint) listPanel.appendChild(phint);
+      var cardHost = el('div');
+      listPanel.appendChild(cardHost);
+      projectContentEl.appendChild(listPanel);
       var assets = passets;
       var ptotals = instanceTotals(assets);
       assets.forEach(function (a) {
-        appendAssetCard(projectContentEl, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary,
+        appendAssetCard(cardHost, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary,
           instanceTotal: instanceTotalFor(ptotals, a),
           riff: { docId: projectDocId(), reload: reopenProjectDoc } });
       });

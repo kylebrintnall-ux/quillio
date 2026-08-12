@@ -331,8 +331,21 @@
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid rgba(77,217,217,0.15);
     }
+    /* THE LOCKUP'S GAP IS 6px, NOT 8px, AND THE ASSET IS WHY.
+       quillio-quill.png used to carry its own transparent margin — 136px of a
+       1024px canvas on the left and 120px on the right, which at this 28px box
+       is 3.7px and 3.3px of dead space INSIDE the image. The header read as
+       pushed right because 18px of nav padding sat next to 3.7px of invisible
+       asset, while the gap to the wordmark already had 3.3px baked into it, and
+       no margin here could correct the ratio. The asset is now trimmed to its
+       alpha bounds (168x168, 0.83px symmetric), so these numbers finally mean
+       what they say.
+       6 rather than 8 because the quill is a DIAGONAL: its visual mass sits up
+       and to the right of its bounding box, so it wants to sit tighter to the
+       wordmark than a rectangular mark would. Same rule in onboarding.html and
+       settings.html — one lockup, three files. */
     .nav-logo {
-      display: flex; align-items: center; gap: 8px; flex: none;
+      display: flex; align-items: center; gap: 6px; flex: none;
       background: none; border: none; padding: 0; cursor: pointer; text-decoration: none;
     }
     .nav-quill-img { width: 28px; height: 28px; image-rendering: pixelated; object-fit: contain; }

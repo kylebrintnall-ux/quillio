@@ -381,6 +381,8 @@
 
     /* ── BRIEF (v8) ── */
     .brief-headline { font-family: 'StarCrush', serif; font-size: 36px; line-height: 1.1; color: var(--ink); margin: 0 0 10px; text-align: center; }
+    /* The phrases that hold together; the space between them is the only break point. */
+    .brief-headline span { white-space: nowrap; }
     .brief-sub { font-size: 15px; font-weight: 400; line-height: 1.55; color: rgba(26,26,46,0.68); margin: 0 0 26px; text-align: center; }
     .glass-card {
       background: rgba(255,255,255,0.14);
@@ -1045,7 +1047,13 @@
 
     <!-- SCREEN 1 — BRIEF INPUT -->
     <section id="screen-brief" class="screen active">
-      <h1 class="brief-headline">What are<br>we writing?</h1>
+      <!-- Two nowrap phrases, NOT a hard <br>. The break used to be markup, so it
+           fired at every width — two lines on a 1130px desktop with 848px of
+           container and only 342px of text. Phrases that cannot break internally
+           let the line wrap where it actually runs out of room: one line from
+           about 350px up, and the same "What are / we writing?" split below that,
+           with no breakpoint to guess at. -->
+      <h1 class="brief-headline"><span>What are</span> <span>we writing?</span></h1>
       <p class="brief-sub">Describe the campaign, drop a link, or paste a brief. Quillio handles the rest.</p>
       <div class="glass-card">
         <textarea id="brief" class="glass-textarea" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>

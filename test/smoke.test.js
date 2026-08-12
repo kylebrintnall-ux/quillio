@@ -4055,8 +4055,17 @@ test('append: additive write inserts below, never deletes (deleteEnd:null guaran
   // …and the deletions filter keys on deleteEnd != null, so a deleteEnd:null field
   // can NEVER produce a deleteContentRange.
   assert.ok(/\.filter\(\(d\) => d\.deleteEnd != null && d\.deleteEnd > d\.insertIndex\)/.test(gd), 'deletions require deleteEnd != null');
-  // The mapping honors an append item's own insertIndex/deleteEnd.
-  assert.ok(/hasOwnProperty\.call\(d, 'deleteEnd'\)/.test(gd), 'mapping honors explicit deleteEnd:null');
+  // The mapping honors an append item's own insertIndex/deleteEnd. This used to
+  // read `hasOwnProperty.call(d, 'deleteEnd')`, because only an append item
+  // carried its own position and everything else fell back to a lookup keyed on
+  // the field NAME. That fallback was the duplicate-delete defect: two labels
+  // under one asset differing only by their bracket parse to one name, so both
+  // resolved to one position. EVERY draft now carries the position of the field
+  // it was drafted for, so there is no fallback left to honour an exception to.
+  assert.ok(/insertIndex: d\.insertIndex,/.test(gd), 'the mapping takes the position off the draft');
+  assert.ok(/deleteEnd: d\.deleteEnd != null \? d\.deleteEnd : null,/.test(gd), 'and its deleteEnd, null included');
+  // The no-delete guarantee itself is proved behaviourally, by replaying a real
+  // append through the index model — see test/generateDraft.replay.test.js.
 });
 
 test('append: threaded route -> adapter -> pipeline -> destination; scoped-only; default off', () => {
@@ -5413,7 +5422,12 @@ test('structural guard: generateDraft threads the instance ordinal through ctxKe
     .filter(({ line }) => /(?<![\w.])ctxKey\(/.test(line))
     .filter(({ line }) => !/^\s*(\/\/|\*)/.test(line))
     .filter(({ line }) => !/function ctxKey\(/.test(line));
-  assert.ok(calls.length >= 10, `expected the known ctxKey call sites, found ${calls.length}`);
+  // The floor stops the guard passing vacuously if the regex ever stops matching.
+  // It came down from 10 to 8 when the post-delete re-parse stopped resolving by
+  // ctxKey at all: a name-keyed map collapsed two labels under one asset that
+  // differ only by their bracket, so the mapping moved to a document-order
+  // ordinal, which cannot collide. Two call sites went with it.
+  assert.ok(calls.length >= 8, `expected the known ctxKey call sites, found ${calls.length}`);
   for (const { line, n } of calls) {
     for (const call of line.match(/(?<![\w.])ctxKey\([^)]*\)/g) || []) {
       const args = call.slice('ctxKey('.length, -1).split(',');
@@ -5434,7 +5448,24 @@ test('structural guard: generateDraft threads the instance ordinal through ctxKe
   // so nothing (generateDraft included) re-derives an ordinal for itself.
   assert.strictEqual((gd.match(/instanceCounter\(\)/g) || []).length, 2, 'no third counter anywhere in the file');
   assert.ok(/instance: asset\.instance/.test(gd), 'assetTargets reads the stamped ordinal');
-  assert.ok(/ctxKey\(asset\.assetType, f\.fieldName, asset\.instance\)/.test(gd), 're-parse keys off the stamped ordinal');
+
+  // THE RE-PARSE NO LONGER KEYS OFF A NAME AT ALL, which is strictly stronger
+  // than keying off (name + instance). The instance ordinal fixed the CROSS-asset
+  // collapse — the same heading twice — and left the within-asset one, because
+  // fieldName is the label with its bracket stripped: "Headline [50]" and
+  // "Headline [60]" under one asset are one key, last wins. Both fields' copy
+  // then landed on the second, leaving the first label empty.
+  //
+  // A document-order ordinal cannot collide, so the guard here is that the old
+  // name-keyed lookup has not come back — not that a particular new line exists.
+  assert.ok(
+    !/insertIndexByField\.set\(/.test(gd),
+    're-parse must not build a name-keyed position map'
+  );
+  assert.ok(/insertIndexByField = freshOrdinals\.insertIndexAt/.test(gd), 're-parse resolves by document-order ordinal');
+  // And the ordinal is only sound while the delete pass cannot remove a label,
+  // so the field count either side of it is checked rather than assumed.
+  assert.ok(/freshOrdinals\.count !== originalOrdinals\.count/.test(gd), 'the ordinal invariant is checked');
 });
 
 // --- Instance ordinals, step 2: the READ path -------------------------------
@@ -16592,7 +16623,11 @@ test('the draft reports a denominator, and reads its causes before the filter dr
   // filter and every cause is gone — which is exactly how an outage produced a
   // clean-looking run with nothing in it.
   const readAt = fn.indexOf('if (d && d.failure) failureKinds.push(d.failure)');
-  const filterAt = fn.indexOf('.filter((r) => r.insertIndex != null && r.copy)');
+  // The filter grew a body when the name-keyed position fallback was removed —
+  // an unplaceable draft is now dropped WITH A WARNING rather than silently — so
+  // this anchors on its opening rather than on the old one-liner. The ordering
+  // property it bounds is unchanged and is the reason the test exists.
+  const filterAt = fn.indexOf('.filter((r) => {');
   assert.ok(readAt > 0 && filterAt > 0, 'both the read and the filter are present');
   assert.ok(readAt < filterAt, 'causes are read before the filter removes the blanks');
 

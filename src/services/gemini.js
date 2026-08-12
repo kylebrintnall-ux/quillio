@@ -2158,7 +2158,22 @@ async function generateAssetDrafts({
       );
     }
 
-    const entry = { fieldName: f.fieldName, copy };
+    // THE CALLER'S OWN IDENTITY FOR THIS FIELD, ECHOED BACK UNREAD.
+    //
+    // `fieldName` does NOT identify a field. googleDocs.js derives it by
+    // stripping the bracket off a label, so "Headline [50]" and "Headline [60]"
+    // under one asset both arrive here as "Headline" — and this loop pushes one
+    // entry per field regardless, so two entries come back with the same name.
+    // The caller used to key them back to a document position BY NAME, which
+    // collapsed them (last wins) and gave both the same insertIndex/deleteEnd.
+    // Phase 1 then issued that delete range twice in one batch, and the second
+    // one cut through whatever had moved into those indices.
+    //
+    // insertIndex is the label paragraph's endIndex, so it is distinct for every
+    // field in a document and needs no composition to stay unique. This function
+    // treats both values as OPAQUE: it never reads them, it only hands them back
+    // so the caller can resolve a draft to the field it was drafted for.
+    const entry = { fieldName: f.fieldName, copy, insertIndex: f.insertIndex, deleteEnd: f.deleteEnd };
     if (unenforced) entry.unenforced = true;
     // WHY ONLY WHEN THERE IS NO COPY, AND ONLY WHEN SOMETHING ACTUALLY FAILED.
     // A field the batch simply omitted and the rescue returned empty for is a

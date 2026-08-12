@@ -348,7 +348,20 @@
       display: flex; align-items: center; gap: 6px; flex: none;
       background: none; border: none; padding: 0; cursor: pointer; text-decoration: none;
     }
-    .nav-quill-img { width: 28px; height: 28px; image-rendering: pixelated; object-fit: contain; }
+    /* AUTO, NOT PIXELATED — AND THIS IS THE ONLY IMAGE IN THE APP THAT CHANGES.
+       Audited every asset carrying image-rendering:pixelated. All six workflow
+       GIFs are genuine pixel art and KEEP it: five are authored on an integer
+       upscale grid (copy-done/doc-done 20x21 at x6, folder 20x24 at x5, review
+       22x22 at x5, scroll 20x18 at x6) and magic_v27 is authored 1:1 at 128px —
+       all six have under 25 colours across every frame and hard binary alpha.
+       Nearest-neighbour is exactly right for those and they are untouched.
+       This asset is the opposite: 6,014 colours and GRADED alpha, so it is an
+       anti-aliased raster with no pixel grid to preserve. At 2x the browser was
+       taking every third pixel of a 168px source and throwing away eight ninths
+       of it. Measured in Chromium against a correct resample of the same source:
+       auto is closer at both densities (2x 39.36 vs 44.43 RMS, 3x 43.38 vs
+       47.18) and keeps more of the smoothing the file actually has. */
+    .nav-quill-img { width: 28px; height: 28px; image-rendering: auto; object-fit: contain; }
     .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
     .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
     .nav-link {

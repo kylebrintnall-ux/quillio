@@ -242,7 +242,11 @@
        and right, so it wants to sit tighter than a rectangular mark. See the
        fuller note on the same rule in app.html. */
     .nav-logo { display: flex; align-items: center; gap: 6px; flex: none; background: none; border: none; padding: 0; cursor: pointer; }
-    .nav-quill-img { width: 28px; height: 28px; image-rendering: pixelated; object-fit: contain; }
+    /* auto, not pixelated: this asset is an anti-aliased raster (6,014 colours,
+       graded alpha), not pixel art, so nearest-neighbour was discarding smoothing
+       the file actually has. Every workflow GIF IS pixel art and keeps pixelated.
+       See the fuller note on the same rule in app.html. */
+    .nav-quill-img { width: 28px; height: 28px; image-rendering: auto; object-fit: contain; }
     .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
     .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
     .nav-link {

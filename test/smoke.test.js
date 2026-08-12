@@ -10036,7 +10036,40 @@ test('the mapping block is filtered to targets the tenant actually has', async (
     if (h.always || h.anyMatching) continue;
     assert.ok(ALLOWED_ASSETS.includes(h.target), `${h.target} is a real asset name`);
     assert.ok(h.line.includes(h.target), `hint line for ${h.target} names its own target`);
+    // AND ONLY ITS OWN. The filter drops a line by its `target`, so a line that
+    // also names a SECOND asset survives into the prompt of a tenant who has the
+    // first and not the second — the stale-mapping failure this table's header
+    // warns about, arriving through a line that passes the check above.
+    //
+    // It became reachable when the landing-page routes were split into a default
+    // and a specialisation, where the tempting phrasing is "…, not the other
+    // one". Each line has to stand alone instead, and their ORDER is what relates
+    // them.
+    for (const other of ALLOWED_ASSETS) {
+      if (other === h.target) continue;
+      assert.ok(!h.line.includes(other), `hint for ${h.target} must not also name ${other}`);
+    }
   }
+
+  // TRIPWIRE, NOT COVERAGE — and labelled as one because it cannot tell a good
+  // route from a bad one. It pins the DIRECTION of the landing-page pair, which
+  // shipped inverted: a bare "landing page" routed to the EVENT asset while
+  // Campaign Landing Page needed the literal phrase "campaign page", so a product
+  // launch got Stat 1-3 and four benefit blocks with nothing flagged. Whether the
+  // corrected routing actually changes what the model returns is a question for
+  // scripts/checkParsePlans.js and a live key; this only stops the inversion
+  // being tidied back in.
+  const routes = assetPhraseHintLines(ALLOWED_ASSETS);
+  const campaign = routes.find((l) => l.includes('→ Campaign Landing Page'));
+  const event = routes.find((l) => l.includes('→ Event Landing Page'));
+  assert.ok(campaign && event, 'both landing-page routes are present');
+  assert.match(campaign, /"landing page"/, 'the BARE phrase belongs to the campaign asset');
+  assert.ok(!/"landing page"/.test(event), 'and must not also be claimed by the event asset');
+  assert.match(event, /date|venue|registration/i, 'the event asset requires an event signal');
+  assert.ok(
+    routes.indexOf(campaign) < routes.indexOf(event),
+    'the default is stated before the specialisation'
+  );
 
   // Full list → every mapping present.
   const full = assetPhraseHintLines(ALLOWED_ASSETS).join('\n');

@@ -250,6 +250,21 @@ async function runWebBriefGenerate(parsed, plan, tenantContext = {}) {
     // Keeps `assets` (names only) above for backward compatibility.
     assetBlocks: assetSpecs.map((a) => ({
       name: a.assetType,
+      // THE INSTANCE ORDINAL, WHICH THIS MAPPING USED TO DROP. app.html's
+      // assetDisplayName renders `name + (Number(asset.instance) || 0) + 1`, so
+      // an absent ordinal made every instance read as 1 — two LinkedIn Single
+      // Image Ads both titled "LinkedIn Single Image Ad 1" — while the count
+      // beside them was right, because instanceTotals counts by NAME and never
+      // needed this field. The doc was always correct: pipeline.generateDoc
+      // stamps the ordinal onto assetSpecs and writes it into the HEADING_3.
+      //
+      // NOT ONLY COSMETIC, which is why it is worth the two lines rather than a
+      // client-side workaround. app.html reads `asset.instance` into `aInst` and
+      // sends it as the scoped draft/riff target; instanceTag(undefined) is ''
+      // — identical to instance 0 — so selecting a field on the SECOND block
+      // scoped the redraft to the FIRST one's field, silently.
+      instance: a.instance,
+      instanceLabel: a.instanceLabel != null ? a.instanceLabel : null,
       asset_direction: a.asset_direction || null,
       fields: (a.fields || []).map((f) => ({
         fieldName: f.fieldName,

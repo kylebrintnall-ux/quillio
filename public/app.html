@@ -571,26 +571,47 @@
       border: none; border-radius: 0; box-shadow: none;
       margin: 0; padding-left: 0; padding-right: 0;
     }
-    /* A hairline between siblings, and one under the hint so the heading reads as
-       a heading rather than as the list's first line. Never above the first row
-       on its own — that would draw a rule with nothing above it. */
+    /* A hairline between document rows, and one under the hint so the heading
+       reads as a heading rather than as the list's first line. Asset cards are
+       NOT in this group — their header band below carries its own rules. */
     .glass-panel.list .doc-row + .doc-row,
-    .glass-panel.list .asset-card + .asset-card,
-    .glass-panel.list .field-select-hint + div > :first-child {
+    .glass-panel.list .field-select-hint + div > .doc-row:first-child {
       border-top: 1px solid rgba(255,255,255,0.6);
     }
     .glass-panel.list .field-select-hint { margin-bottom: 12px; }
     .glass-panel.list .doc-row { padding-top: 12px; padding-bottom: 12px; }
-    .glass-panel.list .asset-card { padding-top: 14px; padding-bottom: 8px; }
-    /* AN ASSET BOUNDARY MUST OUTRANK A FIELD BOUNDARY. Flattened, an asset card
-       loses the border that used to say where it started, and .asset-field draws
-       its own hairline between every field — so at equal weight the line between
-       two ASSETS read the same as the line between two FIELDS and the grouping
-       went soft. The between-asset rule is brighter and carries real space; the
-       field rules inside a card stay as they are. */
-    .glass-panel.list .asset-card + .asset-card {
-      border-top-color: rgba(255,255,255,0.9); padding-top: 22px; margin-top: 8px;
+    .glass-panel.list .asset-card { padding-top: 0; padding-bottom: 8px; }
+
+    /* THE ASSET NAME IS A HEADER BAND, NOT A ROW.
+       Measured against a real nine-asset project — one landing page, three
+       nurture emails, two LinkedIn ads, three Meta ads, 73 fields, 4,448px of
+       scroll. Flattened into the panel, an asset name was a bold line between two
+       hairlines and the field name under it was ALSO a bold line between two
+       hairlines: same family, same colour, 13px against 13px. With the same name
+       repeating three times, "Demand Gen Nurture Email 3" read as another field.
+       Zoomed out the column looks chunked; at reading size it does not.
+       So the name gets its own fill and rules and steps up to 15px tracked. It is
+       a band WITHIN the one surface, not a card on top of it — going back to a
+       card per asset is the nested-glass problem this merge removed.
+       STICKY WAS TRIED FIRST AND DOES NOT WORK HERE. DO NOT RE-ATTEMPT IT.
+       The intent was to pin the current asset's name while its own fields scroll,
+       which would also answer "which of the three am I in" mid-list. It fails
+       silently — the header scrolls away with its card, measured at headerTop
+       -262 against cardTop -277, never pinned. The cause is not backdrop-filter
+       and not the card's reveal transform; both were tested and ruled out. It is
+       `overflow: hidden auto` on html and body: the overflow-x:hidden guard that
+       stops the page scrolling sideways makes BODY the scroll container, and a
+       sticky descendant cannot pin against it. Making sticky work means removing
+       that guard and re-testing horizontal overflow on every screen, which costs
+       more than the problem it solves. */
+    .glass-panel.list .asset-card-header {
+      margin: 0 -18px 4px; padding: 10px 18px 9px;
+      background: rgba(214,236,246,0.97);
+      border-top: 1px solid rgba(255,255,255,0.95);
+      border-bottom: 1px solid rgba(255,255,255,0.85);
     }
+    .glass-panel.list .asset-card-name { font-size: 15px; letter-spacing: 0.04em; }
+    .glass-panel.list .asset-card + .asset-card { margin-top: 14px; }
     .glass-panel.run > *:last-child { margin-bottom: 0; }
     .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
     /* The header is its own run: title + state gif. Padding is tighter on the

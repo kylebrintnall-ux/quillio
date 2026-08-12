@@ -776,6 +776,105 @@ The Dynamic Email block is ordered: Subject Line 1, Subject Line 2,
 Pre-header, Headline (Offer 1) [50], Offer Body 1, CTA Text (Offer 1),
 Headline (Offer 2) [50], Offer Body 2, CTA Text (Offer 2).
 
+## The phrase table decides which asset a brief reaches — and it was inverted
+
+`services/gemini.js` `ASSET_PHRASE_HINTS` maps the words a brief uses to the
+asset names the model may return. It is hand-written intent, filtered per tenant
+by `target`, and it is the closest thing the parse has to a routing table.
+
+**A bare "landing page" pointed at Event Landing Page**, while Campaign Landing
+Page was reachable only by the literal phrase "campaign page". The generic phrase
+aimed at the specialised asset and the general asset needed a password. A product
+launch asking for "a landing page" therefore came back with the EVENT asset — 24
+fields including `Stat 1`–`Stat 3` and four benefit blocks — and **nothing
+flagged it**, because a mapped asset is not an unmatched one. `unmatchedAssets`
+only ever holds what failed to map; a wrong match is invisible to it, and no gate
+downstream compares the asset returned against the words that produced it
+(`tenantAssetsToSpecs` and `sanitizeAssetPlan` both check the name against the
+LIBRARY, never against the BRIEF).
+
+Now inverted: the bare phrase takes Campaign Landing Page, and Event Landing Page
+requires an event signal — a date, a venue, a registration ask — which an event
+brief always carries and a launch brief never does.
+
+### The measured before/after — n=1 per cell, and that bounds the claim
+
+Run in the Railway console against the real model, one brief per cell:
+
+| Brief | Before the inversion | After |
+| --- | --- | --- |
+| `a landing page and a nurture email` | **Event Landing Page** | **Campaign Landing Page** |
+| the event guard rail (a named event, a date, a venue) | Event Landing Page + Event Reminder Email | **unchanged — still both** |
+
+So the fix works and the guard rail holds: making the bare phrase route to the
+campaign asset did not cost the event asset its own briefs, which was the whole
+risk of the change.
+
+**What this supports and what it does not.** It supports *the route was the
+cause* — that is what the pairing is for, and the guard rail is what rules out
+"the model simply stopped choosing the event asset". It does **not** price how
+often the model substitutes in general. One brief per cell is one observation;
+this file's own record has an aggregate at n=5 reverse itself on a second run
+(see "THE READER MISREADS A COUNT TOO"). Do not quote a substitution rate off
+this table, because there isn't one in it.
+
+`scripts/checkParsePlans.js` carries the eight matching cases these came from,
+each with **pre-registered** RIGHT / WRONG / DEFENSIBLE verdicts, plus the
+control (the same brief with the one literal phrase that always routed correctly)
+and the guard rail. `--selftest` drives the whole harness on a stub — no key, no
+network — and asserts a thrown parse is recorded as a DEAD CELL rather than an
+empty result.
+
+### OPEN QUESTION: "a couple of paid posts" invented two LinkedIn ads
+
+Surfaced by the `bare-organic` case, which was watching something else entirely.
+The brief said *"Some organic social to support the launch, plus a couple of paid
+posts."* The parse returned **2 × LinkedIn Single Image Ad**. No probe expected
+it and the classifier flagged it `UNEXPECTED`, which is exactly what that verdict
+exists for — a list that absorbs its own surprises has stopped being a
+pre-registration.
+
+**It is the landing-page shape again, in a route that has no hint line.** "Paid
+posts" names no platform and no format, and five paid social assets answer to it
+(LinkedIn single image and carousel, Meta single image and carousel, Twitter/X).
+The model picked one silently and picked a count of two out of "a couple". So the
+inversion fix addressed one instance of the class; the class is a property of
+*any* generic phrase over a set of siblings, and a phrase with no route at all is
+not safer — it is the same silent pick with nothing written down about it.
+
+Recorded as an OPEN QUESTION rather than a fix, deliberately. The obvious move —
+add a "paid posts" hint line — is the same move that produced the landing-page
+bug: a generic phrase wired to one specialised asset. Whatever is done here needs
+the phrase-retention work behind it (the brief's own words are not kept beside
+the asset the model chose, so there is nothing to show a writer), and it needs
+more than one observation. `bare-organic` is in the harness and will keep
+reporting it.
+
+### The three DEFENSIBLE outcomes are ONE LIBRARY GAP, not a routing problem
+
+Worth separating, because the run's verdict column makes them look like three
+route decisions to argue about and they are not:
+
+| Probe | Landed on |
+| --- | --- |
+| `ambiguous-landing` → "an announcement email" | Demand Gen Nurture Email |
+| `literal-campaign-page` → "an announcement email" | Demand Gen Nurture Email |
+| `bare-email` → "an email" | Demand Gen Nurture Email |
+
+All three trace to the same fact: **there is no product-announcement email asset
+in the library.** Demand Gen Nurture Email is a two-offer promotional shape —
+`Headline (Offer 1)` / `Offer Body 1` / `CTA Text (Offer 1)` and the same again
+for a second, deliberately lighter offer — and a launch announcement has one
+message and no second offer. The model is not choosing badly; it is choosing the
+nearest thing that exists.
+
+So no route change fixes these. Rewriting the `"email"` hint moves which
+specialised email shape a bare ask lands on, and every one of the five is
+specialised — unlike the landing pages, there is no more-general sibling being
+shadowed, which is why that route was left alone. This is a question about what
+the library contains, and it belongs with the coverage gaps rather than with the
+phrase table.
+
 ## Craft and brand voice (`craft.md` + `voice.md`)
 
 Two repo-root markdown files, both loaded once at startup by `gemini.js` and

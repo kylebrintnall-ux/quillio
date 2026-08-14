@@ -18,6 +18,16 @@ const {
   linkSlackIdentityToUser,
 } = require('../db/users');
 
+// The two server-rendered pages below (the Slack popup result and the install
+// result) are the only HTML this router emits. They carry the product's body
+// face — Zen Kaku Gothic New, same as public/*.html — rather than a system
+// stack, so an install doesn't hand the user a page in a different typeface.
+const FONT_LINK =
+  '<link rel="preconnect" href="https://fonts.googleapis.com">' +
+  '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
+  '<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet">';
+const BODY_FONT = "font-family: 'Zen Kaku Gothic New', sans-serif;";
+
 // Post-OAuth landing destinations we accept via ?redirect=… (whitelist).
 const ALLOWED_REDIRECTS = ['onboarding', 'settings'];
 function pickRedirect(value) {
@@ -112,8 +122,8 @@ function slackPopupResult(status) {
   const safe = Object.prototype.hasOwnProperty.call(SLACK_POPUP_LINES, status) ? status : 'failed';
   const line = SLACK_POPUP_LINES[safe];
   return (
-    '<!doctype html><html><head><meta charset="utf-8"><title>Quillio</title></head>' +
-    '<body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem;">' +
+    '<!doctype html><html><head><meta charset="utf-8"><title>Quillio</title>' + FONT_LINK + '</head>' +
+    '<body style="' + BODY_FONT + ' max-width: 32rem; margin: 4rem auto; padding: 0 1rem;">' +
     '<p>' + line + '</p>' +
     '<script>(function(){' +
     'try{if(window.opener){window.opener.postMessage({type:"slack",status:"' + safe + '"},location.origin);}}catch(e){}' +
@@ -541,8 +551,8 @@ router.get('/welcome', (req, res) => {
     .status(200)
     .type('html')
     .send(
-      `<!doctype html><html><head><meta charset="utf-8"><title>Quillio</title></head>` +
-        `<body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem;">${body}</body></html>`
+      `<!doctype html><html><head><meta charset="utf-8"><title>Quillio</title>${FONT_LINK}</head>` +
+        `<body style="${BODY_FONT} max-width: 40rem; margin: 4rem auto; padding: 0 1rem;">${body}</body></html>`
     );
 });
 

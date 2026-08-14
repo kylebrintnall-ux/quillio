@@ -6,13 +6,12 @@
   <title>Quillio — Get set up</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Encode+Sans+Semi+Condensed:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet" />
   <style>
     /* =====================================================================
        v8 DESIGN SYSTEM — Onboarding. Matches app.html / settings.html:
        sky-gradient bg + pixel clouds, dark-glass nav (pixel quill + StarCrush),
-       glass cards/inputs, gold buttons, IBM Plex body, StarCrush headings.
+       glass cards/inputs, gold buttons, Zen Kaku Gothic New body, StarCrush headings.
        ===================================================================== */
     @font-face {
       font-family: 'StarCrush';
@@ -26,7 +25,7 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; height: auto; min-height: 100%; overflow-x: hidden; }
     body {
-      font-family: 'Frank Ruhl Libre', serif;
+      font-family: 'Zen Kaku Gothic New', sans-serif;
       background: var(--ink); color: var(--ink);
       line-height: 1.5; -webkit-text-size-adjust: 100%; -webkit-font-smoothing: antialiased;
     }
@@ -74,16 +73,16 @@
     /* Secondary to the create-account button above it, but not hidden — this is
        the only route off step 1 for someone who already has an account. */
     .signin-existing { margin-top: 14px; text-align: center; font-size: 14px; }
-    code { font-family: 'IBM Plex Mono', monospace; font-size: 0.92em; background: rgba(26,26,46,0.08); border-radius: 5px; padding: 1px 6px; }
+    code { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 0.92em; background: rgba(26,26,46,0.08); border-radius: 5px; padding: 1px 6px; }
 
     /* Progress dots — sky for completed steps */
     .stepdots { display: flex; gap: 6px; margin-bottom: 22px; }
     .stepdots span { height: 5px; flex: 1; background: rgba(255,255,255,0.4); border-radius: 3px; }
     .stepdots span.on { background: var(--sky-btm); }
 
-    label { display: block; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 12px; letter-spacing: 0.02em; color: rgba(26,26,46,0.75); margin: 16px 0 6px; }
+    label { display: block; font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.02em; color: rgba(26,26,46,0.75); margin: 16px 0 6px; }
     input[type="text"], textarea {
-      width: 100%; font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 15px; resize: vertical;
+      width: 100%; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; resize: vertical;
       padding: 12px 14px; color: var(--ink); -webkit-appearance: none;
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
     }
@@ -115,13 +114,13 @@
     .tool-left { flex: 0 0 104px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
     .tool-logo { width: 44px; height: 44px; image-rendering: pixelated; object-fit: contain; }
     .tool-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .tool-badge { font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 10px; letter-spacing: 0.06em;
+    .tool-badge { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; letter-spacing: 0.06em;
       text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
     .tool-badge.now { background: var(--sky-btm); color: #06302f; }
     .tool-badge.soon { background: rgba(26,26,46,0.1); color: rgba(26,26,46,0.6); }
     .tool-bullets { flex: 1; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
     .tool-bullets li { position: relative; padding-left: 16px;
-      font-family: 'Encode Sans Semi Condensed', sans-serif; font-size: 13px; line-height: 1.45; color: var(--ink); }
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.45; color: var(--ink); }
     .tool-bullets li::before { content: ''; position: absolute; left: 0; top: 7px;
       width: 5px; height: 5px; border-radius: 1px; background: var(--sky-btm); }   /* subtle pixel marker */
     .fineprint { color: rgba(26,26,46,0.6); font-size: 13px; margin-top: 10px; }
@@ -132,7 +131,7 @@
     }
 
     .gbtn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: var(--white); color: var(--ink); border: none; box-shadow: 0 4px 16px rgba(26,26,46,0.12); }
-    .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--sky-btm); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; font-family: 'Encode Sans Semi Condensed', sans-serif; }
+    .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--sky-btm); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; font-family: 'Zen Kaku Gothic New', sans-serif; }
 
     .ok { color: #0A5C32; font-weight: 700; font-size: 20px; }
     .pill { display: inline-block; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 13px; font-weight: 600; color: rgba(26,26,46,0.6); }
@@ -148,7 +147,7 @@
     .toggle input:checked + .track { background: var(--sky-btm); }
     .toggle input:checked + .track::before { transform: translateX(18px); }
 
-    .progress { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: rgba(26,26,46,0.6); margin-bottom: 6px; }
+    .progress { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: rgba(26,26,46,0.6); margin-bottom: 6px; }
     .sample { background: rgba(255,255,255,0.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px; padding: 16px; font-size: 15px; line-height: 1.6; color: var(--ink); }
 
     .error { margin-top: 14px; padding: 10px 12px; border: 1.5px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 12px; font-size: 14px; }
@@ -158,14 +157,14 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .note .dot, .spinner { animation: none; } }
 
-    .eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.55); margin-bottom: 6px; }
+    .eyebrow { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.55); margin-bottom: 6px; }
     .break { overflow-wrap: anywhere; }
     a { color: #0d6b6b; }
 
     /* voice.md generating animation */
     #voice-generating { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 0; color: rgba(255,255,255,0.85); }
     .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.25); border-top-color: var(--sky-btm); animation: spin .8s linear infinite; }
-    .genmsg { font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
+    .genmsg { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; }
 
     /* rendered voice.md preview — dark terminal block (matches settings) */
     .preview {
@@ -182,7 +181,7 @@
     .md strong { color: rgba(255,255,255,0.95); }
     /* The inline voice editor textarea uses the dark terminal treatment too. */
     #voice-edit {
-      font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.7; min-height: 320px; white-space: pre;
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.7; min-height: 320px; white-space: pre;
       background: rgba(26,26,46,0.9); color: rgba(255,255,255,0.85);
       border: 1.5px solid rgba(77,217,217,0.2); border-radius: 14px;
     }

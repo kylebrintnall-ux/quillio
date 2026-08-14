@@ -462,10 +462,10 @@ test('public/onboarding.html has all six steps and talks to the onboarding API',
   }
   assert.ok(/\/oauth\/google\?redirect=onboarding/.test(html), 'Step 1 signs in with Google');
   assert.ok(/\/api\/onboarding\/voice/.test(html), 'voice step posts to the API');
-  // v8 design system: StarCrush via @font-face + IBM Plex from Google Fonts
-  // (matches app.html / settings.html). Scripts must still all be inline.
+  // v8 design system: StarCrush via @font-face + Zen Kaku Gothic New from Google
+  // Fonts (matches app.html / settings.html). Scripts must still all be inline.
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
-  assert.ok(/Encode\+Sans\+Semi\+Condensed/.test(html), 'loads Encode Sans Semi Condensed');
+  assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
   assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
 });
 
@@ -511,7 +511,7 @@ test('public/settings.html has the three sections, terminal styling, and setting
   for (const id of ['panel-voice', 'panel-workspace', 'panel-account']) {
     assert.ok(html.includes(id), `settings.html should contain #${id}`);
   }
-  assert.ok(/IBM\+Plex\+Mono/.test(html), 'loads IBM Plex Mono');
+  assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
   assert.ok(/#1C1F3B/i.test(html), 'terminal navy background');
   assert.ok(/\/api\/settings\/voice/.test(html), 'talks to the voice API');
   assert.ok(/\/api\/auth\/signout/.test(html), 'wires sign out');
@@ -2599,11 +2599,11 @@ test('public/app.html has the core screens, API wiring, and the v8 design system
   // No JS frameworks / CDNs — all client logic stays inline.
   assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
   // v8 design system (replaces the old "system fonts, no images" rule): the
-  // StarCrush display font is loaded via @font-face, IBM Plex is the body font,
-  // and the pixel-art assets are referenced from the scoped /assets + /fonts
-  // static routes.
+  // StarCrush display font is loaded via @font-face, Zen Kaku Gothic New is the
+  // body font, and the pixel-art assets are referenced from the scoped
+  // /assets + /fonts static routes.
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
-  assert.ok(/Encode\+Sans\+Semi\+Condensed/.test(html), 'loads Encode Sans Semi Condensed');
+  assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
   assert.ok(/\/assets\/images\/quillio-quill\.png/.test(html), 'uses the pixel-quill logo');
   assert.ok(/\/assets\/gifs\//.test(html), 'uses the progress/header GIFs');
 });
@@ -11071,7 +11071,7 @@ test('the review modal reads its heading in the display face and cannot be aband
   // while the Close button below it was StarCrush, i.e. the rule exactly inverted.
   assert.match(html, /<div class="review-status">Reviewing your copy…<\/div>/);
   assert.match(html, /\.review-status \{ font-family: 'StarCrush', serif/);
-  assert.match(html, /\.review-note \{ font-family: 'Frank Ruhl Libre'/);
+  assert.match(html, /\.review-note \{ font-family: 'Zen Kaku Gothic New'/);
 
   // Close is gone — the run takes seconds and there is nothing to gain by
   // abandoning it. Its handler and its element go together; no dead listener.

@@ -194,6 +194,9 @@ const LANDING_HTML = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Quillio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet">
   <style>
     @font-face {
       font-family: 'Star Crush';
@@ -210,7 +213,7 @@ const LANDING_HTML = `<!doctype html>
     body {
       background: var(--navy);
       color: var(--cream);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-family: 'Zen Kaku Gothic New', sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;

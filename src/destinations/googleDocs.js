@@ -27,6 +27,12 @@ const {
   geminiFailureSentence,
   DOORWAYS,
   INTENSITIES,
+  // The draft path's own ceiling ladder — reused as-is by
+  // enforceVariationCeiling below rather than reimplemented here.
+  overLimit,
+  trimCeiling,
+  trimToCeiling,
+  describeLength,
 } = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
 // Same asset-name folding the pipeline uses to match a name to a library row, so
@@ -1118,6 +1124,70 @@ function buildVariantBlock(variations, { distance, charMax, fieldType, startInde
   return lines.join(numbered && longField ? '\n\n' : '\n');
 }
 
+// Character-ceiling enforcement for the insert/append path (riff, Explore,
+// matrix) — runs on each variation's COPY, before buildVariantBlock adds its
+// "N. " / "(Doorway) " prefix.
+//
+// THE PREFIX IS NOT MEASURED, DELIBERATELY. utils/variants.js already answers
+// this for the review path: a numbered stack is explicitly UNRESOLVED — "the
+// writer has yet to pick one" — and a solo remaining option's doorway tag is
+// "strategy metadata, not copy," stripped by stripSoloLabel() before that
+// path's own length check. Nothing here ever ships "3. (Proof) " to a
+// platform; the writer deletes down to one option and drops the tag first. So
+// each option is checked against the FULL charMax, not charMax minus the
+// prefix — charging the prefix against the ceiling would ship copy shorter
+// than the platform allows, for a prefix that never spends any of that budget.
+//
+// THE LADDER ITSELF IS REUSED, NOT REIMPLEMENTED: overLimit/trimCeiling do the
+// measuring, generateFieldDraft (same function the draft path calls) performs
+// the corrective rewrite — its own internal ladder re-measures and re-trims on
+// the way back — and trimToCeiling is the outer unconditional backstop for the
+// one case that call can't self-heal: the rewrite request itself throwing
+// (timeout/rate-limit), which leaves `copy` as the original overflow. Same
+// belt-and-braces shape generateFieldVariations already uses at its own
+// fallback, for the same reason.
+//
+// Character fields only — trimCeiling returns null for a word field, so this
+// returns `variations` untouched.
+async function enforceVariationCeiling(variations, { charMax, fieldType, regen }) {
+  const ceiling = trimCeiling(charMax, fieldType);
+  if (!ceiling) return variations || [];
+
+  const out = [];
+  for (const v of variations || []) {
+    if (!v || !v.copy) {
+      out.push(v);
+      continue;
+    }
+    let copy = v.copy;
+    if (overLimit(copy, charMax, fieldType)) {
+      try {
+        copy = await generateFieldDraft({
+          ...regen,
+          direction: [
+            regen.direction,
+            `Your previous draft of this option was ${copy.length} characters — too long. Rewrite it as a ` +
+              `COMPLETE, self-contained thought that fits within ${ceiling} characters, preserving the meaning and tone.`,
+          ]
+            .filter(Boolean)
+            .join('. '),
+          currentCopy: copy,
+        });
+      } catch (err) {
+        console.warn(
+          `[googleDocs] variation corrective rewrite failed for ${regen.fieldName} ` +
+            `(${describeLength(copy, charMax, fieldType)}): ${err.message}`
+        );
+      }
+      // Unconditional — fires whether the rewrite above succeeded, came back
+      // still long, or threw and left `copy` as the original overflow.
+      if (copy && copy.length > ceiling) copy = trimToCeiling(copy, ceiling);
+    }
+    out.push(copy ? { ...v, copy } : v);
+  }
+  return out;
+}
+
 // Document-order ordinals for every parsed field — the Nth field in the
 // document, counted across assets in parse order.
 //
@@ -1400,6 +1470,30 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
               variations = c ? [{ doorway: null, copy: c }] : [];
             }
 
+            // Shared by both branches below — append and destructive-replace both
+            // read from this same `variations` array, so one enforcement pass
+            // before either of them covers both.
+            variations = await enforceVariationCeiling(variations, {
+              charMax: f.charMax,
+              fieldType: f.fieldType,
+              regen: {
+                assetType: a.assetType,
+                brief,
+                enrichedFromReferences,
+                referenceStats,
+                fieldName: f.fieldName,
+                charMax: f.charMax,
+                charMin: f.charMin,
+                fieldType: f.fieldType,
+                assetDirection: a.assetDirection,
+                summary,
+                writerPrompt,
+                direction,
+                voiceGuide,
+                siblings,
+              },
+            });
+
             if (appendMode) {
               // ADDITIVE write: number the batch from 1, ALWAYS label each option
               // with its (Doorway), and insert it BELOW the field's current copy
@@ -1502,6 +1596,12 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
           copy: d.copy,
           // Append batches carry their Riff header number (undefined otherwise).
           riffN: d.riffN,
+          // Set only by generateAssetDrafts (the whole-doc path) on a word field
+          // over its own limit — never on a character field, never on the
+          // scoped/riff path (enforceVariationCeiling's producers never set it).
+          // Carried through untouched; both are undefined on every other draft.
+          unenforced: d.unenforced,
+          unenforcedDetail: d.unenforcedDetail,
         }))
         // A draft with no position is DROPPED and named, rather than falling back
         // to a lookup that can put it on top of another field. Nothing produces
@@ -1654,7 +1754,9 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
           );
         }
       }
-      return idx != null ? { insertIndex: idx, copy: d.copy, riffN: d.riffN } : null;
+      return idx != null
+        ? { insertIndex: idx, copy: d.copy, riffN: d.riffN, unenforced: d.unenforced, unenforcedDetail: d.unenforcedDetail }
+        : null;
     })
     .filter(Boolean)
     // Bottom-to-top so each insert doesn't shift the indices of the ones above.
@@ -1671,7 +1773,7 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
   // style lands only on the header; the block range is forced to NORMAL_TEXT so
   // it can't inherit the heading style.
   const requests = [];
-  for (const { insertIndex, copy, riffN } of inserts) {
+  for (const { insertIndex, copy, riffN, unenforced, unenforcedDetail } of inserts) {
     if (riffN != null) {
       const header = `Riff ${riffN}`;
       requests.push({ insertText: { location: { index: insertIndex }, text: `${header}\n${copy}\n` } });
@@ -1720,6 +1822,53 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
         fields: 'bold,italic',
       },
     });
+
+    // A word field over its own limit is written AS GENERATED — trimCeiling is
+    // null for a word field, by design (gemini.js), because truncating prose
+    // mid-thought is worse than the overflow and the writer has to make that
+    // edit themselves. Nothing else marks this, so it is marked here.
+    //
+    // HEADING_5 is unclaimed anywhere else in this file (HEADING_2/3/4/6 and
+    // NORMAL_TEXT are all spoken for — see parseDoc/getDocContent) and used
+    // purely STRUCTURALLY: it is never bold, so it can never be read as a field
+    // label or reach the "[min-max]" bracket regex (that branch is gated on
+    // `bold` before the regex ever runs). parseDoc needs no change at all —
+    // it never accumulates copy TEXT, only positions, so this paragraph falls
+    // straight into the existing generic "any other paragraph = copy position,
+    // advance deleteEnd" branch and is swept into the field's own delete range
+    // on the next Regenerate, exactly like a "Riff N" header already is.
+    // getDocContent DOES accumulate copy text, so it gets one new exclusion
+    // (below, next to its existing HEADING_6 exclusion) so this sentence is
+    // never read as part of the field's copy.
+    //
+    // Visual styling is fully overridden via updateTextStyle, the same
+    // technique the Riff header uses — the named style is structure, not
+    // appearance.
+    if (unenforced) {
+      const marker = `This field is over its word count (${unenforcedDetail}). Edit the length before shipping.`;
+      const markerStart = insertIndex + copy.length + 1; // right after copy's own trailing \n
+      const markerEnd = markerStart + marker.length; // excludes the marker's own trailing \n
+      requests.push({ insertText: { location: { index: markerStart }, text: marker + '\n' } });
+      requests.push({
+        updateParagraphStyle: {
+          range: { startIndex: markerStart, endIndex: markerEnd },
+          paragraphStyle: { namedStyleType: 'HEADING_5' },
+          fields: 'namedStyleType',
+        },
+      });
+      requests.push({
+        updateTextStyle: {
+          range: { startIndex: markerStart, endIndex: markerEnd },
+          textStyle: {
+            bold: false,
+            italic: true,
+            fontSize: { magnitude: 9, unit: 'PT' },
+            foregroundColor: { color: { rgbColor: { red: 0.7, green: 0.4, blue: 0.05 } } },
+          },
+          fields: 'bold,italic,fontSize,foregroundColor',
+        },
+      });
+    }
   }
 
   if (requests.length > 0) {
@@ -1737,6 +1886,11 @@ async function generateDraft(id, direction, clients, voiceGuide, lookupDirection
     // original three is unaffected.
     fieldsAttempted,
     failureReason,
+    // How many of the WRITTEN fields are word fields over their own limit —
+    // written as generated, marked in the doc above, never trimmed. Zero on
+    // every run with no word-field overflow, so an unaffected caller sees the
+    // same shape as before plus one always-present key.
+    unenforcedCount: inserts.filter((i) => i.unenforced).length,
     url: `https://docs.google.com/document/d/${id}/edit`,
   };
 }
@@ -1830,6 +1984,14 @@ async function getDocContent(id, clients) {
         const beforeLine = field.copy ? field.copy.split('\n').length : 0;
         field.riffMarks.push({ beforeLine, riffN: rm ? Number(rm[1]) : field.riffMarks.length + 1 });
       }
+      continue;
+    }
+
+    // The word-limit marker (HEADING_5, written after an over-limit word
+    // field's copy — see generateDraft's write step) is a system note, not
+    // copy. Excluded the same way the Riff header just above is, so review and
+    // sibling-context prompts never see this sentence as part of the field.
+    if (named === 'HEADING_5') {
       continue;
     }
 
@@ -2215,6 +2377,9 @@ module.exports = {
   NOT_A_HARD_LIMIT,
   appendBody,
   buildVariantBlock,
+  // Insert/append-path ceiling enforcement. Unit tests only, same as
+  // buildVariantBlock above — not part of the destination interface.
+  enforceVariationCeiling,
   // The composite (asset, field, instance) lookup key — exposed so its DEFAULT
   // serialization can be pinned byte-for-byte (it is not persisted like
   // copyReview's fieldKey, but a drift would silently mis-place drafted copy).

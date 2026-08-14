@@ -2223,7 +2223,13 @@ async function generateAssetDrafts({
     // treats both values as OPAQUE: it never reads them, it only hands them back
     // so the caller can resolve a draft to the field it was drafted for.
     const entry = { fieldName: f.fieldName, copy, insertIndex: f.insertIndex, deleteEnd: f.deleteEnd };
-    if (unenforced) entry.unenforced = true;
+    if (unenforced) {
+      entry.unenforced = true;
+      // Same wording as the log line just above — one call, one vocabulary, so
+      // the surfaced marker and the server log never describe the overage
+      // differently. googleDocs.js carries this string through untouched.
+      entry.unenforcedDetail = describeLength(copy, f.charMax, f.fieldType);
+    }
     // WHY ONLY WHEN THERE IS NO COPY, AND ONLY WHEN SOMETHING ACTUALLY FAILED.
     // A field the batch simply omitted and the rescue returned empty for is a
     // model result, not a transport failure, and labelling it 'unknown' would put
@@ -3402,6 +3408,12 @@ module.exports = {
   FUNNEL_STAGE_FOR_REVIEW,
   siblingContextBlock,
   overLimit,
+  // The measure/trim primitives generateFieldDraft's own ladder is built from.
+  // Exported so the insert/append path in googleDocs.js can run the identical
+  // ladder on an already-generated variation instead of reimplementing it.
+  trimCeiling,
+  trimToCeiling,
+  describeLength,
   assignDoorways,
   buildVariationsPrompt,
   doorwayRankingForField,

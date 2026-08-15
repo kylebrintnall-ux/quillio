@@ -55,6 +55,13 @@ async function saveProject(tenantId, projectData = {}) {
     // paraphrase of the campaign and never the campaign.
     // scripts/migrateAddProjectBriefRaw.js.
     brief_raw = null,
+    // WHAT THE COPY DOC WAS BUILT WITH — { version, writtenAt, fields:[…] }, one
+    // entry per field rendered into the document, carrying the EFFECTIVE
+    // char_min/char_max that went into its bracket. Null means UNKNOWN (a
+    // template-only brief, a pre-migration row, or a manifest that failed to
+    // build) and must never be read as "contains no fields".
+    // scripts/migrateAddProjectFieldManifest.js.
+    field_manifest = null,
   } = projectData;
 
   console.log(
@@ -109,7 +116,17 @@ async function saveProject(tenantId, projectData = {}) {
     // migrations, so a database can have one and not the other and the power set
     // has to be able to drop exactly one of them. This is the "a fourth group is
     // one array entry" the comment above promised.
-    const GROUPS = [CREATED_BY, TEMPLATE, DRAFT_LINK, BRIEF_RAW];
+    //
+    // And this is the fifth, on the same terms — a database can have brief_raw
+    // and not field_manifest, so it drops independently. Stringified because the
+    // pg driver sends a bare JS object as a Postgres composite, not as jsonb;
+    // null stays null so the column reads UNKNOWN rather than the JSON text
+    // "null".
+    const FIELD_MANIFEST = {
+      extra: ['field_manifest'],
+      values: [field_manifest == null ? null : JSON.stringify(field_manifest)],
+    };
+    const GROUPS = [CREATED_BY, TEMPLATE, DRAFT_LINK, BRIEF_RAW, FIELD_MANIFEST];
     const attempts = [];
     for (let mask = (1 << GROUPS.length) - 1; mask >= 0; mask--) {
       attempts.push({ mask, groups: GROUPS.filter((_, i) => mask & (1 << i)) });

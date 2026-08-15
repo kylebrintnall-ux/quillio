@@ -845,6 +845,65 @@ function resolveAssetLimits(limits) {
 // RENDERED in the doc by googleDocs.js fieldHint(): spec_type becomes the italic
 // tier sentence under the field label (specTypeLine) and spec_source supplies the
 // platform name plus the clickable citation link (specSourceName).
+// WHAT THE DOCUMENT WAS ACTUALLY BUILT WITH — a snapshot, written once, read
+// whole. See scripts/migrateAddProjectFieldManifest.js for why it is a JSONB
+// column rather than a table, and why NULL means UNKNOWN rather than empty.
+//
+// THE KEY SHAPE, AND WHY IT SURVIVES THE INSTANCE SUFFIX.
+//
+// A field is addressed by (assetType, instance, fieldName):
+//
+//   assetType   the LIBRARY name, never the rendered heading. googleDocs
+//               `assetHeadingText` only appends " 2 — Downtown residents" when the
+//               same name appears more than once in one document, so the heading
+//               is a function of the whole document and not of the asset — the
+//               same asset renders bare in one doc and suffixed in another.
+//               `decomposeAssetHeading` exists precisely to undo that, and both
+//               readers (parseDoc, getDocContent) hand back the library name. It
+//               is also the name a spec change arrives under: spec_change_log
+//               stores `asset_type`, which is asset_types.name. Recording the
+//               library name means a sweep matches without parsing a heading.
+//   instance    the 0-based ordinal off the spec group, carried so two sections
+//               of one asset stay distinguishable. Recorded even when it is 0 and
+//               the heading rendered bare, because whether a suffix appeared is a
+//               property of the document, not of this row.
+//   fieldName   the field's own name — unique within an asset (Postgres enforces
+//               it under the normalized form, copy_fields_asset_field_norm_uniq).
+//
+// instanceLabel rides along for display only. It is free text a writer chose and
+// must never be part of the match.
+//
+// THE NUMBERS ARE THE EFFECTIVE ONES, WHICH IS THE WHOLE POINT. These are read
+// off the same spec objects `appendBody` hands to `fieldLabel`, so the manifest
+// records what went into the bracket rather than what the base spec says.
+// getTenantAssets already resolved COALESCE(char_min_override, char_min) before
+// the spec was built (db/assets.js OVERRIDE_COLS), so a tenant who set their own
+// house default is recorded with THEIR number. Recording the base value would
+// describe a bracket that tenant's document does not contain, and a sweep acting
+// on it would "correct" a limit they deliberately detached from the spec.
+//
+// Nothing about the copy is recorded. This says what the document ASKS for, not
+// what anybody wrote into it.
+function buildFieldManifest(assetSpecs, writtenAt) {
+  const fields = [];
+  for (const asset of assetSpecs || []) {
+    for (const field of asset.fields || []) {
+      fields.push({
+        assetType: asset.assetType,
+        instance: Number(asset.instance) || 0,
+        instanceLabel: asset.instanceLabel || null,
+        fieldName: field.fieldName,
+        // Same normalization fieldLabel/isWordField apply, so the recorded unit
+        // is the one the bracket carries.
+        fieldType: field.fieldType === 'words' ? 'words' : 'text',
+        charMin: Number(field.charMin) || 0,
+        charMax: Number(field.charMax) || 0,
+      });
+    }
+  }
+  return { version: 1, writtenAt, fields };
+}
+
 function rowToSpecGroup(a) {
   return {
     assetType: a.name,
@@ -1394,6 +1453,38 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   // brief, so any error is swallowed. slack_channel_id / slack_thread_ts come
   // from projectMeta on the Slack path and are null for web (correct). drive
   // folder id is the project folder we created (null if creation failed).
+  // WHAT THIS DOCUMENT CONTAINS — built from the SAME `copyDocSpecs` that was
+  // just handed to createDocument, so the manifest and the brackets in the
+  // document come from one object and cannot disagree.
+  //
+  // ITS OWN try/catch, OUTSIDE saveProject's. A document that gets created
+  // without a manifest is acceptable — the sweep opens and parses it, which is
+  // what it has to do for every pre-migration row anyway. A document that fails
+  // to create because a manifest built wrong is not. So this cannot throw into
+  // the project write, and the project write below cannot be reached with a
+  // half-built manifest: on failure the value is null, which is the same
+  // "unknown" every existing row carries.
+  //
+  // Null when the copy doc was skipped (a template-only brief). There is no copy
+  // document, so there are no brackets to describe.
+  let fieldManifest = null;
+  if (doc) {
+    try {
+      fieldManifest = buildFieldManifest(copyDocSpecs, new Date().toISOString());
+      console.log(
+        `[pipeline] field manifest: ${fieldManifest.fields.length} field(s) across ` +
+          `${copyDocSpecs.length} asset section(s) for doc ${doc.id}`
+      );
+    } catch (err) {
+      fieldManifest = null;
+      console.error(
+        '[pipeline] field manifest SKIPPED (the document is unaffected and was still created) — ' +
+          'this project will record NULL, meaning unknown:',
+        err.message
+      );
+    }
+  }
+
   let projectId = null;
   try {
     const saved = await saveProject(tenantId, {
@@ -1422,6 +1513,10 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
       // applied at read time (services/gemini.js briefBlock), so raising it later
       // is a code change rather than data that was already thrown away.
       brief_raw: spec.brief || null,
+      // What the copy doc was built with. Null on a template-only brief, and
+      // null when the build above failed — both mean "unknown", which is what a
+      // pre-migration row carries and what a sweep must treat as "open it".
+      field_manifest: fieldManifest,
       status: 'not_started',
       slack_channel_id: projectMeta.slackChannelId || null,
       slack_thread_ts: projectMeta.slackThreadTs || null,

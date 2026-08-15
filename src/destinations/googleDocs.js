@@ -17,6 +17,13 @@ const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
 const { locateCells, readCells, buildCellWriteRequests } = require('./templateCells');
+// The last four are the draft path's own ceiling ladder — reused as-is by
+// enforceVariationCeiling below rather than reimplemented here.
+//
+// ABOVE THE BLOCK, NOT INSIDE IT. A comment between the braces is glued to the
+// name beneath it by the structural import guard in test/smoke.test.js, which
+// splits this list on commas — so `overLimit` read as one token with two
+// comment lines on the front of it and the guard reported it as never imported.
 const {
   generateAssetDrafts,
   generateFieldDraft,
@@ -27,8 +34,6 @@ const {
   geminiFailureSentence,
   DOORWAYS,
   INTENSITIES,
-  // The draft path's own ceiling ladder — reused as-is by
-  // enforceVariationCeiling below rather than reimplemented here.
   overLimit,
   trimCeiling,
   trimToCeiling,

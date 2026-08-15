@@ -1534,11 +1534,22 @@ test('the brief is read from the project row and threaded to every draft call', 
   assert.match(pipe, /brief lookup failed — drafting without it/);
   assert.match(pipe, /generateDraft\(\s*docId, direction, clients, voiceGuide, lookupDirection, scopedFields, append, brief\s*\)/);
 
-  // Threaded to BOTH gemini entry points — scoped to generateDraft, because
-  // createDocument has had its own `brief` parameter since long before this and
-  // a file-wide count silently included it.
+  // Threaded to ALL THREE gemini call sites inside generateDraft — scoped to
+  // generateDraft, because createDocument has had its own `brief` parameter
+  // since long before this and a file-wide count silently included it.
+  //
+  //   1. generateAssetDrafts   — the whole-doc batch
+  //   2. generateFieldDraft    — the scoped single-field draft
+  //   3. enforceVariationCeiling's `regen` context, which passes the brief on to
+  //      generateFieldDraft for the insert/append path's corrective rewrite. A
+  //      rewritten variation must not be the one field in the asset drafted
+  //      without the campaign's own words.
   const draftFn = gd.slice(gd.indexOf('async function generateDraft(id, direction'));
-  assert.strictEqual((draftFn.match(/^\s+brief,$/gm) || []).length, 2, 'batch and single-field');
+  assert.strictEqual(
+    (draftFn.match(/^\s+brief,$/gm) || []).length,
+    3,
+    'batch, single-field, and the variation-ceiling rewrite'
+  );
   assert.match(draftFn, /generateAssetDrafts\(\{\s*\n\s*assetType: a\.assetType,\s*\n\s*brief,/);
   // …and to the batch RESCUE, or a field that fell out of a failed batch would be
   // the one field in the asset drafted without the campaign's own words.
@@ -13579,8 +13590,17 @@ test('the build summary says when a drafted marker was never enforced', () => {
   // field whose copy was empty would be counted in a bucket it isn't in.
   assert.match(build, /if \(d\.unenforced\) unenforced\.push\(d\.fieldName\)/);
   // A qualifier on `written`, not a fourth bucket: these markers ARE drafted and
-  // written, so the three counts must still add up.
-  assert.match(build, /unenforced\.length \? ` \(\$\{unenforced\.length\} of the drafted are OVER LIMIT/);
+  // written, so the three counts must still add up. Appended ONLY when non-zero,
+  // which is the half that keeps "0 over limit" off every clean run.
+  //
+  // Plain language, not the old "OVER LIMIT — the rescue failed": this sentence
+  // is read by a writer, and for a word field no rescue is ever attempted, so
+  // the old wording named a mechanism that did not run. The same wording is used
+  // by regenerateTemplateFields, the Slack card and the in-document marker.
+  assert.match(
+    build,
+    /unenforced\.length\s*\?\s*` \(\$\{unenforced\.length\} field\$\{unenforced\.length === 1 \? '' : 's'\} over the word count\)`/
+  );
   assert.match(build, /const accounted = result\.written\.length \+ result\.skipped\.length \+ result\.missing\.length/);
   assert.match(build, /unenforced,/, 'and the caller gets the names, not just a count');
 

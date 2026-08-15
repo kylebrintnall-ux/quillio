@@ -12714,7 +12714,7 @@ test('the project row records the template document without disturbing copy_doc_
   // with template_doc_* but no created_by must not lose both. Generated rather
   // than hand-written, which is what let the FOURTH group (brief_raw) be one
   // array entry instead of doubling sixteen hand-kept lines.
-  assert.match(src, /const GROUPS = \[CREATED_BY, TEMPLATE, DRAFT_LINK, BRIEF_RAW\]/);
+  assert.match(src, /const GROUPS = \[CREATED_BY, TEMPLATE, DRAFT_LINK, BRIEF_RAW, FIELD_MANIFEST\]/);
   assert.match(src, /for \(let mask = \(1 << GROUPS\.length\) - 1; mask >= 0; mask--\)/);
   assert.match(src, /attempts\.sort\(\(a, b\) => b\.groups\.length - a\.groups\.length/, 'widest first');
   // brief_raw is its OWN group and not folded into DRAFT_LINK: they arrived in
@@ -12722,23 +12722,34 @@ test('the project row records the template document without disturbing copy_doc_
   // set has to be able to drop exactly one of them.
   assert.match(src, /const BRIEF_RAW = \{ extra: \['brief_raw'\], values: \[brief_raw\] \}/);
   assert.match(src, /const DRAFT_LINK = \{\s*\n\s*extra: \['doc_template_id', 'brief_summary', 'brief_writer_prompt'\]/);
+  // …and field_manifest is the FIFTH, on exactly the same terms — the payoff the
+  // generated power set was built for. Stringified on the way in because the pg
+  // driver sends a bare object as a composite rather than as jsonb, and NULL has
+  // to stay NULL so the column reads UNKNOWN rather than the JSON text "null".
+  assert.match(src, /const FIELD_MANIFEST = \{\s*\n\s*extra: \['field_manifest'\]/);
+  assert.match(src, /field_manifest == null \? null : JSON\.stringify\(field_manifest\)/);
   // The generated set really does include the singletons and the empty one —
   // asserted by running the generator, not by matching lines that no longer
-  // exist. Sixteen subsets of four groups, widest first, ending with none.
-  const GROUPS = ['CREATED_BY', 'TEMPLATE', 'DRAFT_LINK', 'BRIEF_RAW'];
+  // exist. Thirty-two subsets of five groups, widest first, ending with none.
+  const GROUPS = ['CREATED_BY', 'TEMPLATE', 'DRAFT_LINK', 'BRIEF_RAW', 'FIELD_MANIFEST'];
   const gen = [];
   for (let mask = (1 << GROUPS.length) - 1; mask >= 0; mask--) {
     gen.push({ mask, groups: GROUPS.filter((_, i) => mask & (1 << i)) });
   }
   gen.sort((a, b) => b.groups.length - a.groups.length || b.mask - a.mask);
-  assert.strictEqual(gen.length, 16);
+  assert.strictEqual(gen.length, 32);
   assert.deepStrictEqual(gen[0].groups, GROUPS, 'widest first');
-  assert.deepStrictEqual(gen[15].groups, [], 'and the bare insert last');
+  assert.deepStrictEqual(gen[31].groups, [], 'and the bare insert last');
   for (const g of GROUPS) assert.ok(gen.some((a) => a.groups.length === 1 && a.groups[0] === g), `${g} alone is tried`);
   // The pair that matters most: brief_raw present WITHOUT the older draft-link
   // columns, and vice versa. Neither can take the other down.
   assert.ok(gen.some((a) => a.groups.includes('BRIEF_RAW') && !a.groups.includes('DRAFT_LINK')));
   assert.ok(gen.some((a) => a.groups.includes('DRAFT_LINK') && !a.groups.includes('BRIEF_RAW')));
+  // Same independence for the newest group, in both directions — a database that
+  // has run the manifest migration but not brief_raw (or the reverse) must keep
+  // whichever column it does have.
+  assert.ok(gen.some((a) => a.groups.includes('FIELD_MANIFEST') && !a.groups.includes('BRIEF_RAW')));
+  assert.ok(gen.some((a) => a.groups.includes('BRIEF_RAW') && !a.groups.includes('FIELD_MANIFEST')));
   assert.match(src, /isUndefinedColumn\(err\)/);
 });
 

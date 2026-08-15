@@ -1622,7 +1622,9 @@ async function draftTemplateDocument({ tenantId, templateId, docId, spec = {}, d
     `${copyMarkers.length} copy marker${copyMarkers.length === 1 ? '' : 's'}: ` +
     `${result.written.length} drafted, ${result.skipped.length} left as {{marker}}, ` +
     `${result.missing.length} unplaced` +
-    (unenforced.length ? ` (${unenforced.length} of the drafted are OVER LIMIT — the rescue failed)` : '');
+    (unenforced.length
+      ? ` (${unenforced.length} field${unenforced.length === 1 ? '' : 's'} over the word count)`
+      : '');
   console.log(`[pipeline] ${summary}`);
   const accounted = result.written.length + result.skipped.length + result.missing.length;
   if (accounted !== copyMarkers.length) {
@@ -1835,7 +1837,9 @@ async function regenerateTemplateFields({
 
   const summary =
     `${wanted.length} named: ${result.written.length} rewritten, ${refused.length} refused, ${failed.length} failed` +
-    (unenforced.length ? ` (${unenforced.length} OVER LIMIT — a word field has no post-hoc trim)` : '');
+    (unenforced.length
+      ? ` (${unenforced.length} field${unenforced.length === 1 ? '' : 's'} over the word count)`
+      : '');
   console.log(`[pipeline] regenerate "${template.name}" — ${summary}`);
 
   return { templateName: template.name, regenerated, refused, failed, unenforced, summary, ...result };

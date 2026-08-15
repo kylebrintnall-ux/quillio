@@ -530,7 +530,7 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
     tenantId: tenant && tenant.id,
     userId: actingUserId,
   });
-  const { title, fieldCount, fieldsAttempted, failureReason, url } = await pipeline.generateDraft(
+  const { title, fieldCount, fieldsAttempted, failureReason, unenforcedCount, url } = await pipeline.generateDraft(
     docId,
     direction,
     clients,
@@ -558,17 +558,24 @@ async function runGenerateDraft(docId, responseUrl, channel, messageTs, workspac
   // as a small brief. The denominator appears only when it is not the whole
   // story; a complete run keeps the wording it has always had, byte for byte.
   const short = fieldsAttempted != null && fieldsAttempted > 0 && fieldCount < fieldsAttempted;
+  // Same wording as pipeline.js's template-path summaries, so a writer
+  // reading any of the three surfaces isn't told the same condition three
+  // different ways. Plain language deliberately — this renders on the
+  // success card too, where "post-hoc trim" would be internal jargon.
+  const overLimitNote = unenforcedCount
+    ? ` (${unenforcedCount} field${unenforcedCount === 1 ? '' : 's'} over the word count)`
+    : '';
   let completionText;
   if (short) {
     const cause = failureReason ? ` ${failureReason}` : '';
     completionText =
       `⚠️ ${isRegen ? 'Regeneration incomplete' : 'Draft incomplete'} — *${title}* ` +
-      `(${fieldCount} of ${fieldsAttempted} fields drafted).${cause}`;
+      `(${fieldCount} of ${fieldsAttempted} fields drafted).${cause}${overLimitNote}`;
   } else {
     const headline = isRegen ? 'Draft regenerated' : 'First draft ready';
     completionText = `${emoji('quillio-copy-done')} ${headline} — *${title}* (${fieldCount} field${
       fieldCount === 1 ? '' : 's'
-    } drafted).`;
+    } drafted).${overLimitNote}`;
   }
 
   if (canLive) {

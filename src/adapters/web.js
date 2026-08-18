@@ -14,6 +14,9 @@
 const pipeline = require('../core/pipeline');
 const { getClientsForTenant } = require('../google');
 const { totalMissMessage, partialMissNotice } = require('../utils/assetMatch');
+const { draftNotification } = require('../utils/draftNotice');
+const { createNotification } = require('../db/notifications');
+const { getProjectByAnyDocId } = require('../db/projects');
 
 // The acting user's id from a resolved tenant context, or null.
 function actingUserId(tenantContext) {
@@ -296,6 +299,61 @@ async function runWebBrief(briefText, tenantContext = {}, fileRefs = []) {
   return runWebBriefGenerate(parsed, parsed.plan, tenantContext);
 }
 
+// Record a finished draft as a notification, and NEVER let doing so fail the
+// draft.
+//
+// THE GAP THIS CLOSES. A web draft runs 30-90s behind an in-memory job the
+// browser polls. On completion the only thing that happens is a 2-second toast
+// in the tab that started it — so a person who closed the tab is never told the
+// draft finished, even though the document was written. The Slack surface has
+// always posted a completion card. This is the web equivalent, stored rather
+// than pushed.
+//
+// EVERYTHING IN HERE IS BEST-EFFORT AND SWALLOWED. A completed draft with no
+// notification is an acceptable outcome; a draft that failed because a
+// notification could not be written is not. That covers the project lookup and
+// the insert alike — both touch the database, and the caller has a finished
+// document in hand by the time this runs.
+//
+// It is AWAITED rather than fired and forgotten, so an error surfaces here where
+// it is caught rather than as an unhandled rejection, and so the ordering is
+// deterministic enough to test. The cost is one SELECT and one INSERT on a path
+// that has just spent a minute in Gemini and the Docs API.
+//
+// The project lookup is getProjectByAnyDocId — the same call pipeline.js makes —
+// because a template-only brief has no copy doc and its draft carries the
+// template document's id. Its own failure is caught separately: a missing
+// project row must still produce a notification, just one whose link has no
+// project to point at.
+async function notifyDraftComplete(tenantId, docId, docKind, result) {
+  try {
+    if (!tenantId) return null; // no tenant → nothing that could ever be read
+    let projectId = null;
+    try {
+      const project = await getProjectByAnyDocId(tenantId, docId);
+      projectId = (project && project.id) || null;
+    } catch (err) {
+      console.warn('[web] notification project lookup failed — link without a project:', err.message);
+    }
+    const { type, message, link } = draftNotification({
+      title: result && result.title,
+      fieldCount: result && result.fieldCount,
+      fieldsAttempted: result && result.fieldsAttempted,
+      failureReason: result && result.failureReason,
+      docKind,
+      projectId,
+    });
+    const row = await createNotification({ tenantId, type, message, link, projectId });
+    console.log(`[web] notification ${row ? `#${row.id}` : '(not stored)'} ${type} tenant=${tenantId} doc=${docId}`);
+    return row;
+  } catch (err) {
+    // Logged with its stack because this is the only place it will ever be seen,
+    // and then dropped on the floor. The draft stands.
+    console.error('[web] notification write failed (draft is unaffected):', err && err.stack ? err.stack : err);
+    return null;
+  }
+}
+
 // Generate (or, with `direction`, regenerate) the draft for an existing doc.
 // tenantContext is accepted for a consistent signature (and future per-tenant
 // config); generateDraft re-reads the doc itself, so no tokens are needed today.
@@ -333,10 +391,25 @@ async function runWebDraft(docId, tenantContext = {}, direction, scopedFields, a
     const fieldCount = fieldNames.length
       ? (out.regenerated || []).length
       : (out.written || []).length;
-    return { docId, title: out.templateName || 'Template document', fieldCount, url: out.templateDocUrl || null };
+    const templateTitle = out.templateName || 'Template document';
+    // No fieldsAttempted on this path, so draftNotification's `short` test is
+    // false and the sentence is the complete one — the same thing app.html's
+    // draftedLabel(n, null) does.
+    await notifyDraftComplete(tenantId, docId, 'template', { title: templateTitle, fieldCount });
+    return { docId, title: templateTitle, fieldCount, url: out.templateDocUrl || null };
   }
 
   const { title, fieldCount, fieldsAttempted, failureReason, url } = await pipeline.generateDraft(docId, direction, clients, tenantId, scopedFields, append);
+  // BOTH outcomes are recorded, and the wording differs: a run that drafted 1 of
+  // 40 gets the incomplete sentence and its cause, exactly as the toast and the
+  // Slack card do.
+  //
+  // ABOVE the return and passed the same four values the return carries, rather
+  // than handed the returned object — the return statement below is UNCHANGED,
+  // byte for byte, because it is what the surfaces' contract is written against
+  // and a smoke test asserts it literally ("the two values have to survive the
+  // trip: adapter → route → browser").
+  await notifyDraftComplete(tenantId, docId, 'copy', { title, fieldCount, fieldsAttempted, failureReason });
   return { docId, title, fieldCount, fieldsAttempted, failureReason, url };
 }
 

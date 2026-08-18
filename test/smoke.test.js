@@ -16270,6 +16270,111 @@ test('normalize: script bodies and whitespace churn do not change the hash', () 
   assert.notStrictEqual(h(base), h(base.replace('150', '220')), 'a spec number moves the hash');
 });
 
+// --- Per-request digit tokens (Google's zwieback id) -------------------------
+//
+// Measured in production, five fetches three seconds apart: Google's normalized
+// text is 5,079-5,080 chars and exactly one region varies, a 19-20 digit run at
+// ~4966 served as a hidden text node
+// (<div data-page-data-key="zwieback_id" style="display:none">…</div>). It put
+// the entry on `unconfirmed` for five weeks. The same page carries a STABLE
+// five-digit run (73067) that has to survive, and LinkedIn / X / the test page
+// carry no run this long at all.
+
+test('normalize: a per-request digit token is stripped, spec numbers survive', () => {
+  const { normalize } = require('../src/services/specDetector');
+  // Real observed values, not invented ones.
+  const TOKENS = [
+    '7192106907275015538', '13913779231612646098', '18126090132078972469',
+    '5075382298409071024', '11032421743034147636',
+  ];
+  const page = (tok) =>
+    '<p>Short headline 30 characters. Long headline 90. Description 90. Business name 25.</p>' +
+    '<p>Intro text 150, post copy 280, technical max 600. Ref 73067.</p>' +
+    `<div data-page-data-key="zwieback_id" style="display:none">${tok}</div>`;
+
+  for (const tok of TOKENS) {
+    const out = normalize(page(tok));
+    assert.ok(!out.includes(tok), `the ${tok.length}-digit token is gone`);
+    // Every number this system actually watches for is still there.
+    for (const keep of ['30', '90', '25', '150', '280', '600']) {
+      assert.ok(out.includes(keep), `${keep} survives alongside a ${tok.length}-digit token`);
+    }
+    // The stable five-digit run on the same page must NOT be collateral.
+    assert.ok(out.includes('73067'), 'the stable 5-digit run survives');
+  }
+});
+
+test('normalize: "600 characters" is untouched', () => {
+  const { normalize } = require('../src/services/specDetector');
+  assert.strictEqual(normalize('<p>600 characters</p>'), '600 characters');
+  // The largest number the library holds anywhere, in the phrasing a spec page
+  // uses. If this ever fails, the threshold has been lowered into the range real
+  // limits occupy.
+  assert.strictEqual(normalize('<p>Up to 600 characters, 150 shown.</p>'), 'Up to 600 characters, 150 shown.');
+});
+
+test('normalize: the digit-run threshold holds from BOTH sides', () => {
+  const { normalize, PER_REQUEST_TOKEN_MIN_DIGITS: MIN } = require('../src/services/specDetector');
+  assert.strictEqual(typeof MIN, 'number', 'the threshold is exported');
+  assert.ok(MIN >= 12, 'never lower it into the range real spec numbers occupy');
+
+  const under = '1'.repeat(MIN - 1);
+  const at = '2'.repeat(MIN);
+  const over = '3'.repeat(MIN + 8); // the observed token is ~7 digits longer
+
+  assert.ok(normalize(`<p>${under}</p>`).includes(under), `${MIN - 1} digits are KEPT`);
+  assert.ok(!normalize(`<p>${at}</p>`).includes(at), `${MIN} digits are STRIPPED`);
+  // Greedy: a longer run goes entirely, leaving no remainder behind.
+  assert.strictEqual(normalize(`<p>a${over}b</p>`), 'a b', 'the whole run goes, not a suffix of it');
+});
+
+test('normalize: two fetches differing only in the token hash identically', () => {
+  const { normalize, hashText } = require('../src/services/specDetector');
+  const page = (tok) =>
+    `<html><body><h1>Responsive display ads</h1><p>Short headline 30 characters.</p>` +
+    `<div data-page-data-key="zwieback_id" style="display:none">${tok}</div>` +
+    `<footer>Google apps Main menu</footer></body></html>`;
+  // This is the whole fix, stated as the property the detector needs: the same
+  // page fetched twice must confirm rather than report `unconfirmed` forever.
+  assert.strictEqual(
+    hashText(normalize(page('7192106907275015538'))),
+    hashText(normalize(page('13913779231612646098'))),
+    'the confirming refetch now reproduces'
+  );
+  // And a real edit to the spec still moves it.
+  assert.notStrictEqual(
+    hashText(normalize(page('7192106907275015538'))),
+    hashText(normalize(page('7192106907275015538').replace('30 characters', '35 characters')))
+  );
+});
+
+test('normalize: a page with no long digit run is byte-identical to the pre-change output', () => {
+  // THE RE-BASELINE GUARD. This is what says the other six watch rows do not
+  // move when this ships — LinkedIn, X and the test page were measured to carry
+  // no run of this length, so their stored hash must still match. The reference
+  // below is the EXACT pre-change function body, kept literal on purpose: it is
+  // a second implementation, and the point is that the two agree.
+  const { normalize } = require('../src/services/specDetector');
+  const before = (html) => String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const FIXTURES = [
+    '<html><body><h1>Introductory text</h1><p>150 characters</p></body></html>',
+    '<p>post copy: 280 characters</p><nav>Home About</nav>',
+    '<html><head><title>Quillio Test Spec</title></head><body><pre>Headline 60</pre></body></html>',
+    '<div>Ref 73067 and 2026 and 12345678901</div>', // 11 digits — under the threshold
+    '<script>var x=1</script><style>.a{}</style><p>Up to 600 characters</p>',
+    '',
+  ];
+  for (const f of FIXTURES) {
+    assert.strictEqual(normalize(f), before(f), `unchanged for ${JSON.stringify(f.slice(0, 48))}`);
+  }
+});
+
 test('KNOWN DEFECT — whole-page normalization: a footer year rollover reads as a spec change', () => {
   // WAITING ON: selector-scoped normalization (hash only the spec region).
   // These three assertions describe today's behaviour and are expected to be

@@ -3,7 +3,10 @@
 // Ops helper (LiveSpecs chunk 2) — manually run the spec-change detector and
 // print the result. Runs the detector IN-PROCESS (no HTTP, no admin session),
 // the same way the migrations run — so it's the console-friendly equivalent of
-// POST /admin/api/run-detection. Manual trigger only; no cron.
+// POST /admin/api/run-detection. This is ALSO the cron service's start command:
+// railway.cron.json runs `node scripts/runDetection.js` weekly on `0 15 * * 1`
+// (Mondays 15:00 UTC). The line here used to claim "manual trigger only; no
+// cron", which predated that service.
 // Requires DATABASE_URL. Run in the Railway console:
 //   node scripts/runDetection.js
 //

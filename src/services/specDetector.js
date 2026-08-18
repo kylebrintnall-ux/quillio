@@ -2,7 +2,11 @@
 
 // LiveSpecs detector (chunk 2 + 2.5). For each spec_watch_list row: fetch the
 // URL, normalize the HTML to visible text, hash it, and compare to the stored
-// hash. Manual trigger only (POST /admin/api/run-detection) — NO cron.
+// hash. Runs WEEKLY on a Railway cron service — railway.cron.json sets
+// `0 15 * * 1` (Mondays 15:00 UTC) against `node scripts/runDetection.js` — and
+// on demand via POST /admin/api/run-detection. This comment used to say "manual
+// trigger only, NO cron"; it predated the cron service and was wrong. It matters
+// whenever a change to normalize() has to be sequenced against the next run.
 //
 // CONFIRM-ON-REFETCH (chunk 2.5): a changed hash is NOT flagged on the first
 // observation. We refetch once after a short delay and only flag if the new
@@ -86,16 +90,64 @@ function isObservedPractice(row) {
   return !!row && row.source_kind === 'observed_practice';
 }
 
+// PER-REQUEST TOKENS — Google's zwieback id, and anything shaped like it.
+//
+// support.google.com serves a hidden per-request identifier as a TEXT NODE:
+//
+//   <div data-page-data-key="zwieback_id" style="display:none">7192106907275015538</div>
+//
+// The tag strip below removes the div and leaves the digits behind, so every
+// fetch of that page hashed differently. That is why the Google entry reported
+// `unconfirmed` every run for five weeks: the hash moved, the confirming refetch
+// produced a THIRD value, nothing ever reproduced, and that branch is silent and
+// terminal by design. The spec content was never the problem — all four
+// Responsive Display limits (30/90/90/25) are present and stable.
+//
+// THE THRESHOLD IS SET FROM THE LIBRARY'S RANGE, NOT FROM THE TOKEN'S LENGTH.
+// That distinction is the entire safety argument. Every character limit in
+// src/data/defaultAssets.js is two or three digits, and the largest number the
+// library holds anywhere — including spec_note prose — is 600. Twelve digits is
+// nine orders of magnitude clear of that, so this rule cannot consume a number
+// this system watches for. Sizing it off the observed token instead would make
+// the safety a coincidence rather than a property.
+//
+// The observed token is 19-20 digits, so there are seven digits of headroom
+// above the threshold too. If Google ever shortens it below twelve, the answer
+// is an element-scoped strip — NOT a lower threshold, which would walk toward
+// the range real spec numbers live in.
+//
+// MEASURED NOT TO OVER-REACH, against production rather than by assertion. The
+// same Google page carries a STABLE five-digit run (73067) that has to survive,
+// and does. LinkedIn (24,568 chars), X (40,562) and the test page (82) contain
+// no run this long at all, so their normalized text — and therefore their stored
+// hash — is byte-identical after this change and none of them re-baselines.
+//
+// APPLIED AFTER THE TAG STRIP, DELIBERATELY, so it only ever sees visible text.
+// Run earlier it would reach inside attributes and script bodies, which is a
+// wider blast radius for no gain: those are already gone by the time it runs.
+//
+// Greedy by construction — \d{12,} consumes a whole run, so a 20-digit token is
+// removed entirely rather than leaving an 8-digit remainder behind.
+//
+// EXPORTED so a test can assert the boundary from BOTH sides: 11 digits kept, 12
+// stripped. That is deliberate. The constant IS the safety property, and an
+// exported number with a two-sided test is much harder to quietly "tidy" into
+// \d{4,} than a literal buried inside a regex.
+const PER_REQUEST_TOKEN_MIN_DIGITS = 12;
+const PER_REQUEST_TOKEN = new RegExp(`\\d{${PER_REQUEST_TOKEN_MIN_DIGITS},}`, 'g');
+
 // Normalize HTML to the visible text we hash. Middle-ground strip: drop
 // <script>/<style> blocks AND their contents (noise that changes constantly),
-// strip all remaining tags, collapse every run of whitespace to a single space,
-// and trim. Keeps visible text — that's where spec numbers live — so real
-// content changes are caught while scripts/ads/whitespace churn are not.
+// strip all remaining tags, drop per-request digit tokens (above), collapse
+// every run of whitespace to a single space, and trim. Keeps visible text —
+// that's where spec numbers live — so real content changes are caught while
+// scripts/ads/whitespace churn are not.
 function normalize(html) {
   return String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
+    .replace(PER_REQUEST_TOKEN, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -501,4 +553,8 @@ module.exports = {
   checkAnchor,
   isObservedPractice,
   UNCONFIRMED_STREAK_ALERT,
+  // Exported for the boundary test, not for callers. See the comment above
+  // normalize(): a two-sided assertion on this number is what stops it being
+  // lowered into the range real spec limits occupy.
+  PER_REQUEST_TOKEN_MIN_DIGITS,
 };

@@ -109,6 +109,11 @@ app.use(require('./routes/headerTemplate'));
 // slash-command/interactions handlers; touches none of them.
 app.use(appRoutes);
 
+// Notifications API (/api/notifications*). Auth-gated per route; scoped entirely
+// from the session (req.user), never from a client-supplied workspace id. Data
+// and API only — nothing renders it yet.
+app.use(require('./routes/notifications'));
+
 // Admin area (/admin). Gated by requireAdmin (users.is_admin); non-admins get a
 // bare 404. Stub only for now — proves the gate before any dashboard is built.
 app.use(require('./routes/admin'));

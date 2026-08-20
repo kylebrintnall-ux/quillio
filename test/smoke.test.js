@@ -16453,6 +16453,18 @@ test('checkSpecHealth is READ-ONLY by construction, and measures what the detect
   // Named, not silenced: its own section, never folded into OK.
   assert.match(src, /DELIBERATELY UNWATCHED \(research citation\)/);
 
+  // ROW AGE vs URL AGE. A repurposed row keeps its created_at, so the age can
+  // describe a page it no longer watches. The queue's denormalised source_url is
+  // the only trace of a repoint that exists — read where present, never inferred,
+  // and the footer says plainly that a row repointed before it ever flagged
+  // leaves nothing to read. Both halves are asserted: the detector, and the
+  // admission that it is partial.
+  assert.match(src, /array_agg\(DISTINCT source_url\)/, 'reads the queue trace');
+  assert.match(src, /URL CHANGED since a flag/);
+  assert.match(src, /ROW AGE IS THE ROW'S, NOT THE URL'S/, 'the limit is printed, not buried');
+  assert.match(src, /No column tracks this and none should/,
+    'the rejected url_changed_at column is recorded as a decision');
+
   // observed_practice is SAID, never silently omitted — same rule the detector
   // follows for not_watched.
   assert.match(src, /observed_practice — not fetched, not hashed/);

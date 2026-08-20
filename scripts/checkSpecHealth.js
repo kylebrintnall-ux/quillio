@@ -202,12 +202,21 @@ async function citedUrls(pool) {
 // spec_review_queue is the ledger of CONFIRMED hash movement — recordChange
 // inserts a row before advancing the hash, in one transaction. Zero rows means
 // this entry has never moved since its baseline.
+// The URLs come along because spec_review_queue DENORMALISES source_url at flag
+// time ("denormalized from the watch entry for convenience",
+// migrateAddSpecTables.js:28). That makes each queue row a dated record of what
+// the entry was watching THEN — the only trace in the schema that a row has been
+// repointed. See the note beside the `moved` line for what it can and cannot say.
 async function movementCounts(pool) {
   const res = await pool.query(
-    'SELECT watch_id, COUNT(*)::int AS n, MAX(detected_at) AS last FROM spec_review_queue GROUP BY watch_id'
+    `SELECT watch_id, COUNT(*)::int AS n, MAX(detected_at) AS last,
+            array_agg(DISTINCT source_url) AS urls
+       FROM spec_review_queue GROUP BY watch_id`
   );
   const m = new Map();
-  for (const r of res.rows) m.set(String(r.watch_id), { n: r.n, last: r.last });
+  for (const r of res.rows) {
+    m.set(String(r.watch_id), { n: r.n, last: r.last, urls: (r.urls || []).filter(Boolean) });
+  }
   return m;
 }
 
@@ -395,14 +404,37 @@ async function checkRow(pool, row, moved) {
   // for months without moving is a real observation about the page. Without the
   // age the reader cannot tell an absence of evidence from evidence of absence,
   // and both render as the same four words.
+  // AND THE AGE BELONGS TO THE ROW, NOT TO THE URL — a distinction with no
+  // column behind it.
+  //
+  // A repurposed row keeps its created_at. `migrateSplitMetaWatchRows` moved
+  // Meta's entry from the ads-guide index to /image, and `migrateFixGoogleSpecSource`
+  // repointed Google's the same way — both UPDATE source_url in place, because
+  // spec_review_queue.watch_id is a foreign key and deleting the row would break
+  // it. So "27d old, never moved" can describe a row that spent 26 of those days
+  // watching a different page.
+  //
+  // THE ONE TRACE THAT EXISTS is the queue's denormalised source_url: a flag
+  // records what the entry was watching when it fired, so a queue URL that
+  // differs from the current one PROVES a repoint. It is partial by construction
+  // — it can only speak for rows that have flagged at least once, and says
+  // nothing about a row repointed before it ever flagged, which is exactly Meta's
+  // case. Reported when available, absent when not, and never inferred.
+  //
+  // The alternative is a url_changed_at column. Not worth it: a column exists to
+  // be maintained, every future repoint would have to remember to set it, and the
+  // failure mode of forgetting is a confident wrong date rather than an honest
+  // silence. The ambiguity is cheaper than the maintenance.
   const mv = moved.get(String(row.id));
   const rowAge = ageDays(row.created_at);
   const ageText = rowAge === null ? 'age unknown'
     : rowAge === 0 ? 'row created today'
       : `row created ${rowAge}d ago`;
+  const priorUrls = mv ? mv.urls.filter((u) => normUrl(u) !== normUrl(row.source_url)) : [];
+  const urlNote = priorUrls.length ? `, URL CHANGED since a flag (was ${short(priorUrls[0])})` : '';
   say('moved', mv
-    ? `${mv.n}x, last ${ageDays(mv.last)}d ago  (${ageText})`
-    : `never since baseline (${ageText})`);
+    ? `${mv.n}x, last ${ageDays(mv.last)}d ago  (${ageText}${urlNote})`
+    : `never since baseline (${ageText}${urlNote})`);
 
   return out;
 }
@@ -566,7 +598,15 @@ LIMITS OF THIS CHECK
   NUMBERS PRESENT IS A FLOOR, NOT A CENSUS. Containing none
   of its own numbers is strong evidence a row watches the
   wrong page. Containing them is weak evidence of anything —
-  short numbers appear incidentally in dates and pixel sizes.`);
+  short numbers appear incidentally in dates and pixel sizes.
+
+  ROW AGE IS THE ROW'S, NOT THE URL'S. A repurposed entry
+  keeps its created_at, so "27d old, never moved" can describe
+  a row that spent 26 of those days watching another page.
+  "URL CHANGED since a flag" appears where the review queue
+  happens to record it — but only a row that has FLAGGED
+  leaves that trace, so a row repointed before it ever flagged
+  shows nothing. No column tracks this and none should.`);
 
   const fail = red.length > 0 || uncovered.length > 0;
   console.log(`\n${TAG} ${fail ? 'ATTENTION NEEDED' : 'all watched rows healthy'}`);

@@ -274,10 +274,20 @@ async function checkRow(pool, row, moved) {
   }
 
   // F — NEAR-EMPTY.
-  if (a.length < MIN_USEFUL_CHARS) {
+  //
+  // NEVER RED ON is_test. The test page is 82 characters BY DESIGN — a deliberate
+  // minimal fixture an admin edits to exercise the detector — so the floor that
+  // catches a real page turning into a JS shell is meaningless on it.
+  //
+  // This was the first red this check ever produced, and it was a false one. A
+  // red nobody can act on is how a check teaches people to ignore it, which is
+  // the Litmus lesson arriving from a new direction: getting that wrong on run
+  // one is worse than not having the check.
+  if (a.length < MIN_USEFUL_CHARS && !row.is_test) {
     out.red.push(`hashed text is ${a.length} chars — a shell, not a document`);
   }
-  say('length', `${a.length} hashed / ${fullA.length} normalized`);
+  say('length', `${a.length} hashed / ${fullA.length} normalized` +
+    (row.is_test && a.length < MIN_USEFUL_CHARS ? '  (small by design — test fixture)' : ''));
 
   // C — the comparison.
   if (landed && normUrl(landed) !== normUrl(row.source_url)) {
@@ -363,8 +373,22 @@ async function checkRow(pool, row, moved) {
   say('checked', row.last_checked_at ? `${d}d ago` : 'never');
   say('streaks', `unconfirmed ${unconf} · failures ${fails}${row.last_error ? ` · ${row.last_error}` : ''}`);
 
+  // MOVEMENT, WITH THE ROW'S AGE BESIDE IT.
+  //
+  // "never since baseline" reads as neutral and is not — it means opposite things
+  // depending on how long the row has existed. A row created today has had no
+  // opportunity to move, so the absence says nothing. A row watching the same page
+  // for months without moving is a real observation about the page. Without the
+  // age the reader cannot tell an absence of evidence from evidence of absence,
+  // and both render as the same four words.
   const mv = moved.get(String(row.id));
-  say('moved', mv ? `${mv.n}x, last ${ageDays(mv.last)}d ago` : 'never since baseline');
+  const rowAge = ageDays(row.created_at);
+  const ageText = rowAge === null ? 'age unknown'
+    : rowAge === 0 ? 'row created today'
+      : `row created ${rowAge}d ago`;
+  say('moved', mv
+    ? `${mv.n}x, last ${ageDays(mv.last)}d ago  (${ageText})`
+    : `never since baseline (${ageText})`);
 
   return out;
 }
@@ -427,8 +451,13 @@ async function main() {
   const uncovered = [];
   for (const url of cited) {
     if (watchedNorm.has(normUrl(url))) continue;
+    // DISTINCT (asset, field) PAIRS, NOT ROWS. A plain COUNT(*) counts one row
+    // per tenant, so on a two-tenant database every figure here doubled and the
+    // line read "cited by 2 tiered fields" about a single field. affected_fields
+    // is a pair list, so a pair count is also the number that compares to it.
     const n = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM copy_fields cf JOIN asset_types at ON at.id = cf.asset_type_id
+      `SELECT COUNT(DISTINCT (at.name, cf.field_name))::int AS n
+         FROM copy_fields cf JOIN asset_types at ON at.id = cf.asset_type_id
         WHERE at.is_active AND cf.spec_source = $1 AND cf.spec_type IN ('enforced','recommended')`,
       [url]
     );
@@ -466,7 +495,7 @@ async function main() {
       for (const x of r.red) console.log(`  ${r.row.display_name || short(r.row.source_url)} — ${x}`);
     }
     for (const u of uncovered) {
-      console.log(`  ${short(u.url)} — cited by ${u.fields} tiered field(s), on no watch row`);
+      console.log(`  ${short(u.url)} — cited by ${u.fields} tiered field(s) (distinct pairs), on no watch row`);
     }
   }
   if (warn.length) {

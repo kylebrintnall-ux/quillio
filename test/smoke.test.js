@@ -16390,6 +16390,63 @@ test('migrateSplitMetaWatchRows derives affected_fields and refuses an empty gat
     'no watch row for /video — it has no asset, so its affected_fields would be empty');
 });
 
+test('checkSpecHealth is READ-ONLY by construction, and measures what the detector hashes', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'checkSpecHealth.js'), 'utf8');
+
+  // THE CLAIM, ASSERTED. "Read-only by construction" is a sentence in a header
+  // until something checks it, and this project's week is a list of claims that
+  // were not checked. Any write verb against either LiveSpecs table fails here.
+  for (const verb of ['UPDATE spec_watch_list', 'INSERT INTO spec_watch_list',
+    'DELETE FROM spec_watch_list', 'UPDATE spec_review_queue',
+    'INSERT INTO spec_review_queue', 'DELETE FROM spec_review_queue',
+    'UPDATE copy_fields', 'INSERT INTO copy_fields', 'DELETE FROM copy_fields']) {
+    assert.ok(!src.includes(verb), `checkSpecHealth must never ${verb}`);
+  }
+  // No transaction at all — there is nothing to roll back when nothing writes.
+  assert.ok(!/\bBEGIN\b|\bCOMMIT\b|\bROLLBACK\b/.test(src), 'no transaction: it only SELECTs');
+  // runDetection WRITES. Importing it is the one mistake that would make this
+  // script unsafe to run at any time, which is its whole selling point.
+  //
+  // Asserted on the IMPORT LIST and on a CALL, not on the bare word — the first
+  // version of this test matched the name inside the file's own header comment
+  // explaining that it must not be imported, which is a test failing the one
+  // thing it should reward. A structural test has to name the property, not a
+  // string that happens to correlate with it.
+  const imported = src.match(/const \{([\s\S]*?)\} = require\('\.\.\/src\/services\/specDetector'\)/);
+  assert.ok(imported, 'imports from the detector');
+  assert.ok(!/runDetection/.test(imported[1]), 'never IMPORTS runDetection — it writes');
+  assert.ok(!/\brunDetection\s*\(/.test(src), 'never CALLS runDetection');
+
+  // MEASURES THROUGH THE DETECTOR'S OWN PATH, not a reimplementation — otherwise
+  // it reports on text production never sees.
+  assert.match(src, /require\('\.\.\/src\/services\/specDetector'\)/);
+  assert.match(src, /hashableText,/, 'derives hashable text through the sanctioned helper');
+  assert.ok(!/replace\(\/<script/.test(src), 'never reimplements normalize()');
+
+  // The unconfirmed threshold is IMPORTED, so there is one definition of when a
+  // streak stops being noise. The failure threshold is local and deliberately
+  // lower — the file has to say why, or someone will "harmonise" them.
+  assert.match(src, /UNCONFIRMED_STREAK_ALERT,/, 'imports the streak alert, never restates 3');
+  assert.match(src, /const FAILURE_STREAK_RED = 2;/);
+  assert.match(src, /DO NOT "HARMONISE" THEM/, 'the file explains why the two thresholds differ');
+
+  // The two limitations are printed, not buried. A reader not told these infers a
+  // guarantee the script does not provide.
+  assert.match(src, /STABLE IS NOT PROOF OF STABILITY/);
+  assert.match(src, /NUMBERS PRESENT IS A FLOOR, NOT A CENSUS/);
+
+  // The coverage gap (A) and orphan (B) checks are what nothing else performs.
+  assert.match(src, /on no watch row/, 'reports pages we cite but do not watch');
+  assert.match(src, /nothing cites this URL/, 'reports watch rows nothing cites');
+
+  // observed_practice is SAID, never silently omitted — same rule the detector
+  // follows for not_watched.
+  assert.match(src, /observed_practice — not fetched, not hashed/);
+
+  // Exits non-zero when something needs a human.
+  assert.match(src, /process\.exit\(fail \? 1 : 0\)/);
+});
+
 test('migrateAddLinkedInCarouselWatch: derived pairs, measured anchor, no stop marker', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddLinkedInCarouselWatch.js'), 'utf8');
 

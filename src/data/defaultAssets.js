@@ -181,7 +181,11 @@ const RAW = [
     ['LAN Description', 0, 70],
   ]],
   ['LinkedIn Carousel Ad', 'Paid Social', [
-    ['Intro Text', 0, 600],
+    // 255, not 600. LinkedIn's carousel specs page publishes "Introductory text:
+    // 255 characters"; 600 appears nowhere on it. See
+    // scripts/migrateFixLinkedInCarouselIntro.js for the fetched text and the
+    // provenance of the 600.
+    ['Intro Text', 0, 255],
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 40, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
@@ -478,10 +482,39 @@ const HOOK_SPEC_NOTE =
   'Only this opening runs before the app collapses the rest behind “…more.” ' +
   'Land the hook within the character limit; the full caption/post can keep going — it just shows after the fold.';
 
-// LinkedIn Single Image Ad → Intro Text note. char_max is the recommended 150
-// (in-feed truncation), not LinkedIn's technical 600; this note explains the gap.
+// LinkedIn Single Image Ad → Intro Text note. char_max is the page's own
+// "Introductory text: 150 characters"; this note says WHY that number rather than
+// restating it, which is what a note is for.
+//
+// THE "600 IS THE TECHNICAL MAX" CLAUSE WAS REMOVED 2026-08-18, and it is worth
+// knowing why rather than assuming it was trimmed for length. 600 has no source:
+// it entered at scripts/migrateFixLinkedInIntroText.js:3-4 as a bare assertion,
+// and it appears NOWHERE on either LinkedIn specs page. The single-image page's
+// only other large number is "URL characters: 2000 characters for destination
+// field URL" — a limit on a different field entirely — so the claim was not even
+// a misreading of something on the page. It corresponded to nothing.
+//
+// This string is customer-visible twice over: it renders as the italic line under
+// the field label AND reaches the drafter as that field's `Field guidance:`.
 // BYTE-IDENTICAL to NOTE in scripts/migrateFixLinkedInIntroText.js.
-const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150; 600 is the technical max.';
+const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150.';
+
+// Twitter/X → the post-copy fields. Real writing guidance the 280 cannot carry:
+// LinkedIn-style truncation is not the issue here, link cost is.
+//
+// The page states: "post copy: 280 characters. (Note: each link used reduces
+// character count by 23 characters, electing 257 characters for X copy.)"
+//
+// Worded for a writer rather than as provenance. The mechanism goes first because
+// it is the part a writer gets wrong — the cost is FIXED regardless of URL length,
+// which is not what anyone assumes — and the workable number goes second.
+//
+// NOT applied to Twitter/X Ad → Headline. The 23-character cost is on links in
+// the post body; a headline is a separate field that does not carry them, and the
+// page attaches the note to "post copy". Putting it there would have a writer
+// budgeting for something that never happens.
+const X_LINK_COST_NOTE =
+  'Every link costs 23 characters regardless of its length, so a post with one link has 257 characters of copy.';
 
 // Demand Gen Nurture Email → Offer Body 1 note. The cited figure and this field's
 // number are DIFFERENT NUMBERS, and without this note a writer reads "Recommended
@@ -575,6 +608,11 @@ const EMAIL_NOTE_ASSETS = new Set([
 // Byte-identical to the corresponding migrations so seed and backfill agree.
 function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'LinkedIn Single Image Ad' && fieldName === 'Intro Text') return LINKEDIN_SIA_INTRO_NOTE;
+  // X's link cost, on the two POST COPY fields and deliberately not on the
+  // headline — see X_LINK_COST_NOTE. Matched per (asset, field) rather than by
+  // field name, because "Headline" exists on the same asset.
+  if (assetName === 'Twitter/X Ad' && fieldName === 'Ad Copy') return X_LINK_COST_NOTE;
+  if (assetName === 'Organic Social — Twitter/X' && fieldName === 'Post Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Demand Gen Nurture Email' && fieldName === 'Offer Body 1') return OFFER_BODY_1_NOTE;
   if (assetName === 'Sales Basho Email' && fieldName === 'Body Copy') return BASHO_BODY_NOTE;
   if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {

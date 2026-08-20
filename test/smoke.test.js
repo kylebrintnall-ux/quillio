@@ -791,17 +791,73 @@ test('LinkedIn Single Image Ad Intro Text seeds char_max 150 + note; Carousel In
   assert.strictEqual(sia.spec_note, NOTE, 'LinkedIn SIA Intro Text spec_note equals the migration NOTE');
   assert.strictEqual(
     sia.spec_note,
-    'In-feed preview truncates near 150; 600 is the technical max.',
+    'In-feed preview truncates near 150.',
     'spec_note is the exact expected text'
   );
   // spec_type / spec_source untouched by this change.
   assert.strictEqual(sia.spec_type, 'enforced', 'spec_type unchanged (enforced)');
   assert.ok(/linkedin/i.test(sia.spec_source), 'spec_source unchanged (LinkedIn URL)');
 
-  // The collision neighbour must NOT be touched: Carousel Intro Text stays 600 / null.
+  // THE CAROUSEL EXPECTATION FLIPPED, 2026-08-18, and it is worth knowing why.
+  // This block used to assert Carousel Intro Text "stays 600 / null" — pinning the
+  // claim at migrateFixLinkedInIntroText.js:8-10 that the neighbours MUST keep
+  // 600. That claim had no source. LinkedIn's carousel specs page publishes
+  // "Introductory text: 255 characters" and 600 appears on neither LinkedIn page;
+  // the only other large number there is a 2000-character DESTINATION URL limit,
+  // a different field entirely. So the old assertion was pinning a wrong number,
+  // which is what a test does when the value it guards was never checked.
+  //
+  // What the pair still guards is the thing that migration got RIGHT: the two
+  // Intro Text fields are different fields with different numbers, and neither
+  // may pick up the other's. 255 is the CAROUSEL's; single-image is 150 above.
   const carousel = introOf('LinkedIn Carousel Ad');
-  assert.strictEqual(carousel.char_max, 600, 'LinkedIn Carousel Intro Text char_max stays 600');
+  assert.strictEqual(carousel.char_max, 255, 'LinkedIn Carousel Intro Text char_max is 255 (the page)');
+  assert.notStrictEqual(carousel.char_max, sia.char_max, 'carousel and single-image are NOT the same number');
   assert.strictEqual(carousel.spec_note, null, 'LinkedIn Carousel Intro Text has no note');
+});
+
+test('LinkedIn carousel intro / X link-cost: the migration and the seed agree', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const fix = require('../scripts/migrateFixLinkedInCarouselIntro');
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('../scripts/migrateFixLinkedInCarouselIntro'), 'utf8');
+  const fieldOf = (a, f) =>
+    DEFAULT_ASSETS.find((x) => x.name === a).fields.find((y) => y.field_name === f);
+
+  // THE FETCHED TEXT IS PRESENT, not merely claimed. Same standard the Meta
+  // correction set: a value change carries the page text that justifies it, and a
+  // test reads it rather than trusting the comment to have been written.
+  assert.match(src, /Introductory text: 255 characters/, 'the carousel page quote is in the header');
+  assert.match(src, /Introductory text: 150 characters/, 'the single-image page quote is in the header');
+  assert.match(src, /each link used reduces character count by 23 characters/, 'the X page quote is in the header');
+  assert.match(src, /URL characters: 2000 characters for destination field URL/,
+    'the 2000 is recorded as a URL limit, so nobody re-reads it as an intro-text max');
+
+  // Seed and migration target the same number, from both directions.
+  assert.strictEqual(fieldOf('LinkedIn Carousel Ad', 'Intro Text').char_max, 255);
+  const band = fix.CHAR_FIXES.find((c) => c[0] === 'LinkedIn Carousel Ad' && c[1] === 'Intro Text');
+  assert.ok(band, 'the migration carries the carousel band');
+  assert.strictEqual(band[3], 255, 'migration writes 255');
+  assert.strictEqual(band[5], 600, 'and guards on the 600 it expects to replace');
+
+  // The X note reaches BOTH post-copy fields and NEITHER headline.
+  assert.strictEqual(fieldOf('Twitter/X Ad', 'Ad Copy').spec_note, fix.X_LINK_COST_NOTE);
+  assert.strictEqual(fieldOf('Organic Social — Twitter/X', 'Post Copy').spec_note, fix.X_LINK_COST_NOTE);
+  assert.strictEqual(fieldOf('Twitter/X Ad', 'Headline').spec_note, null,
+    'a headline carries no links, so it must not carry the link-cost note');
+
+  // TRIPWIRE — 600 must not come back as any LinkedIn character limit. It is not
+  // coverage; it stops one specific wrong number returning.
+  for (const a of DEFAULT_ASSETS.filter((x) => /linkedin/i.test(x.name))) {
+    for (const f of a.fields) {
+      assert.notStrictEqual(f.char_max, 600, `${a.name} / ${f.field_name} must not be 600`);
+    }
+  }
+
+  // The note reaching the drafter survives the reader-only strip — it is writing
+  // guidance, not provenance, so it must NOT be removed the way a tier line is.
+  const { stripReaderOnlyLines } = require('../src/destinations/googleDocs');
+  assert.strictEqual(stripReaderOnlyLines(fix.X_LINK_COST_NOTE), fix.X_LINK_COST_NOTE);
 });
 
 test('email Subject Line + Preheader seed mobile-truncation notes; reused names on non-email assets untouched', () => {
@@ -879,7 +935,7 @@ test('email Subject Line + Preheader seed mobile-truncation notes; reused names 
   );
   assert.strictEqual(
     fieldOf('LinkedIn Single Image Ad', 'Intro Text').spec_note,
-    'In-feed preview truncates near 150; 600 is the technical max.',
+    'In-feed preview truncates near 150.',
     'LinkedIn SIA Intro Text note is preserved'
   );
 
@@ -8479,7 +8535,7 @@ test('spec integrity: the three tier sentences, rendered', () => {
   // with two independent link ranges that do not overlap.
   const both = hintOf('LinkedIn Single Image Ad', 'Intro Text');
   assert.strictEqual(both.text,
-    'In-feed preview truncates near 150; 600 is the technical max. Platform limit (LinkedIn). Stay within this count.');
+    'In-feed preview truncates near 150. Platform limit (LinkedIn). Stay within this count.');
   assert.strictEqual(both.links.length, 1, 'only the tier line has a link here (the note has no known credit)');
   assert.strictEqual(both.text.substring(both.links[0].start, both.links[0].end), 'LinkedIn');
 });

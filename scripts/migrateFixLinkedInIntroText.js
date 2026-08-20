@@ -6,9 +6,31 @@
 // char_max 600 → 150 and adds a spec_note explaining it.
 //
 // PER-ASSET-PAIR match: "Intro Text" also exists on LinkedIn Carousel Ad and the
-// LinkedIn SIA Variants A–D, which MUST stay 600 / null. This touches ONLY the
-// exact pair ("LinkedIn Single Image Ad", "Intro Text"). spec_type and spec_source
-// are left untouched.
+// LinkedIn SIA Variants A–D. This touches ONLY the exact pair ("LinkedIn Single
+// Image Ad", "Intro Text"). spec_type and spec_source are left untouched.
+//
+// CORRECTED 2026-08-18 — this comment used to say the others "MUST stay 600 /
+// null", with no source given. It was WRONG for the carousel. LinkedIn's carousel
+// specs page publishes "Introductory text: 255 characters" and 600 appears nowhere
+// on it; scripts/migrateFixLinkedInCarouselIntro.js moved that pair to 255 and
+// carries the fetched page text.
+//
+// The 600 in this file's own header (:3-4, "LinkedIn's technical maximum is 600")
+// is unsourced too, and the note text below has been shortened to drop it. It is
+// not on either LinkedIn page; the only other large number there is "URL
+// characters: 2000 characters for destination field URL", a limit on a different
+// field. So 600 corresponded to nothing rather than being a misread of something.
+//
+// NOTHING IN THIS FILE NEEDS REMOVING, unlike the Meta entries stripped from
+// migrateSpecIntegrityFixes.js. Its UPDATE is scoped to
+// at.name = 'LinkedIn Single Image Ad' and guarded on char_max = 600, so a re-run
+// cannot reach the carousel row and cannot revert that correction. Only the
+// comment was wrong. Do not apply the Meta de-hazarding pattern here.
+//
+// The four SIA Variants still hold 600. They are retired (is_active = false), so
+// getTenantAssets never reads them and the value cannot reach a document. If one
+// is ever revived, its Intro Text is a SINGLE IMAGE field and belongs at 150 —
+// NOT the carousel's 255.
 //
 // Idempotent + non-clobbering: guarded by char_max = 600 AND spec_note IS NULL, so
 // a re-run (already 150 / noted) changes nothing.
@@ -20,7 +42,7 @@
 
 // spec_note text — kept BYTE-IDENTICAL to LINKEDIN_SIA_INTRO_NOTE in
 // src/data/defaultAssets.js (the smoke test asserts it).
-const NOTE = 'In-feed preview truncates near 150; 600 is the technical max.';
+const NOTE = 'In-feed preview truncates near 150.';
 
 async function main() {
   if (!process.env.DATABASE_URL) {

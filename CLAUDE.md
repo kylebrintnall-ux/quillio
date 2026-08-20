@@ -451,6 +451,43 @@ to be authoritative, quietly still being authoritative.
 four format pages sits in its header, and a test asserts those quotes are actually
 present rather than trusting the comment to have been written.
 
+**THE SAME STANDARD APPLIES TO A TEST THAT PINS A SPEC VALUE.** A test asserting a
+number must cite the page text that number came from, in the same commit. Without
+the citation it is not coverage — it is **a guard protecting whatever was there**,
+and it fails the one person doing the right thing.
+
+The instance, found August 2026 while correcting LinkedIn. `test/smoke.test.js`
+asserted:
+
+```js
+assert.strictEqual(carousel.char_max, 600, 'LinkedIn Carousel Intro Text char_max stays 600');
+```
+
+600 appears on **neither** LinkedIn specs page. It entered as a bare assertion in
+`migrateFixLinkedInIntroText.js` — "the others MUST stay 600 / null", no source —
+and the test then pinned it. So anyone who opened the carousel page, read
+"Introductory text: 255 characters" and corrected the value **would have been met
+by a red test**, and the failure would have read *you broke the spec* rather than
+*the spec was wrong*. The test was the last line of defence for the defect.
+
+This is worse than an uncited migration, because a migration runs once and a test
+runs on every commit forever. It converts an unverified claim into an
+institutional one.
+
+So: a test that pins a limit carries the quote beside it, or asserts the quote is
+present in the migration that set it (`assert.match(src, /Introductory text: 255
+characters/)`). A test that merely restates the seed is fine — that is a
+consistency check between two files, and it should say so rather than look like a
+statement about the platform. What is not fine is an assertion about the outside
+world with nothing behind it.
+
+The second half of the lesson is what to do when the value moves: the flipped
+assertion **kept** the part that was right. `migrateFixLinkedInIntroText` was
+correct that the two Intro Text fields are different fields with different
+numbers, so `assert.notStrictEqual(carousel.char_max, sia.char_max)` replaced the
+literal. Correcting a wrong pin is not a reason to delete the property it was
+guarding.
+
 **What this does NOT license:** inventing a number when the page has none.
 `Meta Single Image Ad / Description` was stored at 30 and `/image` publishes no
 Description recommendation, so the field kept its 30 and lost its **claim** —

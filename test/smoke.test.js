@@ -16390,6 +16390,76 @@ test('migrateSplitMetaWatchRows derives affected_fields and refuses an empty gat
     'no watch row for /video — it has no asset, so its affected_fields would be empty');
 });
 
+test('the freshness clause says what the mechanism supports, and only where it has a referent', () => {
+  const { fieldHint, stripReaderOnlyLines } = require('../src/destinations/googleDocs');
+  const LI = 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs';
+  const D = new Date('2026-08-18T15:00:00Z');
+  const f = (over) => ({ fieldName: 'Headline', charMax: 70, fieldType: 'text',
+    specType: 'enforced', specSource: LI, specNote: null, specCheckedAt: D, ...over });
+
+  // THE WORDING. The detector hashes the whole page and never reads the number,
+  // so the doc may claim the SOURCE has not moved and must not claim the number
+  // was re-read. "Checked" was rejected for inviting the second reading.
+  const line = fieldHint(f()).text;
+  assert.match(line, /Source unchanged as of 2026-08-18\.$/);
+  assert.ok(!/Checked|Verified/.test(line), 'never claims a check or a verification of the number');
+  // "as of", not "since": last_checked_at is a point-in-time reading, and "since"
+  // asserts a duration running to now that no observation covers.
+  assert.ok(!/unchanged since/.test(line), '"since" would overclaim the forward half');
+
+  // ONLY WHERE THE SENTENCE HAS A REFERENT — the same test that decides whether
+  // the platform name is hyperlinked. A line naming nobody cannot say "Source".
+  assert.ok(!fieldHint(f({ specType: 'house_default', specSource: 'quillio_default' })).text.includes('Source unchanged'),
+    'a house default names no source, so it gets no source date');
+  assert.ok(!fieldHint(f({ specSource: 'https://example.com/unknown' })).text.includes('Source unchanged'),
+    'an unrecognised source renders the no-source form and gets no date');
+  assert.strictEqual(fieldHint(f({ specType: null, specSource: null, specNote: 'Keep it punchy.' })).text,
+    'Keep it punchy.', 'a tenant-authored field has no tier line and no date');
+
+  // NULL AND NaN LAND ON THE SAME SILENT PATH — no clause, never a malformed one.
+  for (const bad of [null, undefined, '', 'not-a-date', NaN]) {
+    const t = fieldHint(f({ specCheckedAt: bad })).text;
+    assert.strictEqual(t, 'Platform limit (LinkedIn). Stay within this count.',
+      `${JSON.stringify(bad)} renders byte-identically to the pre-change document`);
+  }
+
+  // STRIPPED BEFORE DRAFTING. Provenance addresses the reader of the doc; the
+  // model writing the copy can do nothing with it.
+  assert.strictEqual(stripReaderOnlyLines(line), 'Platform limit (LinkedIn). Stay within this count.');
+
+  // APPENDED LAST, so every hyperlink offset is unmoved by its presence.
+  const a = fieldHint(f({ specNote: 'Note.', specCheckedAt: null }));
+  const b = fieldHint(f({ specNote: 'Note.' }));
+  assert.deepStrictEqual(a.links, b.links, 'link ranges identical with and without a date');
+});
+
+test('the checked-source read fails CLOSED — one query, no lower tier', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/specWatch'), 'utf8');
+  const q = sliceBetween(src, 'const CHECKED_SOURCES_SQL', 'const CHECKED_TTL_MS');
+
+  // Every freshness clause is named in ONE query. The inversion matters: the
+  // other reads in db/ degrade by selecting fewer columns, because there a
+  // missing column costs information with a safe default. Here it costs a
+  // guarantee, and dropping consecutive_unconfirmed would publish a confident
+  // date for a row stuck exactly the way Google was for five weeks.
+  for (const clause of ['source_kind', 'expected_content', 'current_hash', 'last_error',
+    'consecutive_failures', 'consecutive_unconfirmed', 'last_checked_at', 'is_test',
+    'spec_review_queue']) {
+    assert.ok(q.includes(clause), `the predicate names ${clause}`);
+  }
+  assert.match(q, /INTERVAL '35 days'/, 'a stopped cron freezes every other column');
+
+  // NO TIER LADDER on this read, and no rethrow — an error escaping would make
+  // generateDoc throw and stop every document being built over a cosmetic line.
+  const fn = sliceBetween(src, 'async function getCheckedSourceDates', '\nmodule.exports');
+  assert.ok(!/WATCH_TIERS|for \(const tier/.test(fn), 'no progressive fallback here');
+  assert.match(fn, /catch \(err\)/);
+  assert.match(fn, /value = new Map\(\);/, 'any failure resolves to no dates at all');
+  assert.ok(!/throw/.test(fn), 'never rethrows');
+  // The failure is cached too, or a broken database adds a failing query per doc.
+  assert.match(fn, /checkedCache = \{ value, expires/);
+});
+
 test('checkSpecHealth is READ-ONLY by construction, and measures what the detector hashes', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'checkSpecHealth.js'), 'utf8');
 

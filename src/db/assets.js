@@ -14,6 +14,10 @@
 const { getPool, isUndefinedTable, isUndefinedColumn, warnMissingSchema } = require('../db');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { normalize } = require('../utils/normalize');
+// The freshness read. Lives in db/specWatch because it queries spec_watch_list,
+// which is LiveSpecs' table, not the asset library's — this file only consumes
+// the resolved dates. No cycle: specWatch requires db.js, as this file does.
+const { getCheckedSourceDates } = require('./specWatch');
 
 // The copy_fields INSERT, most-complete first.
 //
@@ -249,6 +253,20 @@ async function getTenantAssets(tenantId) {
   }
   if (!fieldsRes) throw lastErr;
 
+  // WHEN THE PAGE BEHIND EACH CITATION WAS LAST SEEN UNCHANGED.
+  //
+  // A separate cached read of the watch list rather than a LEFT JOIN, for three
+  // reasons. This query is tenant-scoped and spec_watch_list is global, so the
+  // join has nothing to key on. The watch list is nine rows that change weekly,
+  // so it caches almost perfectly. And the freshness predicate has to FAIL CLOSED
+  // on a missing column, which is the exact opposite of the progressive fallback
+  // the field query above uses — folding the two together would mean one query
+  // with two contradictory degradation rules.
+  //
+  // Absent, empty or unavailable resolves to no date on every field, which is
+  // byte-identical to the pre-change document.
+  const checkedDates = await getCheckedSourceDates();
+
   const fieldsByType = new Map();
   for (const row of fieldsRes.rows) {
     if (!fieldsByType.has(row.asset_type_id)) fieldsByType.set(row.asset_type_id, []);
@@ -270,6 +288,11 @@ async function getTenantAssets(tenantId) {
       spec_note: row.spec_note || null,
       spec_type: row.spec_type || null,
       spec_overridden: row.spec_overridden === true,
+      // WHEN THIS FIELD'S CITED PAGE WAS LAST READ AND FOUND UNCHANGED, or null.
+      // Keyed on spec_source, so a field citing 'quillio_default' or a research
+      // study — neither of which is on the watch list — resolves to null and
+      // renders no clause. Carried raw; the formatting is the renderer's.
+      spec_checked_at: checkedDates.get(row.spec_source) || null,
     });
   }
 

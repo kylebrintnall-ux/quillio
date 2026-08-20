@@ -355,6 +355,52 @@ const HOUSE_DEFAULT_LINE_SET = 'House default — yours, set in Settings.';
 const NOT_A_HARD_LIMIT = 'Not a hard limit — adjust for your brand and goal.';
 const READER_ONLY_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET, NOT_A_HARD_LIMIT];
 
+// THE FRESHNESS CLAUSE — "Source unchanged as of 2026-08-18."
+//
+// THE WORDING IS THE WHOLE DESIGN, so it is worth being exact about what the
+// mechanism supports. The detector hashes the WHOLE PAGE and never looks at the
+// number. It cannot say a limit was re-read, and it cannot say a limit is still
+// correct. What it can say is that the page a human read the number off has not
+// moved since.
+//
+// "Checked" was the earlier candidate and was rejected: it invites a reader to
+// believe the number was re-read, which is precisely the thing that did not
+// happen. The document has to make the claim the mechanism supports.
+//
+// "AS OF", NOT "SINCE", and the difference is not stylistic. last_checked_at is
+// the date of the LAST reading. "Unchanged since the 18th" asserts a duration
+// running from the 18th to now, and we have no observation after the 18th at all.
+// "Unchanged as of the 18th" states a point-in-time reading, which is exactly
+// what we have. The forward half of "since" is an overclaim on a line whose only
+// job is to be honest about what is known.
+//
+// STRIPPED BEFORE DRAFTING, by the same rule as the lines above: does this
+// sentence address the READER OF THE DOC or the WRITER OF THE COPY? A provenance
+// date tells whoever opens the document how current the citation is, and tells
+// the model writing the copy nothing it can act on.
+//
+// A regex rather than a member of READER_ONLY_LINES, because the date varies —
+// the same reason RECOMMENDED_ATTRIBUTION is one. The lookahead requires
+// whitespace or end-of-string after the stop, so it cannot run past its sentence.
+const CHECKED_LINE = /\s*Source unchanged as of \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
+
+// "Source unchanged as of 2026-08-18." or '' when there is nothing to say.
+//
+// ISO, because a generated document is read in more than one locale and 08/09 is
+// ambiguous in exactly the way a provenance date must not be.
+//
+// EVERY FAILURE LANDS ON THE SAME SILENT PATH. null, a value that is not a date,
+// and an unparseable one all return '' — a field whose source is not in a
+// citable state must render with NO clause rather than an empty or malformed one,
+// and "Source unchanged as of Invalid Date." is what this guard makes
+// unreachable.
+function checkedSentence(specCheckedAt) {
+  if (!specCheckedAt) return '';
+  const d = specCheckedAt instanceof Date ? specCheckedAt : new Date(specCheckedAt);
+  if (Number.isNaN(d.getTime())) return '';
+  return `Source unchanged as of ${d.toISOString().slice(0, 10)}.`;
+}
+
 // The recommended tier's ATTRIBUTION clause — "Recommended by Meta.",
 // "Recommended by Constant Contact (2.1M customers, small-business campaigns)."
 // Removed for the reason the reference-stats block withholds a source name: a
@@ -384,6 +430,7 @@ function stripReaderOnlyLines(text) {
   let out = String(text == null ? '' : text);
   for (const line of READER_ONLY_LINES) out = out.split(line).join(' ');
   out = out.replace(RECOMMENDED_ATTRIBUTION, ' ');
+  out = out.replace(CHECKED_LINE, ' ');
   return out.replace(/\s+/g, ' ').trim();
 }
 
@@ -471,6 +518,24 @@ function fieldHint(field) {
     : null;
   const parts = [note, tier && tier.text].filter(Boolean);
   if (!parts.length) return null;
+  // THE DATE RIDES A TIER LINE THAT ACTUALLY NAMES A SOURCE — `nameStart >= 0`,
+  // the same condition that decides whether the platform name gets hyperlinked
+  // below.
+  //
+  // Not merely "there is a tier line". A house_default line reads "House default
+  // — set your own in Settings." and names nobody, so "Source unchanged as of …"
+  // has no referent in its own sentence; the same goes for the no-source forms of
+  // enforced and recommended. A tenant-authored field has no tier line at all and
+  // is excluded by the same test.
+  //
+  // In production the resolution already prevents it — specCheckedAt is looked up
+  // by spec_source, and 'quillio_default' is on no watch row — so this is defence
+  // in depth rather than the only guard. It is here because a renderer should not
+  // depend on a query three files away to keep it honest, and because a test
+  // rendering a house_default field with a date supplied produced exactly that
+  // sentence before this condition was tightened.
+  const checked = tier && tier.nameStart >= 0 ? checkedSentence(field && field.specCheckedAt) : '';
+  if (checked) parts.push(checked);
   const text = parts.join(' ');
   const links = [];
   // Note-embedded citation (e.g. "(Litmus)"): the note is parts[0], so its

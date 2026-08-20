@@ -539,6 +539,32 @@ There is deliberately no `--all` on that script — see the note under
 "`affected_fields` is a snapshot" for why a loop over every entry would silently
 gain and lose pairs nobody priced.
 
+### The doc's freshness date rests on the health check being RUN
+
+`getCheckedSourceDates` (`db/specWatch.js`) decides which cited pages are in a
+state worth printing a date for, and every clause in it is about the DETECTION
+RUN: was the page reachable, did the anchor match, did the hash reproduce, is a
+flag pending. **None of it asks whether the page still contains our numbers.**
+
+That is the Meta-index defect exactly. That row reported `unchanged` every week,
+with `last_error` null and both counters at zero, while watching a page with no
+character limit on it. It would have passed this predicate on every one of those
+weeks and printed a confident date.
+
+What closes the gap is `scripts/checkSpecHealth.js` — it asks the structural
+questions the predicate cannot: does the hashed text contain the row's own
+`char_max` values, is the anchor present in the hashed region today, does the
+page vary between fetches, is a cited URL watched by anybody. **It is manual and
+read-only by design, so the dependency is on somebody running it**, and the
+50 fields currently carrying a date rest on that having been done.
+
+Run it when a watch row is added, when a `spec_source` is repointed, and
+periodically otherwise. If it is ever scheduled, a red run is the signal to
+investigate — the date stays weekly and honest, and the structural check becomes
+regular. Moving the date's source to the health check is the wrong fix and was
+declined: it would have to write, which destroys the read-only property its own
+test asserts, and a manual date is a worse date than a weekly one.
+
 ### OPEN QUESTION: are LinkedIn's nine `enforced` fields actually enforced?
 
 **This is a question with two live answers, not a correction waiting to be made.**

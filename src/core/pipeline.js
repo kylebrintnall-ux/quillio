@@ -933,6 +933,11 @@ function rowToSpecGroup(a) {
       // one they have already set says it is theirs. getTenantAssets computes it
       // from the three override columns; false everywhere the columns are absent.
       specOverridden: f.spec_overridden === true,
+      // When this field's cited page was last read and found unchanged, or null.
+      // Resolved in getTenantAssets from the watch list, NOT stored on the field —
+      // it is a property of the SOURCE, shared by every field citing that page.
+      // Raw value or null; the wording and the format are the renderer's.
+      specCheckedAt: f.spec_checked_at || null,
       notes: '', // not stored in copy_fields (Sheet-only)
       funnelStage: '', // not stored in copy_fields (Sheet-only)
     })),

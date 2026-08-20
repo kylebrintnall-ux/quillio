@@ -13010,7 +13010,11 @@ test('both surfaces show both documents, and the copy doc stays first', () => {
   // And the project view has a second button, hidden unless there is one.
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.match(html, /id="project-template-btn"/);
-  assert.match(html, /tplBtn\.classList\.toggle\('hidden', !p\.template_doc_url\)/);
+  // The condition grew a second clause when the detail view gained its Documents
+  // index: both Drive buttons are document-scoped, so they also stand down on the
+  // index, where no document is in view. The claim here is unchanged — no button
+  // for a document that does not exist.
+  assert.match(html, /tplBtn\.classList\.toggle\('hidden', onIndex \|\| !p\.template_doc_url\)/);
   // "Open in Drive" is still the primary and still opens the copy doc.
   assert.match(html, /if \(p && p\.copy_doc_url\) openDocUrl\(p\.copy_doc_url\)/);
 });
@@ -15457,9 +15461,87 @@ test('every affordance on the detail view targets the document being viewed', ()
   // A draft must not switch which document you were looking at.
   assert.match(html, /function reopenProjectDoc\(\) \{\s*\n\s*return openProject\(projectState\.project, projectState\.docKind\);/);
 
-  // The switcher: only when there IS more than one document.
-  assert.match(html, /wrap\.classList\.toggle\('hidden', kinds\.length < 2\);/);
-  assert.match(html, /if \(kinds\.length < 2\) return;/);
+  // THE DOCUMENTS INDEX, which replaced the chip switcher. Same claim as before —
+  // nothing is drawn for a project with one document — reached differently: the
+  // section belongs to a VIEW, and only a project with more than one has that
+  // view to be in.
+  assert.match(html, /wrap\.classList\.toggle\('hidden', !onIndex\);/);
+  assert.match(html, /projectState\.view = \(!kind && projectDocKinds\(p\)\.length > 1\) \? 'docs' : 'doc';/);
+});
+
+// --- The project detail UI pass -------------------------------------------
+// TRIPWIRES, NOT COVERAGE, and labelled as such per this repo's own rule: every
+// one of these was decided and checked in a browser at 390x844, and a string
+// scan cannot see what a page LOOKS like or what it SENDS. They exist so the
+// six things that pass cannot be undone silently — not to stand in for the
+// device pass that established them.
+test('the project detail view: documents index, one back route, top actions', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+
+  // 1. THE INDEX IS A LIST, NOT A SWITCHER, and it is exclusive with the content.
+  //    Browser-measured: a two-document project used to draw its chips AND one
+  //    document's content underneath, so the control offered the thing you were
+  //    already reading.
+  assert.match(html, /<div id="project-docs" class="glass-panel list hidden">/);
+  assert.match(html, /id="project-docs-list"/);
+  assert.match(html, /if \(onIndex\) \{ hide\(projectLoading\); return; \}/,
+    'the index reads no document, so it fetches none');
+  const screen = sliceBetween(html, '<section id="screen-project"', '</section>');
+  assert.ok(!/doc-switch/.test(screen), 'the chip switcher is gone from the markup');
+
+  // 2. BACK GOES UP ONE LEVEL. It went to the Projects list from everywhere,
+  //    which made the Documents view unreachable once you had left it.
+  assert.match(html, /back\.textContent = \(!onIndex && kinds\.length > 1\) \? '← Back to documents' : '← Back to projects'/);
+  assert.match(html, /if \(projectState\.view === 'doc' && projectDocKinds\(projectState\.project\)\.length > 1\) showProjectDocsIndex\(\);/);
+
+  // 3. THE ACTIONS ARE ABOVE THE CONTENT, IN FLOW — not a fixed bar. Measured at
+  //    390x844 on a nine-asset project: 6,893px of page put the primary 6,613px
+  //    down, and a fixed bar of up to five buttons is 240-302px of a 844px
+  //    viewport, permanently. Order is the claim, so it is asserted as order.
+  assert.ok(screen.indexOf('class="project-actions"') < screen.indexOf('id="project-content"'),
+    'the actions come before the content they act on');
+  assert.ok(!/\.project-actions \{[^}]*position:\s*fixed/.test(html), 'and they are not a fixed bar');
+
+  // 4. THE ACCORDION, and a default that depends on how many groups there are.
+  assert.match(html, /var COLLAPSE_GROUPS_FROM = 3;/);
+  assert.match(html, /var startCollapsed = assets\.length >= COLLAPSE_GROUPS_FROM;/);
+  assert.match(html, /collapsible: true, collapsed: startCollapsed,/);
+  // A <button> only where it does something — a header that cannot collapse must
+  // not read as tappable, which is the disabled-control failure this repo has
+  // already paid for once.
+  assert.match(html, /el\(opts\.collapsible \? 'button' : 'div', 'asset-card-header'\)/);
+  // Width is not optional on a form control: shrink-to-fit left the nine bands
+  // ragged, each ending at its own text. Found in a browser, invisible here.
+  assert.match(html, /\.glass-panel\.list button\.asset-card-header \{ width: calc\(100% \+ 36px\); \}/);
+
+  // 5. THE TITLE BLOCK SITS ON THE SAME SURFACE AS THE CARDS. Bare, it was 26px
+  //    from the column edge against the cards' 45px — a 19px step, measured.
+  assert.match(html, /<div class="output-header glass-panel">\s*\n\s*<h2 class="output-title" id="project-title">/);
+  assert.match(html, /#screen-project \.output-header\.glass-panel \{ padding: 14px 18px; \}/);
+
+  // 6. THE EYEBROW USES THE ONE LABEL SYSTEM THIS PRODUCT HAS. It was 10px Zen
+  //    Kaku 700 caps — a second, sans label language, three lines under a Star
+  //    Crush heading. Restyled rather than removed: it carries the only thing
+  //    telling a copy doc from a template document when both names are the
+  //    campaign's, which on the index they are until the template is opened.
+  assert.match(html, /\.doc-row \.doc-row-kind \{ display: block; font-family: 'StarCrush', serif;/);
+  assert.match(html, /text-transform: uppercase; color: var\(--ink\); opacity: 0\.55;/);
+});
+
+// A closed group still has to answer "does this one need work", so the band
+// carries the ratio the draft surfaces already speak — and says the field count
+// instead of "0/9 drafted" when nothing is drafted, which is a count saying
+// nothing a simpler one does not.
+test('a collapsed asset group reports its drafted ratio', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /draftedFields \? \(draftedFields \+ '\/' \+ cardFields\.length \+ ' drafted'\) : \(cardFields\.length \+ ' fields'\)/);
+  // The shared hint is about tapping a FIELD, and closed groups show none. Copy
+  // Done renders the same hint and does not collapse, so the clause is added
+  // here rather than inside fieldSelectHint.
+  // "Open", not "Tap": every fieldSelectHint sentence begins "Tap", and the
+  // prefix put two identical verbs back to back with the 390px wrap landing the
+  // second directly after the first. Different verbs read as a sequence.
+  assert.match(html, /if \(startCollapsed\) phint\.textContent = 'Open an asset to see its fields\. ' \+ phint\.textContent;/);
 });
 
 test('a template document shows its fields, and not the copy doc’s campaign sections', () => {

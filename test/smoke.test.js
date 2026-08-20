@@ -17797,6 +17797,77 @@ test('bell: the message is written as text, never as markup', () => {
   assert.match(script, /createTextNode\(n\.message \|\| ''\)/);
 });
 
+// --- The seven-day window ---------------------------------------------------
+// Notifications older than WINDOW_DAYS are not listed and not counted. The rows
+// STAY — this is a filter, not a retention policy.
+//
+// THESE ARE STRUCTURAL GUARDS, NOT THE VERIFICATION. CI has no database, so
+// nothing here executes the query. The behaviour was measured against a real
+// Postgres 16: rows seeded at 1h / 6d / 6d23h59m / exactly 7d / 7d+1s / 8d / 30d,
+// with the first three listed and counted and the rest absent from both; and a
+// row placed three seconds inside the edge, polled across it, going present ->
+// absent exactly once. What follows guards the two ways that could silently
+// regress — the predicate leaving the WHERE clause, and the cutoff leaving the
+// database's clock.
+
+test('window: the age predicate is in the WHERE of the same query as the count', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/notifications'), 'utf8');
+  const list = sliceBetween(src, 'async function listNotifications(', 'async function markNotificationsRead(');
+  // Same statement: the window function is evaluated over what WHERE returned,
+  // so the list and the count cannot disagree. This is the whole reason the
+  // filter is here rather than in each caller.
+  assert.match(list, /COUNT\(\*\) FILTER \(WHERE r\.read_at IS NULL\) OVER \(\)/);
+  assert.match(list, /WHERE n\.tenant_id = \$1\n\s*AND n\.created_at > NOW\(\) - make_interval\(days => \$4\)/);
+  assert.match(list, /\[tenantId, userId \|\| null, cap, WINDOW_DAYS\]/);
+});
+
+test('window: the cutoff is the database clock, never the process clock', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/notifications'), 'utf8');
+  const list = sliceBetween(src, 'async function listNotifications(', 'async function markNotificationsRead(');
+  // A cutoff computed in JavaScript is one clock PER APP INSTANCE, and Railway
+  // can run more than one — a row near the edge would then be present or absent
+  // depending on which instance answered the poll. NOW() is the transaction
+  // timestamp: one clock, and crossing the edge is one-directional.
+  assert.ok(!/Date\.now\(\)|new Date\(/.test(list), 'no JS-side timestamp in the read path');
+  assert.match(list, /NOW\(\) - make_interval/);
+});
+
+test('window: the rows are NOT post-filtered in JavaScript', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/notifications'), 'utf8');
+  const list = sliceBetween(src, 'async function listNotifications(', 'async function markNotificationsRead(');
+  // Filtering after the query is the regression this whole placement exists to
+  // prevent: unreadCount comes off row 0 of the result, so dropping rows in JS
+  // would leave a count that includes what the panel does not show.
+  assert.ok(!/rows\.filter\(|\.filter\(\(r\)/.test(list), 'no filtering between the query and the return');
+  assert.match(list, /unreadCount: rows\.length \? Number\(rows\[0\]\.unread_total\) : 0,/);
+});
+
+test('window: it is a filter, not a deletion, and mark-read does not carry it', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/notifications'), 'utf8');
+  // Comments stripped first: this module's prose says the word "deletes" while
+  // explaining that it does not, and a test that reads the explanation as the
+  // behaviour is the same class of mistake as a slice that names its subject by
+  // two literals it never checks.
+  const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.ok(!/DELETE|TRUNCATE|DROP /i.test(code), 'nothing in this module removes a row');
+  // The window decides what is SHOWN. Marking read records that somebody read
+  // what they were shown, so a panel left open across the edge posting a
+  // just-aged id is harmless rather than a failed write.
+  const mark = sliceBetween(src, 'async function markNotificationsRead(', 'module.exports');
+  assert.ok(!/created_at|make_interval|WINDOW_DAYS/.test(mark), 'no age predicate on the write');
+});
+
+test('window: seven days, named once and exported', () => {
+  const { WINDOW_DAYS } = require('../src/db/notifications');
+  assert.strictEqual(WINDOW_DAYS, 7);
+  const src = fs.readFileSync(require.resolve('../src/db/notifications'), 'utf8');
+  assert.strictEqual((src.match(/^const WINDOW_DAYS = \d+;$/gm) || []).length, 1, 'declared once');
+  // The client does not carry its own copy — it would drift, and the server is
+  // the only place that can make the list and the count agree.
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  assert.ok(!/7 ?\* ?24|sevenDays|WINDOW_DAYS|604800000/.test(partial), 'the panel does no age filtering');
+});
+
 test('shared nav: onboarding and admin are deliberately NOT in it', () => {
   // onboarding's nav is anchors to real routes with a different link set and no
   // handlers; admin has no nav at all. Neither is this component reskinned, so

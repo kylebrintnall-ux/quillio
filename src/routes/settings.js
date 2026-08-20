@@ -436,6 +436,19 @@ router.post('/api/settings/library/asset/:id', settingsWriteLimiter, requireAuth
           error: 'This asset type changed while you were editing it. Reload and try again.',
         });
       }
+      // The min/max pair, refused against the values in force rather than against
+      // the request. Only reachable since the form began sending a control's own
+      // value alone: normalizeHouseDefaults can compare the two numbers when both
+      // arrive, and a submission carrying one of them has nothing to compare it
+      // to until the stored row is in hand. Named by FIELD, not by position —
+      // this refusal knows which row it is talking about, where a pure validator
+      // only knows it was the third one.
+      if (!hResult.ok && hResult.reason === 'range') {
+        return res.status(400).json({
+          success: false,
+          error: `"${hResult.field}": minimum (${hResult.min}) is above the limit (${hResult.max}).`,
+        });
+      }
       if (!hResult.ok) {
         return res.status(404).json({ success: false, error: 'Asset not found.' });
       }

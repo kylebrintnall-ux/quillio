@@ -1264,15 +1264,26 @@ __NAV:settings__
     function libHouseRow(f) {
       var editable = f.editable !== false;
       var wrap = el('div', 'lib-frow' + (editable ? '' : ' locked'));
-      // ONLY A ROW THE USER TOUCHED IS SENT. Posting every rendered row would
-      // write an override to every house_default field of the asset — equal to
-      // the seed's value, so nothing LOOKS different — and silently detach all of
-      // them from every future seed update. Opening the form and changing one
-      // number would quietly pin the other five forever.
+      // ONLY A ROW THE USER TOUCHED IS SENT, AND ONLY THE VALUES THEY TOUCHED.
+      // Posting every rendered row would write an override to every house_default
+      // field of the asset — equal to the seed's value, so nothing LOOKS
+      // different — and silently detach all of them from every future seed
+      // update. Opening the form and changing one number would quietly pin the
+      // other five forever.
       //
-      // The server already speaks this language: an absent value means "not
-      // offered, leave it alone". This is the client keeping its side of it.
-      var dirty = false;
+      // THE SAME THING HAPPENS ONE LEVEL DOWN, and a row-level flag cannot see
+      // it: a row that posts all three of its values because ONE of them changed
+      // pins the other two. Editing a limit wrote char_min_override and
+      // spec_note_override as well, each equal to the value already in force, and
+      // from then on a corrected spec never reached that field. The note is the
+      // visible half — on a field the seed gives no note, the collapsed textarea
+      // the tenant never opened submitted '' and the row started reporting itself
+      // as overridden — but the numbers are the half that costs something.
+      //
+      // So dirtiness is tracked per VALUE. The server already speaks this
+      // language: an absent value means "not offered, leave it alone". This is
+      // the client keeping its side of it.
+      var touched = { char_min: false, char_max: false, spec_note: false };
 
       var head = el('div', 'lib-fhead');
       head.appendChild(el('span', 'lib-fname static', f.field_name));
@@ -1365,9 +1376,10 @@ __NAV:settings__
       wrap.appendChild(noteWrap);
       setNoteOpen(!!f.spec_note);
       note.addEventListener('input', function () { libAutoGrow(note); });
-      [min, max, note].forEach(function (e) {
-        e.addEventListener('input', function () { dirty = true; });
-      });
+      // Each control marks its OWN key. Not a shared flag — that is the defect.
+      min.addEventListener('input', function () { touched.char_min = true; });
+      max.addEventListener('input', function () { touched.char_max = true; });
+      note.addEventListener('input', function () { touched.spec_note = true; });
 
       // WHAT QUILLIO'S NUMBER IS, and the way back to it. Shown only once the
       // tenant has changed something, because on an untouched field the stored
@@ -1405,15 +1417,27 @@ __NAV:settings__
       // `reset` and values are mutually exclusive by construction, not by the
       // server having to guess which half of a contradictory request to honour.
       // null = this row was not touched and must not be sent.
+      //
+      // A key is present only when its own control fired. An omitted key is
+      // `undefined` on the wire, which normalizeHouseDefaults and
+      // applyHouseDefaultOverrides both already read as "not offered, leave it
+      // alone" — so nothing on the server had to change to accept this.
+      //
+      // ONE THING THIS GIVES UP, AND IT IS PAID FOR ON THE SERVER. The min/max
+      // pair check in normalizeHouseDefaults only runs when both values arrive,
+      // which used to be always. Sending one of them alone would let a tenant put
+      // a minimum above their own stored limit with nothing to catch it, so
+      // applyHouseDefaultOverrides now re-checks the pair against the values it
+      // holds. Do not "restore" the pair here by sending both — sending the
+      // untouched half is exactly what pins it.
       wrap.readRow = function () {
         if (doReset) return { id: f.id, reset: true };
-        if (!dirty) return null;
-        return {
-          id: f.id,
-          char_min: min.value === '' ? 0 : Number(min.value),
-          char_max: max.value === '' ? 0 : Number(max.value),
-          spec_note: note.value
-        };
+        if (!touched.char_min && !touched.char_max && !touched.spec_note) return null;
+        var row = { id: f.id };
+        if (touched.char_min) row.char_min = min.value === '' ? 0 : Number(min.value);
+        if (touched.char_max) row.char_max = max.value === '' ? 0 : Number(max.value);
+        if (touched.spec_note) row.spec_note = note.value;
+        return row;
       };
       return wrap;
     }

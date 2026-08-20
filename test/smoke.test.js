@@ -12261,31 +12261,41 @@ test('the tier gate: house_default and NULL are the tenant\'s, enforced and reco
 // source, because each of these is a way the structural rule could leak.
 test('the house-default write sets overrides only, on permitted tiers only, from the STORED row', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'assets.js'), 'utf8');
-  const fn = src.slice(
-    src.indexOf('async function applyHouseDefaultOverrides'),
-    src.indexOf('// UPDATE one asset the tenant owns')
-  );
+  const fn = sliceBetween(src, 'async function applyHouseDefaultOverrides', '// UPDATE one asset the tenant owns');
   assert.ok(fn.length > 500, 'found the function');
 
   // THE TIER COMES FROM POSTGRES, NEVER THE REQUEST. The client sends whatever
   // it likes; a submitted spec_type must not be able to unlock a field.
-  assert.match(fn, /SELECT id, spec_type FROM copy_fields WHERE asset_type_id = \$1/);
+  assert.match(fn, /SELECT id, field_name, spec_type, spec_note, char_min, char_max,/);
+  assert.match(fn, /FROM copy_fields WHERE asset_type_id = \$1/);
   assert.match(fn, /isTenantEditableTier\(tierById\.get\(id\)\)/);
   assert.ok(!/field\.spec_type|submitted\.spec_type/.test(fn), 'the submission cannot name a tier');
 
   // OVERRIDE COLUMNS ONLY. Not one base column is written — that is what keeps a
   // seed-alignment migration and specReview correct without knowing this exists.
-  for (const base of ['char_min =', 'char_max =', 'spec_note =', 'field_name =', 'sort_order =', 'field_type =']) {
-    assert.ok(!fn.includes(base), `never writes the base column (${base})`);
+  //
+  // Asserted at `put`, which is where the value UPDATE's column list is actually
+  // decided — the SQL interpolates `sets`, so no column name is literal in it and
+  // scanning the statement would find nothing either way. Scanning the whole
+  // function instead is what this used to do, and it broke the moment the pair
+  // check compared `field.char_min === null`: "char_min =" is a substring of
+  // "char_min ===". A read of a base column is not a write of one.
+  const puts = (fn.match(/put\('([a-z_]+)'/g) || []).sort();
+  assert.deepStrictEqual(puts, [
+    "put('char_max_override'",
+    "put('char_min_override'",
+    "put('spec_note_override'",
+  ], 'the only columns this function can write are the three overrides');
+  const updates = fn.match(/UPDATE copy_fields[\s\S]*?`/g) || [];
+  assert.ok(updates.length >= 2, 'found the reset and the value UPDATE');
+  for (const u of updates) {
+    for (const base of ['char_min =', 'char_max =', 'spec_note =', 'field_name =', 'sort_order =', 'field_type =']) {
+      assert.ok(!u.includes(base), `no base column inside an UPDATE (${base})`);
+    }
   }
-  assert.match(fn, /char_min_override/);
-  assert.match(fn, /char_max_override/);
-  assert.match(fn, /spec_note_override/);
   // No authority column inside any UPDATE. spec_type appears in this function
   // exactly once, in the SELECT that READS the gate — checking the whole body
   // would be checking that, which is the opposite of what matters.
-  const updates = fn.match(/UPDATE copy_fields[\s\S]*?`/g) || [];
-  assert.ok(updates.length >= 2, 'found the reset and the value UPDATE');
   for (const u of updates) {
     assert.ok(!/spec_type|spec_source|spec_version/.test(u), 'no authority column in an UPDATE');
   }
@@ -12303,6 +12313,210 @@ test('the house-default write sets overrides only, on permitted tiers only, from
 
   // Scoped to the asset as well as the id, like every other field write here.
   assert.match(fn, /WHERE id = \$\$\{params\.length - 1\} AND asset_type_id = \$\$\{params\.length\}/);
+});
+
+// === Collateral overrides: a value nobody chose, pinned forever ==============
+//
+// An override column is not merely "the tenant's value" — it is a value no
+// future write can move. Every spec correction writes the BASE column by asset
+// name with no tenant predicate, and the reads resolve COALESCE(override, base),
+// so a field carrying an override is permanently detached from every correction
+// that will ever be made to it. Nothing surfaces that.
+//
+// The house-defaults form used to write three of them for every one the tenant
+// changed: dirtiness was tracked per ROW, and a dirty row posted all three of its
+// values. Changing a limit pinned the minimum and the note as well. On a field
+// whose seed carries no note the note collateral was '', submitted by a collapsed
+// textarea nobody opened — and '' is not NULL, so the row began reporting itself
+// overridden and the document began saying "yours, set in Settings".
+//
+// Two halves, tested separately because they fail separately: the client sends
+// only what fired, and the server refuses to store a value that says nothing.
+
+// A stand-in for the transaction's client. Records every statement, answers the
+// one SELECT with the rows given, and reports one row affected by an UPDATE.
+function houseTxnClient(rows) {
+  const calls = [];
+  return {
+    calls,
+    updates: () => calls.filter((c) => /UPDATE copy_fields/.test(c.sql)),
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/^\s*SELECT id, field_name/.test(sql)) return { rows, rowCount: rows.length };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+}
+
+// One stored copy_fields row as applyHouseDefaultOverrides reads it. The default
+// is the row this was found on: LinkedIn Single Image Ad / Graphic Headline,
+// seeded ['Graphic Headline', 0, 70, 'Graphic Copy'] — house_default, no note.
+function houseStoredRow(over) {
+  return Object.assign({
+    id: '7',
+    field_name: 'Graphic Headline',
+    spec_type: 'house_default',
+    spec_note: null,
+    char_min: 0,
+    char_max: 70,
+    eff_min: 0,
+    eff_max: 70,
+  }, over);
+}
+
+test('an empty note over a seed that has none is stored as no override at all', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  const client = houseTxnClient([houseStoredRow()]);
+  const res = await applyHouseDefaultOverrides(client, 99, [{ id: '7', spec_note: '' }]);
+
+  assert.strictEqual(res.ok, true);
+  const upd = client.updates();
+  assert.strictEqual(upd.length, 1, 'one write');
+  assert.match(upd[0].sql, /SET spec_note_override = \$1 WHERE/);
+  assert.strictEqual(upd[0].params[0], null,
+    "'' deletes nothing when the seed gives no note, so it is not an override");
+});
+
+test('an empty note over a SEEDED note is still the tenant deleting it', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  // The twelve Litmus email fields are this shape — house_default, and carrying a
+  // note. A general '' -> NULL fold would silently restore the note here.
+  const client = houseTxnClient([houseStoredRow({ spec_note: 'Front-load the first 40 characters.' })]);
+  const res = await applyHouseDefaultOverrides(client, 99, [{ id: '7', spec_note: '' }]);
+
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(client.updates()[0].params[0], '', 'the deletion survives');
+});
+
+test('only the values the tenant touched are written', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  const client = houseTxnClient([houseStoredRow()]);
+  await applyHouseDefaultOverrides(client, 99, [{ id: '7', char_max: 60 }]);
+
+  const upd = client.updates()[0];
+  assert.match(upd.sql, /SET char_max_override = \$1 WHERE/);
+  assert.ok(!/char_min_override/.test(upd.sql), 'the untouched minimum is not pinned');
+  assert.ok(!/spec_note_override/.test(upd.sql), 'the untouched note is not pinned');
+});
+
+test('the min/max pair is checked against the values in force, not against the request', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  // normalizeHouseDefaults compares the two numbers only when both arrive, which
+  // the form used to guarantee. Now a control sends its own value alone, so the
+  // stored half is the only thing the submitted half can be checked against.
+  const client = houseTxnClient([houseStoredRow({ eff_min: 40, eff_max: 60 })]);
+  const res = await applyHouseDefaultOverrides(client, 99, [{ id: '7', char_max: 30 }]);
+
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.reason, 'range');
+  assert.strictEqual(res.field, 'Graphic Headline', 'named by field, not by position');
+  assert.deepStrictEqual([res.min, res.max], [40, 30]);
+  assert.strictEqual(client.updates().length, 0, 'nothing is written on a refusal');
+});
+
+test('clearing one half of the pair resolves to the SEED, not to the override it replaces', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  // 40 is in force over a seed of 0. An explicit null CLEARS that override, so 0
+  // is what will stand — and a new maximum of 30 is legal. Resolving against the
+  // 40 that is on its way out would refuse an edit that is fine.
+  const client = houseTxnClient([houseStoredRow({ char_min: 0, eff_min: 40, eff_max: 60 })]);
+  const res = await applyHouseDefaultOverrides(client, 99, [{ id: '7', char_min: null, char_max: 30 }]);
+
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(client.updates().length, 1);
+});
+
+test('char_max 0 is "no limit", so no floor can be above it', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  const client = houseTxnClient([houseStoredRow({ eff_min: 40 })]);
+  const res = await applyHouseDefaultOverrides(client, 99, [{ id: '7', char_max: 0 }]);
+
+  assert.strictEqual(res.ok, true, 'mirrors the rule normalizeHouseDefaults applies');
+});
+
+test('a locked tier is skipped BEFORE the pair check, so it cannot refuse a save', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  // A mixed bundled asset posts its enforced rows too. One of them carrying a
+  // pair the tenant cannot change must not turn into a 400 about somebody else's
+  // field — it is `locked`, which is what that counter has always meant.
+  const client = houseTxnClient([houseStoredRow({ spec_type: 'enforced', eff_min: 40, eff_max: 60 })]);
+  const res = await applyHouseDefaultOverrides(client, 99, [{ id: '7', char_max: 30 }]);
+
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.locked, 1);
+  assert.strictEqual(client.updates().length, 0);
+});
+
+// The client half, RUN rather than matched. `readRow` decides what goes on the
+// wire, and the defect was a missing condition inside it — which no string test
+// can see. This lifts the shipped function out of settings.html and calls it.
+//
+// It is still not a browser: it says what the function returns for a given set of
+// flags, not that the flags get set by the right events. Those three listeners
+// are asserted structurally below, and the device remains the test for the page.
+test('the house form sends only the controls that fired', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const houseRow = sliceBetween(src, 'function libHouseRow(f) {', 'function libOpenHouseForm(');
+  // The two-line anchor matters: the LOCKED branch above assigns wrap.readRow too,
+  // on one line, and a one-line anchor finds that one first.
+  const readRow = sliceBetween(houseRow, 'wrap.readRow = function () {\n        if (doReset)', '      return wrap;');
+  const run = new Function('f', 'touched', 'doReset', 'min', 'max', 'note',
+    `var wrap = {};\n${readRow}\nreturn wrap.readRow();`);
+
+  const box = (v) => ({ value: v });
+  const f = { id: '7' };
+  const nothing = { char_min: false, char_max: false, spec_note: false };
+  const maxOnly = { char_min: false, char_max: true, spec_note: false };
+  const noteOnly = { char_min: false, char_max: false, spec_note: true };
+
+  assert.strictEqual(run(f, nothing, false, box('0'), box('70'), box('')), null,
+    'an untouched row is not sent at all');
+
+  const row = run(f, maxOnly, false, box('0'), box('60'), box(''));
+  assert.deepStrictEqual(row, { id: '7', char_max: 60 });
+  assert.ok(!('char_min' in row), 'the untouched minimum is not pinned');
+  assert.ok(!('spec_note' in row),
+    'the collapsed note box the tenant never opened contributes nothing');
+
+  assert.deepStrictEqual(run(f, noteOnly, false, box('0'), box('70'), box('')),
+    { id: '7', spec_note: '' },
+    'emptying a note box IS sent — that is a deletion, and the server decides what it means');
+
+  assert.deepStrictEqual(run(f, maxOnly, true, box('0'), box('60'), box('')),
+    { id: '7', reset: true }, 'reset still wins over values');
+
+  // Each control marks its own key, and no row-level flag survives to
+  // reintroduce the defect by accident.
+  assert.match(houseRow, /min\.addEventListener\('input', function \(\) \{ touched\.char_min = true; \}\)/);
+  assert.match(houseRow, /max\.addEventListener\('input', function \(\) \{ touched\.char_max = true; \}\)/);
+  assert.match(houseRow, /note\.addEventListener\('input', function \(\) \{ touched\.spec_note = true; \}\)/);
+  assert.ok(!/\bdirty\b/.test(houseRow), 'the row-level dirty flag is gone');
+});
+
+test('a pair refusal is a 400 that names the field, not the generic 404', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'settings.js'), 'utf8');
+  const branch = sliceBetween(src, "if (!hResult.ok && hResult.reason === 'range')", 'if (!hResult.ok) {');
+  assert.match(branch, /status\(400\)/);
+  assert.match(branch, /\$\{hResult\.field\}/, 'the message names the field');
+  assert.match(branch, /\$\{hResult\.min\}[\s\S]*\$\{hResult\.max\}/);
+});
+
+test('the redundant-override repair only ever writes NULL, over a base it equals', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateClearRedundantOverrides.js'), 'utf8');
+
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\)/, 'dry run unless asked');
+  const updates = src.match(/UPDATE copy_fields[\s\S]*?`/g) || [];
+  assert.strictEqual(updates.length, 1, 'one UPDATE, driven by the column table');
+  assert.match(updates[0], /SET \$\{col\} = NULL/, 'it can only ever write NULL');
+
+  // Each test is an equality against the BASE column. A bare IS NOT NULL here
+  // would clear the tenant's real values — the thing the columns exist to hold.
+  assert.match(src, /cf\.char_min_override = cf\.char_min/);
+  assert.match(src, /cf\.char_max_override = cf\.char_max/);
+  // '' over an absent base and 'x' over a base of 'x' are one rule: the override
+  // says what the base already says. '' over a base that HAS a note is DISTINCT
+  // from it and is not matched, which is what preserves a real deletion.
+  assert.match(src, /NULLIF\(cf\.spec_note_override, ''\) IS NOT DISTINCT FROM NULLIF\(cf\.spec_note, ''\)/);
 });
 
 test('the update writes six columns, by id, in one transaction', () => {
@@ -12386,12 +12600,19 @@ test('the house-default form sends only the rows the tenant touched', () => {
   // real Postgres: editing Graphic Headline alone logged "3 changed" and left
   // Subhead and CTA Button pinned. That is the exact failure the override
   // columns exist to prevent, arriving through the front door.
-  assert.match(form, /var dirty = false;/);
-  assert.match(form, /e\.addEventListener\('input', function \(\) \{ dirty = true; \}\);/);
-  assert.match(form, /if \(!dirty\) return null;/, 'an untouched row is not sent');
+  //
+  // AND THEN THE SAME THING ONE LEVEL DOWN, which this row-level assertion could
+  // not see: a dirty row still posted all THREE of its values, so changing a
+  // limit pinned the minimum and the note as well. The flag is per value now.
+  // What it returns for a given set of flags is exercised for real in "the house
+  // form sends only the controls that fired"; these stay structural.
+  assert.match(form, /var touched = \{ char_min: false, char_max: false, spec_note: false \};/);
+  assert.match(form, /if \(!touched\.char_min && !touched\.char_max && !touched\.spec_note\) return null;/,
+    'an untouched row is not sent');
   // A reset is an explicit act and IS sent, even though nothing was typed.
-  assert.ok(form.indexOf('if (doReset) return { id: f.id, reset: true };') < form.indexOf('if (!dirty) return null;'),
-    'reset is checked before the dirty gate, so it survives it');
+  assert.ok(form.indexOf('if (doReset) return { id: f.id, reset: true };')
+    < form.indexOf('if (!touched.char_min'),
+    'reset is checked before the touched gate, so it survives it');
   // And the caller drops the nulls rather than posting them.
   assert.match(form, /if \(row\) fields\.push\(row\);/);
   assert.match(form, /if \(fields\.length === 0\) \{ close\(\); return; \}/,

@@ -645,11 +645,47 @@ function isTenantEditableTier(specType) {
 // A null override CLEARS. `undefined` on a submitted value means "not offered",
 // so it is left as it is; an explicit null is the reset control, putting the
 // field back on the seed's number for good — including future seed changes.
+//
+// WHAT A STALE OVERRIDE COSTS, because it is the reason the two guards below
+// exist. An override column is not merely "the tenant's value" — it is a value
+// no future write can move. `specReview.commitReview` and every hand-written
+// spec migration write the BASE column, by asset name, with no tenant predicate;
+// the reads resolve COALESCE(override, base). So a field carrying an override is
+// permanently detached from every correction that will ever be made to it. When
+// a number is wrong and gets fixed — the Meta and LinkedIn corrections of August
+// 2026 are the live examples — the fix reaches every tenant EXCEPT the ones
+// holding an override on that field, and there is nothing anywhere that says so.
+// That is the right trade for a number a tenant chose. It is pure loss for one
+// they never chose, which is what a value written as collateral is.
+//
+// TWO GUARDS, AND NEITHER IS A GENERAL FOLD:
+//
+//   • spec_note '' means "I deleted the note", and it stays '' — EXCEPT where the
+//     stored base note is NULL, where there was no note to delete and '' and NULL
+//     say the same thing. Folding '' to NULL generally would silently restore a
+//     seeded note the tenant removed on purpose; the twelve Litmus email fields
+//     are where that would land. Folding it only over an absent base cannot
+//     restore anything, because there is nothing there.
+//
+//   • char_min / char_max are re-checked AS A PAIR against the values in force.
+//     normalizeHouseDefaults checks them only when both arrive, which used to be
+//     guaranteed by the form posting all three values of any row it touched.
+//     Now that a control sends only its own value, one half can arrive alone —
+//     and a minimum above the stored limit would produce "[40-30]" in the doc and
+//     a prompt asking for at least 40 and at most 30.
 async function applyHouseDefaultOverrides(client, assetTypeId, submitted) {
+  // spec_note, char_min and char_max are the SEED's values; the two _override
+  // columns are what is in force over them. Both are needed: the guards below ask
+  // "does this submission say anything the stored row does not already say", and
+  // that question needs the base and the effective value, not one of them.
   const stored = await client.query(
-    'SELECT id, spec_type FROM copy_fields WHERE asset_type_id = $1',
+    `SELECT id, field_name, spec_type, spec_note, char_min, char_max,
+            COALESCE(char_min_override, char_min) AS eff_min,
+            COALESCE(char_max_override, char_max) AS eff_max
+       FROM copy_fields WHERE asset_type_id = $1`,
     [assetTypeId]
   );
+  const rowById = new Map(stored.rows.map((r) => [String(r.id), r]));
   const tierById = new Map(stored.rows.map((r) => [String(r.id), r.spec_type || null]));
 
   let changed = 0;
@@ -686,6 +722,34 @@ async function applyHouseDefaultOverrides(client, assetTypeId, submitted) {
       continue;
     }
 
+    const row = rowById.get(id);
+
+    // THE PAIR, RESOLVED AS IT WILL STAND AFTER THIS WRITE. A submitted value
+    // wins; an explicit null falls back to the SEED (that is what clearing the
+    // override does); an absent key leaves whatever is in force. Anything else
+    // would check a pair that never exists — the submitted half against a stored
+    // half it is about to replace, or against the seed it is not going back to.
+    const num = (v) => (v == null ? 0 : Number(v));
+    const effMin = field.char_min !== undefined
+      ? (field.char_min === null ? num(row.char_min) : Number(field.char_min))
+      : num(row.eff_min);
+    const effMax = field.char_max !== undefined
+      ? (field.char_max === null ? num(row.char_max) : Number(field.char_max))
+      : num(row.eff_max);
+    // char_max 0 is "no limit" (fieldLabel renders no bracket), so a floor above
+    // it is only wrong when there is a ceiling to be above. Character for
+    // character the test normalizeHouseDefaults makes when both values arrive —
+    // this is the same rule applied where the other half can be missing.
+    if (effMin > 0 && effMax > 0 && effMin > effMax) {
+      return {
+        ok: false,
+        reason: 'range',
+        field: row.field_name,
+        min: effMin,
+        max: effMax,
+      };
+    }
+
     // Only the values actually offered. `undefined` is absent from the form;
     // null is the tenant clearing that one value back to the seed.
     const sets = [];
@@ -696,10 +760,20 @@ async function applyHouseDefaultOverrides(client, assetTypeId, submitted) {
     };
     if (field.char_min !== undefined) put('char_min_override', field.char_min);
     if (field.char_max !== undefined) put('char_max_override', field.char_max);
-    // '' is a real override meaning "I deleted the note", and is stored as ''
-    // rather than folded to NULL — NULL here means "no override", so folding
-    // would silently restore the seed's note the tenant just removed.
-    if (field.spec_note !== undefined) put('spec_note_override', field.spec_note);
+    if (field.spec_note !== undefined) {
+      // '' is a real override meaning "I deleted the note", and is stored as ''
+      // rather than folded to NULL — NULL here means "no override", so folding
+      // would silently restore the seed's note the tenant just removed.
+      //
+      // UNLESS THE SEED GIVES THIS FIELD NO NOTE, in which case '' deletes
+      // nothing and the two values say the same thing. Stored as NULL there, so
+      // an empty box cannot manufacture an override — and so a row already
+      // carrying that phantom is repaired by the next save that touches it. A
+      // base of '' counts as absent for the same reason every other reader treats
+      // it that way (getTenantLibrary folds it, the full editor never writes it).
+      const baseNote = row.spec_note == null ? '' : String(row.spec_note);
+      put('spec_note_override', field.spec_note === '' && baseNote === '' ? null : field.spec_note);
+    }
     if (sets.length === 0) {
       skipped++;
       continue;
@@ -977,6 +1051,12 @@ module.exports = {
   // The only tenant-facing UPDATE. Same fixed column list; refuses a seeded
   // asset and another tenant's asset, both from the STORED row.
   updateAssetType,
+  // The seeded-asset half of that update. UNIT TESTS ONLY — not part of the
+  // module's interface, and no caller outside updateAssetType may use it: it
+  // assumes the transaction and the row lock its one caller has already taken.
+  // Exported because its two guards are decisions about stored values, and a
+  // structural test cannot see which value a WHERE clause was resolved from.
+  applyHouseDefaultOverrides,
   // Read-only-ness of a bundled asset, derived from its name — see the comment
   // above it for why the name and not a column. Exported for the route (which
   // reports it) and for tests.

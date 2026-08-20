@@ -376,7 +376,22 @@ class of silent failure as `affected_fields` going stale.
 Three values that are **not** null and must stay that way: `char_min_override = 0`
 means "no minimum", `spec_note_override = ''` means "the tenant deleted the note",
 and `NULL` on any of them means "no override". Folding `''` to NULL would silently
-restore a note the tenant removed.
+restore a note the tenant removed — the twelve Litmus email fields are
+`house_default` **and** carry a seeded note, so that is where it would land.
+
+**One narrow exception, and it is not a fold.** Where the stored base `spec_note`
+is NULL there is no note to delete, so `''` and NULL say the same thing and
+`applyHouseDefaultOverrides` stores NULL. That cannot restore anything, because
+there is nothing there. It is the *effect* being compared, not the value — the
+same test `migrateClearRedundantOverrides` applies to all three columns.
+
+**And the reason any of this matters is not "the tenant's value".** An override is
+a value **no future write can move**: every correction writes the BASE column by
+asset name with no tenant predicate, and the reads resolve `COALESCE(override,
+base)`. So a corrected spec — Meta's carousel headline, LinkedIn's carousel intro
+text, both fixed this month — reaches every tenant *except* the ones holding an
+override on that field, and nothing anywhere surfaces it. Correct for a number a
+tenant chose. Pure loss for one written as collateral.
 
 `spec_overridden` is a three-column OR, **not** "does the effective value differ
 from the seed" — a tenant who deliberately re-typed Quillio's own number has
@@ -677,13 +692,31 @@ is not a cheaper route; verify that before assuming it either way.
   does render **disabled rather than omitted**, styled inert (no chevron, flat
   fill): the server ignores it on this path, and a control that accepts input the
   server discards is the failure this panel keeps refusing.
-- **Only rows the tenant TOUCHED are sent.** The form posts a row only once its
-  inputs have fired, and drops the request entirely when nothing changed. Posting
-  every rendered row wrote an override to every house_default field of the asset —
-  each equal to the seed's own value, so nothing looked different — and silently
-  detached all of them from future seed updates. That is the failure the override
-  columns exist to prevent, arriving through the front door. The server already
-  reads an absent value as "leave it alone"; this is the client keeping its side.
+- **Only the VALUES the tenant touched are sent**, and only from a row they
+  touched. Posting every rendered row wrote an override to every house_default
+  field of the asset — each equal to the seed's own value, so nothing looked
+  different — and silently detached all of them from future seed updates. That is
+  the failure the override columns exist to prevent, arriving through the front
+  door. The server already reads an absent value as "leave it alone"; this is the
+  client keeping its side.
+
+  **The row-level fix left the same defect one level down, and it took a database
+  query to find.** `dirty` was per ROW, so a row posted all three of its values
+  because one of them changed: editing a limit pinned the minimum and the note
+  too. On a field the seed gives no note, the note collateral was `''` — from a
+  collapsed textarea nobody opened — which is not NULL, so `spec_overridden`
+  began reporting true and the doc began saying "yours, set in Settings" over a
+  number nobody had set. Found on `T0B8LPRDKHR` / LinkedIn Single Image Ad /
+  Graphic Headline: char overrides 40/60 genuine, `spec_note_override = ''`
+  phantom. The flag is per value now (`touched`), and
+  `scripts/migrateClearRedundantOverrides.js` clears what was already written.
+
+  **The pair check moved to the server as a consequence.** `normalizeHouseDefaults`
+  compares `char_min` against `char_max` only when both arrive, which the old form
+  guaranteed. Now one can arrive alone, so `applyHouseDefaultOverrides` re-checks
+  the pair against the values in force — resolving an explicit null to the SEED,
+  because that is what clearing an override does. Do not "fix" a future version of
+  this form by sending both halves again: sending the untouched half is the defect.
 - **`counts.editable` did not change meaning.** It still counts assets that open
   the *full* form. The new state travels in `counts.houseEditable`. A stale client
   reads the old key to mean what it always meant.

@@ -539,6 +539,100 @@ There is deliberately no `--all` on that script — see the note under
 "`affected_fields` is a snapshot" for why a loop over every entry would silently
 gain and lose pairs nobody priced.
 
+### OPEN QUESTION: are LinkedIn's nine `enforced` fields actually enforced?
+
+**This is a question with two live answers, not a correction waiting to be made.**
+Writing it as a pending retier would prejudge it — which is the same failure as
+the original assignment, better documented. It is equally possible that LinkedIn
+rejects above these numbers at ingest, the tier is correct, and the interesting
+finding becomes why its pages call them recommendations.
+
+The nine: `LinkedIn Single Image Ad` Intro Text 150 / Headline 70 / LAN
+Description 70, and `LinkedIn Carousel Ad` Intro Text 255 / Card 1–5 Headline 45.
+All render "Platform limit (LinkedIn). Stay within this count."
+
+**Why it is open.** Both pages put those numbers under a heading reading **"Text
+Recommendations"** — the same evidence that retiered Meta's ten in July. And
+eight of the nine were tiered by the *same hand-written array* as Meta's, in one
+commit, with no citation: `migrateAddCopyFieldSpecType.js`'s `const ENFORCED`,
+23 pairs, of which **10 have since been found wrong**. `migrateSpecIntegrityFixes`
+retiered Meta only — `grep LinkedIn` returns SOURCE_FIXES and FIELD_NOTES entries
+and *zero* tier entries, so LinkedIn was never examined rather than examined and
+kept. (The ninth, LAN Description, was promoted separately by
+`migrateAddCopyFieldSpecTypeFixes.js`, which at least names its claim — "LinkedIn
+Audience Network description, 70-char cap" — though it quotes no page.)
+
+**Why a heading is not enough to act on.** The tier's own definition is
+behavioural: "platform hard cap — over it the asset breaks / is rejected". A
+platform can publish a number as a recommendation and still reject above it.
+Meta's retier had more than a heading — it had the technical ceilings (255 for
+headlines, far larger for primary text) that made "advisory" demonstrable. There
+is no equivalent figure for LinkedIn; the 600 that might have served as one
+turned out to correspond to nothing on any page.
+
+**The cost of being wrong is asymmetric, and it favours leaving it.** Over-claiming
+today costs a writer some craft — a shorter headline than they needed. Retiering
+wrongly tells them 70 is "not a hard limit — adjust for your brand and goal", they
+write 90, and LinkedIn rejects the creative at upload. Nothing here is a wrong
+*number*; all nine limits are confirmed against their pages.
+
+#### What bounds the decision — established by reading the code, and not obvious from outside
+
+- **`spec_type` branches on exactly two things.** The rendered tier sentence
+  (`googleDocs.specTypeLine`, and through `fieldHint` the drafting prompt), and
+  Settings editability (`db/assets.isTenantEditableTier` → `routes/settings.js`).
+  Nothing else in `src/` reads it.
+- **A retier does not change what lands in a document.** `overLimit`,
+  `trimCeiling`, the rescue ladder and the corrective rewrite all key on
+  `charMax` and `fieldType` only. There is no hard trim for `enforced` and no
+  soft one for `recommended` — the ladder is identical. (The `unenforced` flag in
+  `generateAssetDrafts` means "the rescue failed and we kept it anyway"; it is
+  unrelated to `spec_type` despite the name.)
+- **A retier does not hand these numbers to tenants.** `TENANT_EDITABLE_TIERS` is
+  an allowlist — `{ null, 'house_default' }` — so `enforced` → `recommended`
+  leaves them exactly as uneditable as they are now.
+
+#### IT IS A PROMPT CHANGE, NOT A WORDING CHANGE — and that needs its own measurement
+
+The surprise, measured through the real `fieldHint` + `stripReaderOnlyLines`:
+
+| tier | reaches the drafting prompt |
+| --- | --- |
+| `enforced` | `"Platform limit (LinkedIn). Stay within this count."` |
+| `recommended` | `""` — stripped entirely |
+
+The enforced sentence **survives** the strip; the recommended one is removed by
+`RECOMMENDED_ATTRIBUTION` and `READER_ONLY_LINES` together. So retiering would
+take **six of the nine** (the note-less ones) from one guidance sentence to none.
+
+Both directions are arguable and neither has been measured. The limit still
+reaches the model from `charMax` regardless of tier, and this file already flags
+the enforced line as **redundant** with the "character limit 70 — stay within this
+limit" bullet on ~9 fields — these fields — predicting flatness as a possible
+cost. So removing it might improve the copy or might weaken adherence.
+
+**Treat that as a separate question from the ingest one.** Even if LinkedIn turns
+out not to enforce, the prompt effect deserves a before/after of its own rather
+than riding along with a provenance correction.
+
+#### What would settle the ingest question
+
+**Campaign Manager, by hand** — open the creative editor, paste 200 characters
+into a Headline field capped at 70, and observe: hard stop, a warning that permits
+saving, or silent acceptance. That is a direct observation of ingest behaviour
+rather than an inference from a heading, and it is the same test Google's
+Responsive Display fields would pass (those are genuinely rejected at ingest,
+which is what a correct `enforced` looks like).
+
+Do it for one field of **each shape** rather than generalising from one — an
+Audience Network description may enforce differently from an in-feed headline.
+
+This needs a LinkedIn ads account, which nobody on the project had when this was
+written. **It is recorded as the resolution, not as a next step** — it is here for
+whoever has that access, whenever they turn up. The LinkedIn Marketing API's
+advertising write scopes are believed to sit behind partner approval, so the API
+is not a cheaper route; verify that before assuming it either way.
+
 ### Where it surfaces
 
 - **The doc.** The italic line under a `house_default` field says so. Deliberately

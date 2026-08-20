@@ -52,6 +52,11 @@ src/
                      either Postgres or synthesized env vars. `user` is the ACTING
                      user; per-user credentials win over the tenant's.
   emoji.js           Custom :quillio-*: emoji with Unicode fallbacks.
+  pendingBriefs.js   Parsed briefs waiting on a human to confirm their asset
+                     plan — the store, the pause rule and the plan validator
+                     behind parse-then-confirm on BOTH surfaces.
+  liveMessage.js     The two guards protecting the ONE Slack message a run owns
+                     (delivery claim + release, keyed per run).
   workflow.js        Compatibility shim — re-exports adapters/slackWorkflow.js.
 
   core/
@@ -72,12 +77,15 @@ src/
                      sign-in (/oauth/google[/callback]).
     onboarding.js    /onboarding + /api/onboarding/* (assets, folder, voice,
                      complete).
-    app.js           /app + /api/brief, /api/draft, /api/review, /api/upload,
-                     /api/projects[/:id[/content]] + the job-status pollers.
+    app.js           /app + /api/brief[/confirm], /api/draft, /api/review,
+                     /api/upload, /api/projects[/:id[/content]],
+                     PATCH /api/projects/:id/status + the job-status pollers.
     settings.js      /settings + /api/settings/* (voice, workspace, folder) and
                      /api/auth/signout.
     headerTemplate.js /api/header[/extract] + /api/naming — doc-header and
                      file-naming onboarding.
+    notifications.js /api/notifications (read) + /api/notifications/read
+                     (mark read). Scoped from req.user only. See "Notifications".
     admin.js         /admin + /admin/api/* (LiveSpecs watch list, detection run,
                      review queue, approve-preview/commit). requireAdmin-gated.
 
@@ -95,18 +103,42 @@ src/
     users.js         Web sign-in users (Google identity) + per-user credentials:
                      user_tokens (user_id, service) and user_slack_links
                      (slack_team_id, slack_user_id) UNIQUE → user_id.
+    docTemplates.js  Tenant-uploaded template documents (save one, list a
+                     tenant's, read one back). Deliberately thin.
+    templateMarkers.js The confirmed fields of a template document — a name, a
+                     limit, a unit, a note, plus the CELL it lives in.
+    notifications.js Notification writes/reads + per-user read state.
+                     Catches 42P01 and degrades to "no notifications".
     specWatch.js     LiveSpecs watch list / review queue reads.
 
   utils/
     normalize.js     Asset-name normalization (case, dash variants, spacing).
+                     The ONLY normalizer — the migration's indexes derive from it.
     errors.js        clientErrorMessage() — safe, generic client-facing errors.
     variants.js      Numbered-stack / solo-label copy-variation detection.
+    assetInput.js    The shape a TENANT may submit when creating an asset type,
+                     and the only place that decides it. Pure.
+    assetMatch.js    What we say when parseBrief could not map an asset name.
+                     Shared by both surfaces so the wordings cannot drift.
+    briefFacts.js    Does the brief state a fact this campaign cannot invent?
+                     One class today (`datetime`). Holds the field note AND the
+                     surface notice, so the two cannot drift.
+    draftNotice.js   The sentence a finished draft is described with, plus its
+                     structured link target. See "Notifications" below.
+    instanceKey.js   Instance ordinals for the two composite identity keys
+                     (ctxKey and copyReview's fieldKey).
+    shellHtml.js     Reads + stamps the served HTML shells; `__BUILD__` is
+                     replaced with the deploy commit so asset URLs version.
 
   services/
     gemini.js        All Gemini REST calls (parse, enrich, draft, variations,
                      voice guide, vision, header extract, copy review).
     slack.js         Block Kit builders + Slack Web API helpers.
-    copyReview.js    Copy-review orchestration → anchored Doc comments.
+    copyReview.js    Copy-review orchestration → UNANCHORED Doc comments, each
+                     carrying its own locator. See "Review comments are
+                     UNANCHORED" below — nothing here is anchored, or can be.
+    templateReview.js Review a built TEMPLATE document. Not copyReview: neither
+                     half of that transfers to a matrix.
     specDetector.js  LiveSpecs change detection (fetch → normalize → hash).
     specReview.js    The ONLY place that writes copy_fields. Gated + two-step.
 
@@ -455,6 +487,101 @@ Migrations: `scripts/migrateAddUserCredentials.js` (schema) then
 to write). The backfill only moves a tenant's credentials when that tenant has
 **exactly one** user — 0 or 2+ are reported and skipped, never guessed.
 
+## Notifications — the store behind "tell somebody later"
+
+`notifications` + `notification_reads` (`scripts/migrateAddNotifications.js`,
+**applied to production 2026-08-18**). Written by the web draft path, read by
+`/api/notifications`. **Nothing renders it yet** — rows accumulate with no
+surface reading them, which is the intended state, not a gap.
+
+**Why it exists.** A web draft runs 30-90s behind an in-memory job the browser
+polls every 3s. On completion the only thing that ever happened was a
+**two-second toast in the tab that started it**. Close the tab, background it
+past the timers, or restart the server, and the draft still finishes and still
+writes the Doc — and the person is told nothing, ever. The Slack surface has
+posted a completion card since it was built; this is the web equivalent, stored
+rather than pushed.
+
+### Read state is PER USER, but the notification is PER TENANT
+
+One row per tenant EVENT in `notifications`; read state per person in
+`notification_reads`, where **absence IS unread**. The alternative — one
+notification row per user with `read_at` on it — is one table and a simpler
+query, and was rejected for a reason that is a fact about this codebase rather
+than a preference:
+
+**The write path cannot reliably enumerate a tenant's users.** Fanning out needs
+`SELECT id FROM users WHERE tenant_id = $1` at draft-completion time, and in demo
+mode `middleware/auth.js` attaches `{ id: null }` while `resolveTenant` returns
+`user: null` — so there is no key to write against, and a demo draft would
+produce **zero** notifications, silently, inside the very catch that keeps a
+notification failure from failing a draft. The tenant is always available; the
+user is not.
+
+Two more, both supporting: the product's visibility model is **already
+tenant-scoped** (`getProjects(tenantId)` hands every project in the workspace to
+everyone in it, so "a draft finished" is a workspace fact); and one event staying
+one row means the copies cannot drift and somebody who joins later still sees the
+history.
+
+So **"when it was read" lives on `notification_reads.read_at`, not on the
+notification** — a notification has no single read time. `ON CONFLICT DO NOTHING`
+is what makes it the FIRST read rather than the last time somebody scrolled past.
+
+### The wording is shared, the glyph is not
+
+`utils/draftNotice.js` composes the sentence in one place. It is the **Slack
+card's** sentence, because that is the one that NAMES THE DOCUMENT — a
+notification is read away from the screen that produced it, so "1 of 40 fields
+drafted" with no title says nothing about which run. The phrasing inside is
+identical to `app.html`'s `draftedLabel`.
+
+**The glyph is deliberately absent.** `app.html` prefixes ✓/⚠ and Slack its own
+emoji; both are decoration the surface chooses, and `type` (`draft_complete` /
+`draft_incomplete`) already carries the distinction structurally, so a renderer
+picks its own mark without parsing the message.
+
+**The `short` test is now in THREE places** — `app.html` `draftIsShort`,
+`slackWorkflow`'s `short`, and here — all of them
+`fieldsAttempted > 0 && fieldCount < fieldsAttempted`. Nothing enforces the
+agreement. A notification calling a complete run incomplete would contradict the
+toast the same person just saw, so if that test changes, change all three. Same
+standing hazard as the review overlay's duplicated wording.
+
+### Two rules the writer follows
+
+**A notification failure must never fail a draft.** The project lookup and the
+insert are both inside one catch that logs with a stack and swallows. A completed
+draft with no notification is acceptable; a draft that failed because of a
+notification write is not. It is awaited rather than fired and forgotten, so an
+error lands in that catch instead of as an unhandled rejection.
+
+**`runWebDraft`'s return value is unchanged, byte for byte.** A smoke test asserts
+that return literal — "the two values have to survive the trip: adapter → route →
+browser" — and it caught a first version of this change that had restructured it
+into a named variable. The notifier takes the same values separately, ABOVE the
+return.
+
+### The route
+
+Its own router, not a growth of `routes/app.js`. `GET /api/notifications` returns
+unread-first, newest-next, with `unreadCount` off a window function evaluated
+**before** the `LIMIT` — so it is the tenant's true total, not the page's, and
+there is no separate count endpoint. `POST /api/notifications/read` takes
+`{ ids }` and its INSERT..SELECT filters on `tenant_id`, so an id from another
+tenant is skipped rather than marked.
+
+**Every scope comes from `req.user`.** `app.html` carries a hardcoded
+`WORKSPACE_ID` the server correctly ignores; this route did not become the first
+to trust it.
+
+### What has and has not been exercised in production
+
+`draft_complete` **has** — row 1 on tenant `T0B8LPRDKHR`, from a real brief, with
+the project id and doc kind in its link. `draft_incomplete` **has not**: it needs
+a genuine partial failure, and is verified only against a local database. Same
+function and same insert, so the risk is low, but it is untested in the wild.
+
 ## Removed features — do not try to use them
 
 Commit `2ac1408` deleted the unshipped **approval workflow** and the **Figma
@@ -524,8 +651,8 @@ node --env-file=.env src/server.js
 npm test                          # node --test → test/smoke.test.js
 ```
 
-**There is a test suite.** `test/smoke.test.js` is ~3,300 lines and currently
-runs **173 tests** in about a second, with no credentials or network — it
+**There is a test suite.** `test/smoke.test.js` is ~17,500 lines and currently
+runs **635 tests** in about ten seconds, with no credentials or network — it
 exercises wiring, parsing, rendering, and regression guards. `.github/workflows/ci.yml`
 runs `npm ci && npm test` on every push and pull request. Run it before you
 commit, and add cases there when you change behavior.
@@ -534,7 +661,7 @@ commit, and add cases there when you change behavior.
 **strings** and asserts that certain ids, URLs, and CSS references are present —
 there is no jsdom, no headless browser, no JS execution. A frontend change can
 pass CI and still be broken in the browser. For anything in `public/app.html`
-(2,800+ lines of inline markup, CSS, and vanilla JS), **the device is the test**:
+(4,100+ lines of inline markup, CSS, and vanilla JS), **the device is the test**:
 load the page and click through it.
 
 ### The case that justifies that rule — not a hypothetical

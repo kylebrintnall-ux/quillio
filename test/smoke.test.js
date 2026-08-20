@@ -646,9 +646,20 @@ test('spec tiers: the seed equals what the migration chain produces, in both dir
     const cold = require('../scripts/migrateCiteColdEmailBand');
     recommended.add(`${cold.ASSET}||${cold.FIELD}`);
   }
+  // migrateFixMetaSpecs: Meta's Description leaves the tiered set ENTIRELY. Meta
+  // publishes no Description recommendation on /image, so there is nothing to
+  // cite and the field falls to house_default. This is the only demotion in the
+  // chain — every other migration moves a field between tiers, this one removes
+  // it from both.
+  for (const [a, f] of require('../scripts/migrateFixMetaSpecs').DEMOTE) {
+    const k = `${a}||${f}`;
+    assert.ok(enforced.has(k) || recommended.has(k), `${k} must be tiered before it can be demoted`);
+    enforced.delete(k);
+    recommended.delete(k);
+  }
 
-  assert.strictEqual(enforced.size, 16, '16 enforced pairs after the integrity migration');
-  assert.strictEqual(recommended.size, 12, '10 platform recommendations + 2 research citations');
+  assert.strictEqual(enforced.size, 16, '16 enforced pairs after the migration chain');
+  assert.strictEqual(recommended.size, 11, '9 platform recommendations + 2 research citations');
 
   // FORWARD: everything the migrations produce is in the seed at that tier.
   const seedTier = new Map();
@@ -676,6 +687,12 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { fieldHint } = require('../src/destinations/googleDocs');
   const { SOURCE_URLS } = require('../scripts/migrateSpecIntegrityFixes');
+  // Meta's URLs moved OUT of the integrity migration and into their own, because
+  // the integrity migration's map pointed at the ads-guide index — a page with no
+  // character limit on it — and that map is written, so leaving the entries there
+  // would re-point Meta back at the index on any re-run. The later migration wins,
+  // which is what a replay chain means.
+  const ASSET_SOURCES = { ...SOURCE_URLS, ...require('../scripts/migrateFixMetaSpecs').SOURCE_URLS };
   const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
   const cold = require('../scripts/migrateCiteColdEmailBand');
   const FIELD_SOURCES = Object.fromEntries([
@@ -710,7 +727,7 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
       const fieldSource = FIELD_SOURCES[`${a.name}||${f.field_name}`];
       assert.strictEqual(
         f.spec_source,
-        fieldSource || SOURCE_URLS[a.name],
+        fieldSource || ASSET_SOURCES[a.name],
         `${a.name}/${f.field_name} seed spec_source === its migration URL`
       );
 
@@ -738,7 +755,9 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     }
   }
   assert.strictEqual(enforcedSeen, 16, 'exactly 16 enforced fields carry a real spec_source');
-  assert.strictEqual(recommendedSeen, 12, '10 platform recommendations + 2 research citations');
+  // 9, not 10: Meta Single Image Ad / Description left the tier when
+  // migrateFixMetaSpecs found that Meta publishes no Description recommendation.
+  assert.strictEqual(recommendedSeen, 11, '9 platform recommendations + 2 research citations');
 
   // The two citations this migration corrected, pinned by value.
   const urlOf = (asset, field) => {
@@ -2045,7 +2064,7 @@ test('a reminder has somewhere to put the time, named as the invitation names it
   assert.ok(!names('Event Follow-Up / Recap Email').includes(FIELD), 'a recap needs no arrival time');
 });
 
-test('19 seeded CHARACTER fields already carry a floor — this is not opt-in-only', () => {
+test('20 seeded CHARACTER fields already carry a floor — this is not opt-in-only', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const floored = [];
   let charFields = 0;
@@ -2061,10 +2080,21 @@ test('19 seeded CHARACTER fields already carry a floor — this is not opt-in-on
   // 167 since Event Reminder Email gained `Date / Location Line` — a reminder
   // needs somewhere to put the time. char_min 0, so the floored count is unmoved.
   assert.strictEqual(charFields, 167, 'character fields in the seed');
-  assert.strictEqual(floored.length, 19, 'and 19 of them have a floor');
-  // The shape of them: every Subhead, every Preheader, the landing-page meta pairs.
+  // 20 since migrateFixMetaSpecs gave Meta Single Image Ad / Primary Text the
+  // 50 half of Meta's published "50-150 characters" — the first new floor on a
+  // paid-social field since floorAB measured what a floor costs in spread.
+  assert.strictEqual(floored.length, 20, 'and 20 of them have a floor');
+  // The shape of them: every Subhead, every Preheader, the landing-page meta
+  // pairs — and now one Primary Text, the only one of the twenty whose floor is a
+  // PLATFORM's published number rather than a house convention.
   const names = new Set(floored.map((r) => r.field));
-  assert.deepStrictEqual([...names].sort(), ['Meta Description', 'Meta Title', 'Preheader', 'Subhead']);
+  assert.deepStrictEqual([...names].sort(),
+    ['Meta Description', 'Meta Title', 'Preheader', 'Primary Text', 'Subhead']);
+  assert.deepStrictEqual(
+    floored.filter((r) => r.field === 'Primary Text'),
+    [{ asset: 'Meta Single Image Ad', field: 'Primary Text' }],
+    'the carousel Primary Text has no floor — Meta states a single 80, not a band'
+  );
 });
 
 // THE REGRESSION THIS GUARDS. Both draft prompts used to read
@@ -8423,7 +8453,10 @@ test('spec integrity: the three tier sentences, rendered', () => {
   assert.strictEqual(rec.text, 'Recommended by Meta. Not a hard limit — adjust for your brand and goal.');
   assert.strictEqual(rec.links.length, 1, 'the platform name is still a link');
   assert.strictEqual(rec.text.substring(rec.links[0].start, rec.links[0].end), 'Meta');
-  assert.strictEqual(rec.links[0].url, 'https://www.facebook.com/business/ads-guide/update');
+  // The PER-FORMAT page, not the ads-guide index. The index publishes no
+  // character limit at all, so the old citation sent a doubting writer somewhere
+  // that could not settle the number.
+  assert.strictEqual(rec.links[0].url, 'https://www.facebook.com/business/ads-guide/update/image');
 
   // HOUSE_DEFAULT with no note — the Settings line, and NO link. It still claims
   // no authority: it names no source and cites nothing, it says whose number it
@@ -8461,9 +8494,11 @@ test('spec integrity: the corrected numbers, and what was deliberately NOT chang
     return fl;
   };
 
-  // 2. Meta Carousel: 45 was LinkedIn's carousel number, 18 matched nothing published.
-  for (let i = 1; i <= 5; i += 1) assert.strictEqual(f('Meta Carousel Ad', `Card ${i} Headline`).char_max, 40);
-  assert.strictEqual(f('Meta Carousel Ad', 'Card Description').char_max, 20);
+  // 2. META'S NUMBERS MOVED OUT OF THIS MIGRATION ENTIRELY — see the dedicated
+  //    test below. What this migration wrote (40 and 20) was itself wrong: it
+  //    corrected Meta by comparing against LinkedIn's published number instead of
+  //    fetching Meta's page, which says 20 and 18. The assertions live with
+  //    migrateFixMetaSpecs now.
   // LinkedIn keeps 45 — that IS LinkedIn's number, and it stays enforced.
   for (let i = 1; i <= 5; i += 1) {
     assert.strictEqual(f('LinkedIn Carousel Ad', `Card ${i} Headline`).char_max, 45);
@@ -8481,10 +8516,11 @@ test('spec integrity: the corrected numbers, and what was deliberately NOT chang
     assert.strictEqual(f(a, n).spec_type, 'enforced', `${a}/${n} stays enforced`);
   }
 
-  // 1. Meta's values are unchanged in NUMBER — only the claim about them changed.
-  assert.strictEqual(f('Meta Single Image Ad', 'Primary Text').char_max, 125);
-  assert.strictEqual(f('Meta Single Image Ad', 'Headline').char_max, 40);
-  assert.strictEqual(f('Meta Single Image Ad', 'Description').char_max, 30);
+  // 1. Meta's TIER is what this migration got right and is all that survives of
+  //    its Meta work: these are recommendations, not caps. The numbers it left
+  //    behind were corrected later — see the migrateFixMetaSpecs test.
+  assert.strictEqual(f('Meta Single Image Ad', 'Primary Text').spec_type, 'recommended');
+  assert.strictEqual(f('Meta Carousel Ad', 'Primary Text').spec_type, 'recommended');
 
   // 4. Organic X: a genuine hard cap that was an uncited house default.
   const x = f('Organic Social — Twitter/X', 'Post Copy');
@@ -8596,10 +8632,21 @@ test('spec integrity: the migration is idempotent-by-construction and dry-run by
   assert.ok(/already have an asset named/.test(src), 'guards against a rename collision');
 
   // The tables the seed is compared against are exported, and non-empty.
-  assert.strictEqual(fix.RETIER.length, 10);
+  //
+  // THE THREE COUNTS BELOW WENT DOWN ON 2026-08-18, AND THAT IS THE POINT OF
+  // THEM. Every Meta entry was removed from this file — not corrected — because
+  // all three arrays are WRITES and this migration's Meta numbers were wrong: it
+  // corrected Meta by comparing against LinkedIn's published number instead of
+  // fetching Meta's page. Leaving them would silently revert
+  // scripts/migrateFixMetaSpecs.js on any re-run.
+  assert.strictEqual(fix.RETIER.length, 9, 'Description left — Meta publishes no such recommendation');
   assert.strictEqual(fix.PROMOTE.length, 1);
-  assert.strictEqual(fix.CHAR_FIXES.length, 6 + 5 * 3, '6 Meta carousel + 15 email fields');
-  assert.strictEqual(Object.keys(fix.SOURCE_URLS).length, 7);
+  assert.strictEqual(fix.CHAR_FIXES.length, 5 * 3, '15 email fields; the 6 Meta carousel entries were removed');
+  assert.strictEqual(Object.keys(fix.SOURCE_URLS).length, 5, 'both Meta entries removed — they cited the index');
+  for (const k of Object.keys(fix.SOURCE_URLS)) {
+    assert.ok(!/^Meta /.test(k), `${k} must not be re-pointed by this migration any more`);
+  }
+  assert.ok(!/facebook\.com/.test(src), 'no Meta URL survives anywhere in this file');
 });
 
 test('spec integrity: the seed and the migration agree on every band, both directions', () => {
@@ -8646,6 +8693,11 @@ test('spec integrity: the seed and the migration agree on every band, both direc
   const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
   const expectCiting = new Set([
     ...Object.keys(SOURCE_URLS),
+    // Meta's two assets are repointed by their own migration now. The BACKWARD
+    // check is about the seed never citing something NO migration applies, so the
+    // union of every repointing migration is what it has to be compared against —
+    // not this one file's map.
+    ...Object.keys(require('../scripts/migrateFixMetaSpecs').SOURCE_URLS),
     ...CITED_BANDS.map(([asset]) => asset),
     require('../scripts/migrateCiteColdEmailBand').ASSET,
   ]);
@@ -8705,10 +8757,15 @@ test('spec integrity: the LinkedIn carousel note renders BESIDE the tier line, n
     'Card 1 Headline [45]');
 
   // Per-asset-pair, never a bare field_name sweep: Meta Carousel has identically
-  // named fields where this caveat is false, and they must stay noteless.
+  // named fields whose note is a DIFFERENT one. Both platforms now put a note on
+  // "Card N Headline", so a field_name-only match would give LinkedIn's Lead Gen
+  // Form caveat to Meta or Meta's per-card sentence to LinkedIn — and this is the
+  // assertion that catches it either way.
+  const { CARD_HEADLINE_NOTE: META_CARD_NOTE } = require('../scripts/migrateFixMetaSpecs');
   const meta = DEFAULT_ASSETS.find((a) => a.name === 'Meta Carousel Ad');
   for (const f of meta.fields.filter((x) => /^Card \d Headline$/.test(x.field_name))) {
-    assert.strictEqual(f.spec_note, null, `Meta ${f.field_name} must not pick up LinkedIn's caveat`);
+    assert.strictEqual(f.spec_note, META_CARD_NOTE, `Meta ${f.field_name} carries META's note`);
+    assert.notStrictEqual(f.spec_note, CARD_HEADLINE_NOTE, `Meta ${f.field_name} must not pick up LinkedIn's caveat`);
   }
   // LinkedIn Carousel's OTHER fields are untouched too — this is the card headlines
   // only, not the whole asset.
@@ -8725,6 +8782,123 @@ test('spec integrity: the LinkedIn carousel note renders BESIDE the tier line, n
     FIELD_NOTES.map(([a, f]) => `${a}||${f}`).sort(),
     'seed and migration agree on exactly which fields carry the note'
   );
+});
+
+// --- Meta specs, read off Meta's own per-format pages -------------------------
+// Every Meta number in the library was wrong, and all of them traced to one
+// omission: nobody had fetched Meta's spec pages. The stored 125/40 was
+// COLLECTION's pair applied to single-image and carousel; the stored 30 appeared
+// on no Meta page at all; and migrateSpecIntegrityFixes moved card description
+// from 18 to 20 on the written grounds that "18 matches no published Meta figure"
+// when Meta's carousel page says 18. See scripts/migrateFixMetaSpecs.js, whose
+// header carries the fetched text.
+
+test('meta specs: the seed and the migration agree on every band, both directions', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { CHAR_FIXES, SOURCE_URLS, DEMOTE } = require('../scripts/migrateFixMetaSpecs');
+  const f = (asset, name) => {
+    const a = DEFAULT_ASSETS.find((x) => x.name === asset);
+    assert.ok(a, `${asset} exists in the seed`);
+    const fl = a.fields.find((x) => x.field_name === name);
+    assert.ok(fl, `${asset}/${name} exists in the seed`);
+    return fl;
+  };
+
+  // FORWARD: every band the migration writes is the band a fresh tenant is seeded
+  // with. If these drift, a migrated tenant and a new one render different limits
+  // for the same field — which is the whole reason the two are kept in step.
+  for (const [asset, field, min, max] of CHAR_FIXES) {
+    assert.strictEqual(f(asset, field).char_min, min, `${asset}/${field} char_min`);
+    assert.strictEqual(f(asset, field).char_max, max, `${asset}/${field} char_max`);
+  }
+
+  // The numbers themselves, spelled out against the fetched page text rather than
+  // derived from the table above — so an error in the table cannot agree with
+  // itself. /image: "Primary Text: 50-150 characters Headline: 27 characters".
+  assert.deepStrictEqual(
+    [f('Meta Single Image Ad', 'Primary Text').char_min, f('Meta Single Image Ad', 'Primary Text').char_max],
+    [50, 150]);
+  assert.strictEqual(f('Meta Single Image Ad', 'Headline').char_max, 27);
+  // /carousel: "Primary Text: 80 Headline: 20 Description: 18".
+  assert.strictEqual(f('Meta Carousel Ad', 'Primary Text').char_max, 80);
+  for (let i = 1; i <= 5; i += 1) assert.strictEqual(f('Meta Carousel Ad', `Card ${i} Headline`).char_max, 20);
+  assert.strictEqual(f('Meta Carousel Ad', 'Card Description').char_max, 18);
+
+  // BACKWARD — THE TRIPWIRE. 125 and 40 are Collection's numbers and 30 is
+  // nobody's; none may reappear on a TIERED Meta field. Labelled a tripwire, not
+  // coverage: it cannot tell a right number from a wrong one, it only stops these
+  // three coming back.
+  for (const asset of ['Meta Single Image Ad', 'Meta Carousel Ad']) {
+    const a = DEFAULT_ASSETS.find((x) => x.name === asset);
+    for (const fl of a.fields) {
+      if (fl.spec_type === 'house_default') continue; // Graphic Copy fields legitimately use 70/90/20
+      assert.ok(![125, 40, 30].includes(fl.char_max),
+        `${asset}/${fl.field_name} must not carry a Collection-page number (${fl.char_max})`);
+    }
+  }
+
+  // The citation is the per-FORMAT page, on every tiered field of both assets.
+  for (const [asset, url] of Object.entries(SOURCE_URLS)) {
+    assert.match(url, /\/ads-guide\/update\/(image|carousel)$/, `${asset} cites a format page, not the index`);
+    const a = DEFAULT_ASSETS.find((x) => x.name === asset);
+    const tiered = a.fields.filter((x) => x.spec_type !== 'house_default');
+    assert.ok(tiered.length > 0, `${asset} has at least one tiered field`);
+    for (const fl of tiered) assert.strictEqual(fl.spec_source, url, `${asset}/${fl.field_name} cites ${url}`);
+  }
+
+  // THE DEMOTION. Meta publishes no Description recommendation, so the field keeps
+  // its 30 and loses its claim: house_default, the sentinel source, no tier
+  // sentence naming anyone, and no link.
+  for (const [asset, field] of DEMOTE) {
+    const fl = f(asset, field);
+    assert.strictEqual(fl.spec_type, 'house_default', `${asset}/${field} is a house default`);
+    assert.strictEqual(fl.spec_source, 'quillio_default', `${asset}/${field} cites nobody`);
+    assert.strictEqual(fl.char_max, 30, 'the NUMBER is unchanged — only the claim about it');
+    const { fieldHint, HOUSE_DEFAULT_LINE } = require('../src/destinations/googleDocs');
+    const hint = fieldHint({ specType: fl.spec_type, specSource: fl.spec_source, specNote: fl.spec_note });
+    assert.strictEqual(hint.text, HOUSE_DEFAULT_LINE);
+    assert.strictEqual(hint.links.length, 0, 'a demoted field must not keep a live platform link');
+  }
+});
+
+test('meta specs: the card-headline note is Meta\'s own, and the migration is dry-run by default', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateFixMetaSpecs.js'), 'utf8');
+  const { CARD_HEADLINE_NOTE, CHAR_FIXES } = require('../scripts/migrateFixMetaSpecs');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  // Byte-identical between seed and migration, the same rule every other note here
+  // follows — otherwise a migrated tenant and a seeded one read different text.
+  const seedNote = DEFAULT_ASSETS.find((a) => a.name === 'Meta Carousel Ad')
+    .fields.find((f) => f.field_name === 'Card 3 Headline').spec_note;
+  assert.strictEqual(seedNote, CARD_HEADLINE_NOTE);
+
+  // It states the FACT, not our confidence in it. A writer needs to know the 20 is
+  // per card; the reasoning behind that reading belongs in the source comment,
+  // where a maintainer will look, and nowhere near the document.
+  assert.match(CARD_HEADLINE_NOTE, /applies to each card/);
+  assert.ok(!/infer|assume|likely|probably|we believe/i.test(CARD_HEADLINE_NOTE),
+    'the note must not hedge at the reader');
+
+  // THE FETCHED PAGE TEXT IS IN THE FILE. This is the rule the whole correction
+  // exists to establish: no spec value is changed without the source page quoted
+  // in the same change. Assert the quotes are actually there rather than trusting
+  // the comment to have been written.
+  assert.match(src, /Text Recommendations Primary Text: 50-150 characters Headline: 27 characters/);
+  assert.match(src, /Primary Text: 80 characters Headline: 20 characters/);
+  assert.match(src, /Description: 18 characters/);
+
+  // Dry run unless --commit, and every write guarded on the value it replaces.
+  assert.match(src, /const COMMIT = process\.argv\.includes\('--commit'\);/);
+  assert.match(src, /await client\.query\('BEGIN'\)/);
+  assert.match(src, /await client\.query\('ROLLBACK'\)/);
+  assert.ok(/at\.name = \$1/.test(src) && !/tenant_id = \$/.test(src), 'matched by name across all tenants');
+  assert.match(src, /if \(require\.main === module\) main\(\);/, 'requiring it must not open a connection');
+  // Each band write names the OLD value it expects, so a row some other migration
+  // has since moved is left alone rather than silently taken back.
+  for (const row of CHAR_FIXES) {
+    assert.strictEqual(row.length, 6, `${row[0]}/${row[1]} carries newMin,newMax AND expectMin,expectMax`);
+  }
+  assert.match(src, /AND cf\.char_min = \$5\s*\n\s*AND cf\.char_max = \$6/, 'the guard reaches the SQL');
 });
 
 // --- Email body copy in WORDS ------------------------------------------------

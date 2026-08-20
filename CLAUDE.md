@@ -406,6 +406,60 @@ them — so this is belt and braces, and it costs one clause. It also protects t
 case overrides do not: a row some *other* migration moved, which a blind rewrite
 would silently take back.
 
+### FETCH THE SOURCE PAGE IN THE SAME CHANGE. PASTE THE TEXT IN THE MIGRATION.
+
+**No spec value is corrected without fetching the page it is cited to, in the same
+change, with the fetched text quoted in the migration's header.** Not "check the
+source", not "verify the number" — fetch it, and paste what it says, so the next
+reader can check the claim without leaving the file.
+
+This is the most expensive rule in this document to have learned, and it was
+learned from one incident that produced *every wrong Meta number in the library*.
+
+**`scripts/migrateSpecIntegrityFixes.js` (July 2026) was a migration whose stated
+purpose was correcting numbers that "did not match the platforms' own published
+specs".** It corrected Meta without ever fetching Meta. What it wrote:
+
+| It claimed | Meta's page actually says |
+| --- | --- |
+| "Meta publishes 125 / 40 / 30" | 125/40 is the **Collection** format's pair. Single-image publishes 50-150 / 27, carousel publishes 80 / 20 / 18. **30 appears on no Meta page at all.** |
+| "card headline 45 → 40 (45 is LinkedIn's carousel number, not Meta's)" | Right that 45 was foreign. Wrong about the replacement: the page says **20**. It corrected Meta by comparing against **LinkedIn**. |
+| "card description 18 → 20 (18 matches no published Meta figure)" | The carousel page says **18**. It took a correct value and made it wrong, and wrote down a justification the page contradicts. |
+
+Every cell is a *reasoned* number. Not one was *read*. The reasoning was careful,
+internally consistent, peer-reviewable, and wrong — which is precisely why "be
+careful" is not the rule and "fetch it" is.
+
+**The citation is part of the value.** Both Meta assets cited
+`.../ads-guide/update`, the ads-guide **index**: 2,208 normalized characters of
+nav, marketing copy, a signup form and a language footer, containing no character
+limit and stating outright that the guide "provides information on … character
+limits and more" — the page telling you the specs are elsewhere. A number and a
+link that cannot confirm it are one defect, not two, so **a value correction and
+its citation ship together.** Correcting one and not the other leaves the document
+self-contradicting for the length of the window.
+
+**Removing the hazard is part of the fix.** A superseded migration's tables are
+*writes*. Leaving Meta's entries in `RETIER` / `CHAR_FIXES` / `SOURCE_URLS` would
+have silently reverted the correction on any re-run, so they were **removed rather
+than corrected**, with the reason recorded in the file and asserted by a test
+(`fix.CHAR_FIXES.length === 15`, no `facebook.com` anywhere in it). The same class
+of hazard as the frozen `affected_fields` snapshot: a stale table nobody expects
+to be authoritative, quietly still being authoritative.
+
+`scripts/migrateFixMetaSpecs.js` is the shape to copy — the fetched text for all
+four format pages sits in its header, and a test asserts those quotes are actually
+present rather than trusting the comment to have been written.
+
+**What this does NOT license:** inventing a number when the page has none.
+`Meta Single Image Ad / Description` was stored at 30 and `/image` publishes no
+Description recommendation, so the field kept its 30 and lost its **claim** —
+demoted to `house_default` with the `quillio_default` sentinel, rendering "House
+default — set your own in Settings." with no source named and no link. Deleting
+the field would have removed a deliverable writers fill; assigning it a
+sourced-looking number would have been the original defect with a fresh coat on.
+The honest move when a page is silent is to say the number is yours.
+
 ### Where it surfaces
 
 - **The doc.** The italic line under a `house_default` field says so. Deliberately

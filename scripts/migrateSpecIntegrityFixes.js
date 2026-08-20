@@ -11,16 +11,62 @@
 // hyperlink behind the platform name, so a wrong URL sent a reader who wanted to
 // check the number to a page that does not contain it. Both are user-visible.
 //
+// ═══════════════════════════════════════════════════════════════════════════
+// CORRECTION, 2026-08-18 — THIS MIGRATION'S META NUMBERS WERE WRONG, AND THEY
+// WERE WRONG FOR ONE REASON: NOBODY FETCHED META'S PAGE.
+//
+// Every Meta claim below was REASONED rather than READ. "Meta publishes 125 / 40
+// / 30" is Meta's COLLECTION format's numbers, applied to single-image and
+// carousel, which publish 50-150 / 27 and 80 / 20 / 18. The card-headline fix
+// corrected Meta by comparing against LINKEDIN's published number — the right
+// observation that 45 was foreign, the wrong conclusion about what replaced it.
+// And "card description 18 → 20 (18 matches no published Meta figure)" is exactly
+// backwards: 18 IS the figure on Meta's carousel page. This migration took a
+// correct value and made it wrong, in a file whose stated purpose was correcting
+// numbers that "did not match the platforms' own published specs".
+//
+// WHAT WAS REMOVED, AND WHAT DELIBERATELY SURVIVES — read this before wondering
+// why there are still nine Meta rows in RETIER below.
+//
+//   REMOVED, because each is a WRITE that would silently revert
+//   scripts/migrateFixMetaSpecs.js on any re-run:
+//     • CHAR_FIXES — all six Meta carousel entries. They wrote card headline 40
+//       and card description 20; the page says 20 and 18.
+//     • SOURCE_URLS — both Meta entries. They pointed at the ads-guide index.
+//     • RETIER — the 'Meta Single Image Ad' / 'Description' entry ONLY, because
+//       Meta publishes no Description recommendation, so `recommended` asserts an
+//       advisory that does not exist.
+//
+//   SURVIVING — RETIER's other NINE Meta entries. This migration's REASONING
+//   about Meta was wrong; its CONCLUSION for these nine was right. They are
+//   recommendations rather than caps, and Meta's own page heading reads "Text
+//   Recommendations" — so `recommended` is the correct tier and re-running it
+//   writes the tier those rows already hold. They also anchor the tier-replay
+//   chain in test/smoke.test.js, which derives what a long-lived tenant's rows
+//   should be by applying every migration in order; deleting accurate history
+//   would break that derivation for no gain.
+//
+//   The rule the split follows: an entry goes if re-running it would UNDO the
+//   correction, and stays if re-running it is a no-op. Nothing here was kept
+//   because it was well argued — the argument was wrong throughout.
+//
+// scripts/migrateFixMetaSpecs.js is the authority for every Meta number and URL,
+// and it carries the fetched page text in its header.
+//
+// The rest of this file stands. LinkedIn, X, Google and the email bands were not
+// affected. It is kept as the record of what happened.
+// ═══════════════════════════════════════════════════════════════════════════
+//
 // WHAT IT DOES
-//   1. RETIER — Meta's ten fields enforced → recommended. Meta publishes 125 / 40
-//      / 30 as what renders untruncated across placements; the technical ceilings
-//      are 255 for headlines and far larger for primary text. This is also what
-//      first puts a row in the 'recommended' tier: the renderer has had the branch
-//      since spec tiers shipped, but no seeded row ever used it.
-//   2. CHAR_FIXES — Meta Carousel card headline 45 → 40 (45 is LinkedIn's carousel
-//      number, not Meta's) and card description 18 → 20 (18 matches no published
-//      Meta figure). Email preheaders 85–120 → 85–100. Email subject lines split
-//      by type, with the char_min floor dropped (see SUBJECT_BANDS).
+//   1. RETIER — Meta's fields enforced → recommended. (The 125 / 40 / 30 claim
+//      that motivated this was wrong — see the correction above — but the TIER is
+//      still right: these are recommendations, not caps, and Meta's own heading
+//      reads "Text Recommendations". This is also what first puts a row in the
+//      'recommended' tier: the renderer has had the branch since spec tiers
+//      shipped, but no seeded row ever used it.)
+//   2. CHAR_FIXES — Meta's six entries removed (see the correction above). Email
+//      preheaders 85–120 → 85–100. Email subject lines split by type, with the
+//      char_min floor dropped (see SUBJECT_BANDS).
 //   3. SOURCE_FIXES — LinkedIn Carousel cited the SINGLE IMAGE ads page, which does
 //      not carry the carousel's numbers; it now cites the carousel specs page.
 //   4. RENAME — 'Google DV360 / Responsive Display' → 'Google Responsive Display
@@ -61,7 +107,10 @@ const COMMIT = process.argv.includes('--commit');
 const RETIER = [
   ['Meta Single Image Ad', 'Primary Text', 'recommended'],
   ['Meta Single Image Ad', 'Headline', 'recommended'],
-  ['Meta Single Image Ad', 'Description', 'recommended'],
+  // 'Meta Single Image Ad', 'Description' REMOVED 2026-08-18. Meta publishes no
+  // Description recommendation on /image, so `recommended` asserts an advisory
+  // that does not exist. migrateFixMetaSpecs.js demotes it to house_default; this
+  // entry would revert that tier on a re-run.
   ['Meta Carousel Ad', 'Primary Text', 'recommended'],
   ['Meta Carousel Ad', 'Card 1 Headline', 'recommended'],
   ['Meta Carousel Ad', 'Card 2 Headline', 'recommended'],
@@ -79,13 +128,11 @@ const PROMOTE = [['Organic Social — Twitter/X', 'Post Copy']];
 // --- 2. Character-band corrections --------------------------------------------
 // [assetName, fieldName, charMin, charMax].
 const CHAR_FIXES = [
-  // Meta carousel: two numbers that came from the wrong places.
-  ['Meta Carousel Ad', 'Card 1 Headline', 0, 40],
-  ['Meta Carousel Ad', 'Card 2 Headline', 0, 40],
-  ['Meta Carousel Ad', 'Card 3 Headline', 0, 40],
-  ['Meta Carousel Ad', 'Card 4 Headline', 0, 40],
-  ['Meta Carousel Ad', 'Card 5 Headline', 0, 40],
-  ['Meta Carousel Ad', 'Card Description', 0, 20],
+  // META'S SIX ENTRIES WERE REMOVED 2026-08-18. They wrote card headline 40 and
+  // card description 20; Meta's own carousel page says 20 and 18. Re-running this
+  // file with them present would silently revert scripts/migrateFixMetaSpecs.js,
+  // so they are gone rather than corrected — that script is the authority for
+  // every Meta number now. See the header for what went wrong.
 ];
 
 // The five email assets, and the subject-line ceiling each one gets.
@@ -122,8 +169,10 @@ for (const [asset, subjectMax] of SUBJECT_BANDS) {
 // (enforced or recommended) field on that asset. Kept BYTE-IDENTICAL to
 // SPEC_SOURCE_URLS in src/data/defaultAssets.js; a smoke test asserts it.
 const SOURCE_URLS = {
-  'Meta Single Image Ad': 'https://www.facebook.com/business/ads-guide/update',
-  'Meta Carousel Ad': 'https://www.facebook.com/business/ads-guide/update',
+  // META'S TWO ENTRIES WERE REMOVED 2026-08-18. Both pointed at the ads-guide
+  // INDEX, which publishes no character limit at all. This map is WRITTEN (see
+  // step 3), so leaving them here would re-point Meta back at the index on any
+  // re-run. scripts/migrateFixMetaSpecs.js owns the per-format URLs now.
   'LinkedIn Single Image Ad':
     'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
   'LinkedIn Carousel Ad':

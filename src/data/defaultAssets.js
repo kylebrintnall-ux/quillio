@@ -199,25 +199,33 @@ const RAW = [
   // parse had to choose between, and near-duplicates are what a name match gets
   // wrong. scripts/migrateRetireDeadAssets.js switches them off for tenants that
   // already have them.
+  // META'S NUMBERS ARE READ OFF META'S OWN PER-FORMAT PAGES (August 2026). They
+  // previously came from a general Facebook recommendation applied to two formats
+  // it does not describe — see scripts/migrateFixMetaSpecs.js, which carries the
+  // fetched page text.
   ['Meta Single Image Ad', 'Paid Social', [
-    ['Primary Text', 0, 125],
-    ['Headline', 0, 40],
+    ['Primary Text', 50, 150],
+    ['Headline', 0, 27],
+    // 30 is QUILLIO'S number, not Meta's — /image's Text Recommendations lists
+    // Primary Text and Headline only. The field stays (Description renders in
+    // several placements and writers fill it); the CITATION goes, so it is tiered
+    // house_default and cites quillio_default like any other house number.
     ['Description', 0, 30],
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 40, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
   ['Meta Carousel Ad', 'Paid Social', [
-    ['Primary Text', 0, 125],
+    ['Primary Text', 0, 80],
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 40, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
-    ['Card 1 Headline', 0, 40],
-    ['Card 2 Headline', 0, 40],
-    ['Card 3 Headline', 0, 40],
-    ['Card 4 Headline', 0, 40],
-    ['Card 5 Headline', 0, 40],
-    ['Card Description', 0, 20],
+    ['Card 1 Headline', 0, 20],
+    ['Card 2 Headline', 0, 20],
+    ['Card 3 Headline', 0, 20],
+    ['Card 4 Headline', 0, 20],
+    ['Card 5 Headline', 0, 20],
+    ['Card Description', 0, 18],
   ]],
   ['Twitter/X Ad', 'Paid Social', [
     ['Ad Copy', 0, 280],
@@ -511,6 +519,24 @@ const BASHO_BODY_NOTE =
 const LINKEDIN_CAROUSEL_CARD_NOTE =
   'Applies to carousels driving to a destination URL; with a Lead Gen Form CTA the cap is 30.';
 
+// Meta Carousel → card headline note. Meta's carousel page states ONE entry,
+// "Headline: 20 characters", with no cardinality. The note tells a writer what
+// they need to know: the 20 is per card, not a budget to divide across five.
+//
+// WHERE THE INFERENCE IS, for whoever maintains this. The page names a field and
+// gives it a number; it does not say "per card". A Meta carousel has no
+// format-level headline — the headline exists once per card by construction — so
+// the field the page is naming can only be the per-card one. That is a claim
+// about Meta's ad structure, not a quote from the page. The alternative reading,
+// a single global headline at 20, describes a field this asset does not have and
+// would leave all five card headlines sitting on the old wrong 40.
+//
+// The note deliberately does NOT say "we inferred this". A writer needs the fact,
+// not our confidence in it. BYTE-IDENTICAL to CARD_HEADLINE_NOTE in
+// scripts/migrateFixMetaSpecs.js.
+const META_CAROUSEL_CARD_NOTE =
+  'Meta publishes one Headline recommendation for carousel; it applies to each card.';
+
 // The five LinkedIn Carousel card-headline fields that carry the note above.
 const LINKEDIN_CAROUSEL_CARD_FIELDS = new Set([
   'Card 1 Headline',
@@ -553,6 +579,11 @@ function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'Sales Basho Email' && fieldName === 'Body Copy') return BASHO_BODY_NOTE;
   if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
     return LINKEDIN_CAROUSEL_CARD_NOTE;
+  }
+  // Same field names on a different platform — matched on the asset too, so a
+  // LinkedIn card never picks up Meta's note or the reverse.
+  if (assetName === 'Meta Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
+    return META_CAROUSEL_CARD_NOTE;
   }
   if (EMAIL_NOTE_ASSETS.has(assetName)) {
     if (fieldName === 'Subject Line 1' || fieldName === 'Subject Line 2') return EMAIL_SUBJECT_NOTE;
@@ -598,7 +629,10 @@ const RECOMMENDED_SPEC_FIELDS = new Set([
   'Demand Gen Nurture Email||Offer Body 1',
   'Meta Single Image Ad||Primary Text',
   'Meta Single Image Ad||Headline',
-  'Meta Single Image Ad||Description',
+  // 'Meta Single Image Ad||Description' IS DELIBERATELY ABSENT. Meta's /image page
+  // publishes no Description recommendation, so there is nothing to cite and the
+  // field falls through to house_default — which is the honest tier for a number
+  // only Quillio holds. See scripts/migrateFixMetaSpecs.js.
   'Meta Carousel Ad||Primary Text',
   'Meta Carousel Ad||Card 1 Headline',
   'Meta Carousel Ad||Card 2 Headline',
@@ -691,11 +725,19 @@ function fieldSpecType(assetName, fieldName) {
 // specs page, which does not contain the carousel's numbers. A reader who followed
 // the citation to check the 45-character card headline would not have found it.
 //
-// URLs are kept BYTE-IDENTICAL to SOURCE_URLS in
-// scripts/migrateSpecIntegrityFixes.js (asserted by a smoke test).
+// URLs are kept BYTE-IDENTICAL to the SOURCE_URLS map of whichever migration is
+// the CURRENT authority for that asset (asserted by a smoke test, which unions
+// them): scripts/migrateFixMetaSpecs.js for the two Meta assets,
+// scripts/migrateSpecIntegrityFixes.js for the rest. Meta moved out because that
+// file's map pointed at the ads-guide index and is WRITTEN, so leaving the
+// entries there would re-point Meta back at a page with no limits on it.
 const SPEC_SOURCE_URLS = {
-  'Meta Single Image Ad': 'https://www.facebook.com/business/ads-guide/update',
-  'Meta Carousel Ad': 'https://www.facebook.com/business/ads-guide/update',
+  // PER FORMAT, not per platform. .../ads-guide/update is the INDEX — 2,208 chars
+  // of nav, marketing copy and a signup form, containing no character limit at
+  // all and stating outright that the specs are elsewhere. Both Meta assets cited
+  // it, so a reader following the citation to check a number could never find it.
+  'Meta Single Image Ad': 'https://www.facebook.com/business/ads-guide/update/image',
+  'Meta Carousel Ad': 'https://www.facebook.com/business/ads-guide/update/carousel',
   'LinkedIn Single Image Ad':
     'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
   'LinkedIn Carousel Ad':

@@ -18317,7 +18317,8 @@ test('bell: routing goes through the app\u2019s own project opener, not a new on
   assert.match(partial, /link\.doc === 'template' \? 'template' : 'copy'/);
   assert.match(partial, /typeof window\.quillioOpenNotification === 'function'/);
   // Settings has no screens, so it hands off through the query string instead.
-  assert.match(partial, /'\/app\?project=' \+ encodeURIComponent\(target\.projectId\) \+ '&doc=' \+ target\.doc/);
+  // The URL construction now lives in fallbackUrl, which the spec target shares.
+  assert.match(partial, /'\/app\?project=' \+ encodeURIComponent\(t\.projectId\) \+ '&doc=' \+ t\.doc/);
   // The app's half: openProjectDoc is the same function the result screen's
   // document rows use, and the fallback is the Projects list.
   const hook = sliceBetween(app, 'window.quillioOpenNotification = function (target) {', '};');
@@ -18355,7 +18356,10 @@ test('bell: the glyph comes off `type`, which is why draftNotice omits one', () 
   // utils/draftNotice.js deliberately stores no mark, so the surface picks one.
   // These are app.html's own two.
   assert.match(partial, /var warn = n\.type === 'draft_incomplete';/);
-  assert.match(partial, /mark\.textContent = warn \? '⚠' : '✓';/);
+  // A third type joined them: a spec change is neither a completed thing nor a
+  // failed one, so it takes its own mark rather than borrowing the draft tick.
+  assert.match(partial, /var spec = n\.type === 'spec_change';/);
+  assert.match(partial, /mark\.textContent = spec \? '⚙' : \(warn \? '⚠' : '✓'\);/);
   // And the stored row still carries none — the header comment quotes the two
   // surfaces' marks, so this asks the function rather than the file.
   const { draftNotification } = require('../src/utils/draftNotice');
@@ -18440,6 +18444,366 @@ test('window: seven days, named once and exported', () => {
   // the only place that can make the list and the count agree.
   const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
   assert.ok(!/7 ?\* ?24|sevenDays|WINDOW_DAYS|604800000/.test(partial), 'the panel does no age filtering');
+});
+
+// --- The spec correction sweep ----------------------------------------------
+// Behaviour was verified end to end against a real PostgreSQL 16 with a faithful
+// in-memory Docs engine (71 checks) and in Chromium for the routing (18 checks).
+// What follows guards the decisions those runs cannot re-assert on every commit:
+// the scope gate, the ordering, and the two "never do this" rules.
+
+test('sweep scope: the tier gate is an allowlist of exactly one', () => {
+  const { CORRECTABLE_TIERS, evaluateRow } = require('../src/services/specSweep');
+  assert.deepStrictEqual([...CORRECTABLE_TIERS], ['enforced']);
+  // Not `!== 'house_default'`. A fourth tier would only ever be added to carry
+  // some new authority, so an unrecognised one must fail CLOSED — the same call
+  // db/assets.js isTenantEditableTier makes for the mirror-image decision.
+  for (const tier of ['house_default', 'recommended', null, 'something_new']) {
+    const v = evaluateRow({ specType: tier, charMax: 100, charMaxOverride: null });
+    assert.strictEqual(v.eligible, false, `${tier} must not be correctable`);
+    assert.match(v.reason, /^tier_/);
+  }
+  assert.strictEqual(evaluateRow({ specType: 'enforced', charMax: 100, charMaxOverride: null }).eligible, true);
+});
+
+test('sweep scope: char_max_override skips, and a NOTE-only override does not', () => {
+  const { evaluateRow } = require('../src/services/specSweep');
+  const over = evaluateRow({ specType: 'enforced', charMax: 150, charMaxOverride: 200 });
+  assert.strictEqual(over.eligible, false);
+  assert.strictEqual(over.reason, 'tenant_override');
+
+  // THE DISTINCTION THAT MATTERS. db/assets.js computes `spec_overridden` as a
+  // THREE-column OR (min, max, note), so a tenant who only rewrote the guidance
+  // note reads as overridden while their maximum is still the base spec. Gating
+  // on that flag would leave exactly those tenants stale forever. The gate is
+  // char_max_override alone, so a row carrying only a note override is eligible.
+  const noteOnly = evaluateRow({ specType: 'enforced', charMax: 150, charMaxOverride: null });
+  assert.strictEqual(noteOnly.eligible, true, 'a note-only override is still corrected');
+  assert.strictEqual(noteOnly.effectiveMax, 150);
+
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  assert.ok(!/spec_overridden/.test(sliceBetween(src, 'function evaluateRow(', '\n}')),
+    'the coarse flag is not the gate');
+});
+
+test('sweep scope: projects are filtered by EXCLUSION, never by enumeration', () => {
+  const { EXCLUDED_STATUSES } = require('../src/db/specSweep');
+  assert.deepStrictEqual(EXCLUDED_STATUSES, ['finished', 'closed']);
+  const src = fs.readFileSync(require.resolve('../src/db/specSweep'), 'utf8');
+  const fn = sliceBetween(src, 'async function getSweepableProjects()', 'async function updateManifestMax');
+  // NOT IN, never IN. A status added next year must be swept by default: a
+  // project silently never swept produces no error and no notification, so the
+  // inclusion form fails invisibly and the exclusion form fails loudly.
+  assert.match(fn, /status NOT IN/);
+  assert.ok(!/status IN \(/.test(fn), 'no inclusion list');
+  // A NULL status is swept too, for the same reason.
+  assert.match(fn, /status IS NULL OR status NOT IN/);
+});
+
+test('sweep: a null manifest is skipped and COUNTED, never opened', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/specSweep'), 'utf8');
+  const fn = sliceBetween(src, 'async function getSweepableProjects()', 'async function updateManifestMax');
+  assert.match(fn, /skippedNoManifest \+= 1;/);
+  assert.match(fn, /if \(r\.field_manifest == null\)/);
+  // The count is what makes the skip visible; it falls to zero on its own as
+  // pre-manifest projects finish.
+  const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'runSpecSweep.js'), 'utf8');
+  assert.match(script, /skipped for a null manifest/);
+});
+
+test('sweep: the watermark stops at the first unfinished change, never skips it', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  const fn = sliceBetween(src, 'async function runSpecSweep(', '\nmodule.exports');
+  // Advance only while nothing has failed; the first incomplete change latches
+  // `stopped` and every later change is left for the next run even if it would
+  // have succeeded. Skipping ahead would mean a document is never corrected by a
+  // job nobody watches.
+  assert.match(fn, /if \(entry\.complete && !stopped\) \{/);
+  assert.match(fn, /\} else if \(!entry\.complete\) \{\n\s*stopped = entry\.changeId;/);
+  // A run that advanced nothing must LEAVE the watermark, not null it.
+  const db = fs.readFileSync(require.resolve('../src/db/specSweep'), 'utf8');
+  assert.match(db, /last_changed_at = COALESCE\(\$1, last_changed_at\)/);
+  assert.match(db, /last_change_id  = COALESCE\(\$2, last_change_id\)/);
+});
+
+test('sweep: the watermark is a TUPLE, because one approval shares a timestamp', () => {
+  const db = fs.readFileSync(require.resolve('../src/db/specSweep'), 'utf8');
+  // commitReview writes every changed attribute of one approval inside a single
+  // transaction, and changed_at defaults to NOW() — the TRANSACTION timestamp —
+  // so those rows are identical to the microsecond and only the id separates
+  // them. A timestamp-only watermark could not resume inside such a group.
+  assert.match(db, /\(changed_at, id\) > \(\$1::timestamptz, \$2::bigint\)/);
+  assert.match(db, /ORDER BY changed_at ASC, id ASC/);
+  // And the watermark is NOT derived from notifications, which age out at seven
+  // days — a sweep that had not run in eight would lose its place.
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  assert.ok(!/listNotifications/.test(src), 'the watermark is never derived from notifications');
+});
+
+test('sweep: a revoked credential is expected — skip the tenant, never the run', () => {
+  const { isInvalidGrant } = require('../src/services/specSweep');
+  // Three shapes, because googleapis reports it differently depending on version
+  // and on whether it came from the token endpoint or the API call.
+  assert.strictEqual(isInvalidGrant({ response: { data: { error: 'invalid_grant' } } }), true);
+  assert.strictEqual(isInvalidGrant(new Error('invalid_grant')), true);
+  assert.strictEqual(isInvalidGrant({ response: { data: { error_description: 'bad invalid_grant here' } } }), true);
+  assert.strictEqual(isInvalidGrant(new Error('503 backend error')), false);
+  assert.strictEqual(isInvalidGrant(null), false);
+
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  const fn = sliceBetween(src, 'async function runSpecSweep(', '\nmodule.exports');
+  // It breaks out of that TENANT's documents (every one resolves the same dead
+  // credential) and marks the change incomplete, so the watermark holds and the
+  // corrections arrive on their own once the person signs in again.
+  assert.match(fn, /if \(isInvalidGrant\(err\)\) \{/);
+  assert.match(fn, /tenantDead = true;\n\s*entry\.complete = false;/);
+  // And never rethrows: one dead credential must not stop every other tenant.
+  assert.ok(!/throw err/.test(fn), 'a tenant failure never aborts the run');
+});
+
+test('sweep: notifications are one per change per tenant, and never duplicated', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  const fn = sliceBetween(src, 'async function runSpecSweep(', '\nmodule.exports');
+  // The notification is written once per TENANT per CHANGE, outside the document
+  // loop — one per spec change, not one per document.
+  assert.match(fn, /const already = !dryRun && \(await hasSpecNotification\(row\.tenantId, change\.id\)\);/);
+  // Because the watermark holds at an incomplete change, the next run re-processes
+  // it, and every tenant that already succeeded comes back through here.
+  const db = fs.readFileSync(require.resolve('../src/db/specSweep'), 'utf8');
+  const q = sliceBetween(db, 'async function hasSpecNotification(', '\n}');
+  assert.match(q, /link ->> 'changeId' = \$2/);
+  // Queried directly, NOT through listNotifications: that hides anything older
+  // than seven days, and a change stalled for a fortnight must not be
+  // re-announced because its first notification aged out of the panel.
+  assert.ok(!/listNotifications/.test(q));
+});
+
+test('sweep: the document edit never uses replaceAllText', () => {
+  const gd = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
+  const fn = sliceBetween(gd, 'async function correctFieldBrackets(', '\nmodule.exports');
+  // replaceAllText exists in this file on the TEMPLATE path only, where markers
+  // are unique by construction. "[50]" is not remotely unique — it occurs on
+  // every 50-character field, in the copy a writer typed, and in a reference
+  // insight — and replaceAllText cannot be scoped.
+  assert.ok(!/replaceAllText/.test(fn), 'no replaceAllText in the bracket edit');
+  assert.match(fn, /deleteContentRange/);
+  assert.match(fn, /insertText/);
+});
+
+test('sweep: multiple edits in one document are ordered back to front', () => {
+  const gd = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
+  const fn = sliceBetween(gd, 'async function correctFieldBrackets(', '\nmodule.exports');
+  // Every edit is expressed against indices from ONE parse, and a replacement is
+  // not length-preserving ("[90]" -> "[100]"), so an applied edit shifts every
+  // index after it. Descending order means each edit only ever moves text that is
+  // already behind us — the same `.sort((a, b) => b.insertIndex - a.insertIndex)`
+  // generateDraft uses twice.
+  assert.match(fn, /\.sort\(\(a, b\) => b\.start - a\.start\)/);
+  assert.ok(!/\.sort\(\(a, b\) => a\.start - b\.start\)/.test(fn));
+  // Overlapping ranges refuse the whole document rather than half-editing it.
+  assert.match(fn, /The document was NOT modified/);
+});
+
+test('sweep: the label itself is never rewritten — only the bracket span', () => {
+  const gd = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
+  const fn = sliceBetween(gd, 'async function correctFieldBrackets(', '\nmodule.exports');
+  // The delete range is the bracket's own range, which contains no field name and
+  // no copy. Nothing here reads labelStart/labelEnd as a delete bound.
+  assert.match(fn, /range: \{ startIndex: a\.start, endIndex: a\.end \}/);
+  assert.ok(!/labelStart|labelEnd/.test(fn), 'the label extent is not a delete bound');
+  // And the copy is never touched: no deleteEnd, no insertion under a label.
+  assert.ok(!/deleteEnd/.test(fn), 'the copy region is not in scope');
+});
+
+test('sweep: parseDoc now records where a label and its bracket are', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+  // A label split across TWO textRuns, which is what a real document looks like
+  // after anything has touched it — the case that breaks index arithmetic based
+  // on the paragraph's own startIndex.
+  const runs = (parts) => parts.map((t, i) => ({ textRun: { content: t, textStyle: { bold: true } } }))
+    .map((e, i, all) => {
+      const before = all.slice(0, i).reduce((n, x) => n + x.textRun.content.length, 0);
+      return { ...e, startIndex: 100 + before, endIndex: 100 + before + e.textRun.content.length };
+    });
+  const doc = { body: { content: [
+    { startIndex: 1, endIndex: 20, paragraph: { paragraphStyle: { namedStyleType: 'HEADING_3' },
+      elements: [{ startIndex: 1, endIndex: 20, textRun: { content: 'Some Asset\n', textStyle: {} } }] } },
+    { startIndex: 100, endIndex: 118, paragraph: { paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+      elements: runs(['Intro Text ', '[150]\n']) } },
+  ] } };
+  const out = parseDoc(doc);
+  const f = out.assets[0].fields[0];
+  assert.strictEqual(f.fieldName, 'Intro Text');
+  assert.strictEqual(f.charMax, 150);
+  assert.strictEqual(f.labelStart, 100, 'the label START is available, which it never was before');
+  assert.strictEqual(f.bracketText, '[150]');
+  // The bracket begins inside the SECOND run and the trailing newline is excluded.
+  assert.strictEqual(f.bracketStart, 111);
+  assert.strictEqual(f.bracketEnd, 116);
+  // insertIndex still means what every existing consumer needs: the label's end.
+  assert.strictEqual(f.insertIndex, 118);
+});
+
+test('sweep: a label with no bracket reports null, not index 0', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+  const doc = { body: { content: [
+    { startIndex: 1, endIndex: 12, paragraph: { paragraphStyle: { namedStyleType: 'HEADING_3' },
+      elements: [{ startIndex: 1, endIndex: 12, textRun: { content: 'Asset\n', textStyle: {} } }] } },
+    { startIndex: 50, endIndex: 60, paragraph: { paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+      elements: [{ startIndex: 50, endIndex: 60, textRun: { content: 'No Bracket\n', textStyle: { bold: true } } }] } },
+  ] } };
+  const f = parseDoc(doc).assets[0].fields[0];
+  // A caller must read null as "do not touch this label". Index 0 would be a
+  // valid-looking range at the top of the document.
+  assert.strictEqual(f.bracketStart, null);
+  assert.strictEqual(f.bracketEnd, null);
+});
+
+test('sweep: the bracket is composed in ONE place, shared with fieldLabel', () => {
+  const { fieldLabel, fieldBracket } = require('../src/destinations/googleDocs');
+  // fieldLabel's output is unchanged by the split.
+  assert.strictEqual(fieldLabel({ fieldName: 'Headline', charMin: 0, charMax: 50 }), 'Headline [50]');
+  assert.strictEqual(fieldLabel({ fieldName: 'Body', charMin: 40, charMax: 90 }), 'Body [40-90]');
+  assert.strictEqual(fieldLabel({ fieldName: 'Intro', charMin: 0, charMax: 0 }), 'Intro');
+  assert.strictEqual(fieldLabel({ fieldName: 'B', charMin: 50, charMax: 125, fieldType: 'words' }), 'B [50-125 words]');
+  // And the sweep composes its replacement with the same function, so the two
+  // cannot drift the day somebody changes the dash or moves the unit suffix.
+  assert.strictEqual(fieldBracket({ charMin: 0, charMax: 255 }), '[255]');
+  assert.strictEqual(fieldBracket({ charMin: 45, charMax: 255 }), '[45-255]');
+  assert.strictEqual(fieldBracket({ charMin: 0, charMax: 0 }), '');
+  const gd = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
+  const fn = sliceBetween(gd, 'async function correctFieldBrackets(', '\nmodule.exports');
+  assert.match(fn, /fieldBracket\(\{ charMin: field\.charMin/);
+});
+
+test('spec notice: the wording, the unit, and the drop warning', () => {
+  const { specChangeNotification } = require('../src/utils/specNotice');
+  const rose = specChangeNotification({
+    platform: 'LinkedIn', assetType: 'LinkedIn Single Image Ad', fieldName: 'Intro Text',
+    fieldType: 'text', oldMax: 150, newMax: 255, documentsUpdated: 3, changeId: 9,
+  });
+  assert.strictEqual(rose.type, 'spec_change');
+  assert.match(rose.message, /^LinkedIn changed the limit on Intro Text \(LinkedIn Single Image Ad\) from 150 to 255 characters\. 3 of your documents were updated\.$/);
+  // A limit that ROSE cannot leave anybody with over-length copy.
+  assert.ok(!/too long/.test(rose.message));
+
+  const fell = specChangeNotification({ platform: 'Meta', assetType: 'A', fieldName: 'F',
+    oldMax: 255, newMax: 100, documentsUpdated: 1, changeId: 9 });
+  // The sentence the whole feature exists to say: the limit moved, the copy did
+  // not, and that is deliberate.
+  assert.match(fell.message, /1 of your documents was updated\./);
+  assert.match(fell.message, /may now be too long — Quillio did not change it\./);
+
+  // Zero is reported, not suppressed: the limit still changed and the tenant's
+  // next document carries the new number.
+  assert.match(specChangeNotification({ assetType: 'A', fieldName: 'F', oldMax: 1, newMax: 2, documentsUpdated: 0 }).message,
+    /No existing documents needed updating\./);
+  // An unrecognised source is described without a publisher, never with a raw URL.
+  assert.match(specChangeNotification({ assetType: 'A', fieldName: 'F', oldMax: 1, newMax: 2 }).message,
+    /^A platform limit changed/);
+  // Words, not characters, when the field counts words.
+  assert.match(specChangeNotification({ assetType: 'A', fieldName: 'F', fieldType: 'words', oldMax: 50, newMax: 60 }).message,
+    /from 50 to 60 words\./);
+});
+
+test('spec notice: the link is a NEW target that does not disturb the old one', () => {
+  const { specChangeNotification } = require('../src/utils/specNotice');
+  const { draftNotification } = require('../src/utils/draftNotice');
+  const spec = specChangeNotification({ assetType: 'Asset A', fieldName: 'Field F', oldMax: 1, newMax: 2, changeId: 7 });
+  assert.deepStrictEqual(spec.link, { screen: 'spec', asset: 'Asset A', field: 'Field F', changeId: 7 });
+  // The project target is untouched — same three keys, same screen name.
+  const draft = draftNotification({ title: 'T', fieldCount: 3, projectId: 5, docKind: 'copy' });
+  assert.deepStrictEqual(draft.link, { screen: 'project', projectId: 5, doc: 'copy' });
+  // Addressed by NAME: the notification is written per tenant from a
+  // spec_change_log row that carries no asset id and no field id.
+  const src = fs.readFileSync(require.resolve('../src/utils/specNotice'), 'utf8');
+  assert.ok(!/assetId|fieldId/.test(src));
+});
+
+test('spec routing: each page handles only the screen it owns', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  // The hook returns TRUE when it handled the target in-page; anything else means
+  // navigate. That contract is what lets each page implement only its own screens.
+  assert.match(partial, /window\.quillioOpenNotification\(t\) === true\) return;/);
+  assert.match(partial, /if \(screen === 'spec'\)/);
+  assert.match(partial, /return \{ screen: 'unknown' \};/, 'an unknown screen is named, not guessed at');
+  assert.match(partial, /'\/settings\?tab=library'/);
+
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const appHook = sliceBetween(app, 'window.quillioOpenNotification = function (target) {', '\n    };');
+  assert.match(appHook, /target\.screen !== 'project'\) return false;/);
+  assert.match(appHook, /return true;/);
+
+  const settings = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const setHook = sliceBetween(settings, 'window.quillioOpenNotification = function (target) {', '\n    };');
+  assert.match(setHook, /target\.screen !== 'spec'\) return false;/);
+  assert.match(setHook, /libFocusField\(target\.asset, target\.field\)/);
+  // The library addresses a field by name, which is what the notification carries.
+  assert.match(settings, /card\.setAttribute\('data-asset'/);
+  assert.match(settings, /li\.setAttribute\('data-field'/);
+  // The hand-off is consumed on arrival, so a reload does not re-fire it.
+  assert.match(settings, /window\.history\.replaceState\(\{\}, '', '\/settings'\)/);
+});
+
+test('sweep: the match key cannot collide, and carries no literal control byte', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  // normalize() collapses whitespace but KEEPS it, so a space separator is
+  // ambiguous: ("Nurture Email", "Subject") and ("Nurture", "Email Subject")
+  // would key identically and one change would correct the other's field.
+  assert.match(src, /const KEY_SEP = '\\u0000';/);
+  assert.match(src, /`\$\{normalize\(asset\)\}\$\{KEY_SEP\}\$\{normalize\(field\)\}`/);
+  // WRITTEN AS AN ESCAPE, NEVER AS A LITERAL BYTE. A literal NUL parses
+  // identically and passes every behavioural test — and makes git classify the
+  // file as BINARY, so the change has no reviewable diff at all. This is a
+  // tripwire for that exact regression, and it is worth having because nothing
+  // else in the toolchain complains.
+  const raw = fs.readFileSync(require.resolve('../src/services/specSweep'));
+  assert.strictEqual(raw.indexOf(0), -1, 'no literal NUL byte in the source');
+  // And the whole repo, since the same slip anywhere would be as invisible.
+  for (const f of ['src/db/specSweep.js', 'src/utils/specNotice.js', 'scripts/runSpecSweep.js']) {
+    assert.strictEqual(fs.readFileSync(path.join(__dirname, '..', f)).indexOf(0), -1, `${f} is text`);
+  }
+});
+
+test('sweep migration: matches the dry-run/--commit convention of its neighbours', () => {
+  const dir = path.join(__dirname, '..', 'scripts');
+  const mine = fs.readFileSync(path.join(dir, 'migrateAddSpecSweepState.js'), 'utf8');
+  // The two it was modelled on, both of which are applied in production.
+  for (const peer of ['migrateAddNotifications.js', 'migrateAddProjectFieldManifest.js']) {
+    const src = fs.readFileSync(path.join(dir, peer), 'utf8');
+    for (const marker of [
+      "const COMMIT = process.argv.includes('--commit')",
+      'function sslFor(url)',
+      "await client.query('BEGIN')",
+    ]) {
+      assert.ok(src.includes(marker), `${peer} has ${marker}`);
+      assert.ok(mine.includes(marker), `the sweep migration matches ${peer} on ${marker}`);
+    }
+  }
+  assert.match(mine, /DRY RUN \(rolls back — pass --commit to write\)/);
+  assert.match(mine, /CREATE TABLE IF NOT EXISTS spec_sweep_state/);
+  assert.match(mine, /ON CONFLICT \(id\) DO NOTHING/, 'idempotent seed');
+  // TIMESTAMPTZ, matching spec_change_log.changed_at — comparing against a bare
+  // timestamp would reinterpret one of them in the server's local zone.
+  assert.match(mine, /last_changed_at  TIMESTAMPTZ/);
+  assert.ok(!/railway run/.test(mine.replace(/NEVER `railway run`/g, '')), 'never railway run');
+});
+
+test('sweep cron: its own Railway service, not bolted onto the detector', () => {
+  const detector = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'railway.cron.json'), 'utf8'));
+  const sweep = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'railway.spec-sweep.cron.json'), 'utf8'));
+  // A Railway service runs exactly one startCommand, so a second schedule needs a
+  // second service. The detector's is untouched.
+  assert.strictEqual(detector.deploy.startCommand, 'node scripts/runDetection.js');
+  assert.strictEqual(sweep.deploy.startCommand, 'node scripts/runSpecSweep.js --commit');
+  assert.notStrictEqual(sweep.deploy.cronSchedule, detector.deploy.cronSchedule);
+  assert.strictEqual(sweep.deploy.restartPolicyType, 'NEVER');
+  // The ops script is dry-run by default; only the scheduled service passes
+  // --commit, so a hand-run in the console cannot edit a customer's documents by
+  // accident.
+  const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'runSpecSweep.js'), 'utf8');
+  assert.match(script, /const COMMIT = process\.argv\.includes\('--commit'\);/);
+  assert.match(script, /dryRun: !COMMIT/);
 });
 
 test('shared nav: onboarding and admin are deliberately NOT in it', () => {

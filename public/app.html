@@ -680,7 +680,17 @@
     }
     .doc-row:active { background: rgba(201,168,76,0.10); border-color: rgba(201,168,76,0.55); }
     .doc-row .doc-row-body { flex: 1; min-width: 0; }
-    .doc-row .doc-row-kind { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.42); margin-bottom: 3px; }
+    /* THE EYEBROW IS AN EYEBROW, so it uses the one this product already has.
+       It was 10px Zen Kaku 700 uppercase at 42% ink — a second, sans label
+       system existing nowhere else in the app, sitting three lines under
+       "DOCUMENTS" set in Star Crush. Restyled rather than removed: it carries
+       the only thing that tells a copy doc from a template document when the
+       names below them are both the campaign's, which is exactly the question
+       this section exists to answer.
+       Matched to .section-label / .assets-label (Star Crush, uppercase, 0.06em)
+       and stepped down from their 13px so it reads as subordinate to the
+       heading rather than competing with it. */
+    .doc-row .doc-row-kind { display: block; font-family: 'StarCrush', serif; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); opacity: 0.55; margin-bottom: 3px; }
     .doc-row .doc-row-name { display: block; font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.02em; overflow-wrap: anywhere; }
     .doc-row .doc-row-note { display: block; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.5); margin-top: 4px; line-height: 1.45; }
     .doc-row .doc-row-go { font-size: 18px; color: rgba(26,26,46,0.35); flex-shrink: 0; }
@@ -688,15 +698,11 @@
        document behind it — and it says which, instead of being silent. */
     .doc-row.failed { cursor: default; border-color: rgba(192,57,43,0.35); background: rgba(192,57,43,0.05); }
     .doc-row.failed .doc-row-note { color: #a5382a; font-style: normal; }
-    /* WHICH DOCUMENT the detail view is showing, when there is more than one. */
-    .doc-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 20px; }
-    .doc-switch-btn {
-      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 700;
-      color: rgba(26,26,46,0.6); background: rgba(255,255,255,0.5);
-      border: 1.5px solid rgba(255,255,255,0.8); border-radius: 100px; padding: 7px 15px;
-      cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
-    }
-    .doc-switch-btn.active { color: var(--ink); background: rgba(201,168,76,0.18); border-color: rgba(201,168,76,0.65); }
+    /* `.doc-switch` / `.doc-switch-btn` WERE HERE — the project view's chip pair,
+       removed with the switcher itself. That control put the document you were
+       already reading on screen as a thing to go to; the project view now uses
+       the same .doc-row index the result screen does, so there is one document
+       list in the app rather than two that look nothing alike. */
     .asset-card {
       background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px; padding: 18px 18px 12px; margin-bottom: 12px;
@@ -713,6 +719,44 @@
       background: rgba(255,255,255,0.7); border: 1.5px solid rgba(255,255,255,0.9);
       border-radius: 10px;
     }
+    /* THE ASSET GROUP AS AN ACCORDION. The header band already exists and
+       already reads as the group's own row (see .glass-panel.list
+       .asset-card-header); this makes it the control for its own fields.
+       As a <button> it inherits the band's fill and rules, and drops only the
+       side borders and the UA font — the band must look identical whether the
+       card is collapsible or not, because a nine-asset project and a one-asset
+       project are the same screen. */
+    button.asset-card-header {
+      border-left: none; border-right: none; border-radius: 0;
+      font: inherit; color: inherit; text-align: left;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      /* WIDTH IS NOT OPTIONAL ON A BUTTON. A form control sizes shrink-to-fit
+         even as a flex container, so the band stopped at its own text and the
+         nine of them came out ragged, each ending at a different x — measured in
+         a browser, invisible to every structural check, and the reason the band
+         is a <button> rather than a <div> with a handler is the only reason it
+         needed saying. */
+      width: 100%;
+    }
+    /* Full-bleed inside the merged list, where the band is pulled out to the
+       panel's padding edges by `margin: 0 -18px` — so its width is the card's
+       plus both of those. */
+    .glass-panel.list button.asset-card-header { width: calc(100% + 36px); }
+    button.asset-card-header:active { background: rgba(201,168,76,0.14); }
+    /* The name takes the slack so the chevron stays on the header's own line —
+       .asset-card-header wraps, and an asset name long enough to wrap would
+       otherwise drop the chevron onto a second line, right-aligned under it. */
+    button.asset-card-header .asset-card-name { flex: 1 1 auto; min-width: 0; }
+    .asset-card-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.45); flex: none; font-variant-numeric: tabular-nums; }
+    .asset-card-chev { display: inline-block; flex: none; font-size: 13px; color: rgba(26,26,46,0.5); transition: transform 0.15s ease; transform: rotate(90deg); }
+    .asset-card.collapsed .asset-card-chev { transform: none; }
+    /* WHAT COLLAPSES: the group's fields and its creative-direction line. The
+       band itself never does — collapsed, the bands ARE the index. */
+    .asset-card.collapsed > .asset-direction,
+    .asset-card.collapsed > .asset-field { display: none; }
+    /* A collapsed card is a band and nothing else, so the 8px foot the flattened
+       card carries would read as a gap under a rule. */
+    .glass-panel.list .asset-card.collapsed { padding-bottom: 0; }
     .asset-card-badge { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; font-weight: 600; color: rgba(26,26,46,0.5); background: rgba(26,26,46,0.06); border-radius: 100px; padding: 2px 9px; }
     .asset-card-badge.drafted { color: #0A5C32; background: #C6F0D8; }
     .asset-direction { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.48); margin: 0 0 12px; line-height: 1.5; }
@@ -1008,7 +1052,21 @@
     }
     .back-link:hover { color: var(--ink); }
     #screen-project .project-card-status { cursor: default; }
-    .project-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+    /* 18px, not the 16px .output-header.glass-panel carries: that rule's tighter
+       right padding is for the output screen's header GIF, which this header
+       does not have. 18px is .glass-panel.list's own padding, so the title's
+       first character sits on the same vertical as "CAMPAIGN SUMMARY" and every
+       asset name below it. */
+    #screen-project .output-header.glass-panel { padding: 14px 18px; }
+    /* ABOVE the content now (see the markup), so the margin moved with it. */
+    .project-actions { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
+    /* The Drive links, side by side. `flex: 1 1 140px` splits a row evenly and
+       wraps a third button onto its own line rather than crushing all three. */
+    .project-actions-secondary { display: flex; flex-wrap: wrap; gap: 10px; }
+    .project-actions-secondary .cta-secondary { flex: 1 1 140px; padding: 13px 10px; }
+    /* A row of one is a full-width button again, which is what a project with no
+       folder (or no copy doc) should still get. Handled by flex-grow already —
+       noted so the single-button case is not read as an oversight. */
     /* Copy-review result panel (8b) — glass card with the two GIF states. */
     .review-panel {
       margin-top: 16px; padding: 18px; text-align: center;
@@ -1273,37 +1331,69 @@ __NAV:brief__
 
     <!-- PROJECT DETAIL (opened from the Projects list) -->
     <section id="screen-project" class="screen">
+      <!-- Label is set per render by renderProjectDocs: a multi-document project
+           viewed on one of its documents goes back to its Documents index, and
+           everything else goes back to the Projects list. -->
       <button class="back-link" id="project-back">← Back to projects</button>
-      <div class="output-header">
+      <!-- `glass-panel` DELIBERATELY, matching the output and copy-done headers.
+           Bare, the title sat on the raw sky at the content column's own edge
+           (26px) while every card below inset its text by its panel padding
+           (45px) — a 19px step measured at 390px, which reads as the heading
+           being outdented rather than as two different surfaces. -->
+      <div class="output-header glass-panel">
         <h2 class="output-title" id="project-title">Campaign</h2>
         <span class="project-card-status" id="project-status"></span>
       </div>
 
-      <!-- WHICH DOCUMENT this screen is showing. Rendered only when the brief
-           produced more than one — a project with a single document has nothing
-           to switch between, and an empty switcher would imply a missing one. -->
-      <div id="project-docs" class="doc-switch hidden"></div>
+      <!-- THE DOCUMENTS THIS PROJECT HOLDS — an INDEX, not a switcher.
+           Rendered only when the project has more than one: one document has
+           nothing to choose between, and a section listing the single thing
+           already rendered below it is a step to reach where you already are.
+           When it IS rendered, the screen shows the list ALONE — no document's
+           content underneath, or the list would be offering the thing you are
+           looking at. Tapping a row opens that document; Back returns here. -->
+      <div id="project-docs" class="glass-panel list hidden">
+        <div class="assets-label">Documents</div>
+        <p class="field-select-hint">Tap a document to open it.</p>
+        <div id="project-docs-list"></div>
+      </div>
 
-      <div id="project-loading" class="loading hidden"><span class="dot"></span><span>Loading content…</span></div>
-      <div id="project-content"></div>
-      <div id="project-fallback" class="empty hidden">Content unavailable. You can still open the doc in Drive.</div>
-
+      <!-- ABOVE THE CONTENT, IN FLOW — not a fixed bar. Measured at 390x844 on a
+           nine-asset project: the content runs 6,893px, so at the foot of the
+           page the primary sat 6,613px down. This screen carries up to FIVE
+           buttons (240-302px measured), which as a fixed bar is 28-36% of the
+           viewport gone on every scroll of the screen with the most to read.
+           showScreen already lands every arrival at scroll 0, so in flow at the
+           top they are on screen the moment you arrive, for no standing cost. -->
       <div class="project-actions">
         <button class="cta-primary hidden" id="project-review-btn">Review Copy</button>
         <!-- ONE dynamic primary: Generate First Draft / Generate Selected (N) /
              Regenerate / Regenerate Selected (N). Routes by draft state × selection. -->
         <button class="cta-primary hidden" id="project-primary-btn">Generate First Draft</button>
-        <button class="cta-secondary" id="project-open-btn">Campaign folder</button>
-        <!-- These open the document in DRIVE. The chips at the top of the screen
-             switch which document this view is showing — different verbs, so the
-             labels say "Open". -->
-        <button class="cta-secondary" id="project-doc-btn">Open copy doc</button>
-        <!-- The second document, when this brief produced one (custom document
-             types). Hidden for every copy-doc-only project, which is nearly all
-             of them. "Campaign folder" holds this too — the direct button saves
-             a click and a scan, which is why it stays. -->
-        <button class="cta-secondary hidden" id="project-template-btn">Open template document</button>
+        <!-- THE DRIVE LINKS SHARE A ROW. Stacked full-width like the primaries,
+             the four buttons measured 504px at 390x844 — 60% of the viewport,
+             which put the campaign summary and every asset name below the fold.
+             Moving them off the foot of the page is worth nothing if they take
+             the top of it instead. Wrapping rather than a fixed split: a project
+             with a template document has three of these, and 106px each is not a
+             button anybody can read. -->
+        <div class="project-actions-secondary">
+          <button class="cta-secondary" id="project-open-btn">Campaign folder</button>
+          <!-- These open the document in DRIVE. The Documents index above opens a
+               document INTO THIS SCREEN — different verbs, so the labels say
+               "Open". -->
+          <button class="cta-secondary" id="project-doc-btn">Open copy doc</button>
+          <!-- The second document, when this brief produced one (custom document
+               types). Hidden for every copy-doc-only project, which is nearly all
+               of them. "Campaign folder" holds this too — the direct button saves
+               a click and a scan, which is why it stays. -->
+          <button class="cta-secondary hidden" id="project-template-btn">Open template document</button>
+        </div>
       </div>
+
+      <div id="project-loading" class="loading hidden"><span class="dot"></span><span>Loading content…</span></div>
+      <div id="project-content"></div>
+      <div id="project-fallback" class="empty hidden">Content unavailable. You can still open the doc in Drive.</div>
       <div id="project-error" class="error hidden"></div>
     </section>
 
@@ -2145,16 +2235,47 @@ __NAV:brief__
     //   opts.showPlaceholder → render "Not yet drafted" for empty fields
     //   opts.instanceTotal → how many instances of this asset the doc holds; >1
     //                        puts the ordinal (and label) in the card heading
+    //   opts.collapsible   → the header band becomes the group's own accordion
+    //                        control (chevron + a drafted count)
+    //   opts.collapsed     → whether it starts closed. The CALLER decides, because
+    //                        the right default depends on how many groups are on
+    //                        the page and only the caller can see that.
     function appendAssetCard(container, asset, opts) {
       opts = opts || {};
       var card = el('div', 'asset-card');
 
-      var header = el('div', 'asset-card-header');
+      var cardFields = asset.fields || [];
+      var draftedFields = cardFields.filter(function (f) {
+        return f.copy != null && String(f.copy).trim().length > 0;
+      }).length;
+
+      // A <button> only when it does something. A plain header stays a <div>, so
+      // no screen that does not collapse gains a control that reads as tappable
+      // and is not — the failure the disabled house-default rows were.
+      var header = el(opts.collapsible ? 'button' : 'div', 'asset-card-header');
+      if (opts.collapsible) header.type = 'button';
       // opts.instanceTotal (from the calling renderer, which can see the whole
       // list) decides whether an ordinal is shown. Absent → 1 → the bare name.
       header.appendChild(el('span', 'asset-card-name', assetDisplayName(asset, opts.instanceTotal)));
       if (opts.badge) {
         header.appendChild(el('span', 'asset-card-badge' + (opts.drafted ? ' drafted' : ''), opts.badge));
+      }
+      if (opts.collapsible) {
+        // WHAT A CLOSED GROUP STILL TELLS YOU. Collapsed, the bands are the whole
+        // index, and "which of these still needs work" is the question they are
+        // being scanned for — so the count is the drafted ratio, in the same
+        // "N of M" vocabulary the draft surfaces already use. With nothing
+        // drafted the ratio says nothing a field count does not, so it says the
+        // field count instead of "0/9 drafted".
+        header.appendChild(el('span', 'asset-card-count',
+          draftedFields ? (draftedFields + '/' + cardFields.length + ' drafted') : (cardFields.length + ' fields')));
+        header.appendChild(el('span', 'asset-card-chev', '▸'));
+        if (opts.collapsed) card.classList.add('collapsed');
+        header.setAttribute('aria-expanded', opts.collapsed ? 'false' : 'true');
+        header.addEventListener('click', function () {
+          var closed = card.classList.toggle('collapsed');
+          header.setAttribute('aria-expanded', closed ? 'false' : 'true');
+        });
       }
       card.appendChild(header);
 
@@ -2163,7 +2284,7 @@ __NAV:brief__
       var assetDirection = asset.asset_direction != null ? String(asset.asset_direction).trim() : '';
       if (assetDirection) card.appendChild(el('div', 'asset-direction', assetDirection));
 
-      (asset.fields || []).forEach(function (f) {
+      cardFields.forEach(function (f) {
         var copy = f.copy != null ? String(f.copy) : '';
         var hasCopy = copy.trim().length > 0;
         var limit = charLimit(f); // '[70]' / '[40–60]' / ''
@@ -3515,7 +3636,11 @@ __NAV:brief__
     // 'template'). templateName: the template document's own name, which only
     // arrives with its content — the project row records WHICH document, not what
     // it is called.
-    var projectState = { project: null, docKind: 'copy', templateName: null };
+    // view: which of the screen's two states it is in — 'docs', the project's
+    // document INDEX (only ever reached by a project holding more than one), or
+    // 'doc', one document's content. They are exclusive: an index that also
+    // rendered a document below it would be offering the thing you are reading.
+    var projectState = { project: null, docKind: 'copy', templateName: null, view: 'doc' };
     var projectBlankFields = []; // [{assetType, instance, fieldName}] recomputed each openProject
     var projectContentEl = document.getElementById('project-content');
     var projectLoading = document.getElementById('project-loading');
@@ -3722,10 +3847,17 @@ __NAV:brief__
     // to fall back to.
     async function openProject(p, kind) {
       // A different project's template has a different name — forget the last
-      // one rather than labelling this switcher with it.
+      // one rather than labelling this project's index row with it.
       if (!projectState.project || projectState.project.id !== p.id) projectState.templateName = null;
       projectState.project = p;
       projectState.docKind = resolveDocKind(p, kind);
+      // WHICH OF THIS SCREEN'S TWO VIEWS. An explicit `kind` means a document was
+      // CHOSEN — by a row in the index, by a notification's link, or by a reload
+      // after a draft, which must never switch what you were reading. Everything
+      // else (the Projects list, which passes none) lands on the index, and only
+      // a project with more than one document has one.
+      projectState.view = (!kind && projectDocKinds(p).length > 1) ? 'docs' : 'doc';
+      var onIndex = projectState.view === 'docs';
       clearFieldSelection(); // fresh view → no stale selection
       projectBlankFields = []; // recomputed once content loads
       showScreen('project');
@@ -3734,15 +3866,17 @@ __NAV:brief__
       var pkey = statusKey(p.status);
       badge.textContent = statusLabel(pkey);
       badge.className = 'project-card-status ' + (PILL_CLASS[pkey] || 'status-notstarted');
-      renderProjectDocSwitch();
+      renderProjectDocs();
 
       // The template document, if this brief produced one. The column rides in
       // on the project row (db/projects selects *), so nothing else is fetched.
+      // Both Drive buttons are document-scoped, so both stand down on the index —
+      // where the rows above are what a document is reached by.
       var tplBtn = document.getElementById('project-template-btn');
-      tplBtn.classList.toggle('hidden', !p.template_doc_url);
+      tplBtn.classList.toggle('hidden', onIndex || !p.template_doc_url);
       // Same for the copy doc's own button: a template-only project has none, and
       // a button that opens nothing is worse than one fewer button.
-      document.getElementById('project-doc-btn').classList.toggle('hidden', !p.copy_doc_url);
+      document.getElementById('project-doc-btn').classList.toggle('hidden', onIndex || !p.copy_doc_url);
       // A project with no folder (creation failed, or one predating folders)
       // shows the copy doc alone rather than two buttons going to one place.
       document.getElementById('project-open-btn').classList.toggle('hidden', !p.drive_folder_url);
@@ -3756,6 +3890,9 @@ __NAV:brief__
 
       projectContentEl.textContent = '';
       hide(projectFallback);
+      // The index renders no document, so it reads none: the content fetch, its
+      // spinner and the draft affordances all belong to the view that shows one.
+      if (onIndex) { hide(projectLoading); return; }
       show(projectLoading);
       try {
         // Cache-bust nonce: a project's content changes as soon as a draft is
@@ -3776,11 +3913,13 @@ __NAV:brief__
         }
         var content = data.content || {};
         // The template's own name only arrives with its content (the project row
-        // records which document, not what it is called), so the switcher is
+        // records which document, not what it is called), so its index row is
         // relabelled once it does.
         if (content.templateName) {
           projectState.templateName = content.templateName;
-          renderProjectDocSwitch();
+          // Relabels the Back target's row for the next visit to the index; the
+          // index itself is not on screen while a document is being read.
+          renderProjectDocs();
         }
         projectBlankFields = computeBlankFields(content);
         renderProjectContent(content);
@@ -3818,27 +3957,93 @@ __NAV:brief__
       return openProject(projectState.project, projectState.docKind);
     }
 
-    // The document chips. Rendered only when this brief produced more than one;
-    // one document has nothing to switch between, and an empty second chip would
-    // imply a document that was never asked for.
-    function renderProjectDocSwitch() {
-      var wrap = document.getElementById('project-docs');
-      if (!wrap) return;
-      var p = projectState.project;
-      wrap.textContent = '';
+    // WHICH DOCUMENTS THIS PROJECT HOLDS. Read off the project ROW — the same
+    // two id columns the detail view already reads to decide what it can show —
+    // so this asks no question the screen was not already asking.
+    //
+    // The NAME is the document's own; the eyebrow above it is the KIND. A
+    // template document's name only arrives with its content (the row records
+    // which document, not what it is called), and the index deliberately does
+    // not fetch content, so until it has been opened once it falls back to the
+    // campaign's name. Both rows then read as the campaign's, and the eyebrow is
+    // what tells them apart — which is the job the eyebrow is kept for.
+    function projectDocKinds(p) {
       var kinds = [];
-      if (p && p.copy_doc_id) kinds.push({ kind: 'copy', label: 'Copy doc' });
-      if (p && p.template_doc_id) kinds.push({ kind: 'template', label: projectState.templateName || 'Template document' });
-      wrap.classList.toggle('hidden', kinds.length < 2);
-      if (kinds.length < 2) return;
+      var campaign = (p && p.name) || 'Campaign';
+      if (p && p.copy_doc_id) kinds.push({ kind: 'copy', label: 'Copy doc', name: campaign });
+      if (p && p.template_doc_id) {
+        kinds.push({ kind: 'template', label: 'Template document', name: projectState.templateName || campaign });
+      }
+      return kinds;
+    }
+
+    // THE DOCUMENTS INDEX, and the Back label that goes with it.
+    //
+    // Rendered ONLY on the index view, which is only ever reached by a project
+    // with more than one document. A single-document project never draws this:
+    // the section would list the one thing already rendered below it, which is a
+    // step to reach where you already are.
+    //
+    // Not `docRow` from the result screen, though the markup is deliberately the
+    // same component: that one also renders templates that were REFUSED or
+    // FAILED to build, which a project row cannot be — a project only carries a
+    // template_doc_id once one was built — and it routes through the result
+    // screen's own state.
+    function renderProjectDocs() {
+      var wrap = document.getElementById('project-docs');
+      var list = document.getElementById('project-docs-list');
+      var back = document.getElementById('project-back');
+      if (!wrap || !list) return;
+      var p = projectState.project;
+      var kinds = projectDocKinds(p);
+      var onIndex = projectState.view === 'docs';
+      wrap.classList.toggle('hidden', !onIndex);
+      // BACK GOES UP ONE LEVEL. From one document of a multi-document project
+      // that is the project's own index — which used to be unreachable, because
+      // the only Back on this screen left for the Projects list. A project with
+      // one document has no index to return to, so it keeps the old route and
+      // the problem never existed there.
+      if (back) back.textContent = (!onIndex && kinds.length > 1) ? '← Back to documents' : '← Back to projects';
+      list.textContent = '';
+      if (!onIndex) return;
       kinds.forEach(function (k) {
-        var b = el('button', 'doc-switch-btn' + (k.kind === projectState.docKind ? ' active' : ''), k.label);
-        b.type = 'button';
-        b.addEventListener('click', function () {
-          if (k.kind !== projectState.docKind) openProject(p, k.kind);
-        });
-        wrap.appendChild(b);
+        var row = el('button', 'doc-row');
+        row.type = 'button';
+        var body = el('div', 'doc-row-body');
+        body.appendChild(el('span', 'doc-row-kind', k.label));
+        body.appendChild(el('span', 'doc-row-name', k.name));
+        row.appendChild(body);
+        row.appendChild(el('span', 'doc-row-go', '›'));
+        // An explicit kind — which is what puts the screen on that document
+        // rather than back on this index. openProject's own signature, unchanged.
+        row.addEventListener('click', function () { openProject(p, k.kind); });
+        list.appendChild(row);
       });
+    }
+
+    // Back to the index from one of its documents. No refetch: the index renders
+    // off the project row, which is already in hand, and the content this drops
+    // is re-read when a document is opened again.
+    function showProjectDocsIndex() {
+      var p = projectState.project;
+      if (!p) return loadHistory();
+      projectState.view = 'docs';
+      clearFieldSelection();
+      projectBlankFields = [];
+      renderProjectDocs();
+      hide(projectLoading);
+      hide(projectFallback);
+      clearError(projectError);
+      projectContentEl.textContent = '';
+      // The document-scoped actions belong to a document. On the index there is
+      // no document in view, so the only action left is the one that is about
+      // the project: its folder.
+      hide(projectPrimaryBtn);
+      hide(projectReviewBtn);
+      document.getElementById('project-doc-btn').classList.add('hidden');
+      document.getElementById('project-template-btn').classList.add('hidden');
+      document.getElementById('project-open-btn').classList.toggle('hidden', !p.drive_folder_url);
+      window.scrollTo(0, 0);
     }
 
     function renderProjectContent(content) {
@@ -3878,18 +4083,54 @@ __NAV:brief__
         hasBlank: assetsHaveBlank(passets),
         canRiff: assetsCanRiff(passets),
       });
-      if (phint) listPanel.appendChild(phint);
+      var assets = passets;
+      var startCollapsed = assets.length >= COLLAPSE_GROUPS_FROM;
+      if (phint) {
+        // The shared hint is about tapping a FIELD, and closed groups have none
+        // on screen. Prefixed here rather than inside fieldSelectHint, which
+        // Copy Done also renders and which does not collapse: the sentence is
+        // true of both surfaces, this clause is true only of this one.
+        //
+        // "OPEN", NOT "TAP" — the one word decided in a browser. Every sentence
+        // fieldSelectHint returns begins "Tap", so a "Tap an asset…" prefix put
+        // two identical verbs back to back and the 390px wrap landed the second
+        // "Tap" directly after the first. Read as two competing instructions
+        // rather than one sequence, and the second describes something you
+        // cannot do yet — with the groups closed there is no field on screen to
+        // tap. Two different verbs make them read in order: open, then tap.
+        if (startCollapsed) phint.textContent = 'Open an asset to see its fields. ' + phint.textContent;
+        listPanel.appendChild(phint);
+      }
       var cardHost = el('div');
       listPanel.appendChild(cardHost);
       projectContentEl.appendChild(listPanel);
-      var assets = passets;
       var ptotals = instanceTotals(assets);
       assets.forEach(function (a) {
         appendAssetCard(cardHost, a, { showPlaceholder: true, selectable: true, onSelectionChange: refreshProjectPrimary,
           instanceTotal: instanceTotalFor(ptotals, a),
+          collapsible: true, collapsed: startCollapsed,
           riff: { docId: projectDocId(), reload: reopenProjectDoc } });
       });
     }
+
+    // THE ACCORDION DEFAULT, AND WHY IT IS A COUNT AND NOT A CONSTANT.
+    //
+    // A one-asset project and a twelve-asset project are the same screen asking
+    // for opposite things. Measured at 390x844:
+    //   1 asset  ~1,300px — the whole thing is already scannable; collapsing it
+    //            puts the ENTIRE content of the screen behind a tap, so arriving
+    //            at a project shows a closed drawer and nothing else.
+    //   9 assets  6,893px — eight viewports, no way to see what is in the project
+    //            without scrolling all of it. Closed, the same project is one
+    //            screen of asset names, which is the index the page never had.
+    // The line is drawn where the list stops fitting a screen or two, so the
+    // default only ever hides what could not have been seen anyway. 3 is the
+    // first count that cannot fit in two viewports on this data.
+    //
+    // COLLAPSIBLE IS NOT CONDITIONAL — only the default is. A chevron that
+    // appears at three assets and vanishes at two is a control that comes and
+    // goes; every group carries one, and a one-asset project simply starts open.
+    var COLLAPSE_GROUPS_FROM = 3;
 
     // The affordance line: fields aren't obviously tappable, so say so. Muted,
     // shared by the project view and Copy Done. Wording adapts to draft state so
@@ -4151,7 +4392,12 @@ __NAV:brief__
       try { window.history.replaceState({}, '', '/app'); } catch (e) {}
       window.quillioOpenNotification({ screen: 'project', projectId: m[1], doc: d ? d[1] : 'copy' });
     })();
-    document.getElementById('project-back').addEventListener('click', loadHistory);
+    // UP ONE LEVEL, not always out. A document of a multi-document project sits
+    // under that project's index; everything else sits under the Projects list.
+    document.getElementById('project-back').addEventListener('click', function () {
+      if (projectState.view === 'doc' && projectDocKinds(projectState.project).length > 1) showProjectDocsIndex();
+      else loadHistory();
+    });
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
     document.getElementById('project-doc-btn').addEventListener('click', function () {
       var p = projectState.project;

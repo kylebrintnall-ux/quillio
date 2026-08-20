@@ -16439,6 +16439,20 @@ test('checkSpecHealth is READ-ONLY by construction, and measures what the detect
   assert.match(src, /on no watch row/, 'reports pages we cite but do not watch');
   assert.match(src, /nothing cites this URL/, 'reports watch rows nothing cites');
 
+  // A RESEARCH CITATION IS NOT A GAP, and the distinction is READ from the one
+  // registry that carries it rather than restated as a second list here — a
+  // duplicate would drift the first time a source was added there and not here.
+  assert.match(src, /SPEC_SOURCE_DETAIL \} = require\('\.\.\/src\/destinations\/googleDocs'\)/);
+  const { SPEC_SOURCE_DETAIL } = require('../src/destinations/googleDocs');
+  assert.ok(SPEC_SOURCE_DETAIL && Object.keys(SPEC_SOURCE_DETAIL).length >= 2,
+    'the registry is exported and non-empty, or the check silently treats every study as a gap');
+  for (const [url, d] of Object.entries(SPEC_SOURCE_DETAIL)) {
+    assert.ok(/^https?:\/\//.test(url), `${url} is a URL, so it can match a spec_source`);
+    assert.ok(d.scope && d.finding, `${url} carries the scope and finding the report prints`);
+  }
+  // Named, not silenced: its own section, never folded into OK.
+  assert.match(src, /DELIBERATELY UNWATCHED \(research citation\)/);
+
   // observed_practice is SAID, never silently omitted — same rule the detector
   // follows for not_watched.
   assert.match(src, /observed_practice — not fetched, not hashed/);

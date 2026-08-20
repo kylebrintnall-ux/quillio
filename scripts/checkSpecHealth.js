@@ -73,6 +73,20 @@ const {
   isObservedPractice,
   UNCONFIRMED_STREAK_ALERT,
 } = require('../src/services/specDetector');
+// A CHECKER REACHING INTO THE RENDER LAYER, ON PURPOSE.
+//
+// SPEC_SOURCE_DETAIL is the codebase's ONLY registry of "this URL is a study,
+// not a platform spec page" — its entries carry what each source measured and
+// what it found, and it is maintained beside the rendering that depends on it.
+// The coverage check needs exactly that distinction to tell a real GAP from a
+// deliberate non-watch, and duplicating the list here would create a second one
+// that drifts the first time a source is added there and not here.
+//
+// The alternative considered and rejected: two spec_watch_list rows marked
+// source_kind = 'observed_practice', mirroring Litmus. It works, but it means
+// creating rows whose only purpose is to say "do not look here" — and a row that
+// exists to be ignored is a row somebody later mistakes for one that matters.
+const { SPEC_SOURCE_DETAIL } = require('../src/destinations/googleDocs');
 
 const TAG = '[spec-health]';
 
@@ -447,10 +461,25 @@ async function main() {
     }
   }
 
-  // A — COVERAGE GAP.
+  // A — COVERAGE GAP, split from the deliberate non-watches.
+  //
+  // A research citation is NOT a gap. CLAUDE.md: "if the page states a limit the
+  // platform enforces, watch it. If the page reports what someone measured, cite
+  // it and leave it alone." A study does not change, it AGES, so hash-diffing one
+  // measures the wrong variable and every layout tweak the publisher ships fills
+  // the queue with noise — the Litmus finding, which cost six dismissed flags.
+  //
+  // They are REPORTED IN THEIR OWN SECTION rather than skipped, so a reader can
+  // see that two cited URLs have no watch row and that this is intentional,
+  // without having to already know why.
   const uncovered = [];
+  const research = [];
   for (const url of cited) {
     if (watchedNorm.has(normUrl(url))) continue;
+    if (SPEC_SOURCE_DETAIL[url]) {
+      research.push({ url, detail: SPEC_SOURCE_DETAIL[url] });
+      continue;
+    }
     // DISTINCT (asset, field) PAIRS, NOT ROWS. A plain COUNT(*) counts one row
     // per tenant, so on a two-tenant database every figure here doubled and the
     // line read "cited by 2 tiered fields" about a single field. affected_fields
@@ -503,6 +532,17 @@ async function main() {
     for (const r of warn) {
       for (const x of r.amber) console.log(`  ${r.row.display_name || short(r.row.source_url)} — ${x}`);
     }
+  }
+  // NAMED, NOT SILENCED — and deliberately not folded into OK, because these are
+  // not watched rows at all. They are cited pages we have decided never to watch.
+  if (research.length) {
+    console.log('\nDELIBERATELY UNWATCHED (research citation)');
+    for (const r of research) {
+      console.log(`  ${short(r.url)}`);
+      console.log(`    ${r.detail.scope} — ${r.detail.finding}`);
+    }
+    console.log('    A study does not change, it ages. Hash-watching one measures');
+    console.log('    the wrong variable and fills the queue with layout noise.');
   }
   if (ok.length) console.log(`\nOK  ${ok.map((r) => r.row.display_name).join(', ')}`);
   if (skipped.length) {

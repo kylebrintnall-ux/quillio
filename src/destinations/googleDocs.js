@@ -2379,6 +2379,13 @@ module.exports = {
   HOUSE_DEFAULT_LINE,
   HOUSE_DEFAULT_LINE_SET,
   stripReaderOnlyLines,
+  // EXPORTED FOR scripts/checkSpecHealth.js, not for the destination interface.
+  // Its keys are the only record in this codebase of which cited URLs are
+  // STUDIES rather than platform spec pages, and the health check needs exactly
+  // that distinction to tell a coverage GAP from a deliberate non-watch. Reading
+  // it beats a second list, which would drift the first time a source changed
+  // here and not there.
+  SPEC_SOURCE_DETAIL,
   NOT_A_HARD_LIMIT,
   appendBody,
   buildVariantBlock,

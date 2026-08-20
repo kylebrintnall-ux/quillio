@@ -28,8 +28,13 @@ const WATCH_BASE = `id, source_url, display_name, affected_fields, current_hash,
 // wrongly. The one thing it must never do is default a missing column IN.
 const ANCHOR_COLS = 'expected_content, anchor_scope, consecutive_failures';
 const UNCONFIRMED_COLS = 'consecutive_unconfirmed, last_unconfirmed_reason';
+const STOP_MARKER_COL = 'content_stop_marker';
 const WATCH_TIERS = [
-  { extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind` },
+  { extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind, ${STOP_MARKER_COL}` },
+  {
+    extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind`,
+    missing: ['spec_watch_list.content_stop_marker', 'scripts/migrateAddContentStopMarker.js'],
+  },
   {
     extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}`,
     missing: ['spec_watch_list.source_kind', 'scripts/migrateAddSourceKind.js'],

@@ -16310,26 +16310,37 @@ test('specWatch.getWatchList degrades one migration at a time', async () => {
   assert.strictEqual(full.asked.length, 1);
   assert.match(full.asked[0], /source_kind/);
 
-  // Everything but the newest migration: falls exactly one tier.
-  const noKind = await watchListAgainst(['source_kind']);
-  assert.strictEqual(noKind.asked.length, 2);
-  assert.match(noKind.asked[1], /consecutive_unconfirmed/, 'and keeps the tier below');
+  // Everything but the newest migration: falls exactly one tier. The newest is
+  // now content_stop_marker (scripts/migrateAddContentStopMarker.js).
+  const noMarker = await watchListAgainst(['content_stop_marker']);
+  assert.strictEqual(noMarker.asked.length, 2);
+  assert.match(noMarker.asked[1], /source_kind/, 'and keeps the tier below');
+  assert.ok(!('content_stop_marker' in noMarker.rows[0]),
+    'the fallback must NOT default the column in — an absent key means "no truncation configured"');
+
+  // Two migrations back. source_kind missing takes out the two tiers that name
+  // it, so this is three queries rather than two.
+  const noKind = await watchListAgainst(['source_kind', 'content_stop_marker']);
+  assert.strictEqual(noKind.asked.length, 3);
+  assert.match(noKind.asked[2], /consecutive_unconfirmed/, 'and keeps the tier below');
   assert.ok(!('source_kind' in noKind.rows[0]),
     'the fallback must NOT default the columns in — key presence is the signal the detector reads');
 
-  // Two migrations back.
-  const mid = await watchListAgainst(['source_kind', 'consecutive_unconfirmed', 'last_unconfirmed_reason']);
-  assert.strictEqual(mid.asked.length, 3);
-  assert.match(mid.asked[2], /expected_content/, 'and kept the anchor columns');
+  // Three migrations back.
+  const mid = await watchListAgainst([
+    'source_kind', 'content_stop_marker', 'consecutive_unconfirmed', 'last_unconfirmed_reason',
+  ]);
+  assert.strictEqual(mid.asked.length, 4);
+  assert.match(mid.asked[3], /expected_content/, 'and kept the anchor columns');
   assert.ok(!('consecutive_unconfirmed' in mid.rows[0]));
 
   // No migration run: falls all the way to the base columns.
   const base = await watchListAgainst([
-    'source_kind', 'expected_content', 'anchor_scope', 'consecutive_failures',
-    'consecutive_unconfirmed', 'last_unconfirmed_reason',
+    'source_kind', 'content_stop_marker', 'expected_content', 'anchor_scope',
+    'consecutive_failures', 'consecutive_unconfirmed', 'last_unconfirmed_reason',
   ]);
-  assert.strictEqual(base.asked.length, 4);
-  assert.ok(!/expected_content|consecutive|source_kind/.test(base.asked[3]));
+  assert.strictEqual(base.asked.length, 5);
+  assert.ok(!/expected_content|consecutive|source_kind|content_stop_marker/.test(base.asked[4]));
   assert.ok(!('consecutive_failures' in base.rows[0]));
 });
 
@@ -16339,6 +16350,44 @@ test('specWatch.getWatchList does NOT swallow a broken table', async () => {
   // clear — which is the same silent-success shape this whole subsystem keeps
   // producing. It must throw.
   await assert.rejects(() => watchListAgainst(['source_url']), /source_url/);
+});
+
+test('migrateAddContentStopMarker adds the column if-not-exists and seeds nothing', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddContentStopMarker.js'), 'utf8');
+  assert.match(src, /ADD COLUMN IF NOT EXISTS content_stop_marker TEXT/);
+  assert.match(src, /ROLLBACK/, 'dry run by default');
+  // SCHEMA ONLY. A seed here would put a marker on a row before anyone has
+  // measured that the marker is present on that page.
+  assert.ok(!/UPDATE spec_watch_list SET content_stop_marker/.test(src),
+    'this migration must not seed a marker — that is the split migration, after --verify');
+});
+
+test('migrateSplitMetaWatchRows derives affected_fields and refuses an empty gate', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateSplitMetaWatchRows.js'), 'utf8');
+
+  // The fetched page text is quoted in the header — CLAUDE.md's fetch rule, and
+  // asserted rather than trusted to have been written.
+  assert.match(src, /Primary Text: 50-150 characters Headline: 27 characters/);
+  assert.match(src, /Primary Text: 80 characters Headline: 20 characters/);
+  assert.match(src, /Description: 18 characters/);
+
+  // DERIVED, NOT PASTED. A hardcoded pair count would have been wrong the moment
+  // the Description demotion landed.
+  assert.match(src, /SELECT DISTINCT at\.name AS asset, cf\.field_name AS field/);
+  assert.match(src, /AND at\.is_active/, 'the derivation carries the predicate affectedFieldsWhere() lacks');
+  assert.match(src, /derived ZERO pairs/, 'an empty derivation is refused, not written');
+
+  // Repurpose, never delete — spec_review_queue.watch_id is a FK.
+  assert.match(src, /UPDATE spec_watch_list\n\s*SET source_url/);
+  assert.ok(!/DELETE FROM spec_watch_list/.test(src), 'the old row is repurposed, never deleted');
+
+  // current_hash cleared so the next run takes the baseline branch and cannot flag.
+  assert.match(src, /current_hash = NULL/);
+
+  // Both rows get the same marker and an anchor; /video and /collection get no row.
+  assert.match(src, /View available calls to action/);
+  assert.ok(!/ads-guide\/update\/video'/.test(src) || !/ROWS = \[[\s\S]*update\/video/.test(src),
+    'no watch row for /video — it has no asset, so its affected_fields would be empty');
 });
 
 test('migrateAddSpecAnchors adds the three columns and seeds idempotently', () => {
@@ -16580,6 +16629,111 @@ test('normalize: two fetches differing only in the token hash identically', () =
     hashText(normalize(page('7192106907275015538'))),
     hashText(normalize(page('7192106907275015538').replace('30 characters', '35 characters')))
   );
+});
+
+// --- Content stop marker (Meta's shuffled call-to-action list) ---------------
+//
+// Meta permutes its CTA list on every request — ~480-530 characters of churn on
+// /image, /video and /carousel, same items in a different order. Not a token, so
+// the digit rule cannot touch it. Every spec number appears before the phrase
+// "View available calls to action", so the row carries a marker and we hash the
+// head.
+
+test('truncateAtMarker: cuts at the marker, absent marker is null, no marker is a no-op', () => {
+  const { truncateAtMarker } = require('../src/services/specDetector');
+  const page = 'Primary Text: 50-150 characters View available calls to action Apply now Download';
+
+  assert.strictEqual(truncateAtMarker(page, 'View available calls to action'),
+    'Primary Text: 50-150 characters', 'cuts at the marker and trims');
+
+  // NULL IS THE FAILURE SIGNAL, not an empty string and not the full text.
+  // Returning the full text here would silently reintroduce the shuffle.
+  assert.strictEqual(truncateAtMarker(page, 'Not On This Page'), null,
+    'a configured marker that is absent returns null, so the caller can fail loudly');
+
+  // No marker configured → untouched, which is every row except the two Meta ones.
+  for (const empty of [null, undefined, '', '   ']) {
+    assert.strictEqual(truncateAtMarker(page, empty), page, `no marker (${JSON.stringify(empty)}) is a no-op`);
+  }
+});
+
+test('hashableText: a marked row hashes the head, and the CTA shuffle stops mattering', () => {
+  const { hashableText, hashText } = require('../src/services/specDetector');
+  const MARKER = 'View available calls to action';
+  // Plain concatenation, no nested template literal. maskNonCode's regex-vs-
+  // division heuristic desyncs on a template nested inside a ${} of another
+  // template, and its compile check caught exactly that here — which is the
+  // scanner working, not a reason to weaken it.
+  const page = (ctas) =>
+    '<html><body><h2>Text Recommendations</h2>' +
+    '<p>Primary Text: 50-150 characters Headline: 27 characters</p>' +
+    '<h3>' + MARKER + '</h3><ul>' +
+    ctas.map((c) => '<li>' + c + '</li>').join('') +
+    '</ul><footer>Related Content</footer></body></html>';
+
+  // The real observed shape: same items, permuted.
+  const a = page(['Apply now', 'Download', 'Learn more', 'Send message', 'Order now']);
+  const b = page(['Apply now', 'Download', 'Get directions', 'Learn more', 'Send message']);
+  const row = { content_stop_marker: MARKER };
+
+  assert.notStrictEqual(hashText(hashableText({}, a)), hashText(hashableText({}, b)),
+    'UNMARKED: the shuffle moves the hash — this is the bug');
+  assert.strictEqual(hashText(hashableText(row, a)), hashText(hashableText(row, b)),
+    'MARKED: the shuffle is gone, so the confirming refetch can reproduce');
+
+  // And a real spec edit still moves it.
+  const edited = a.replace('27 characters', '30 characters');
+  assert.notStrictEqual(hashText(hashableText(row, a)), hashText(hashableText(row, edited)),
+    'a spec number still moves the hash — the detector still has a job');
+
+  // A marked row whose marker vanished reports null, not a hash.
+  assert.strictEqual(hashableText(row, '<p>no marker here</p>'), null);
+});
+
+test('hashableText: an UNMARKED row is byte-identical to normalize() — the re-baseline guard', () => {
+  // This is what says the five non-Meta rows do not move when this ships.
+  // LinkedIn, X, Google and the test page carry no content_stop_marker, so their
+  // hashable text — and therefore their stored hash — must be unchanged.
+  const { hashableText, normalize } = require('../src/services/specDetector');
+  const FIXTURES = [
+    '<html><body><h1>Introductory text</h1><p>255 characters</p></body></html>',
+    '<p>post copy: 280 characters</p><nav>Home About</nav>',
+    '<html><head><title>Quillio Test Spec</title></head><body><pre>Headline 60</pre></body></html>',
+    '<div>Responsive display ads 30 90 90 25</div>',
+    '',
+  ];
+  for (const f of FIXTURES) {
+    for (const row of [{}, { content_stop_marker: null }, { content_stop_marker: '' }]) {
+      assert.strictEqual(hashableText(row, f), normalize(f),
+        `unmarked row unchanged for ${JSON.stringify(f.slice(0, 40))}`);
+    }
+  }
+});
+
+test('runDetection calls normalize() DIRECTLY zero times — the guard, not the helper', () => {
+  // THE POINT OF THIS TEST. The run loop fetches TWICE — the reading and the
+  // confirming refetch. A truncation applied to only one of them makes the two
+  // disagree on every run, so a marked row could never confirm and would report
+  // `unconfirmed` forever: the exact five-week Google failure, rebuilt by the fix
+  // for it. hashableText() is the implementation; this assertion is what stops
+  // the next person adding a third fetch that routes around it.
+  //
+  // The region is sliced with ASSERTED anchors and the source is comment/string
+  // masked before scanning — an unmasked scan reports the word "normalize(" from
+  // this file's own explanatory comments, and an unbounded slice runs past the
+  // end of the function into module.exports. Both happened while writing this.
+  const src = fs.readFileSync(require.resolve('../src/services/specDetector'), 'utf8');
+  const body = sliceBetween(src, 'async function runDetection()', '\nmodule.exports');
+  const masked = maskNonCode(body);
+
+  const direct = [...masked.matchAll(/(?<![A-Za-z_.])normalize\(/g)];
+  assert.strictEqual(direct.length, 0,
+    'runDetection must derive hashable text through hashableText(), never normalize() directly');
+
+  // And it does reach the helper, on BOTH fetch paths — otherwise zero direct
+  // calls would be satisfiable by not hashing anything at all.
+  assert.strictEqual([...masked.matchAll(/hashableText\(/g)].length, 2,
+    'both the first read and the confirming refetch go through hashableText()');
 });
 
 test('normalize: a page with no long digit run is byte-identical to the pre-change output', () => {

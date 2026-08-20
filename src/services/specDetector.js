@@ -152,6 +152,55 @@ function normalize(html) {
     .trim();
 }
 
+// CONTENT STOP MARKER — per-row truncation, for a page whose tail moves.
+//
+// Meta's per-format spec pages SHUFFLE THE ORDER of their call-to-action list on
+// every request. Same items, same count, permuted — measured at ~480-530
+// characters of churn on /image, /video and /carousel. It is not a token, so the
+// digit rule above cannot touch it, and sorting the whole normalized text would
+// destroy ordering semantics for all seven rows.
+//
+// Every spec number on those pages appears BEFORE the phrase "View available
+// calls to action", so cutting there removes the shuffle and loses nothing we
+// watch for.
+//
+// WHY THIS IS PER-ROW DATA AND NOT A RULE IN normalize(). A truncation marker in
+// normalize() would be one page's English chrome string hardcoded into a function
+// shared by seven sources, where any other page containing that phrase mid-document
+// would be silently cut. On the row, it applies to the row that owns it and is
+// NULL everywhere else — so every other entry's hashable text is byte-identical
+// and none of them re-baselines. Same mechanism, opposite blast radius.
+//
+// A SET-BUT-ABSENT MARKER IS A FAILURE, NOT A FALLBACK. Returning the full text
+// when the marker is missing would silently reintroduce the shuffle and the row
+// would report `unconfirmed` forever with nothing naming the cause — which is the
+// five-week Google outage, rebuilt. So this returns null and the caller routes it
+// to `failed`, exactly as a missed anchor does. That is the anchor argument
+// applied to the second string on the row.
+//
+// Returns the text to hash, or null when a configured marker was not found.
+function truncateAtMarker(text, marker) {
+  const m = typeof marker === 'string' ? marker.trim() : '';
+  if (!m) return String(text || '');
+  const at = String(text || '').indexOf(m);
+  if (at < 0) return null;
+  return String(text || '').slice(0, at).trim();
+}
+
+// THE ONE PLACE A ROW'S HASHABLE TEXT IS DERIVED. normalize() then truncate.
+//
+// It exists because the run loop fetches TWICE — once for the reading, once for
+// the confirming refetch — and a truncation applied to only one of them would make
+// the two disagree on every run. That is the same `unconfirmed` failure this
+// change removes, reintroduced by the change itself. The Google token fix escaped
+// this only because it went inside normalize(), where both paths inherited it.
+//
+// A test asserts the run loop calls normalize() DIRECTLY zero times, so the next
+// person adding a fetch cannot route around this by accident.
+function hashableText(row, html) {
+  return truncateAtMarker(normalize(html), row && row.content_stop_marker);
+}
+
 // sha256 of the normalized text, hex.
 function hashText(text) {
   return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
@@ -406,7 +455,21 @@ async function runDetection() {
     if (!anchored) summary.unanchored += 1;
     try {
       const html = await fetchText(row.source_url);
-      const normalized = normalize(html);
+      const normalized = hashableText(row, html);
+
+      // THE STOP MARKER IS CHECKED FIRST, BEFORE THE ANCHOR, and the order is
+      // load-bearing. `normalized` is null here only when a configured marker was
+      // absent, which means we do not yet know what region of this page we are
+      // looking at — so there is nothing meaningful to run an anchor against, and
+      // checkAnchor on a null haystack would report the anchor as the thing that
+      // missed. Naming the wrong string is worse than naming none.
+      if (normalized === null) {
+        error = `content stop marker not found: ${JSON.stringify(row.content_stop_marker)}`;
+        failures = await bumpFailure(pool, row, error);
+        status = 'failed';
+        // Fall through to the reporting block below — deliberately NOT nested
+        // inside the anchor/compare chain, so no later branch can be reached.
+      } else {
       const newHash = hashText(normalized);
 
       // BEFORE ANY COMPARISON. A page that failed to read must not be able to
@@ -414,6 +477,11 @@ async function runDetection() {
       // unchanged branch (where it agrees with itself forever), or the changed
       // branch (where it would flag a real spec edit into existence out of an
       // error page).
+      //
+      // THE ANCHOR IS CHECKED AGAINST THE TRUNCATED TEXT — the bytes we actually
+      // hash — not the whole page. An anchor living past the stop marker would
+      // assert that content we then throw away rendered, which is the "anchor that
+      // cannot fail" this project already rejected once for Meta.
       const anchorInfo = checkAnchor(row, html, normalized);
       if (!anchorInfo.ok) {
         // Name the string that missed, verbatim and quoted. The two ways an
@@ -449,7 +517,18 @@ async function runDetection() {
         let refetchError = null;
         try {
           await sleep(REFETCH_DELAY_MS);
-          confirmHash = hashText(normalize(await fetchText(row.source_url)));
+          // hashableText, NOT normalize — the refetch has to be reduced exactly
+          // as the first read was. Calling normalize() here would compare a
+          // truncated hash against an untruncated one, so a marked row could
+          // never confirm and would report `unconfirmed` forever. That is the bug
+          // this change exists to remove, and this is the line where it would
+          // come back.
+          const confirmText = hashableText(row, await fetchText(row.source_url));
+          // The marker vanished between two fetches seconds apart — treat it as
+          // an unusable comparison rather than crashing on null. It cannot confirm,
+          // so it must not flag.
+          confirmHash = confirmText === null ? null : hashText(confirmText);
+          if (confirmText === null) refetchError = 'content stop marker not found on refetch';
         } catch (e) {
           // Couldn't refetch → can't confirm → treat as unconfirmed (no flag).
           refetchError = e.message || String(e);
@@ -479,6 +558,7 @@ async function runDetection() {
           status = 'unconfirmed';
         }
       }
+      } // end of the stop-marker guard opened above
     } catch (err) {
       // Fetch/processing failure: record it, DON'T flag, DON'T touch current_hash.
       // Counts toward consecutive_failures for the same reason an anchor miss
@@ -551,6 +631,10 @@ module.exports = {
   hashText,
   fetchText,
   checkAnchor,
+  // The stop-marker pair. hashableText is the ONLY sanctioned way to derive a
+  // row's hashable text; truncateAtMarker is exported for its own boundary test.
+  truncateAtMarker,
+  hashableText,
   isObservedPractice,
   UNCONFIRMED_STREAK_ALERT,
   // Exported for the boundary test, not for callers. See the comment above

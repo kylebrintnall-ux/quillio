@@ -497,6 +497,48 @@ the field would have removed a deliverable writers fill; assigning it a
 sourced-looking number would have been the original defect with a fresh coat on.
 The honest move when a page is silent is to say the number is yours.
 
+### REPOINTING `spec_source` LEAVES THE OLD GATE HOLDING PAIRS IT NO LONGER DESCRIBES
+
+The other half of a spec correction, and the half with no symptom. Changing a
+field's `spec_source` is a one-line write that nothing else follows. In
+particular it does **not** touch `spec_watch_list.affected_fields`, which is a
+snapshot computed once by `migrateAddSpecTables.js` and recomputed by nothing —
+so the OLD page's watch entry keeps listing the field, and its flags keep being
+approvable for a field that is no longer cited to it.
+
+**No test and no detection run will surface this.** `guardEdits` asks only
+whether a pair is *in* the array; it never asks whether the array still describes
+the page. `scripts/auditWatchList.js` checks that every pair in an entry still
+*resolves* to a live row — which it does, because the field exists, it just cites
+somewhere else now. The approve form renders, the write commits, the flag flips
+to `reviewed`. Everything reports success.
+
+**The case, and it is live.** `migrateSpecIntegrityFixes.js` repointed LinkedIn
+Carousel's six enforced fields from the single-image page to the carousel specs
+page in July, correctly — the single-image page does not carry the carousel's
+numbers. It did not re-derive anything. Those six pairs are still in the
+single-image entry's `affected_fields` today, so for a month they have been
+approvable **through a flag raised by the wrong page**, and the page that
+actually publishes their numbers was on no watch row at all until
+`scripts/migrateAddLinkedInCarouselWatch.js`.
+
+Meta's `Description` left its gate today only because the split re-derived from
+`spec_source` at run time. Nothing in the system would otherwise have noticed
+that a `house_default` field with a `quillio_default` sentinel was still sitting
+in a platform page's write gate.
+
+**So a change that repoints `spec_source` owns the gate too.** Either re-derive
+the affected entries in the same change (`scripts/rederiveAffectedFields.js
+--only=<id>`, dry-run by default), or write down that you did not and why. The
+ordering is a real decision rather than a formality: re-deriving the old entry
+DROPS those pairs, so if the new page has no watch row yet, the fields go from
+gated-by-the-wrong-page to gated-by-nothing. Add the new row, let it produce one
+clean comparison, then re-derive the old one.
+
+There is deliberately no `--all` on that script — see the note under
+"`affected_fields` is a snapshot" for why a loop over every entry would silently
+gain and lose pairs nobody priced.
+
 ### Where it surfaces
 
 - **The doc.** The italic line under a `house_default` field says so. Deliberately

@@ -16390,6 +16390,43 @@ test('migrateSplitMetaWatchRows derives affected_fields and refuses an empty gat
     'no watch row for /video — it has no asset, so its affected_fields would be empty');
 });
 
+test('migrateAddLinkedInCarouselWatch: derived pairs, measured anchor, no stop marker', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddLinkedInCarouselWatch.js'), 'utf8');
+
+  // The fetched page text is quoted in the header — CLAUDE.md's fetch rule, and
+  // asserted rather than trusted to have been written.
+  assert.match(src, /Card headline: 45 characters Introductory text: 255 characters/);
+  assert.match(src, /URL characters: 2000 characters for destination field URL/);
+
+  // DERIVED, NOT PASTED — the same derivation the Meta split uses, is_active and all.
+  assert.match(src, /SELECT DISTINCT at\.name AS asset, cf\.field_name AS field/);
+  assert.match(src, /AND at\.is_active/, 'carries the predicate affectedFieldsWhere() lacks');
+  assert.match(src, /derived ZERO pairs/, 'an empty gate is refused, not written');
+
+  // NO STOP MARKER. The page is stable, so the column is left NULL and the INSERT
+  // does not name it — which is also why this migration does not depend on
+  // migrateAddContentStopMarker having run.
+  // Asserted on the INSERT's own column list rather than by slicing to it — an
+  // indexOf slice bound is the failure mode the baseline tripwire exists for, and
+  // this test tripped it on the first run. Naming the columns is a stronger claim
+  // anyway: it says exactly which six are written, not merely that one is absent.
+  assert.match(
+    src,
+    /INSERT INTO spec_watch_list\s+\(source_url, display_name, affected_fields, is_test, expected_content, anchor_scope\)/,
+    'the INSERT names six columns and content_stop_marker is not among them'
+  );
+
+  // Insert-only. The Meta script repurposes an existing row; this one adds a new
+  // row and must never remove anything — spec_review_queue.watch_id is a FK.
+  assert.ok(!/DELETE FROM spec_watch_list/.test(src));
+  assert.match(src, /INSERT INTO spec_watch_list/);
+
+  // Anchored at birth. Every other change this month removed an unanchored row;
+  // adding one back would undo that.
+  assert.match(src, /expected_content IS NOT NULL|expected_content, anchor_scope/);
+  assert.match(src, /const ANCHOR = 'Card headline';/);
+});
+
 test('migrateAddSpecAnchors adds the three columns and seeds idempotently', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateAddSpecAnchors.js'), 'utf8');
   for (const col of ['expected_content', 'anchor_scope', 'consecutive_failures']) {

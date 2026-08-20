@@ -25,8 +25,17 @@ const MIGRATION = 'scripts/migrateAddSpecSweepState.js';
 // swept produces no error and no notification. Excluding means a new status is
 // swept by default, which is the direction that fails loudly if it is wrong.
 //
-// `closed` is here and `finished` is here. See services/specSweep.js for why
-// `closed` was added to a list the brief described as `finished` alone.
+// WHY `closed` IS HERE AS WELL AS `finished`. The brief this was built from
+// described the vocabulary as not_started / in_progress / finished plus a legacy
+// `draft`, and did not mention `closed` — but it exists and it is the RETIRE
+// path: getProjects hides it unless includeClosed, and app.html's card × is what
+// sets it. A retired campaign is not work in progress, so correcting its document
+// would be editing something its owner has put away. Raised as a deviation from
+// the brief and confirmed 2026-08-20; recorded here rather than left implicit
+// because the two members of this array come from different arguments.
+//
+// Note this is still an EXCLUSION list — adding `closed` does not weaken the
+// property above. A status nobody has invented yet is swept.
 const EXCLUDED_STATUSES = ['finished', 'closed'];
 
 // Read the watermark. Returns { lastChangedAt, lastChangeId, ready }.

@@ -2444,10 +2444,14 @@ __NAV:brief__
     // driven by the project ROW (which document ids it carries), so it is
     // fetched rather than reconstructed from the brief payload — the same row
     // the Projects list would have handed over.
+    // Returns whether the project actually opened. The result screen's own rows
+    // ignore it — they are already on a screen with an error slot — but a caller
+    // arriving from somewhere with no error slot of its own (a notification) needs
+    // to know it should fall back to the Projects list.
     async function openProjectDoc(projectId, kind) {
       if (projectId == null) {
         showError(document.getElementById('output-error'), 'This run has no project to open yet.');
-        return;
+        return false;
       }
       try {
         var res = await fetchWithTimeout('/api/projects/' + encodeURIComponent(projectId) +
@@ -2455,8 +2459,10 @@ __NAV:brief__
         var data = await res.json();
         if (!data || !data.success || !data.project) throw new Error('no project');
         openProject(data.project, kind);
+        return true;
       } catch (e) {
         showError(document.getElementById('output-error'), 'Couldn’t open that document — it’s under Projects.');
+        return false;
       }
     }
 
@@ -4106,6 +4112,39 @@ __NAV:brief__
     document.getElementById('nav-new').addEventListener('click', function () { showScreen('brief'); });
     document.getElementById('nav-history').addEventListener('click', loadHistory);
     document.getElementById('nav-settings').addEventListener('click', function () { window.location.href = '/settings'; });
+
+    // --- Notification routing ------------------------------------------------
+    // The nav partial owns the bell, the panel and the polling; it knows nothing
+    // about screens. This is the app's half of that split: it is handed the
+    // notification's structured link (a screen name, a project id, a doc kind) and
+    // routes it through openProjectDoc, which is how the result screen's document
+    // rows already open a project. No projectId — or a screen this build does not
+    // know — falls back to the Projects list, which is what draftNotice's own
+    // comment says a renderer should do.
+    window.quillioOpenNotification = function (target) {
+      if (!target || target.projectId == null) { loadHistory(); return; }
+      Promise.resolve(openProjectDoc(target.projectId, target.doc === 'template' ? 'template' : 'copy'))
+        .then(function (opened) { if (!opened) loadHistory(); });
+    };
+
+    // THE HAND-OFF FROM SETTINGS. Settings has no screens, so a notification
+    // clicked there navigates here and names its target in the query string — the
+    // same vocabulary the content API already uses (?doc=template). A query string
+    // rather than sessionStorage because this has to survive a full document
+    // navigation and the browser already carries exactly that; a storage key would
+    // be an invisible side channel with a cleanup obligation, and nothing would
+    // show it if the write and the read ever disagreed.
+    //
+    // Consumed on arrival with replaceState: /app is the app's only URL and it has
+    // no router, so a parameter left in the bar would re-open the project on every
+    // later reload and fight whatever screen the person had moved to.
+    (function () {
+      var m = /[?&]project=(\d+)/.exec(window.location.search);
+      if (!m) return;
+      var d = /[?&]doc=(copy|template)/.exec(window.location.search);
+      try { window.history.replaceState({}, '', '/app'); } catch (e) {}
+      window.quillioOpenNotification({ screen: 'project', projectId: m[1], doc: d ? d[1] : 'copy' });
+    })();
     document.getElementById('project-back').addEventListener('click', loadHistory);
     document.getElementById('project-open-btn').addEventListener('click', openProjectInDrive);
     document.getElementById('project-doc-btn').addEventListener('click', function () {

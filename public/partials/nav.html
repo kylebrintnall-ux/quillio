@@ -7,5 +7,262 @@
       <button type="button" class="nav-link__ACTIVE:brief__" id="nav-new">Brief</button>
       <button type="button" class="nav-link__ACTIVE:projects__" id="nav-history">Projects</button>
       <button type="button" class="nav-link__ACTIVE:settings__" id="nav-settings">Settings</button>
+      <div class="nav-bell-wrap">
+        <button type="button" class="nav-bell" id="nav-bell" aria-label="Notifications" aria-expanded="false" aria-haspopup="dialog">
+          <svg viewBox="0 0 18 18" width="16" height="16" shape-rendering="crispEdges" aria-hidden="true"><rect x="8" y="1" width="2" height="2"/><rect x="6" y="3" width="6" height="2"/><rect x="5" y="5" width="8" height="3"/><rect x="4" y="8" width="10" height="3"/><rect x="3" y="11" width="12" height="2"/><rect x="2" y="13" width="14" height="2"/><rect x="7" y="15" width="4" height="2"/></svg>
+          <span class="nav-bell-count" id="nav-bell-count"></span>
+        </button>
+        <div class="notif-panel" id="notif-panel" role="dialog" aria-label="Notifications">
+          <div class="notif-head">Notifications</div>
+          <div class="notif-list" id="notif-list"></div>
+          <div class="notif-empty" id="notif-empty">Nothing yet.</div>
+        </div>
+      </div>
     </div>
   </nav>
+  <style>
+    .nav-bell-wrap { position: relative; display: flex; align-items: center; margin-left: 4px; }
+    .nav-bell {
+      position: relative; display: flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px; padding: 0; border: none; border-radius: 8px;
+      background: none; color: rgba(255,255,255,0.4); cursor: pointer;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-bell:hover { color: #fff; background: rgba(255,255,255,0.08); }
+    .nav-bell.open { color: #4DD9D9; background: rgba(77,217,217,0.12); }
+    .nav-bell svg { fill: currentColor; }
+    .nav-bell-count {
+      display: none; position: absolute; top: -1px; right: -2px; min-width: 15px; height: 15px;
+      padding: 0 3px; border-radius: 8px; background: #E4572E; color: #fff;
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; font-weight: 700;
+      line-height: 15px; text-align: center; box-shadow: 0 0 0 2px rgba(26,26,46,0.9);
+    }
+    .nav-bell-count.on { display: block; }
+    .notif-panel {
+      display: none; position: absolute; top: calc(100% + 10px); right: 0; z-index: 60;
+      width: 320px; max-width: calc(100vw - 24px);
+      background: rgba(26,26,46,0.97);
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(77,217,217,0.18); border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.35); overflow: hidden;
+      font-family: 'Zen Kaku Gothic New', sans-serif; text-align: left;
+    }
+    .notif-panel.open { display: block; }
+    .notif-head {
+      padding: 10px 14px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: rgba(255,255,255,0.45); border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .notif-list { max-height: 60vh; overflow-y: auto; }
+    .notif-item {
+      display: block; width: 100%; padding: 11px 14px 11px 12px; border: none;
+      border-left: 3px solid transparent; border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: none; color: rgba(255,255,255,0.55); font-family: inherit; font-size: 13px;
+      line-height: 1.4; text-align: left; cursor: pointer;
+    }
+    .notif-item:last-child { border-bottom: none; }
+    .notif-item:hover { background: rgba(255,255,255,0.06); }
+    .notif-item.unread { border-left-color: #4DD9D9; background: rgba(77,217,217,0.07); color: #fff; }
+    .notif-msg { display: block; }
+    .notif-mark { color: #4DD9D9; margin-right: 5px; }
+    .notif-item.warn .notif-mark { color: #E8B84B; }
+    .notif-when { display: block; margin-top: 3px; font-size: 11px; color: rgba(255,255,255,0.35); }
+    .notif-empty { display: none; padding: 16px 14px; font-size: 13px; color: rgba(255,255,255,0.4); }
+    .notif-empty.on { display: block; }
+  </style>
+  <script>
+    (function () {
+      var bell = document.getElementById('nav-bell');
+      var badge = document.getElementById('nav-bell-count');
+      var panel = document.getElementById('notif-panel');
+      var list = document.getElementById('notif-list');
+      var empty = document.getElementById('notif-empty');
+      if (!bell || !panel) return;
+
+      var PAGE_SIZE = 20;
+      var POLL_MS = 60000;
+      var state = { items: [], unread: 0, fetchedAt: 0, inFlight: null, open: false, highlight: {} };
+
+      function markedRead(id) { return state.highlight[id] === 'read'; }
+
+      function when(iso) {
+        var t = iso ? new Date(iso).getTime() : NaN;
+        if (!t) return '';
+        var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+        if (s < 60) return 'just now';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        if (s < 604800) return Math.floor(s / 86400) + 'd ago';
+        return new Date(t).toLocaleDateString();
+      }
+
+      function render() {
+        list.textContent = '';
+        state.items.forEach(function (n) {
+          var row = document.createElement('button');
+          row.type = 'button';
+          var warn = n.type === 'draft_incomplete';
+          row.className = 'notif-item' + (warn ? ' warn' : '') + (isUnread(n) ? ' unread' : '');
+          var msg = document.createElement('span');
+          msg.className = 'notif-msg';
+          var mark = document.createElement('span');
+          mark.className = 'notif-mark';
+          mark.textContent = warn ? '⚠' : '✓';
+          msg.appendChild(mark);
+          msg.appendChild(document.createTextNode(n.message || ''));
+          row.appendChild(msg);
+          var ts = document.createElement('span');
+          ts.className = 'notif-when';
+          ts.textContent = when(n.createdAt);
+          row.appendChild(ts);
+          row.addEventListener('click', function () { activate(n); });
+          list.appendChild(row);
+        });
+        empty.classList.toggle('on', state.items.length === 0);
+        paintBadge();
+      }
+
+      // Unread for DISPLAY, which is not the same as unread on the server once the
+      // panel has been opened. Opening marks everything on show read, but the rows
+      // keep their highlight until the panel closes — otherwise the list you came
+      // to read repaints itself the moment you look at it.
+      function isUnread(n) {
+        if (state.open && state.highlight[n.id] === 'was-unread') return true;
+        return !n.readAt && !markedRead(n.id);
+      }
+
+      function paintBadge() {
+        var n = state.unread;
+        badge.textContent = n > 99 ? '99+' : String(n);
+        badge.classList.toggle('on', n > 0);
+      }
+
+      // Silent by design: a notification count that cannot be fetched is not worth
+      // an error. A FAILED attempt still stamps fetchedAt so a broken endpoint is
+      // throttled at the same rate as a working one. The `state.fetchedAt &&` guard
+      // matters: without it the sentinel 0 reads as "fetched at the epoch" and the
+      // first call would be a cache hit that never fetches at all.
+      function refresh(force) {
+        if (state.inFlight) return state.inFlight;
+        if (!force && state.fetchedAt && Date.now() - state.fetchedAt < POLL_MS) return Promise.resolve(false);
+        state.inFlight = fetch('/api/notifications?limit=' + PAGE_SIZE, { cache: 'no-store', credentials: 'same-origin' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            state.fetchedAt = Date.now();
+            if (!d || !d.success) return false;
+            state.items = Array.isArray(d.notifications) ? d.notifications : [];
+            state.unread = Number(d.unreadCount) || 0;
+            render();
+            if (state.open) markShownRead();
+            return true;
+          })
+          .catch(function () { state.fetchedAt = Date.now(); return false; })
+          .then(function (ok) { state.inFlight = null; schedule(); return ok; });
+        return state.inFlight;
+      }
+
+      // Opening the panel is the read. Everything on show is fully readable without
+      // clicking, so a badge that only cleared on click would stay lit for anyone
+      // who read the list and had no reason to open a document.
+      function markShownRead() {
+        var ids = state.items.filter(function (n) { return !n.readAt && !markedRead(n.id); })
+          .map(function (n) { return n.id; });
+        if (!ids.length) return;
+        var before = state.unread;
+        ids.forEach(function (id) {
+          if (!state.highlight[id]) state.highlight[id] = 'was-unread';
+        });
+        state.unread = Math.max(0, state.unread - ids.length);
+        paintBadge();
+        fetch('/api/notifications/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ ids: ids })
+        }).then(function (r) {
+          if (!r.ok) throw new Error('read failed');
+          ids.forEach(function (id) { state.highlight[id] = state.open ? 'was-unread' : 'read'; });
+        }).catch(function () {
+          // The write did not land, so the count was not really cleared. Put it
+          // back and let the next poll say what is true.
+          ids.forEach(function (id) { delete state.highlight[id]; });
+          state.unread = before;
+          paintBadge();
+        });
+      }
+
+      function openPanel() {
+        state.open = true;
+        state.highlight = {};
+        panel.classList.add('open');
+        bell.classList.add('open');
+        bell.setAttribute('aria-expanded', 'true');
+        render();
+        markShownRead();
+        refresh(true);
+      }
+
+      function closePanel() {
+        if (!state.open) return;
+        state.open = false;
+        panel.classList.remove('open');
+        bell.classList.remove('open');
+        bell.setAttribute('aria-expanded', 'false');
+        Object.keys(state.highlight).forEach(function (id) { state.highlight[id] = 'read'; });
+        render();
+      }
+
+      // The link is a structured target — a screen name, a project id and a doc
+      // kind — never a URL. On the app the page supplies the router; on settings
+      // there are no screens, so the target rides to /app as a query string and the
+      // app opens it on boot.
+      function activate(n) {
+        var link = n && n.link ? n.link : {};
+        var target = {
+          screen: link.screen || 'project',
+          projectId: link.projectId == null ? null : link.projectId,
+          doc: link.doc === 'template' ? 'template' : 'copy'
+        };
+        if (target.screen !== 'project') target.projectId = null;
+        closePanel();
+        if (typeof window.quillioOpenNotification === 'function') {
+          window.quillioOpenNotification(target);
+          return;
+        }
+        window.location.href = target.projectId == null
+          ? '/app'
+          : '/app?project=' + encodeURIComponent(target.projectId) + '&doc=' + target.doc;
+      }
+
+      bell.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (state.open) closePanel(); else openPanel();
+      });
+      panel.addEventListener('click', function (e) { e.stopPropagation(); });
+      document.addEventListener('click', closePanel);
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePanel(); });
+
+      // Polling, not push: nothing in this app holds a socket open. A draft runs
+      // 30-90s, so a minute is inside the window somebody would call prompt and is
+      // 60 cheap indexed reads an hour per tab. A hidden tab is skipped entirely
+      // and refreshed the moment it comes back, which is the case the bell is for.
+      //
+      // RE-ARMED AFTER EACH ATTEMPT, NOT setInterval, and the difference is not
+      // cosmetic. On a fixed interval the tick and the TTL run on the same period,
+      // so a tick arriving a few milliseconds before its own TTL expires is
+      // THROTTLED — the poll silently drops to one refresh every two minutes.
+      // Measured in Chromium: a tab whose first poll failed did not recover at 60s.
+      // Re-arming from the moment an attempt finishes removes the race, and lets
+      // the scheduled tick force past the TTL because the timer IS the throttle.
+      var pollTimer = null;
+      function schedule() { clearTimeout(pollTimer); pollTimer = setTimeout(tick, POLL_MS); }
+      function tick() {
+        if (document.hidden) { schedule(); return; }
+        refresh(true);
+      }
+      // The opportunistic path keeps the TTL: coming back to a tab refreshed two
+      // seconds ago should not fetch again.
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(false); });
+      refresh(true);
+      schedule();
+    })();
+  </script>

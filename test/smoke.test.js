@@ -17577,6 +17577,13 @@ test('the notice gets its own slot on both surfaces, never composed', () => {
 // the whole rendered block, spelled out, rather than a pattern that would still
 // pass if a link were dropped.
 
+const BELL_SVG =
+  '<svg viewBox="0 0 18 18" width="16" height="16" shape-rendering="crispEdges" aria-hidden="true">' +
+  '<rect x="8" y="1" width="2" height="2"/><rect x="6" y="3" width="6" height="2"/>' +
+  '<rect x="5" y="5" width="8" height="3"/><rect x="4" y="8" width="10" height="3"/>' +
+  '<rect x="3" y="11" width="12" height="2"/><rect x="2" y="13" width="14" height="2"/>' +
+  '<rect x="7" y="15" width="4" height="2"/></svg>';
+
 const NAV_BLOCK = (activeId, build) => [
   '  <nav>',
   '    <button type="button" class="nav-logo" id="nav-brand">',
@@ -17587,6 +17594,20 @@ const NAV_BLOCK = (activeId, build) => [
   ...[['nav-new', 'Brief'], ['nav-history', 'Projects'], ['nav-settings', 'Settings']].map(
     ([id, label]) => `      <button type="button" class="nav-link${id === activeId ? ' active' : ''}" id="${id}">${label}</button>`
   ),
+  // The bell is the fourth item in the SAME .nav-links row, not a third child of
+  // <nav>. The nav is justify-content: space-between with two children, so a
+  // third one would have pushed the links to the centre on both pages.
+  '      <div class="nav-bell-wrap">',
+  '        <button type="button" class="nav-bell" id="nav-bell" aria-label="Notifications" aria-expanded="false" aria-haspopup="dialog">',
+  `          ${BELL_SVG}`,
+  '          <span class="nav-bell-count" id="nav-bell-count"></span>',
+  '        </button>',
+  '        <div class="notif-panel" id="notif-panel" role="dialog" aria-label="Notifications">',
+  '          <div class="notif-head">Notifications</div>',
+  '          <div class="notif-list" id="notif-list"></div>',
+  '          <div class="notif-empty" id="notif-empty">Nothing yet.</div>',
+  '        </div>',
+  '      </div>',
   '    </div>',
   '  </nav>',
 ].join('\n');
@@ -17638,6 +17659,142 @@ test('shared nav: an unknown section throws rather than serving a nav with nothi
   // A typo would otherwise be invisible — every link renders, none is active,
   // and no error reaches anyone.
   assert.throws(() => renderNav('setttings'), /not in/);
+});
+
+// --- The notification bell --------------------------------------------------
+// The bell, the panel, their CSS and their JS all live in the nav partial, which
+// is what makes "one edit, both pages" true. These assert that placement and the
+// handful of behaviours that decide whether the thing works at all; the panel
+// opening, routing and clearing were verified in a browser against a stub server,
+// because per CLAUDE.md a string test cannot see what a page SENDS or how it
+// LOOKS.
+
+test('bell: the whole feature lives in the partial, not in either page', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  assert.ok(partial.includes('id="nav-bell"'), 'the partial owns the bell');
+  assert.ok(partial.includes('id="notif-panel"'), 'the partial owns the panel');
+  assert.match(partial, /<style>/, 'the partial carries its own CSS');
+  assert.match(partial, /\/api\/notifications\?limit=/, 'the partial does its own fetching');
+  for (const f of ['app.html', 'settings.html']) {
+    const raw = fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+    assert.ok(!raw.includes('nav-bell'), `${f} does not name the bell`);
+    assert.ok(!raw.includes('notif-panel'), `${f} does not name the panel`);
+    assert.ok(!raw.includes('/api/notifications'), `${f} does not fetch notifications itself`);
+  }
+});
+
+test('bell: both served pages get it', () => {
+  const { renderShell } = require('../src/utils/shellHtml');
+  const shell = (f) => renderShell(path.join(__dirname, '..', 'public', f));
+  for (const f of ['app.html', 'settings.html']) {
+    const html = shell(f);
+    assert.ok(html.includes('id="nav-bell"'), `${f} serves the bell`);
+    assert.ok(html.includes('id="notif-panel"'), `${f} serves the panel`);
+    // One copy of each, so the partial is spliced once.
+    assert.strictEqual((html.match(/id="nav-bell"/g) || []).length, 1, `${f}: one bell`);
+  }
+});
+
+test('bell: the poll is throttled, quiet, and skips a hidden tab', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  // The checkShellFresh shape: one in-flight request shared by every caller, a
+  // TTL that a FAILED attempt also stamps, and the `state.fetchedAt &&` guard
+  // without which the sentinel 0 is a cache hit that never fetches at all.
+  assert.match(partial, /if \(state\.inFlight\) return state\.inFlight;/);
+  assert.match(partial, /if \(!force && state\.fetchedAt && Date\.now\(\) - state\.fetchedAt < POLL_MS\)/);
+  assert.match(partial, /\.catch\(function \(\) \{ state\.fetchedAt = Date\.now\(\); return false; \}\)/);
+  // Quiet: nothing in the notification path raises a banner, a toast or an alert.
+  const script = sliceBetween(partial, '<script>', '</script>');
+  assert.ok(!/alert\(|showError|throw new Error\('read/.test(script.replace(/throw new Error\('read failed'\);/, '')),
+    'a failed poll says nothing to the user');
+  // A hidden tab costs nothing, and comes back current the moment it is focused.
+  assert.match(partial, /function tick\(\) \{\n\s*if \(document\.hidden\) \{ schedule\(\); return; \}/);
+  assert.match(partial, /visibilitychange/);
+  assert.match(partial, /var POLL_MS = 60000;/);
+  // NOT setInterval. A fixed interval runs on the same period as the TTL, so a
+  // tick arriving just before its own TTL expires is throttled and the poll
+  // silently halves. A browser pass caught it: a tab whose first poll failed did
+  // not recover at 60s. This is a tripwire for that specific regression.
+  assert.ok(!/setInterval\(/.test(partial), 'the poll re-arms after each attempt');
+  assert.match(partial, /function schedule\(\) \{ clearTimeout\(pollTimer\); pollTimer = setTimeout\(tick, POLL_MS\); \}/);
+  assert.match(partial, /state\.inFlight = null; schedule\(\); return ok;/, 'every finished attempt re-arms');
+});
+
+test('bell: no unread-count endpoint — the count rides in on the list', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  assert.match(partial, /state\.unread = Number\(d\.unreadCount\) \|\| 0;/);
+  assert.ok(!/unread-count|\/api\/notifications\/count/.test(partial), 'no second round trip for the number');
+  // And the server grew no new route for it.
+  const routes = fs.readFileSync(require.resolve('../src/routes/notifications'), 'utf8');
+  assert.strictEqual((routes.match(/router\.(get|post|put|delete)\(/g) || []).length, 2, 'still two routes');
+});
+
+test('bell: the badge is absent at zero, not a zero', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  assert.match(partial, /badge\.classList\.toggle\('on', n > 0\);/);
+  assert.match(partial, /\.nav-bell-count \{[^}]*display: none;/);
+  assert.match(partial, /\.nav-bell-count\.on \{ display: block; \}/);
+});
+
+test('bell: routing goes through the app\u2019s own project opener, not a new one', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // The partial routes on the link's FIELDS and never builds an in-app URL.
+  assert.match(partial, /link\.doc === 'template' \? 'template' : 'copy'/);
+  assert.match(partial, /typeof window\.quillioOpenNotification === 'function'/);
+  // Settings has no screens, so it hands off through the query string instead.
+  assert.match(partial, /'\/app\?project=' \+ encodeURIComponent\(target\.projectId\) \+ '&doc=' \+ target\.doc/);
+  // The app's half: openProjectDoc is the same function the result screen's
+  // document rows use, and the fallback is the Projects list.
+  const hook = sliceBetween(app, 'window.quillioOpenNotification = function (target) {', '};');
+  assert.match(hook, /openProjectDoc\(target\.projectId/);
+  assert.match(hook, /loadHistory\(\);/);
+  // It can only fall back because openProjectDoc now reports what happened.
+  const opener = sliceBetween(app, 'async function openProjectDoc(projectId, kind) {', '\n    }');
+  assert.match(opener, /openProject\(data\.project, kind\);\n\s*return true;/);
+  assert.match(opener, /return false;/);
+});
+
+test('bell: the settings hand-off is consumed on arrival', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // Left in the address bar it would re-open the project on every later reload.
+  assert.match(app, /window\.history\.replaceState\(\{\}, '', '\/app'\);/);
+  assert.match(app, /\/\[\?&\]project=\(\\d\+\)\//);
+});
+
+test('bell: opening the panel is the read, and a failed write puts the count back', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  const open = sliceBetween(partial, 'function openPanel() {', '      }');
+  assert.match(open, /markShownRead\(\);/, 'opening marks what is on show read');
+  // Optimistic, but not blindly: a rejected write restores the count rather than
+  // leaving a cleared badge over unread rows.
+  const mark = sliceBetween(partial, 'function markShownRead() {', '      }\n\n      function openPanel');
+  assert.match(mark, /var before = state\.unread;/);
+  assert.match(mark, /state\.unread = before;/);
+  // POST /api/notifications/read takes ids, and only ids this client believes are
+  // unread — the server skips anything from another tenant regardless.
+  assert.match(mark, /body: JSON\.stringify\(\{ ids: ids \}\)/);
+});
+
+test('bell: the glyph comes off `type`, which is why draftNotice omits one', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  // utils/draftNotice.js deliberately stores no mark, so the surface picks one.
+  // These are app.html's own two.
+  assert.match(partial, /var warn = n\.type === 'draft_incomplete';/);
+  assert.match(partial, /mark\.textContent = warn \? '⚠' : '✓';/);
+  // And the stored row still carries none — the header comment quotes the two
+  // surfaces' marks, so this asks the function rather than the file.
+  const { draftNotification } = require('../src/utils/draftNotice');
+  for (const args of [{ title: 'T', fieldCount: 3 }, { title: 'T', fieldCount: 1, fieldsAttempted: 40 }]) {
+    assert.ok(!/[✓⚠]/.test(draftNotification(args).message), 'the stored message carries no glyph');
+  }
+});
+
+test('bell: the message is written as text, never as markup', () => {
+  const partial = fs.readFileSync(path.join(__dirname, '..', 'public', 'partials', 'nav.html'), 'utf8');
+  const script = sliceBetween(partial, '<script>', '</script>');
+  assert.ok(!/innerHTML/.test(script), 'no innerHTML anywhere in the panel renderer');
+  assert.match(script, /createTextNode\(n\.message \|\| ''\)/);
 });
 
 test('shared nav: onboarding and admin are deliberately NOT in it', () => {

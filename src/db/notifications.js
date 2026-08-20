@@ -28,6 +28,26 @@ const MIGRATION = 'scripts/migrateAddNotifications.js';
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
+// How far back a notification is shown. Older rows STAY IN THE TABLE — this is a
+// filter, not a retention policy, and nothing here deletes.
+//
+// IT LIVES IN THE WHERE CLAUSE, WHICH IS THE WHOLE POINT. `unread_total` is a
+// window function over the result set, so a predicate in WHERE is applied before
+// the count is taken and the list and the count cannot disagree by construction.
+// Filtering after the query — here in JS, or in each caller — would leave a count
+// that includes rows the panel does not show, which is the one bug this store's
+// no-separate-count-endpoint design exists to prevent.
+//
+// AND THE CUTOFF IS THE DATABASE'S CLOCK, NOT THE PROCESS'S. `NOW()` is the
+// transaction timestamp, so it is fixed for the statement and there is exactly
+// one clock deciding it. A cutoff computed in JavaScript would be one clock PER
+// APP INSTANCE, and Railway can run more than one: a row within a second of the
+// boundary would then be present or absent depending on which instance answered
+// the poll, appearing and disappearing while nothing about it changed. Reading
+// the boundary off the row's own database is what makes crossing it a
+// one-directional event rather than a race.
+const WINDOW_DAYS = 7;
+
 // Write one notification. Returns the saved row, or null when there is no
 // database or the table does not exist yet.
 //
@@ -73,6 +93,13 @@ async function createNotification({ tenantId, type, message, link, projectId } =
 // tenant's unread rows in full, not the ones on this page. A separate
 // /unread-count endpoint would be a second round trip for a number this query
 // already has in hand.
+//
+// ANYTHING OLDER THAN WINDOW_DAYS IS INVISIBLE HERE — absent from the rows AND
+// uncounted, because the age predicate sits in WHERE and the count is taken over
+// what WHERE returned. The row is untouched; only this read stops returning it.
+// A tenant whose notifications are all older than the window gets
+// `{ notifications: [], unreadCount: 0 }`, which is the same shape as a tenant
+// with none at all — deliberately, since "nothing to show you" is one state.
 async function listNotifications(tenantId, userId, limit = DEFAULT_LIMIT) {
   const empty = { notifications: [], unreadCount: 0 };
   const pool = getPool();
@@ -93,9 +120,10 @@ async function listNotifications(tenantId, userId, limit = DEFAULT_LIMIT) {
                 ON r.notification_id = n.id
                AND r.user_id = $2
         WHERE n.tenant_id = $1
+          AND n.created_at > NOW() - make_interval(days => $4)
         ORDER BY (r.read_at IS NOT NULL), n.created_at DESC, n.id DESC
         LIMIT $3`,
-      [tenantId, userId || null, cap]
+      [tenantId, userId || null, cap, WINDOW_DAYS]
     );
     const rows = res.rows || [];
     return {
@@ -131,6 +159,14 @@ async function listNotifications(tenantId, userId, limit = DEFAULT_LIMIT) {
 //
 // ON CONFLICT DO NOTHING keeps read_at as the FIRST read rather than the latest,
 // and makes a repeated call idempotent.
+//
+// NO AGE PREDICATE HERE, ON PURPOSE. listNotifications' window decides what is
+// SHOWN; this records that somebody read what they were shown. A panel left open
+// across the boundary would post an id that has just aged out, and refusing it
+// would turn a race into a failed write for no gain — the row is invisible
+// either way, so marking it read is harmless and honest. Adding the predicate
+// would also make a read silently do nothing at exactly the moment the two
+// clocks disagree, which is worse than the no-op it replaces.
 async function markNotificationsRead(tenantId, userId, ids) {
   const pool = getPool();
   if (!pool || !tenantId || !userId) return 0;
@@ -165,4 +201,5 @@ module.exports = {
   markNotificationsRead,
   DEFAULT_LIMIT,
   MAX_LIMIT,
+  WINDOW_DAYS,
 };

@@ -933,11 +933,12 @@ function rowToSpecGroup(a) {
       // one they have already set says it is theirs. getTenantAssets computes it
       // from the three override columns; false everywhere the columns are absent.
       specOverridden: f.spec_overridden === true,
-      // When this field's cited page was last read and found unchanged, or null.
-      // Resolved in getTenantAssets from the watch list, NOT stored on the field —
-      // it is a property of the SOURCE, shared by every field citing that page.
+      // When a human last confirmed THIS number against its page, or null. A
+      // fixed historical event, which is the only kind of date a document can
+      // carry — see verifiedSentence in destinations/googleDocs.js for why the
+      // detector's weekly last_checked_at was the wrong value to render.
       // Raw value or null; the wording and the format are the renderer's.
-      specCheckedAt: f.spec_checked_at || null,
+      specVerifiedAt: f.spec_verified_at || null,
       notes: '', // not stored in copy_fields (Sheet-only)
       funnelStage: '', // not stored in copy_fields (Sheet-only)
     })),

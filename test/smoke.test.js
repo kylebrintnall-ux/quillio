@@ -16390,74 +16390,139 @@ test('migrateSplitMetaWatchRows derives affected_fields and refuses an empty gat
     'no watch row for /video — it has no asset, so its affected_fields would be empty');
 });
 
-test('the freshness clause says what the mechanism supports, and only where it has a referent', () => {
+test('the provenance clause records an EVENT, and only where it has a referent', () => {
   const { fieldHint, stripReaderOnlyLines } = require('../src/destinations/googleDocs');
   const LI = 'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs';
-  const D = new Date('2026-08-18T15:00:00Z');
+  const META = 'https://www.facebook.com/business/ads-guide/update/carousel';
+  const D = new Date('2026-08-20T15:00:00Z');
   const f = (over) => ({ fieldName: 'Headline', charMax: 70, fieldType: 'text',
-    specType: 'enforced', specSource: LI, specNote: null, specCheckedAt: D, ...over });
+    specType: 'enforced', specSource: LI, specNote: null, specVerifiedAt: D, ...over });
 
-  // THE WORDING. The detector hashes the whole page and never reads the number,
-  // so the doc may claim the SOURCE has not moved and must not claim the number
-  // was re-read. "Checked" was rejected for inviting the second reading.
+  // A DOCUMENT CAN ONLY CARRY A STATIC DATE. The first version of this feature
+  // rendered spec_watch_list.last_checked_at, which advances every Monday, frozen
+  // into a file nothing can update — true-but-weak on an untouched page and false
+  // the moment one changed. This records a FIXED historical event instead.
   const line = fieldHint(f()).text;
-  assert.match(line, /Source unchanged as of 2026-08-18\.$/);
-  assert.ok(!/Checked|Verified/.test(line), 'never claims a check or a verification of the number');
-  // "as of", not "since": last_checked_at is a point-in-time reading, and "since"
-  // asserts a duration running to now that no observation covers.
-  assert.ok(!/unchanged since/.test(line), '"since" would overclaim the forward half');
+  assert.match(line, /Verified against LinkedIn's spec page on 2026-08-20\.$/);
+  assert.ok(!/unchanged/.test(line), 'never claims a state that keeps changing after the doc is written');
 
-  // ONLY WHERE THE SENTENCE HAS A REFERENT — the same test that decides whether
-  // the platform name is hyperlinked. A line naming nobody cannot say "Source".
-  assert.ok(!fieldHint(f({ specType: 'house_default', specSource: 'quillio_default' })).text.includes('Source unchanged'),
-    'a house default names no source, so it gets no source date');
-  assert.ok(!fieldHint(f({ specSource: 'https://example.com/unknown' })).text.includes('Source unchanged'),
-    'an unrecognised source renders the no-source form and gets no date');
+  // NAMES THE PLATFORM, through the SAME resolution the hyperlink uses. The point
+  // is not to inform the reader — the link two sentences earlier already does —
+  // it is that "the source page" would survive being pointed at the wrong page
+  // and "LinkedIn's spec page" reads wrong under a Meta field.
+  assert.match(fieldHint(f({ specSource: META, specType: 'recommended' })).text,
+    /Verified against Meta's spec page on 2026-08-20\.$/);
+
+  // ONLY WHERE THE PARAGRAPH HAS ALREADY NAMED A SOURCE — the same nameStart test
+  // that decides whether the platform name is hyperlinked.
+  assert.ok(!/Verified against/.test(fieldHint(f({ specType: 'house_default', specSource: 'quillio_default' })).text),
+    'a house default names no source, so it gets no verification clause');
+  assert.ok(!/Verified against/.test(fieldHint(f({ specSource: 'https://example.com/unknown' })).text),
+    'an unrecognised source renders the no-source form and gets no clause');
   assert.strictEqual(fieldHint(f({ specType: null, specSource: null, specNote: 'Keep it punchy.' })).text,
-    'Keep it punchy.', 'a tenant-authored field has no tier line and no date');
+    'Keep it punchy.', 'a tenant-authored field has no tier line and no clause');
 
   // NULL AND NaN LAND ON THE SAME SILENT PATH — no clause, never a malformed one.
   for (const bad of [null, undefined, '', 'not-a-date', NaN]) {
-    const t = fieldHint(f({ specCheckedAt: bad })).text;
-    assert.strictEqual(t, 'Platform limit (LinkedIn). Stay within this count.',
-      `${JSON.stringify(bad)} renders byte-identically to the pre-change document`);
+    assert.strictEqual(fieldHint(f({ specVerifiedAt: bad })).text,
+      'Platform limit (LinkedIn). Stay within this count.',
+      `${JSON.stringify(bad)} renders byte-identically to a field with no recorded verification`);
   }
 
   // STRIPPED BEFORE DRAFTING. Provenance addresses the reader of the doc; the
   // model writing the copy can do nothing with it.
   assert.strictEqual(stripReaderOnlyLines(line), 'Platform limit (LinkedIn). Stay within this count.');
+  // The strip must survive a different platform and a different date, since both
+  // vary — that is why it is a regex and not a literal in READER_ONLY_LINES.
+  assert.strictEqual(
+    stripReaderOnlyLines(fieldHint(f({ specSource: META, specType: 'recommended', specVerifiedAt: new Date('2027-01-02T00:00:00Z') })).text),
+    '', 'a Meta recommended field strips to nothing whatever the date reads');
 
   // APPENDED LAST, so every hyperlink offset is unmoved by its presence.
-  const a = fieldHint(f({ specNote: 'Note.', specCheckedAt: null }));
-  const b = fieldHint(f({ specNote: 'Note.' }));
-  assert.deepStrictEqual(a.links, b.links, 'link ranges identical with and without a date');
+  assert.deepStrictEqual(
+    fieldHint(f({ specNote: 'Note.', specVerifiedAt: null })).links,
+    fieldHint(f({ specNote: 'Note.' })).links,
+    'link ranges identical with and without a verification clause');
 });
 
-test('the checked-source read fails CLOSED — one query, no lower tier', () => {
-  const src = fs.readFileSync(require.resolve('../src/db/specWatch'), 'utf8');
-  const q = sliceBetween(src, 'const CHECKED_SOURCES_SQL', 'const CHECKED_TTL_MS');
+test('the verification date is a copy_fields column, and its absence degrades', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/assets'), 'utf8');
 
-  // Every freshness clause is named in ONE query. The inversion matters: the
-  // other reads in db/ degrade by selecting fewer columns, because there a
-  // missing column costs information with a safe default. Here it costs a
-  // guarantee, and dropping consecutive_unconfirmed would publish a confident
-  // date for a row stuck exactly the way Google was for five weeks.
-  for (const clause of ['source_kind', 'expected_content', 'current_hash', 'last_error',
-    'consecutive_failures', 'consecutive_unconfirmed', 'last_checked_at', 'is_test',
-    'spec_review_queue']) {
-    assert.ok(q.includes(clause), `the predicate names ${clause}`);
+  // It rides the SAME progressive fallback as fact_kind and the override columns,
+  // because here a missing column costs INFORMATION with a safe default — no
+  // recorded verification, which is already the state of most of the library.
+  // That is the opposite of the watch-row freshness read this replaced, which had
+  // to fail closed with no lower tier because a missing column there dropped a
+  // GUARANTEE.
+  assert.match(src, /const VERIFIED_COL = 'spec_verified_at';/);
+  assert.match(src, /const NO_VERIFIED_COL = 'NULL AS spec_verified_at';/);
+  assert.match(src, /\$\{factCol\}, \$\{verifiedCol\}/, 'both optional groups are in one SELECT');
+  assert.match(src, /spec_verified_at: row\.spec_verified_at \|\| null,/);
+
+  // The superseded watch-row reader is GONE rather than left wired to nothing —
+  // it read a weekly-moving value for an artifact that cannot change, and a
+  // future library screen wants more than a date anyway.
+  assert.ok(!/getCheckedSourceDates/.test(src), 'assets.js no longer reads the watch list');
+  const watch = fs.readFileSync(require.resolve('../src/db/specWatch'), 'utf8');
+  assert.ok(!/getCheckedSourceDates/.test(watch), 'the reader is deleted, not orphaned');
+
+  // Carried through the pipeline under a name that says what it is.
+  const pipe = fs.readFileSync(require.resolve('../src/core/pipeline'), 'utf8');
+  assert.match(pipe, /specVerifiedAt: f\.spec_verified_at \|\| null,/);
+  assert.ok(!/specCheckedAt/.test(pipe));
+});
+
+test('the backfill records a reading that happened, and refuses to invent one', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateBackfillSpecVerifiedAt.js'), 'utf8');
+
+  // THE FETCHED TEXT IS QUOTED HERE, not cross-referenced. A reader of this file
+  // is being asked to believe a reading happened and should not have to open two
+  // other migrations to see what was read.
+  //
+  // Matched against a NORMALISED view — comment markers stripped, whitespace
+  // collapsed — because a quote long enough to be worth having wraps across
+  // comment lines, and an assertion that breaks on rewrapping is testing the
+  // formatting rather than the claim.
+  const flat = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
+  for (const quote of [
+    'Text Recommendations Primary Text: 50-150 characters Headline: 27 characters',
+    'Primary Text: 80 characters Headline: 20 characters Description: 18 characters',
+    'Ad name (optional): 255 characters Headline: 70 characters Introductory text: 150 characters Description (LAN only): 70 characters',
+    'Ad name (optional): 255 characters Card headline: 45 characters Introductory text: 255 characters',
+    'post copy: 280 characters',
+  ]) {
+    assert.ok(flat.includes(quote), `the header quotes: ${quote.slice(0, 60)}…`);
   }
-  assert.match(q, /INTERVAL '35 days'/, 'a stopped cron freezes every other column');
 
-  // NO TIER LADDER on this read, and no rethrow — an error escaping would make
-  // generateDoc throw and stop every document being built over a cosmetic line.
-  const fn = sliceBetween(src, 'async function getCheckedSourceDates', '\nmodule.exports');
-  assert.ok(!/WATCH_TIERS|for \(const tier/.test(fn), 'no progressive fallback here');
-  assert.match(fn, /catch \(err\)/);
-  assert.match(fn, /value = new Map\(\);/, 'any failure resolves to no dates at all');
-  assert.ok(!/throw/.test(fn), 'never rethrows');
-  // The failure is cached too, or a broken database adds a failing query per doc.
-  assert.match(fn, /checkedCache = \{ value, expires/);
+  // The rule, stated where it is applied, and the rejected alternative NAMED.
+  // Against `flat` for the same reason as the quotes — these sentences wrap, and
+  // an assertion that breaks on rewrapping tests the formatting, not the claim.
+  for (const claim of [
+    'did somebody do the thing this date says they did',
+    'REJECTED, and named rather than quietly not chosen',
+    'backfilling from the SEED date',
+    'insertDefaultLibrary ran a transaction',
+  ]) {
+    assert.ok(flat.includes(claim), `the header states: ${claim}`);
+  }
+
+  // The date of the AUDIT, never NOW() — which would stamp whenever someone ran
+  // the file, a different event from the one being recorded.
+  assert.match(src, /const AUDITED_ON = '2026-08-20';/);
+  assert.ok(!/spec_verified_at = NOW\(\)/.test(src));
+
+  // Never moves a date backward, so a later audit survives a re-run.
+  assert.match(src, /cf\.spec_verified_at IS NULL OR cf\.spec_verified_at < \$1::date/);
+  // Scoped to tiered active fields on the six audited URLs — it cannot reach a
+  // house_default row, a tenant field, or the two research citations.
+  assert.match(src, /cf\.spec_type IN \('enforced', 'recommended'\)/);
+  assert.match(src, /at\.is_active/);
+  // Refuses a no-op and refuses to stamp anything outside the audited set.
+  assert.match(src, /ZERO pairs in scope/);
+  assert.match(src, /outside the audited set carry/);
+
+  // The two Google rows moving forward is explained, not left to be wondered at.
+  assert.ok(flat.includes('NARROWER event that entails the broader one'));
 });
 
 test('checkSpecHealth is READ-ONLY by construction, and measures what the detector hashes', () => {

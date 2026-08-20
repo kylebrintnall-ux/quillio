@@ -355,50 +355,78 @@ const HOUSE_DEFAULT_LINE_SET = 'House default — yours, set in Settings.';
 const NOT_A_HARD_LIMIT = 'Not a hard limit — adjust for your brand and goal.';
 const READER_ONLY_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET, NOT_A_HARD_LIMIT];
 
-// THE FRESHNESS CLAUSE — "Source unchanged as of 2026-08-18."
+// THE PROVENANCE CLAUSE — "Verified against LinkedIn's spec page on 2026-08-20."
 //
-// THE WORDING IS THE WHOLE DESIGN, so it is worth being exact about what the
-// mechanism supports. The detector hashes the WHOLE PAGE and never looks at the
-// number. It cannot say a limit was re-read, and it cannot say a limit is still
-// correct. What it can say is that the page a human read the number off has not
-// moved since.
+// A DOCUMENT CAN ONLY CARRY A STATIC DATE, and that constraint decides everything
+// about this sentence. A .docx is a FILE: once it lands in someone's Drive
+// nothing reaches inside it again. So whatever is written here is written once at
+// creation and is still there in a year.
 //
-// "Checked" was the earlier candidate and was rejected: it invites a reader to
-// believe the number was re-read, which is precisely the thing that did not
-// happen. The document has to make the claim the mechanism supports.
+// THE FIRST VERSION GOT THIS WRONG and the fix is what this is. It rendered
+// `spec_watch_list.last_checked_at` — a value that ADVANCES EVERY MONDAY the
+// detector reads that page cleanly — frozen into an artifact that cannot change.
+// One sample of a moving series, attributed to a document that outlives it. It
+// failed in both directions: a doc built in March said "unchanged as of March"
+// forever, understating a page the detector had confirmed every week since; and
+// on any field whose page later changed and whose limit was corrected, the
+// sentence asserted the source was unchanged when the correction existed BECAUSE
+// it had changed. The second case did not need the sweep to appear — it arrives
+// the moment any flag is approved.
 //
-// "AS OF", NOT "SINCE", and the difference is not stylistic. last_checked_at is
-// the date of the LAST reading. "Unchanged since the 18th" asserts a duration
-// running from the 18th to now, and we have no observation after the 18th at all.
-// "Unchanged as of the 18th" states a point-in-time reading, which is exactly
-// what we have. The forward half of "since" is an overclaim on a line whose only
-// job is to be honest about what is known.
+// WHAT GOES IN A DOCUMENT IS A FACT ABOUT AN EVENT, NOT A READING OF A GAUGE.
+// `copy_fields.spec_verified_at` records when a human last confirmed THIS number
+// against its page. That is a fixed historical event: it was true when written
+// and stays true forever, and a reader can see the date age and judge it. The
+// moving number — how recently the detector saw the page unchanged — belongs on
+// the spec library screen, which re-renders every time it is opened and is the
+// only surface that can show it honestly.
+//
+// THE SENTENCE NAMES THE PLATFORM, AND THAT IS A CHECK ON US RATHER THAN A
+// SERVICE TO THE READER. The hyperlink two sentences earlier already carries the
+// source. "The source page" is a phrase that would survive being pointed at the
+// wrong page; "LinkedIn's spec page" reads wrong the moment it sits under a Meta
+// field. Specificity is what makes a careless claim visible.
+//
+// It is composed through specSourceName from the field's own spec_source — the
+// SAME resolution the hyperlink uses — so there is one mapping rather than two
+// that can disagree about who published a limit.
 //
 // STRIPPED BEFORE DRAFTING, by the same rule as the lines above: does this
-// sentence address the READER OF THE DOC or the WRITER OF THE COPY? A provenance
-// date tells whoever opens the document how current the citation is, and tells
+// sentence address the READER OF THE DOC or the WRITER OF THE COPY? Provenance
+// tells whoever opens the document who confirmed the number and when; it tells
 // the model writing the copy nothing it can act on.
 //
-// A regex rather than a member of READER_ONLY_LINES, because the date varies —
-// the same reason RECOMMENDED_ATTRIBUTION is one. The lookahead requires
-// whitespace or end-of-string after the stop, so it cannot run past its sentence.
-const CHECKED_LINE = /\s*Source unchanged as of \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
+// A regex rather than a member of READER_ONLY_LINES, because both the platform
+// and the date vary. `[^.]` cannot cross a sentence boundary, and the lookahead
+// requires whitespace or end-of-string after the stop.
+const VERIFIED_LINE = /\s*Verified against [^.]{1,60} on \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
 
-// "Source unchanged as of 2026-08-18." or '' when there is nothing to say.
+// "Verified against LinkedIn's spec page on 2026-08-20.", or '' when there is
+// nothing to say.
 //
 // ISO, because a generated document is read in more than one locale and 08/09 is
 // ambiguous in exactly the way a provenance date must not be.
 //
-// EVERY FAILURE LANDS ON THE SAME SILENT PATH. null, a value that is not a date,
-// and an unparseable one all return '' — a field whose source is not in a
-// citable state must render with NO clause rather than an empty or malformed one,
-// and "Source unchanged as of Invalid Date." is what this guard makes
-// unreachable.
-function checkedSentence(specCheckedAt) {
-  if (!specCheckedAt) return '';
-  const d = specCheckedAt instanceof Date ? specCheckedAt : new Date(specCheckedAt);
+// EVERY FAILURE LANDS ON THE SAME SILENT PATH. No date, a value that is not a
+// date, an unparseable one, and a source that resolves to no platform name all
+// return '' — a field with no recorded verification must render with NO clause
+// rather than an empty or malformed one. "Verified against null's spec page on
+// Invalid Date." is what these guards make unreachable.
+//
+// KNOWN WORDING EDGE, currently unreachable. "spec page" is right for the six
+// platform pages and wrong for a study — Constant Contact and Gong are cited by
+// two `recommended` fields whose sources are research, and specSourceName does
+// resolve both. No such field carries a verification date today and the backfill
+// does not give them one, so the sentence cannot render for them. If one is ever
+// verified, the wording needs a second form rather than calling a study a spec
+// page.
+function verifiedSentence(specVerifiedAt, specSource) {
+  if (!specVerifiedAt) return '';
+  const sourceName = specSourceName(specSource);
+  if (!sourceName) return '';
+  const d = specVerifiedAt instanceof Date ? specVerifiedAt : new Date(specVerifiedAt);
   if (Number.isNaN(d.getTime())) return '';
-  return `Source unchanged as of ${d.toISOString().slice(0, 10)}.`;
+  return `Verified against ${sourceName}'s spec page on ${d.toISOString().slice(0, 10)}.`;
 }
 
 // The recommended tier's ATTRIBUTION clause — "Recommended by Meta.",
@@ -430,7 +458,7 @@ function stripReaderOnlyLines(text) {
   let out = String(text == null ? '' : text);
   for (const line of READER_ONLY_LINES) out = out.split(line).join(' ');
   out = out.replace(RECOMMENDED_ATTRIBUTION, ' ');
-  out = out.replace(CHECKED_LINE, ' ');
+  out = out.replace(VERIFIED_LINE, ' ');
   return out.replace(/\s+/g, ' ').trim();
 }
 
@@ -518,24 +546,25 @@ function fieldHint(field) {
     : null;
   const parts = [note, tier && tier.text].filter(Boolean);
   if (!parts.length) return null;
-  // THE DATE RIDES A TIER LINE THAT ACTUALLY NAMES A SOURCE — `nameStart >= 0`,
+  // THE CLAUSE RIDES A TIER LINE THAT ACTUALLY NAMES A SOURCE — `nameStart >= 0`,
   // the same condition that decides whether the platform name gets hyperlinked
-  // below.
+  // below, so the sentence and the link can never disagree about whether there is
+  // a source to speak of.
   //
   // Not merely "there is a tier line". A house_default line reads "House default
-  // — set your own in Settings." and names nobody, so "Source unchanged as of …"
-  // has no referent in its own sentence; the same goes for the no-source forms of
-  // enforced and recommended. A tenant-authored field has no tier line at all and
-  // is excluded by the same test.
+  // — set your own in Settings." and names nobody, so "Verified against …'s spec
+  // page" would have no referent in its own paragraph; the same goes for the
+  // no-source forms of enforced and recommended. A tenant-authored field has no
+  // tier line at all and is excluded by the same test.
   //
-  // In production the resolution already prevents it — specCheckedAt is looked up
-  // by spec_source, and 'quillio_default' is on no watch row — so this is defence
-  // in depth rather than the only guard. It is here because a renderer should not
-  // depend on a query three files away to keep it honest, and because a test
-  // rendering a house_default field with a date supplied produced exactly that
-  // sentence before this condition was tightened.
-  const checked = tier && tier.nameStart >= 0 ? checkedSentence(field && field.specCheckedAt) : '';
-  if (checked) parts.push(checked);
+  // Redundant with verifiedSentence's own specSourceName guard, and kept anyway:
+  // one decides whether a NAME exists, this decides whether the paragraph has
+  // already introduced it. A test rendering a house_default field with a date
+  // supplied produced exactly that dangling sentence before this was tightened.
+  const verified = tier && tier.nameStart >= 0
+    ? verifiedSentence(field && field.specVerifiedAt, field && field.specSource)
+    : '';
+  if (verified) parts.push(verified);
   const text = parts.join(' ');
   const links = [];
   // Note-embedded citation (e.g. "(Litmus)"): the note is parts[0], so its

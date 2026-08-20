@@ -14,10 +14,6 @@
 const { getPool, isUndefinedTable, isUndefinedColumn, warnMissingSchema } = require('../db');
 const { DEFAULT_ASSETS } = require('../data/defaultAssets');
 const { normalize } = require('../utils/normalize');
-// The freshness read. Lives in db/specWatch because it queries spec_watch_list,
-// which is LiveSpecs' table, not the asset library's — this file only consumes
-// the resolved dates. No cycle: specWatch requires db.js, as this file does.
-const { getCheckedSourceDates } = require('./specWatch');
 
 // The copy_fields INSERT, most-complete first.
 //
@@ -223,22 +219,43 @@ async function getTenantAssets(tenantId) {
                 OR char_max_override IS NOT NULL
                 OR spec_note_override IS NOT NULL) AS spec_overridden`;
   const NO_OVERRIDE_COLS = 'char_min, char_max, spec_note, false AS spec_overridden';
-  const variants = [
+  // spec_verified_at is a THIRD independent group (scripts/migrateAddSpecChangeLog.js).
+  // Same rule as the two above and the SAME direction: a database missing it must
+  // still build documents, so it degrades to a literal NULL, which renders no
+  // provenance clause and leaves the document byte-identical.
+  //
+  // DEGRADING IS RIGHT HERE AND WOULD HAVE BEEN WRONG for the value this feature
+  // first used. That one read spec_watch_list's freshness columns, where dropping
+  // a column drops a GUARANTEE and the read had to fail closed with no lower
+  // tier. Here a missing column costs INFORMATION with a safe default — no
+  // recorded verification, which is already the state of most of the library.
+  //
+  // Composed over the existing list rather than hand-written as eight rows,
+  // because the axes are independent and the combinations are not interesting
+  // individually; ordering is most-complete-first, so a fully migrated database
+  // still takes the first query.
+  const VERIFIED_COL = 'spec_verified_at';
+  const NO_VERIFIED_COL = 'NULL AS spec_verified_at';
+  const valueVariants = [
     ['copy_fields.fact_kind', OVERRIDE_COLS, 'fact_kind'],
     ['copy_fields.fact_kind', NO_OVERRIDE_COLS, 'fact_kind'],
     ['copy_fields.char_max_override', OVERRIDE_COLS, 'NULL AS fact_kind'],
     [null, NO_OVERRIDE_COLS, 'NULL AS fact_kind'],
   ];
+  const variants = [
+    ...valueVariants.map(([m, v, f]) => [m, v, f, VERIFIED_COL]),
+    ...valueVariants.map(([m, v, f]) => [m, v, f, NO_VERIFIED_COL]),
+  ];
 
   let fieldsRes = null;
   let lastErr = null;
-  for (const [missing, valueCols, factCol] of variants) {
+  for (const [missing, valueCols, factCol, verifiedCol] of variants) {
     try {
       fieldsRes = await pool.query(
         `SELECT asset_type_id, field_name,
                 ${valueCols},
                 field_type, sort_order, spec_source, spec_version, group_label,
-                spec_type, ${factCol}
+                spec_type, ${factCol}, ${verifiedCol}
            FROM copy_fields
           WHERE asset_type_id = ANY($1::bigint[])
           ORDER BY sort_order, id`,
@@ -252,20 +269,6 @@ async function getTenantAssets(tenantId) {
     }
   }
   if (!fieldsRes) throw lastErr;
-
-  // WHEN THE PAGE BEHIND EACH CITATION WAS LAST SEEN UNCHANGED.
-  //
-  // A separate cached read of the watch list rather than a LEFT JOIN, for three
-  // reasons. This query is tenant-scoped and spec_watch_list is global, so the
-  // join has nothing to key on. The watch list is nine rows that change weekly,
-  // so it caches almost perfectly. And the freshness predicate has to FAIL CLOSED
-  // on a missing column, which is the exact opposite of the progressive fallback
-  // the field query above uses — folding the two together would mean one query
-  // with two contradictory degradation rules.
-  //
-  // Absent, empty or unavailable resolves to no date on every field, which is
-  // byte-identical to the pre-change document.
-  const checkedDates = await getCheckedSourceDates();
 
   const fieldsByType = new Map();
   for (const row of fieldsRes.rows) {
@@ -288,11 +291,21 @@ async function getTenantAssets(tenantId) {
       spec_note: row.spec_note || null,
       spec_type: row.spec_type || null,
       spec_overridden: row.spec_overridden === true,
-      // WHEN THIS FIELD'S CITED PAGE WAS LAST READ AND FOUND UNCHANGED, or null.
-      // Keyed on spec_source, so a field citing 'quillio_default' or a research
-      // study — neither of which is on the watch list — resolves to null and
-      // renders no clause. Carried raw; the formatting is the renderer's.
-      spec_checked_at: checkedDates.get(row.spec_source) || null,
+      // WHEN A HUMAN LAST CONFIRMED THIS NUMBER AGAINST ITS PAGE, or null.
+      //
+      // A FACT ABOUT AN EVENT, which is what a document can carry. The earlier
+      // version of this feature resolved spec_watch_list.last_checked_at through
+      // the source URL — a value that advances every Monday — and froze it into an
+      // artifact nothing can update, so it drifted from true-but-weak to false the
+      // moment a page changed. This is a fixed historical fact: it was true when
+      // written and stays true.
+      //
+      // Written by specReview.commitReview on an approved change, and by an audit
+      // migration when somebody reads the pages by hand. NULL on every field
+      // nobody has confirmed, which is most of them and is the honest default —
+      // see scripts/migrateBackfillSpecVerifiedAt.js for why the seed date was
+      // never a candidate.
+      spec_verified_at: row.spec_verified_at || null,
     });
   }
 

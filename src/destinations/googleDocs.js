@@ -40,6 +40,11 @@ const {
   describeLength,
 } = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
+// Which repeated spec_notes may be shown once per run of adjacent fields. Read
+// from the file where the notes themselves are written, so the decision sits
+// beside the sentence it is about — see the comment on SHOW_ONCE_NOTES for the
+// test that classifies a new one.
+const { SHOW_ONCE_NOTES } = require('../data/defaultAssets');
 // Same asset-name folding the pipeline uses to match a name to a library row, so
 // instance-heading sibling detection groups names the same way.
 const { normalize } = require('../utils/normalize');
@@ -534,8 +539,21 @@ function specTypeLine(specType, sourceName, detail, overridden) {
 // single paragraph and parseDoc treats any SECOND paragraph after a label as
 // drafted copy (deleted on the first "Generate Draft"). The link is a sub-range
 // within that one paragraph, so the notes-branch still consumes it whole.
-function fieldHint(field) {
-  const note = field && field.specNote != null ? String(field.specNote).trim() : '';
+// `suppressNote` drops the spec_note and keeps everything else. Additive and
+// optional — every existing caller passes one argument and is unaffected.
+//
+// The DECISION is not made here, because it cannot be: whether a note has already
+// been shown is a property of the fields BEFORE this one, and fieldHint sees one
+// field at a time. The field loop in createDocument tracks that and passes the
+// answer down. See SHOW_ONCE_NOTES in data/defaultAssets.js for which notes may
+// be dropped and the test for classifying a new one.
+//
+// Only the NOTE goes. The tier line and the verification date stay on every
+// field: those are per-field claims about that field's limit and that field's
+// source page, and four fields whose limit had no stated provenance is what the
+// last three changes were about removing.
+function fieldHint(field, { suppressNote = false } = {}) {
+  const note = !suppressNote && field && field.specNote != null ? String(field.specNote).trim() : '';
   const tier = field
     ? specTypeLine(
       field.specType,
@@ -758,15 +776,33 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
     // (e.g. "Graphic Copy") emit that sub-heading once, then render indented so
     // the on-graphic copy reads as one nested unit.
     let openGroup = null;
+    // A note listed in SHOW_ONCE_NOTES is emitted on the FIRST field of a run of
+    // ADJACENT fields sharing it, and dropped on the rest. Meta Carousel's five
+    // card headlines carry one identical sentence; before this they stacked
+    // 202 characters of it five times above the fields where a writer is doing
+    // the most work.
+    //
+    // ADJACENT, tracked as "the note the PREVIOUS field carried" rather than as a
+    // set of everything seen in this asset. The same sentence reappearing seven
+    // fields later is not repetition — the reader has scrolled past the first one
+    // — so a gap has to restore it. A Set would hide it forever.
+    //
+    // Reset per ASSET by living inside this loop: two assets sharing a note each
+    // show it once, which is right because they are separate sections a reader
+    // may not read in order.
+    let prevNote = null;
     for (const field of asset.fields) {
       const group = field.groupLabel || null;
       if (group !== openGroup) {
         if (group) b.groupLabel(group);
         openGroup = group;
       }
+      const note = field.specNote != null ? String(field.specNote).trim() : '';
+      const suppressNote = !!note && note === prevNote && SHOW_ONCE_NOTES.has(note);
+      prevNote = note || null;
       const indent = group ? GROUP_INDENT_PT : 0;
       b.boldLabel(fieldLabel(field), { indent });
-      const hint = fieldHint(field);
+      const hint = fieldHint(field, { suppressNote });
       if (hint) b.fieldNote(hint.text, { indent, links: hint.links });
       b.blankLine({ indent });
     }

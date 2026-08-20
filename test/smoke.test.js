@@ -16445,6 +16445,85 @@ test('the provenance clause records an EVENT, and only where it has a referent',
     'link ranges identical with and without a verification clause');
 });
 
+test('SHOW_ONCE_NOTES is opt-in, and holds only notes redundant with their field', () => {
+  const { SHOW_ONCE_NOTES, DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  // THE TEST THE COMMENT STATES: if a writer never reads this note, can they
+  // still fill the field correctly? Meta's says "it applies to each card" — true
+  // of the bracket already in front of them. LinkedIn's is a SECOND LIMIT
+  // conditional on something the document cannot know, so a writer on Card 4 who
+  // skipped it writes 45 into a field that caps at 30.
+  assert.ok(SHOW_ONCE_NOTES.has('Meta publishes one Headline recommendation for carousel; it applies to each card.'));
+  assert.ok(!SHOW_ONCE_NOTES.has('Applies to carousels driving to a destination URL; with a Lead Gen Form CTA the cap is 30.'),
+    'a conditional second limit must never be shown once');
+  assert.ok(!SHOW_ONCE_NOTES.has('Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)'),
+    'front-loading is an instruction for building each line, and notesAB measured it acting on the copy');
+
+  // EVERY MEMBER MUST STILL BE A NOTE THE SEED EMITS. An entry that no field
+  // carries is a decision about a sentence that no longer exists, and the note
+  // having been edited is exactly when this set goes stale — silently, in the
+  // safe direction, which is why nothing else would catch it.
+  const emitted = new Set();
+  for (const a of DEFAULT_ASSETS) for (const f of a.fields) if (f.spec_note) emitted.add(f.spec_note);
+  for (const n of SHOW_ONCE_NOTES) {
+    assert.ok(emitted.has(n), `SHOW_ONCE_NOTES member is no longer emitted by any field: ${n.slice(0, 50)}…`);
+  }
+});
+
+test('a show-once note renders on the first of an ADJACENT run and nowhere after', () => {
+  const g = require('../src/destinations/googleDocs');
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+
+  const NOTE = 'Meta publishes one Headline recommendation for carousel; it applies to each card.';
+  const SRC = 'https://www.facebook.com/business/ads-guide/update/carousel';
+  const card = (n, note) => ({ fieldName: `Card ${n} Headline`, charMin: 0, charMax: 20, fieldType: 'text',
+    specType: 'recommended', specSource: SRC, specNote: note, specVerifiedAt: new Date('2026-08-20T00:00:00Z') });
+  const render = (fields) => {
+    const b = new DocBuilder();
+    g.appendBody(b, { summary: 'S', writerPrompt: 'W', resolvedLinks: [], referenceInsights: [],
+      assetSpecs: [{ assetType: 'Meta Carousel Ad', fields }] });
+    return String(b.text || '').split('\n').filter((l) => l.trim());
+  };
+
+  // FIVE ADJACENT CARDS: the note appears exactly once, on the first.
+  const run = render([1, 2, 3, 4, 5].map((n) => card(n, NOTE)));
+  const withNote = run.filter((l) => l.includes(NOTE));
+  assert.strictEqual(withNote.length, 1, 'the sentence is emitted once across the run');
+  const firstHint = run[run.indexOf('Card 1 Headline [20]') + 1];
+  assert.ok(firstHint.startsWith(NOTE), 'and it is on Card 1');
+  // The rest keep their per-field claims — tier line and verification date.
+  const laterHint = run[run.indexOf('Card 3 Headline [20]') + 1];
+  assert.ok(!laterHint.includes(NOTE));
+  assert.match(laterHint, /^Recommended by Meta\..*Verified against Meta's spec page on 2026-08-20\.$/,
+    'only the note is dropped; provenance stays on every field');
+
+  // A GAP RESTORES IT. The same sentence after an intervening field is a
+  // different reader, not a repetition — a Set of "seen in this asset" would
+  // hide it forever, which is why adjacency is tracked instead.
+  const gapped = render([card(1, NOTE), card(2, null), card(3, NOTE)]);
+  assert.strictEqual(gapped.filter((l) => l.includes(NOTE)).length, 2, 'a gap restores the note');
+});
+
+test('LinkedIn carousel keeps its conditional limit on all five cards', () => {
+  const g = require('../src/destinations/googleDocs');
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { tenantAssetsToSpecs } = require('../src/core/pipeline');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  const seeded = DEFAULT_ASSETS.filter((a) => a.name === 'LinkedIn Carousel Ad').map((a) => ({
+    id: 1, name: a.name, group: a.group, sort_order: a.sort_order, asset_direction: a.asset_direction,
+    fields: a.fields.map((f) => ({ ...f, spec_overridden: false, fact_kind: null, spec_verified_at: null })),
+  }));
+  const b = new DocBuilder();
+  g.appendBody(b, { summary: 'S', writerPrompt: 'W', resolvedLinks: [], referenceInsights: [],
+    assetSpecs: tenantAssetsToSpecs(seeded, []) });
+  const lines = String(b.text || '').split('\n');
+
+  const conditional = lines.filter((l) => l.includes('with a Lead Gen Form CTA the cap is 30'));
+  assert.strictEqual(conditional.length, 5,
+    'all five card headlines state the conditional cap — a writer on Card 4 must not have to remember it');
+});
+
 test('the verification date is a copy_fields column, and its absence degrades', () => {
   const src = fs.readFileSync(require.resolve('../src/db/assets'), 'utf8');
 

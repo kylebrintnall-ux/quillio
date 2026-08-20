@@ -570,6 +570,59 @@ const LINKEDIN_CAROUSEL_CARD_NOTE =
 const META_CAROUSEL_CARD_NOTE =
   'Meta publishes one Headline recommendation for carousel; it applies to each card.';
 
+// NOTES THAT MAY BE SHOWN ONCE PER RUN OF ADJACENT FIELDS THAT SHARE THEM.
+//
+// ─── THE TEST, so you can classify your own sentence ────────────────────────
+// Ask: IF A WRITER NEVER READS THIS NOTE, CAN THEY STILL FILL THE FIELD
+// CORRECTLY?
+//
+//   YES  -> it restates something already in front of them, usually the bracket.
+//           Add it here.
+//   NO   -> it carries a fact the field does not, and they need it AT the field.
+//           Leave it out.
+//
+// The two carousel notes are the worked example, and they look alike until you
+// apply the test:
+//
+//   META_CAROUSEL_CARD_NOTE — "it applies to each card". The writer is looking at
+//     "Card 3 Headline [20]". The note tells them the 20 is theirs alone rather
+//     than a fifth of a budget — true of the bracket they can already see, and
+//     equally true whether or not they read it. SHOW ONCE.
+//
+//   LINKEDIN_CAROUSEL_CARD_NOTE — "with a Lead Gen Form CTA the cap is 30". This
+//     is a SECOND LIMIT, conditional on something the document cannot know. The
+//     bracket says 45 and for some campaigns it is wrong. A writer on Card 4 who
+//     did not read it writes 45 into a field that caps at 30 and ships a broken
+//     deliverable. SHOW EVERY TIME.
+//
+// The difference is not length, tone, or how repetitive it feels on the page. It
+// is whether the sentence is REDUNDANT with the field or ADDITIONAL to it.
+//
+// ─── WHY OPT-IN, AND WHY THAT DEFAULT IS NOT NEGOTIABLE ─────────────────────
+// Absence means show on every field. A note nobody has classified stays visible,
+// so the cost of forgetting is a wall of text; the cost of the opposite default
+// would be silently hiding a conditional limit from the writer it protects. The
+// two failures are not comparable and the default is set against the worse one.
+//
+// Three things inherit that safe default for free: a note edited here stops
+// matching and reverts to showing; a tenant's overridden note is a different
+// string and is never a member; and a NEW note is absent until someone decides.
+//
+// ─── SCOPE ──────────────────────────────────────────────────────────────────
+// Keyed by the note CONSTANT, not by (asset, field): five card headlines share
+// one sentence, so five keys would be five chances to disagree. One entry, one
+// decision. Suppression applies only to a run of ADJACENT fields sharing the
+// note — a gap resets it, because the same sentence reappearing seven fields
+// later is not repetition, it is a different reader.
+//
+// EMAIL_SUBJECT_NOTE IS DELIBERATELY ABSENT. "Front-load the first 40" is an
+// instruction about how to build a line, and Subject Line 2 is a different line
+// being built — it fails the test above. scripts/notesAB.js measured it moving
+// Subject Line 1's median length 55 -> 44 and its in-band rate 1/5 -> 4/5, so it
+// demonstrably acts on the copy at the field rather than sitting as background. A
+// sentence that changes what gets written is not one to hide.
+const SHOW_ONCE_NOTES = new Set([META_CAROUSEL_CARD_NOTE]);
+
 // The five LinkedIn Carousel card-headline fields that carry the note above.
 const LINKEDIN_CAROUSEL_CARD_FIELDS = new Set([
   'Card 1 Headline',
@@ -834,4 +887,12 @@ const DEFAULT_ASSETS = RAW.map(([name, group, fields], i) => ({
   })),
 }));
 
-module.exports = { DEFAULT_ASSETS };
+module.exports = {
+  DEFAULT_ASSETS,
+  // Read by destinations/googleDocs.js, which decides per document whether a
+  // repeated note is emitted again. Exported rather than duplicated there: a
+  // second copy of these strings would drift the first time one was edited, and
+  // drifting silently back to "show every time" is the harmless direction only
+  // by luck.
+  SHOW_ONCE_NOTES,
+};

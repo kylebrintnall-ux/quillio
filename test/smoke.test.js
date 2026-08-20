@@ -2615,7 +2615,11 @@ test('public/app.html has the core screens, API wiring, and the v8 design system
   // /assets + /fonts static routes.
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
   assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
-  assert.ok(/\/assets\/images\/quillio-quill\.png/.test(html), 'uses the pixel-quill logo');
+  // Read through renderShell, not off the raw file: the logo lives in the nav,
+  // and the nav is now the shared partial. The claim was always about the page
+  // the browser gets, and that is unchanged — see the shared-nav tests below.
+  const servedApp = require('../src/utils/shellHtml').renderShell(path.join(__dirname, '..', 'public', 'app.html'));
+  assert.ok(/\/assets\/images\/quillio-quill\.png/.test(servedApp), 'uses the pixel-quill logo');
   assert.ok(/\/assets\/gifs\//.test(html), 'uses the progress/header GIFs');
 });
 
@@ -17564,4 +17568,86 @@ test('the notice gets its own slot on both surfaces, never composed', () => {
   assert.match(sw, /missingFactNotice: missingFactNotice \|\| null,/);
   const pipe = fs.readFileSync(require.resolve('../src/core/pipeline'), 'utf8');
   assert.match(pipe, /\n {4}missingFactNotice,\n {2}\};/);
+});
+
+// --- The shared nav partial -------------------------------------------------
+// app.html and settings.html carried the same eleven lines of nav markup and now
+// carry one token each. These are not tripwires: the contract this extraction
+// was allowed to have is that the SERVED BYTES do not move, so the assertion is
+// the whole rendered block, spelled out, rather than a pattern that would still
+// pass if a link were dropped.
+
+const NAV_BLOCK = (activeId, build) => [
+  '  <nav>',
+  '    <button type="button" class="nav-logo" id="nav-brand">',
+  `      <img class="nav-quill-img" src="/assets/images/quillio-quill.png?v=${build}" alt="Quillio">`,
+  '      <span class="nav-wordmark">Quillio</span>',
+  '    </button>',
+  '    <div class="nav-links">',
+  ...[['nav-new', 'Brief'], ['nav-history', 'Projects'], ['nav-settings', 'Settings']].map(
+    ([id, label]) => `      <button type="button" class="nav-link${id === activeId ? ' active' : ''}" id="${id}">${label}</button>`
+  ),
+  '    </div>',
+  '  </nav>',
+].join('\n');
+
+test('shared nav: each page serves the identical block, differing only in which link is active', () => {
+  const { renderShell, buildId } = require('../src/utils/shellHtml');
+  const shell = (f) => renderShell(path.join(__dirname, '..', 'public', f));
+  const b = buildId();
+
+  const app = shell('app.html');
+  const settings = shell('settings.html');
+  assert.ok(app.includes(NAV_BLOCK('nav-new', b)), 'app serves the nav with Brief active');
+  assert.ok(settings.includes(NAV_BLOCK('nav-settings', b)), 'settings serves the nav with Settings active');
+
+  // Exactly one active link on each page — not zero (a section name that no
+  // longer matches) and not two (a slot left filled in the partial).
+  for (const [name, html] of [['app', app], ['settings', settings]]) {
+    assert.strictEqual((html.match(/class="nav-link active"/g) || []).length, 1, `${name}: one active link`);
+    assert.strictEqual((html.match(/<nav>/g) || []).length, 1, `${name}: one nav`);
+  }
+
+  // No token survives into the response. `__NAV:` would render as visible text.
+  assert.ok(!app.includes('__NAV:') && !settings.includes('__NAV:'), 'the nav token is consumed');
+  assert.ok(!app.includes('__ACTIVE:') && !settings.includes('__ACTIVE:'), 'the active slots are consumed');
+});
+
+test('shared nav: the markup exists in exactly one place', () => {
+  // The point of the pass. If either page grows its own <nav> back, the
+  // duplication is back and the byte-equality test above would still pass.
+  for (const f of ['app.html', 'settings.html']) {
+    const raw = fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+    assert.ok(!raw.includes('<nav>'), `${f} has no inline nav`);
+    assert.ok(!raw.includes('id="nav-brand"'), `${f} does not name the nav's elements in markup`);
+    assert.match(raw, /^__NAV:[a-z-]+__$/m, `${f} carries the token alone on its line`);
+  }
+  // The token must sit at column 0 with its own line: the partial supplies the
+  // indentation, and the page's newline terminates the block. Any leading space
+  // would shift the whole nav.
+  for (const f of ['app.html', 'settings.html']) {
+    const raw = fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+    assert.ok(!/[^\n]__NAV:/.test(raw), `${f}: nothing precedes the token on its line`);
+  }
+});
+
+test('shared nav: an unknown section throws rather than serving a nav with nothing highlighted', () => {
+  const { renderNav } = require('../src/utils/shellHtml');
+  assert.doesNotThrow(() => renderNav('brief'));
+  assert.doesNotThrow(() => renderNav('settings'));
+  // A typo would otherwise be invisible — every link renders, none is active,
+  // and no error reaches anyone.
+  assert.throws(() => renderNav('setttings'), /not in/);
+});
+
+test('shared nav: onboarding and admin are deliberately NOT in it', () => {
+  // onboarding's nav is anchors to real routes with a different link set and no
+  // handlers; admin has no nav at all. Neither is this component reskinned, so
+  // neither was forced into it.
+  const onboarding = fs.readFileSync(path.join(__dirname, '..', 'public', 'onboarding.html'), 'utf8');
+  assert.ok(!onboarding.includes('__NAV:'), 'onboarding does not use the partial');
+  assert.match(onboarding, /<a class="nav-link" href="\/app">App<\/a>/);
+  assert.match(onboarding, /<a class="nav-link" href="\/settings">Settings<\/a>/);
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.ok(!admin.includes('<nav'), 'admin has no nav to share');
 });

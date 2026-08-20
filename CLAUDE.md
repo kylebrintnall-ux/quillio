@@ -156,7 +156,10 @@ src/
 
 public/              Self-contained HTML pages (no frameworks, no external
                      scripts). app.html, onboarding.html, settings.html,
-                     admin.html + fonts/, assets/ (GIFs, logos, images).
+                     admin.html + fonts/, assets/ (GIFs, logos, images), and
+                     partials/nav.html — the one copy of the app/settings nav,
+                     spliced in by renderShell at a `__NAV:<section>__` token.
+                     Only fonts/ and assets/ are served statically.
 scripts/             One-off migrations, seeds, and query/debug utilities.
 test/smoke.test.js   The test suite (see "Running & checking").
 ```

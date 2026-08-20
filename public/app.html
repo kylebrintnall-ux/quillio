@@ -4121,10 +4121,16 @@ __NAV:brief__
     // rows already open a project. No projectId — or a screen this build does not
     // know — falls back to the Projects list, which is what draftNotice's own
     // comment says a renderer should do.
+    // RETURNS TRUE ONLY WHEN THIS PAGE HANDLED IT. The app owns screens and does
+    // not own the asset library, so a 'spec' target returns falsy and the partial
+    // navigates to /settings — the mirror image of what settings.html does with a
+    // 'project' target. Neither page has to know the other's routes.
     window.quillioOpenNotification = function (target) {
-      if (!target || target.projectId == null) { loadHistory(); return; }
+      if (!target || target.screen !== 'project') return false;
+      if (target.projectId == null) { loadHistory(); return true; }
       Promise.resolve(openProjectDoc(target.projectId, target.doc === 'template' ? 'template' : 'copy'))
         .then(function (opened) { if (!opened) loadHistory(); });
+      return true;
     };
 
     // THE HAND-OFF FROM SETTINGS. Settings has no screens, so a notification

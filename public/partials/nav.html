@@ -65,6 +65,7 @@
     .notif-msg { display: block; }
     .notif-mark { color: #4DD9D9; margin-right: 5px; }
     .notif-item.warn .notif-mark { color: #E8B84B; }
+    .notif-item.spec .notif-mark { color: #B8A6F0; }
     .notif-when { display: block; margin-top: 3px; font-size: 11px; color: rgba(255,255,255,0.35); }
     .notif-empty { display: none; padding: 16px 14px; font-size: 13px; color: rgba(255,255,255,0.4); }
     .notif-empty.on { display: block; }
@@ -101,12 +102,18 @@
           var row = document.createElement('button');
           row.type = 'button';
           var warn = n.type === 'draft_incomplete';
-          row.className = 'notif-item' + (warn ? ' warn' : '') + (isUnread(n) ? ' unread' : '');
+          // A spec change is neither a completed thing nor a failed one — it is a
+          // fact about the library that the reader may need to act on. It gets
+          // its own mark rather than borrowing the draft path's tick, and the
+          // mark points at where it goes.
+          var spec = n.type === 'spec_change';
+          row.className = 'notif-item' + (warn ? ' warn' : '') + (spec ? ' spec' : '')
+            + (isUnread(n) ? ' unread' : '');
           var msg = document.createElement('span');
           msg.className = 'notif-msg';
           var mark = document.createElement('span');
           mark.className = 'notif-mark';
-          mark.textContent = warn ? '⚠' : '✓';
+          mark.textContent = spec ? '⚙' : (warn ? '⚠' : '✓');
           msg.appendChild(mark);
           msg.appendChild(document.createTextNode(n.message || ''));
           row.appendChild(msg);
@@ -211,26 +218,57 @@
         render();
       }
 
-      // The link is a structured target — a screen name, a project id and a doc
-      // kind — never a URL. On the app the page supplies the router; on settings
-      // there are no screens, so the target rides to /app as a query string and the
-      // app opens it on boot.
-      function activate(n) {
-        var link = n && n.link ? n.link : {};
-        var target = {
-          screen: link.screen || 'project',
-          projectId: link.projectId == null ? null : link.projectId,
-          doc: link.doc === 'template' ? 'template' : 'copy'
-        };
-        if (target.screen !== 'project') target.projectId = null;
-        closePanel();
-        if (typeof window.quillioOpenNotification === 'function') {
-          window.quillioOpenNotification(target);
-          return;
+      // THE LINK VOCABULARY. A structured target — never a URL — so the panel
+      // routes on fields and no renderer parses a message. Two screens today:
+      //
+      //   { screen: 'project', projectId, doc }  a project's copy or template doc
+      //   { screen: 'spec',    asset, field }    the asset library, at one field
+      //
+      // A screen this build does not know resolves to 'unknown' and lands on the
+      // app, so an older client meeting a newer notification does something
+      // harmless rather than guessing at half-recognised keys.
+      function targetOf(n) {
+        var link = (n && n.link) || {};
+        var screen = String(link.screen || 'project');
+        if (screen === 'spec') {
+          return { screen: 'spec', asset: link.asset || null, field: link.field || null };
         }
-        window.location.href = target.projectId == null
-          ? '/app'
-          : '/app?project=' + encodeURIComponent(target.projectId) + '&doc=' + target.doc;
+        if (screen === 'project') {
+          return {
+            screen: 'project',
+            projectId: link.projectId == null ? null : link.projectId,
+            doc: link.doc === 'template' ? 'template' : 'copy'
+          };
+        }
+        return { screen: 'unknown' };
+      }
+
+      // Where to NAVIGATE when the page cannot open the target itself. Each page
+      // owns one surface: /app has screens and no library, /settings has the
+      // library and no screens, so exactly one of them can handle each target
+      // in-page and the other has to hand over through the URL.
+      function fallbackUrl(t) {
+        if (t.screen === 'spec') {
+          return '/settings?tab=library'
+            + (t.asset ? '&asset=' + encodeURIComponent(t.asset) : '')
+            + (t.field ? '&field=' + encodeURIComponent(t.field) : '');
+        }
+        if (t.screen === 'project' && t.projectId != null) {
+          return '/app?project=' + encodeURIComponent(t.projectId) + '&doc=' + t.doc;
+        }
+        return '/app';
+      }
+
+      // The hook returns TRUE when it handled the target in-page. Anything else —
+      // false, undefined, no hook at all — means navigate. That contract is what
+      // lets each page implement only the screens it actually has, instead of
+      // both pages having to know which screens the other one owns.
+      function activate(n) {
+        var t = targetOf(n);
+        closePanel();
+        if (typeof window.quillioOpenNotification === 'function'
+            && window.quillioOpenNotification(t) === true) return;
+        window.location.href = fallbackUrl(t);
       }
 
       bell.addEventListener('click', function (e) {

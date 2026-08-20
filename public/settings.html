@@ -439,6 +439,18 @@
     /* Rows inside a group step in, and their divider steps in with them (margin,
        not padding) so the rule reads as belonging to the nested block. */
     .lib-field.grouped { margin-left: 14px; }
+    /* Where a spec notification lands. It fades rather than latching, because the
+       highlight answers "which field did it mean" once and then stops being
+       useful — a permanent marker on a read-only list would be state nobody can
+       clear. prefers-reduced-motion keeps the tint and drops the animation. */
+    .lib-field.lib-hit { animation: libHit 2.4s ease-out 1; border-radius: 6px; }
+    @keyframes libHit {
+      0%, 55% { background: rgba(184,166,240,0.45); box-shadow: 0 0 0 6px rgba(184,166,240,0.45); }
+      100% { background: transparent; box-shadow: 0 0 0 6px transparent; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .lib-field.lib-hit { animation: none; background: rgba(184,166,240,0.35); }
+    }
     /* The first row under a label needs no rule — the label already separates. */
     .lib-grouplabel + .lib-field { border-top: none; padding-top: 3px; }
 
@@ -1065,6 +1077,10 @@ __NAV:settings__
 
     function libRenderAsset(a) {
       var card = el('div', 'lib-asset' + (a.is_active ? '' : ' off'));
+      // Addressed by NAME because that is what a spec notification carries:
+      // copy_fields.id and asset_types.id are per tenant and the notification is
+      // written from a spec_change_log row that has neither.
+      card.setAttribute('data-asset', a.name || '');
       var head = el('div', 'lib-head');
       // Name + group share a column that is free to wrap; the toggle is the
       // head's other child and never wraps with them.
@@ -1173,6 +1189,7 @@ __NAV:settings__
         // `grouped` is what steps the row in under its label — the panel's
         // equivalent of the doc's GROUP_INDENT_PT.
         var li = el('li', 'lib-field' + (f.group_label ? ' grouped' : ''));
+        li.setAttribute('data-field', f.field_name || '');
         var top = el('div');
         top.appendChild(el('span', 'lib-fname', f.field_name));
         top.appendChild(document.createTextNode('  '));
@@ -3025,6 +3042,69 @@ __NAV:settings__
         })
         .catch(function () { btn.disabled = false; showError($('hdr-error'), 'Could not save.'); });
     });
+
+    // --- Notification routing ------------------------------------------------
+    // Settings owns the asset library and has no screens; the app owns screens
+    // and has no library. So this page handles a 'spec' target in place and
+    // returns falsy for everything else, which tells the nav partial to navigate
+    // to /app instead. The two hooks are mirror images and neither knows the
+    // other's routes.
+    function libFocusField(assetName, fieldName) {
+      var norm = function (v) { return String(v || '').trim().toLowerCase(); };
+      enterSection('library');
+      // libEnsureLoaded resolves once the list is rendered; on a second visit it
+      // returns immediately and the rows are already there.
+      Promise.resolve(libEnsureLoaded()).then(function () {
+        var cards = Array.prototype.slice.call(document.querySelectorAll('.lib-asset'));
+        var card = null;
+        for (var i = 0; i < cards.length; i++) {
+          if (norm(cards[i].getAttribute('data-asset')) === norm(assetName)) { card = cards[i]; break; }
+        }
+        // An asset the tenant no longer has: land on the library rather than
+        // nowhere. The notification is still true — the limit did change — and
+        // the library is the right place to be told it is not there.
+        if (!card) return;
+        var target = card;
+        if (fieldName) {
+          var rows = Array.prototype.slice.call(card.querySelectorAll('.lib-field'));
+          for (var j = 0; j < rows.length; j++) {
+            if (norm(rows[j].getAttribute('data-field')) === norm(fieldName)) { target = rows[j]; break; }
+          }
+        }
+        if (target.scrollIntoView) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (target !== card) {
+          target.classList.remove('lib-hit');
+          // Reflow between remove and add, so clicking a second notification for
+          // the same field restarts the animation instead of doing nothing.
+          void target.offsetWidth;
+          target.classList.add('lib-hit');
+        }
+      });
+    }
+
+    window.quillioOpenNotification = function (target) {
+      if (!target || target.screen !== 'spec') return false;
+      libFocusField(target.asset, target.field);
+      return true;
+    };
+
+    // The hand-off from /app, same mechanism app.html uses in the other
+    // direction: the target rides in the query string and is consumed on arrival
+    // with replaceState, so a later reload does not re-open the library and
+    // re-fire the highlight.
+    (function () {
+      var q = window.location.search;
+      if (q.indexOf('tab=library') === -1) return;
+      var pick = function (name) {
+        var m = new RegExp('[?&]' + name + '=([^&]*)').exec(q);
+        return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : null;
+      };
+      var asset = pick('asset');
+      var field = pick('field');
+      try { window.history.replaceState({}, '', '/settings'); } catch (e) {}
+      if (asset) libFocusField(asset, field);
+      else enterSection('library');
+    })();
   </script>
 </body>
 </html>

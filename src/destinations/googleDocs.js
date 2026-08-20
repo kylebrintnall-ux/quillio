@@ -509,13 +509,30 @@ function isWordField(field) {
 // telling the model to count characters.
 const WORD_UNIT_SUFFIX = ' words';
 
-function fieldLabel(field) {
+// The bracket alone, without the field name in front of it.
+//
+// SPLIT OUT OF fieldLabel BECAUSE THE SWEEP REWRITES THIS SUBSTRING IN PLACE.
+// services/specSweep.js corrects an enforced limit by replacing exactly the
+// bracket inside an existing bold label — it never rewrites the label — so it
+// needs to compose the replacement the same way the label was composed in the
+// first place. Two copies of these three lines is precisely the drift CLAUDE.md
+// records for the review overlay's wording: the day someone changes the dash to
+// an en dash, or moves the unit suffix, every swept document stops matching the
+// documents that were built. One composer, two callers.
+//
+// fieldLabel's output is byte-identical to what it was before the split.
+function fieldBracket(field) {
   const min = Number(field.charMin) || 0;
   const max = Number(field.charMax) || 0;
   const unit = isWordField(field) ? WORD_UNIT_SUFFIX : '';
-  if (min > 0 && max > 0) return `${field.fieldName} [${min}-${max}${unit}]`;
-  if (max > 0) return `${field.fieldName} [${max}${unit}]`;
-  return field.fieldName; // charMax === 0 → no bracket
+  if (min > 0 && max > 0) return `[${min}-${max}${unit}]`;
+  if (max > 0) return `[${max}${unit}]`;
+  return ''; // charMax === 0 → no bracket
+}
+
+function fieldLabel(field) {
+  const bracket = fieldBracket(field);
+  return bracket ? `${field.fieldName} ${bracket}` : field.fieldName;
 }
 
 // Strip the bits of markdown that render as literal characters in a Google Doc:
@@ -792,6 +809,67 @@ function paragraphText(paragraph) {
     .replace(/\n+$/, '');
 }
 
+// The same concatenation paragraphText produces, plus the ABSOLUTE document index
+// of every character in it. Untrimmed, deliberately — trimming would shift every
+// offset and the whole point of this is that an offset maps back to a real index.
+//
+// WHY A PER-CHARACTER MAP RATHER THAN ARITHMETIC ON THE PARAGRAPH START. A
+// paragraph is a list of textRun elements and a label is not guaranteed to be one
+// run: Docs splits a run wherever a style changes, and anything that has ever
+// touched a label (a writer selecting part of it, a suggestion being accepted)
+// leaves it in pieces. Walking the elements and taking each one's own startIndex
+// is correct whether the label is one run or six; assuming contiguity from the
+// paragraph's startIndex is correct only in the first case, and wrong silently in
+// the second — it would delete the wrong characters.
+//
+// Returns null when any element lacks a startIndex, which is the honest answer
+// for a paragraph nothing can safely edit.
+function paragraphCharIndex(paragraph) {
+  const map = [];
+  let raw = '';
+  for (const e of paragraph.elements || []) {
+    const content = e.textRun ? e.textRun.content : null;
+    if (content == null) continue;
+    const base = Number(e.startIndex);
+    if (!Number.isFinite(base)) return null;
+    for (let i = 0; i < content.length; i += 1) {
+      map.push(base + i);
+      raw += content[i];
+    }
+  }
+  return raw ? { raw, map } : null;
+}
+
+// The [ ... ] at the END of a label paragraph, as an absolute document range.
+//
+// Anchored to the end (allowing only trailing whitespace and the paragraph's own
+// newline after it) because that is where fieldLabel puts it, and because a field
+// NAME may legitimately contain brackets — "Headline (Offer 1) [50]" is a real
+// seeded field and a first-match search would find nothing, but an unanchored
+// last-match search over a name like "CTA [beta] [20]" has to take the last one.
+// Anchoring is what makes "the bracket" unambiguous.
+//
+// The returned range EXCLUDES the trailing whitespace, so replacing it leaves the
+// paragraph's newline and any spacing exactly as it was.
+const LABEL_BRACKET_AT_END = /\[[^\]]*\][ \t\r\n]*$/;
+
+function labelBracketRange(paragraph) {
+  const idx = paragraphCharIndex(paragraph);
+  if (!idx) return null;
+  const m = idx.raw.match(LABEL_BRACKET_AT_END);
+  if (!m) return null;
+  const start = m.index;
+  const text = m[0].replace(/[ \t\r\n]+$/, '');
+  const end = start + text.length;
+  if (!text || idx.map[start] == null || idx.map[end - 1] == null) return null;
+  // Contiguity is not assumed above, but it IS required for a single delete
+  // range: a bracket split across runs that are not adjacent in the document
+  // cannot be expressed as one range, and silently deleting the span between
+  // them would take the text in the middle with it.
+  if (idx.map[end - 1] - idx.map[start] !== text.length - 1) return null;
+  return { start: idx.map[start], end: idx.map[end - 1] + 1, text };
+}
+
 // Walks the document and reconstructs the campaign context needed to draft copy.
 //
 // REFERENCE INSIGHTS ARE RECOVERED FROM THE DOC, NOT FROM THE PROJECT ROW — the
@@ -990,11 +1068,26 @@ function parseDoc(doc) {
         charMax = Math.max(...vals);
         if (vals.length >= 2) charMin = Math.min(...vals);
       }
+      // WHERE THE LABEL IS, WHICH parseDoc HAS NEVER RECORDED. Every existing
+      // consumer needs only where the label ENDS (insertIndex) and where the
+      // copy under it ends (deleteEnd) — the regeneration delete range spans
+      // exactly that and must never reach a label. The sweep is the first caller
+      // that edits INSIDE one, so it needs the label's own extent and the exact
+      // range of its bracket. Additive: nothing below reads these.
+      const bracketRange = labelBracketRange(p);
       currentField = {
         fieldName,
         charMin,
         charMax,
         fieldType,
+        labelStart: item.startIndex,
+        labelEnd: item.endIndex,
+        // null when the label has no bracket (charMax was 0 at build time), or
+        // when the paragraph cannot be safely edited — a caller must treat null
+        // as "do not touch this label" rather than as an index of 0.
+        bracketStart: bracketRange ? bracketRange.start : null,
+        bracketEnd: bracketRange ? bracketRange.end : null,
+        bracketText: bracketRange ? bracketRange.text : null,
         // The blank paragraph immediately after the label starts where this
         // label paragraph ends; that's our draft insertion point (moved past the
         // notes line below when one is present).
@@ -2349,6 +2442,138 @@ async function addUnanchoredComment(docId, content, clients) {
   }
 }
 
+// Correct the character-limit bracket inside existing field labels.
+//
+// THE ONLY CODE PATH IN THIS REPO THAT MODIFIES A FIELD LABEL. Everything else
+// that writes into a built document works BELOW a label: generateDraft's delete
+// range runs from a label's endIndex to the end of its copy (assertDisjointDeletes
+// guards it), and appendBody only ever adds. That invariant is deliberate and this
+// function does not break it — it edits strictly INSIDE the bracket, which is a
+// span that contains no field name and no copy.
+//
+// WHAT IT DOES NOT DO: touch the copy. A field whose limit DROPPED may now hold
+// copy that is over the new limit, and that is exactly the thing the writer is
+// being told about. Rewriting their line to fit would make Quillio the author of
+// copy a person signed off, which is a different product.
+//
+// NOT replaceAllText. That request exists in this file on the template path only,
+// where markers are unique by construction ("{{brand_line}}" appears once). A
+// bracket is not remotely unique — "[50]" occurs on every 50-character field in
+// the document, in the copy a writer may have typed, and inside a reference
+// insight. replaceAllText would rewrite all of them with no way to scope it.
+//
+// ORDERING. Every edit is expressed against indices read from ONE parse, so an
+// applied edit invalidates the indices of every edit after it in the document.
+// The requests are therefore emitted in DESCENDING index order, so each edit only
+// ever shifts text that is already behind us — the same reason
+// `.sort((a, b) => b.insertIndex - a.insertIndex)` appears twice in generateDraft,
+// and the same reason buildTemplateDocument writes its cells in reverse. A
+// replacement is not length-preserving ("[150]" -> "[255]" is, "[90]" -> "[100]"
+// is not), so this is load-bearing rather than defensive.
+//
+// `corrections` are { assetType, instance, fieldName, expectMax, newMax }. Each is
+// applied only if the document's OWN bracket still reads expectMax — the manifest
+// says which documents to open, the document itself decides what to change. That
+// is what makes a re-run after a partial failure a no-op on the documents already
+// corrected, rather than a second edit.
+async function correctFieldBrackets(id, corrections, clients) {
+  const { docs } = clients || (await getClients());
+  const doc = (await docs.documents.get({ documentId: id })).data;
+  const parsed = parseDoc(doc);
+
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  const applied = [];
+  const skipped = [];
+
+  for (const c of corrections || []) {
+    const asset = (parsed.assets || []).find(
+      (a) => norm(a.assetType) === norm(c.assetType) && (Number(a.instance) || 0) === (Number(c.instance) || 0)
+    );
+    if (!asset) {
+      skipped.push({ ...c, reason: 'asset_absent' });
+      continue;
+    }
+    const field = (asset.fields || []).find((f) => norm(f.fieldName) === norm(c.fieldName));
+    if (!field) {
+      skipped.push({ ...c, reason: 'field_absent' });
+      continue;
+    }
+    if (field.bracketStart == null || field.bracketEnd == null) {
+      skipped.push({ ...c, reason: 'no_bracket' });
+      continue;
+    }
+    // The document is the truth. A bracket that does not read the value the
+    // change is moving away from was either already corrected, or was never the
+    // spec's number — a writer may have edited it by hand. Neither is ours.
+    if ((Number(field.charMax) || 0) !== (Number(c.expectMax) || 0)) {
+      skipped.push({ ...c, reason: 'not_at_old_value', found: field.charMax });
+      continue;
+    }
+    // charMin comes off the DOCUMENT, not off the spec, so a tenant who set their
+    // own floor keeps it — only the maximum this change is about moves.
+    const text = fieldBracket({ charMin: field.charMin, charMax: c.newMax, fieldType: field.fieldType });
+    if (!text) {
+      skipped.push({ ...c, reason: 'refuses_empty_bracket' });
+      continue;
+    }
+    if (text === field.bracketText) {
+      skipped.push({ ...c, reason: 'already_correct' });
+      continue;
+    }
+    applied.push({
+      assetType: asset.assetType,
+      instance: Number(asset.instance) || 0,
+      fieldName: field.fieldName,
+      start: field.bracketStart,
+      end: field.bracketEnd,
+      from: field.bracketText,
+      to: text,
+      oldMax: field.charMax,
+      newMax: c.newMax,
+    });
+  }
+
+  if (applied.length === 0) return { docId: id, title: doc.title || '', applied: [], skipped };
+
+  // Two labels cannot overlap, so this can only fire on a bug in the range
+  // computation above. It refuses the whole document rather than half-editing it.
+  const ordered = [...applied].sort((a, b) => b.start - a.start);
+  for (let i = 1; i < ordered.length; i += 1) {
+    if (ordered[i].end > ordered[i - 1].start) {
+      throw new Error(
+        `Bracket correction aborted before writing: overlapping ranges in ${id} — ` +
+          `[${ordered[i].start}, ${ordered[i].end}) and [${ordered[i - 1].start}, ${ordered[i - 1].end}). ` +
+          'The document was NOT modified.'
+      );
+    }
+  }
+
+  const requests = [];
+  for (const a of ordered) {
+    requests.push({ deleteContentRange: { range: { startIndex: a.start, endIndex: a.end } } });
+    requests.push({ insertText: { location: { index: a.start }, text: a.to } });
+    // Inserted text inherits the style of what precedes it, which here is the
+    // bold label — but "inherits" is a property of the API rather than of this
+    // document, and a label whose runs were split could put a non-bold character
+    // immediately before the bracket. Stating it costs one request and removes
+    // the question.
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: a.start, endIndex: a.start + a.to.length },
+        textStyle: { bold: true },
+        fields: 'bold',
+      },
+    });
+  }
+
+  await docs.documents.batchUpdate({ documentId: id, requestBody: { requests } });
+  console.log(
+    `[googleDocs] corrected ${applied.length} bracket(s) in ${id}: ` +
+      applied.map((a) => `${a.assetType}/${a.fieldName} ${a.from} -> ${a.to}`).join('; ')
+  );
+  return { docId: id, title: doc.title || '', applied, skipped };
+}
+
 module.exports = {
   name: 'google-docs',
   createDocument,
@@ -2362,11 +2587,19 @@ module.exports = {
   addReviewComment,
   deleteReviewComment,
   REVIEW_PREFIX,
+  // Consumed by services/specSweep.js through getDestination(), so it belongs to
+  // the destination interface rather than to the test-only block below.
+  correctFieldBrackets,
+  // The platform display name for a spec_source URL. Exported because the sweep's
+  // notification names the platform, and a second copy of that mapping is how the
+  // doc and the notification end up disagreeing about who published a limit.
+  specSourceName,
   // Exposed for unit tests only (not part of the destination interface used by
   // the registry): char-limit bracket rendering, the field explainer, doc
   // re-parsing including the regeneration delete-range detection, and the body
   // builder (to lock the default-header fallback ordering).
   fieldLabel,
+  fieldBracket,
   fieldHint,
   parseDoc,
   // The delete-range disjointness guard. Unit tests only — it is called from

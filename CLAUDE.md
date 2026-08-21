@@ -1070,7 +1070,7 @@ label at **exactly 0px**. Nothing in the source is wrong; the rule is right,
 present, and shared. It took one measurement in a browser. The fix is scoped to
 the id, so the three older notices do not move.
 
-None of the three was reachable by a source scan, because none was a question
+None of these was reachable by a source scan, because none was a question
 about what the source SAYS:
 
 | The defect | What a string test can see | What it took |
@@ -1078,6 +1078,7 @@ about what the source SAYS:
 | posts every row | nothing — the bug is a missing condition | run the save and read the DB |
 | dimmed reads as enabled | the CSS rule is present and correct | look at it at 390px |
 | inert control reads as broken | the `disabled` attribute is set | look at it |
+| 11px label fails AA | the colour is declared and looks reasonable | screenshot it and read the PIXEL |
 
 So the rule is not "browsers catch more". It is that a source scan can only
 answer *is this line present*, and the three questions worth asking about a form
@@ -1090,6 +1091,58 @@ takes about five minutes to stand up and is worth it for anything that writes.
 A structural test added AFTER a browser finds something is a tripwire, not
 coverage. Label it as one where you write it, so the next reader does not mistake
 a green suite for a working page.
+
+### DIMMING CANNOT CARRY HIERARCHY ON THESE SURFACES — size has to
+
+The fourth row of that table, from the project-detail pass (August 2026), and the
+one with the longest reach: it is a constraint on every future visual decision
+about `.glass-panel`, not a defect that was fixed and closed.
+
+**The declared alpha is not the rendered colour.** A `.glass-panel` is
+`backdrop-filter: blur(16px)` over a gradient sky, and the asset header band adds
+its own 97%-opaque fill on top. What a low-alpha `--ink` composites to on that
+stack cannot be read off the CSS, and it lands far lighter than the declaration
+suggests. Both 11px labels the project-detail pass introduced were under the
+4.5:1 AA floor and neither looked wrong in the source.
+
+Measured at 390x844/3x by screenshotting the element and sampling its pixels —
+darkest 1% for the glyph, 90th percentile for the surface behind it:
+
+| alpha | `.asset-card-count` on the band | `.doc-row-kind` on the panel |
+| --- | --- | --- |
+| 0.42 | | **2.45:1** |
+| 0.45 | **2.74:1** | |
+| 0.55 | 3.63:1 | **3.38:1** |
+| 0.65 | 4.95:1 | 4.45:1 |
+| 0.70 | 5.78:1 | |
+| 0.75 | 6.73:1 | 5.88:1 |
+
+**So the practical floor for 11px ink on these panels is about 0.7**, and
+`.section-label`'s existing **0.75** is the known-safe value to reach for. Below
+that the text fails AA while still looking like a deliberate muted label.
+
+**The consequence, stated as a rule because it will come up again: "muted label"
+is not a tool available at this size on a backdrop-filter panel.** Both offending
+values were chosen to say *subordinate* — a count secondary to the asset name, an
+eyebrow secondary to its heading — and on any flat surface dimming would have said
+it fine. Here it says *illegible*. Hierarchy has to come from **size** (the
+eyebrow's 11px against its heading's 13px says the same thing and costs nothing),
+or from weight, tracking or case. Not from alpha. Anything planned for these
+panels should assume that constraint rather than discover it.
+
+**BETTER IS NOT PASSING, and this is how the finding was nearly lost.** The
+eyebrow was already failing at 0.42 before that pass touched it. Restyling it to
+Star Crush moved it to 3.38:1 — a real improvement, against a floor of 4.5 — and
+it was reported as fixed on the strength of having been *changed*. A partial fix
+on a threshold reads as done to everyone including the person who made it. The
+only thing that caught it was measuring the number rather than the delta.
+
+**How to measure it**, since no tool in the repo does: screenshot the element
+through Playwright, draw the PNG to a canvas, read `getImageData`, take the
+darkest 1% of pixels as the glyph colour and the 90th percentile as its
+background, and apply the WCAG ratio. That is the only method that sees through
+`backdrop-filter`. It costs about thirty lines and it swept every label on the
+screen in one run.
 
 ## Deploy
 

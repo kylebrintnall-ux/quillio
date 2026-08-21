@@ -390,14 +390,33 @@
     .lib-fname { color: var(--ink); }
     .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
     .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
+    /* THE AUTHORITY CHIPS, AND WHY THEIR COLOURS ARE DARKER THAN THEY LOOK.
+       Measured with scripts/checkContrast.js against .lib-asset — rgba(255,255,255,0.5)
+       over backdrop-filter: blur(14px) over the sky gradient, which is why a hex
+       that reads fine in an editor lands somewhere else on screen:
+
+         enforced      #8a4b00 -> 2.01:1   #6b3a00 -> 5.18:1
+         recommended   #1E6F8E -> 3.74:1   #12506a -> 5.26:1
+         mine          #2f6b46 -> 3.75:1   #1f4d31 -> 5.74:1
+         house_default  a 0.5 alpha -> 2.90:1, at 0.75 -> 5.58:1
+
+       ALPHA COULD NOT HAVE FIXED THE FIRST THREE. The probe ladder tops out at
+       3.14:1 for the old amber at alpha 0.85 — the HUE is the ceiling, not the
+       opacity, and no amount of dimming-in-reverse reaches 4.5. That is the
+       difference between this group and the muted labels around it.
+
+       AND THE CHIP SETS THE CEILING FOR .lib-sub, which wraps it. Probing
+       .lib-sub plateaued at 3.78 no matter how dark its own text went, because
+       the darkest ink in the row belonged to the chip. Nothing in the stylesheet
+       says so; the worst-instance probe is what found it. */
     .lib-tier { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; }
-    .lib-tier.enforced { color: #8a4b00; }
-    .lib-tier.recommended { color: #1E6F8E; }
+    .lib-tier.enforced { color: #6b3a00; }
+    .lib-tier.recommended { color: #12506a; }
     /* The two tenant-side chips. Quieter than the authority ones on purpose:
        "House default" is not a warning, it is an invitation, and "Yours" is a
        statement of fact about a number the tenant already set. */
-    .lib-tier.house_default { color: rgba(26,26,46,0.5); }
-    .lib-tier.mine { color: #2f6b46; }
+    .lib-tier.house_default { color: rgba(26,26,46,0.75); }
+    .lib-tier.mine { color: #1f4d31; }
 
     /* --- Reduced form: setting your own limits on a BUNDLED asset ---------- */
     /* A locked row is PRESENT but carries no controls — it renders its value the
@@ -450,8 +469,14 @@
     .lib-reset:empty { display: none; }
     .lib-reset { margin-top: 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .lib-basehint { font-size: 11.5px; color: rgba(26,26,46,0.6); }
+    /* THE CONTROL THAT UNDOES AN OVERRIDE, AND IT WAS INVISIBLE. var(--sky-btm)
+       is #4DD9D9 — measured at 1.10:1 on this card, which is the worst number
+       anywhere on the panel. The variable is not wrong; it is a DARK-surface
+       colour and it is correct on .nav-link.active and .terminal .t-h, which is
+       why the fix is local to this button rather than to the token.
+       #0a5c5c -> 5.02:1, the same hue family with the value taken down. */
     .lib-resetbtn { background: none; border: none; padding: 0; cursor: pointer;
-      font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--sky-btm);
+      font-family: inherit; font-size: 11.5px; font-weight: 600; color: #0a5c5c;
       text-decoration: underline; text-underline-offset: 2px; }
     /* Sub-group heading ("Graphic Copy").
        The doc renders this as a HEADING_4 and then INDENTS the fields beneath it

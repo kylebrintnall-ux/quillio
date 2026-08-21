@@ -43,6 +43,8 @@
 //   node scripts/checkContrast.js                     # every fixture
 //   node scripts/checkContrast.js --file=settings     # one page
 //   node scripts/checkContrast.js --all               # include the uncovered list
+//   node scripts/checkContrast.js --probe=.lib-sub    # alpha ladder for a selector
+//   node scripts/checkContrast.js --color=.lib-tier.enforced=#6b3a00   # a candidate
 //
 // Needs a browser, which is NOT a project dependency:
 //   npm i --no-save playwright-core     (or set PW=/path/to/playwright-core)
@@ -330,6 +332,48 @@ async function main() {
       }
       await p.evaluate(() => {
         const st = document.getElementById('probe-style'); if (st) st.textContent = '';
+        document.querySelectorAll('[data-probe]').forEach((e) => e.removeAttribute('data-probe'));
+      });
+    }
+
+    // COLOUR MODE. `--color=.lib-tier.enforced=#6b3a00` measures a CANDIDATE on
+    // this surface, which is the only way to propose one honestly. A hex proven
+    // on one element is not proven on another: weight, size and whatever the
+    // element sits on all move the number, so a colour that measures 5.03 on an
+    // 11px regular line has to be re-measured at 600 weight before it is claimed.
+    const colours = String(ARG('color', '')).split(',').map((x) => x.trim()).filter(Boolean);
+    for (const pair of colours) {
+      const at = pair.lastIndexOf('=');
+      const sel = pair.slice(0, at);
+      const hex = pair.slice(at + 1);
+      const n = await p.evaluate(({ s2, c }) => {
+        const id = 'colour-style';
+        let st = document.getElementById(id);
+        if (!st) { st = document.createElement('style'); st.id = id; document.head.appendChild(st); }
+        st.textContent = `${s2} { color: ${c} !important; }`;
+        const els = [...document.querySelectorAll(s2)];
+        els.forEach((e, i) => e.setAttribute('data-probe', String(i)));
+        return els.length;
+      }, { s2: sel, c: hex });
+      if (!n) { console.log(`\n${TAG} colour ${sel}: not in this fixture`); continue; }
+      let ratio = Infinity;
+      let px = 0;
+      let bold = false;
+      for (let i = 0; i < n; i += 1) {
+        const shot = await p.locator(`[data-probe="${i}"]`).screenshot();
+        ratio = Math.min(ratio, await p.evaluate(RATIO_FN, shot.toString('base64')));
+        const m = await p.evaluate((j) => {
+          const el = document.querySelector(`[data-probe="${j}"]`);
+          const cs = getComputedStyle(el);
+          return { px: parseFloat(cs.fontSize), bold: parseInt(cs.fontWeight, 10) >= 600 };
+        }, i);
+        px = m.px; bold = m.bold;
+      }
+      const need = floorFor(px, bold);
+      console.log(`\n${TAG} colour ${sel} = ${hex}   ${ratio.toFixed(2)}:1   `
+        + `(${px}px${bold ? ' 600' : ''}, floor ${need}) ${ratio >= need ? 'PASSES' : 'FAILS'}`);
+      await p.evaluate(() => {
+        const st = document.getElementById('colour-style'); if (st) st.textContent = '';
         document.querySelectorAll('[data-probe]').forEach((e) => e.removeAttribute('data-probe'));
       });
     }

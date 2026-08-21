@@ -10830,7 +10830,18 @@ test('the group label heads its rows the way the doc does — space and indent',
   assert.match(css, /font-weight: 700/);
   assert.match(css, /text-transform: uppercase/);
   assert.match(css, /letter-spacing/);
-  assert.match(css, /rgba\(26,26,46,0\.62\)/);
+  // NOT A PINNED ALPHA. This used to assert the literal rgba(26,26,46,0.62),
+  // which restated the stylesheet and said nothing — and it went red when that
+  // value was corrected from 4.18:1 to 5.4:1 by measurement, so the failure read
+  // "you broke the label" when the label had just been made legible.
+  //
+  // What it is actually for is that the label stays MUTED ink rather than
+  // becoming full-strength or picking up an accent colour. 0.7 is the measured
+  // floor for 11px on .lib-asset (scripts/checkContrast.js); anything at or above
+  // it is legible, and anything below it is the defect this replaced.
+  const alpha = css.match(/color: rgba\(26,26,46,([0-9.]+)\)/);
+  assert.ok(alpha, 'still muted ink, not an accent colour');
+  assert.ok(parseFloat(alpha[1]) >= 0.7, `muted but legible — 0.7 floor, found ${alpha[1]}`);
   // A label that opens an asset has nothing above it to separate from.
   assert.match(css, /\.lib-grouplabel:first-child \{ margin-top: 2px; \}/);
 });

@@ -11,7 +11,12 @@
     :root {
       --accent: #4DD9D9;
       --ink: #111;
-      --muted: #666;
+      /* #666 measured 4.16:1 at 11px on .lib-asset — under the floor for the two
+         smallest things that use it (.cf-meta, .cf-marker). #5a5a5a is 5.00:1
+         there and darkens the other seventeen uses, all of which are larger and
+         already passing, by a step nobody will notice. A token, because the
+         alternative is two overrides that then disagree with the token. */
+      --muted: #5a5a5a;
       --line: #e3e3e3;
       --bg: #fff;
       --soft: #f6f6f6;
@@ -355,9 +360,9 @@
     }
     .card .k { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 500; color: var(--ink); font-size: 14px; }
     .card .v { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
-    .pill { font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.55); }
+    .pill { font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.75); }
     .soon { opacity: 0.55; background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.3); }
-    .badge-soon { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.45); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
+    .badge-soon { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.75); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
 
     /* Asset library (read-only). Two levels — asset, then its fields — so the
        structure a clone-and-edit feature will attach to is visible as structure,
@@ -382,14 +387,14 @@
        alone. Every rule here declares its own family; none inherits from body. */
     .lib-name { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px;
       letter-spacing: 0.02em; color: var(--ink); }
-    .lib-group { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.45); }
-    .lib-dir { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.55); margin-top: 4px; }
+    .lib-group { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); }
+    .lib-dir { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.75); margin-top: 4px; }
     .lib-fields { list-style: none; margin: 8px 0 0; padding: 0; }
     .lib-field { font-family: 'Zen Kaku Gothic New', sans-serif; padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .lib-field:first-child { border-top: none; }
     .lib-fname { color: var(--ink); }
-    .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
-    .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
+    .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.75); font-size: 12px; }
+    .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); margin-top: 2px; }
     /* THE AUTHORITY CHIPS, AND WHY THEIR COLOURS ARE DARKER THAN THEY LOOK.
        Measured with scripts/checkContrast.js against .lib-asset — rgba(255,255,255,0.5)
        over backdrop-filter: blur(14px) over the sky gradient, which is why a hex
@@ -426,7 +431,7 @@
        card they still read as enabled and invited a tap that does nothing. */
     .lib-frow.locked { opacity: 0.6; }
     .lib-fstatic { padding: 2px 0 0; }
-    .lib-fstaticnote { margin: 4px 0 0; font-size: 12.5px; color: rgba(26,26,46,0.66); }
+    .lib-fstaticnote { margin: 4px 0 0; font-size: 12.5px; color: rgba(26,26,46,0.75); }
     /* HOW CURRENT THIS NUMBER IS. Deliberately NOT a badge — no tick, no pill,
        no green. A "clean" state has no accent at all, because the whole point of
        the second sentence is that it withdraws rather than reassures, and a green
@@ -468,7 +473,7 @@
     .lib-fname.static { font-size: 14px; font-weight: 600; padding: 6px 0; margin-right: 8px; }
     .lib-reset:empty { display: none; }
     .lib-reset { margin-top: 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .lib-basehint { font-size: 11.5px; color: rgba(26,26,46,0.6); }
+    .lib-basehint { font-size: 11.5px; color: rgba(26,26,46,0.75); }
     /* THE CONTROL THAT UNDOES AN OVERRIDE, AND IT WAS INVISIBLE. var(--sky-btm)
        is #4DD9D9 — measured at 1.10:1 on this card, which is the worst number
        anywhere on the panel. The variable is not wrong; it is a DARK-surface
@@ -494,7 +499,7 @@
       font-family: 'Zen Kaku Gothic New', sans-serif;
       margin: 11px 0 0; padding: 0; border-top: none;
       font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-      color: rgba(26,26,46,0.62);
+      color: rgba(26,26,46,0.75);
     }
     .lib-grouplabel:first-child { margin-top: 2px; }
     /* Rows inside a group step in, and their divider steps in with them (margin,
@@ -550,7 +555,7 @@
        dozen-plus fields, so it opens at eight lines and grows with what is in it
        (libAutoGrow) rather than becoming a four-line scroll port. */
     .lib-paste { min-height: 172px; resize: none; overflow: hidden; }
-    .lib-hint { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(26,26,46,0.55); margin: 4px 0 0; line-height: 1.5; }
+    .lib-hint { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(26,26,46,0.75); margin: 4px 0 0; line-height: 1.5; }
     /* One field row, stacked on purpose. A single grid line put the field NAME —
        the only value you cannot infer from the others — in the narrowest column:
        at 390px it showed nine characters, so "Section 1 Headline" and
@@ -601,17 +606,17 @@
        field has no built-in and no tier line — so it is a full-width invitation
        rather than a word beside an X. */
     .lib-fnotebtn { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; width: 100%; margin-top: 6px; padding: 9px 10px; min-height: 38px;
-      text-align: left; cursor: pointer; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.62);
+      text-align: left; cursor: pointer; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.75);
       background: rgba(255,255,255,0.28); border: 1.5px dashed rgba(26,26,46,0.22); border-radius: 9px; }
     .lib-fnotebtn:hover { color: var(--ink); border-color: rgba(26,26,46,0.4); }
     .lib-fnotewrap { margin-top: 6px; }
     .lib-fnotelab { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
-      text-transform: uppercase; color: rgba(26,26,46,0.5); margin-bottom: 4px; }
+      text-transform: uppercase; color: rgba(26,26,46,0.75); margin-bottom: 4px; }
     .lib-fnote { width: 100%; min-height: 54px; resize: none; overflow: hidden; font-family: 'Zen Kaku Gothic New', sans-serif;
       font-size: 12.5px !important; line-height: 1.5; }
     /* Said once, above the rows, so every note button below reads as the thing
        that fills a real gap rather than an optional extra. */
-    .lib-notewhy { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.6);
+    .lib-notewhy { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.75);
       background: rgba(255,255,255,0.3); border-radius: 9px; padding: 8px 10px; margin: 10px 0 0; }
     /* What the reconciler did, in words, whenever it protected an edit. */
     .lib-kept { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; line-height: 1.5; color: rgba(26,26,46,0.72);
@@ -629,7 +634,7 @@
     .tpl-droptitle { display: block; font-family: 'StarCrush', serif; font-size: 15px;
       letter-spacing: 0.02em; color: var(--ink); }
     .tpl-dropsub { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; margin-top: 6px; font-size: 11.5px; line-height: 1.5;
-      color: rgba(26,26,46,0.55); }
+      color: rgba(26,26,46,0.75); }
     #tpl-upload-btn { margin-top: 12px; }
     /* Naming, renaming, and the field->marker mapper (step two). */
     .tpl-namerow { margin-top: 12px; }
@@ -678,13 +683,13 @@
     .tpl-name { flex: 1; min-width: 0; font-family: 'StarCrush', serif; font-weight: normal;
       font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
     .tpl-open { font-family: 'Zen Kaku Gothic New', sans-serif; flex: none; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); text-decoration: underline; }
-    .tpl-meta { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(26,26,46,0.55); margin-top: 4px; }
+    .tpl-meta { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(26,26,46,0.75); margin-top: 4px; }
     .tpl-marks { list-style: none; margin: 10px 0 0; padding: 0; }
     .tpl-mark { font-family: 'Zen Kaku Gothic New', sans-serif; padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .tpl-mark:first-child { border-top: none; }
     .tpl-token { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: var(--ink); }
-    .tpl-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.5); margin-left: 6px; }
-    .tpl-where { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; color: rgba(26,26,46,0.5); margin-top: 2px; }
+    .tpl-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); margin-left: 6px; }
+    .tpl-where { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; color: rgba(26,26,46,0.75); margin-top: 2px; }
     /* A malformed marker is shown, never swallowed — a tenant who typo'd a brace
        has to see it here rather than discover it when nothing fills in. */
     .tpl-warn { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: #8a1f1f; background: rgba(255,255,255,0.42);

@@ -464,6 +464,17 @@ argued away — the rule that decides it is "The one decision rule that recurs",
 and the visible side is that a tenant who loses a pin watches the number move and
 the "Yours" chip disappear on the panel they are already looking at.
 
+**It has RUN in production (`--commit`), and the result closes the question the
+judgement was about.** One row, one column: `T0B8LPRDKHR` / LinkedIn Single Image
+Ad / Graphic Headline, the phantom `spec_note_override = ''` cleared, and its
+40/60 char overrides kept as genuine. `rows still holding an override: 1
+(expected 1)`. **No other row in the database held an override at all** — so the
+"clear versus keep" call, which was decided on the asymmetry of two failures
+rather than on likelihood, turned out to touch exactly the one value that was
+provably collateral and nothing a tenant had chosen. That is a good outcome and
+it is not evidence the reasoning was unnecessary: the same rule would have been
+needed if the count had been fifty.
+
 `spec_overridden` is a three-column OR, **not** "does the effective value differ
 from the seed" — a tenant who deliberately re-typed Quillio's own number has
 overridden it, and a later seed change must not drag them along.
@@ -1212,6 +1223,39 @@ tool. The library panel is where the work was and it is clean. `app.html`,
 `onboarding.html` and `admin.html` have **no fixture at all** and are not in the
 78 — that is a larger number again, and the honest statement is that this page is
 measured and the others are not.
+
+### A TOOL THAT MEASURES ONE PROPERTY MAKES THE OTHERS FEEL COVERED
+
+The most important line in this section, and it is about the tool rather than
+about contrast.
+
+`checkContrast` reports one property of a rendered page. Somebody who reads
+"every measured element meets its floor" is entitled to think the page was
+checked — and it was not. **The contrast numbers being green says nothing about
+whether a card is too long, whether a hierarchy reads upside down, whether an
+alarm repeats until it is ignored, or whether a control is where a thumb can
+reach it.**
+
+That is not hypothetical either. The device pass that produced these numbers
+found two things in the same run, and the harness would have found neither:
+
+- the freshness block rendered **three times identically** on one card, and in
+  the flagged state said "this number may be out of date" three times about one
+  fact. A repetition problem, invisible to a per-element ratio.
+- fixing the freshness lines to 0.75 in isolation left them **louder than the
+  tier chip above them**, so the provenance footnote outranked the
+  classification. Both elements measured; the INVERSION between them did not.
+
+**This is a different failure from the four species above.** Those are
+measurements that are WRONG in a way that looks like a result. This one is a
+measurement that is RIGHT and NARROW, read as broad — which is harder to catch,
+because there is nothing to disbelieve. The fix is not a better tool; it is
+saying what the tool covers every time its output is quoted, which is why the
+commit that introduced it says "every measured element on the library panel meets
+its floor" and explicitly not "the app is accessible".
+
+**Vertical rhythm, repetition and hierarchy are still the device.** Nothing in
+this repo measures them and nothing here is planned to.
 
 ## Deploy
 

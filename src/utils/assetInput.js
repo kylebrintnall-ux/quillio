@@ -270,10 +270,21 @@ function normalizeAssetEdit(raw, { existingNames = [], selfName = null } = {}) {
 // spec_type, inside db/assets.updateAssetType's row lock — never from here and
 // never from the request.
 //
-// char_min and char_max are validated AS A PAIR because the form always renders
-// both, so both always arrive. A submission carrying only one is accepted and
-// compared against nothing — it cannot be checked without the stored row, and
-// the database has no cross-column constraint to violate.
+// char_min AGAINST char_max IS NOT CHECKED HERE, and that is deliberate. This
+// function is pure, so it can only compare the two numbers when both arrive —
+// which the form used to guarantee and no longer does: a control sends its own
+// value alone, so a minimum can arrive to be measured against a limit that is
+// only in the stored row. `applyHouseDefaultOverrides` owns the rule now, where
+// the row is in hand and every submission shape reaches the same test.
+//
+// The check used to live here as well. Keeping it would have left one rule in
+// two places for the sake of a round trip inside a transaction that is already
+// open — and, worse, two different sentences for one condition: a positional
+// "Field 3: …" when both halves were touched, and the field's own name when one
+// was. The tenant who edited more got the vaguer error.
+//
+// Each value is still range-checked on its own below. That is a property of one
+// number and needs nothing but the request.
 //
 // `reset: true` means "put this field back on Quillio's default". It is
 // exclusive: any value sent alongside it is ignored, because a request that both
@@ -331,14 +342,6 @@ function normalizeHouseDefaults(raw) {
         out.char_max = v;
       }
     }
-    // Only when BOTH arrived as real numbers. char_max 0 is "no limit" (fieldLabel
-    // renders no bracket), so a floor above it is only wrong when there is a
-    // ceiling to be above.
-    if (typeof out.char_min === 'number' && typeof out.char_max === 'number'
-        && out.char_min > 0 && out.char_max > 0 && out.char_min > out.char_max) {
-      errors.push(`${where}: minimum (${out.char_min}) is above the limit (${out.char_max}).`);
-    }
-
     if (f.spec_note !== undefined) {
       // '' survives as '' — it is the tenant DELETING the note, which is a
       // different instruction from "leave the seed's note alone".

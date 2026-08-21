@@ -1423,13 +1423,14 @@ __NAV:settings__
       // applyHouseDefaultOverrides both already read as "not offered, leave it
       // alone" — so nothing on the server had to change to accept this.
       //
-      // ONE THING THIS GIVES UP, AND IT IS PAID FOR ON THE SERVER. The min/max
-      // pair check in normalizeHouseDefaults only runs when both values arrive,
-      // which used to be always. Sending one of them alone would let a tenant put
-      // a minimum above their own stored limit with nothing to catch it, so
-      // applyHouseDefaultOverrides now re-checks the pair against the values it
-      // holds. Do not "restore" the pair here by sending both — sending the
-      // untouched half is exactly what pins it.
+      // ONE THING THIS GIVES UP, AND IT IS PAID FOR ON THE SERVER. A pure
+      // validator can only compare min against max when both arrive, which this
+      // form used to guarantee. Sending one alone would let a tenant put a
+      // minimum above their own stored limit with nothing to catch it, so the
+      // pair is checked in applyHouseDefaultOverrides against the values it
+      // holds — the only place every submission shape reaches the same test.
+      // Do not "restore" the pair here by sending both: sending the untouched
+      // half is exactly what pins it.
       wrap.readRow = function () {
         if (doReset) return { id: f.id, reset: true };
         if (!touched.char_min && !touched.char_max && !touched.spec_note) return null;

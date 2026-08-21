@@ -297,6 +297,15 @@ returns data instead of posting messages.
   each label. `fieldHint` deliberately emits **one** paragraph — `parseDoc`
   treats a second paragraph after a label as drafted copy.
 
+  A field's provenance boilerplate collapses over a **run of three or more**
+  adjacent fields with identical tier, cited page and verification date; the
+  attribution and its citation link stay on every field. Three because a PAIR does
+  not read as a group — the collapsed field sits between a full line belonging to
+  a different field and whatever follows, so it reads as missing something rather
+  than as the second of two. The seed holds runs of 1, 2, 4, 5 and 6 and **not one
+  of exactly 3**, so 3 and 4 render identical documents today; the constant is an
+  argument, not a measurement, and `MIN_COLLAPSE_RUN` says so.
+
   **AND THE HINT LINE IS LOAD-BEARING, WHICH IS NOT OBVIOUS FROM WHAT IT SAYS.**
   `parseDoc` takes the FIRST italic paragraph after a label as that field's
   `notes`, and the hint claims that slot. A field rendering NO hint line absorbs a

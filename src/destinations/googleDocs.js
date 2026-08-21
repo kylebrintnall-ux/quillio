@@ -629,6 +629,23 @@ function specTypeLine(specType, sourceName, detail, overridden) {
 // Composed from the three values the suppressed sentences are ABOUT, so the rule
 // cannot drift from what it suppresses: change what the tail says and this key
 // has to change with it.
+// HOW LONG A RUN HAS TO BE BEFORE ITS BOILERPLATE COLLAPSES.
+//
+// THREE, because a PAIR does not read as a group. At two, the collapsed field is
+// bounded on both sides by non-members — the full line above belongs to a
+// different field with a different note, and what follows is house defaults — so
+// a lone bare attribution reads as a field that is missing something rather than
+// as the second of two. Three is where a repetition starts reading as a set, and
+// where one explanation visibly covers what is under it.
+//
+// MEASURED, AND THE NUMBER IS UNDER-DETERMINED BY THE DATA: the seeded library
+// contains runs of 1, 2, 4, 5 and 6 and NOT ONE run of exactly 3, so 3 and 4
+// produce byte-identical documents today. The choice between them is the
+// argument above and nothing else — do not read the constant as a measurement.
+// If a run of 3 ever appears, 3 collapses it and 4 does not, and that is the only
+// case where they differ.
+const MIN_COLLAPSE_RUN = 3;
+
 function provenanceKey(field) {
   if (!field || !field.specType) return null;
   const source = String(field.specSource || '');
@@ -927,9 +944,23 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
     // Reset per ASSET by living inside this loop: two assets sharing a note each
     // show it once, which is right because they are separate sections a reader
     // may not read in order.
+    // RUN LENGTHS NEED LOOKAHEAD, which the previous-field test cannot give: you
+    // do not know a run is long enough to collapse until you have seen its third
+    // member. One pass to measure, then render.
+    const provKeys = asset.fields.map((f) => provenanceKey(f));
+    const runStart = new Array(provKeys.length).fill(-1);
+    const runLen = new Array(provKeys.length).fill(0);
+    for (let i = 0; i < provKeys.length;) {
+      if (!provKeys[i]) { i += 1; continue; }
+      let j = i;
+      while (j < provKeys.length && provKeys[j] === provKeys[i]) j += 1;
+      for (let k = i; k < j; k += 1) { runStart[k] = i; runLen[k] = j - i; }
+      i = j;
+    }
+
     let prevNote = null;
-    let prevProvenance = null;
-    for (const field of asset.fields) {
+    for (let idx = 0; idx < asset.fields.length; idx += 1) {
+      const field = asset.fields[idx];
       const group = field.groupLabel || null;
       if (group !== openGroup) {
         if (group) b.groupLabel(group);
@@ -955,9 +986,12 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
       // null and it BREAKS the run, exactly as a different note breaks the
       // show-once note run. On both carousels that is what splits Card 1 from
       // Cards 2-5.
-      const provenance = provenanceKey(field);
-      const suppressDetail = !!provenance && provenance === prevProvenance;
-      prevProvenance = provenance;
+      // AND ONLY WHEN THE RUN IS LONG ENOUGH TO READ AS ONE. A pair does not:
+      // the collapsed field sits between a full line belonging to a DIFFERENT
+      // field and whatever follows, with nothing adjacent that explains it, so it
+      // reads as a field missing its provenance rather than as the second of two.
+      // Three is where a repetition starts reading as a set.
+      const suppressDetail = runLen[idx] >= MIN_COLLAPSE_RUN && idx > runStart[idx];
       const indent = group ? GROUP_INDENT_PT : 0;
       b.boldLabel(fieldLabel(field), { indent });
       const hint = fieldHint(field, { suppressNote, suppressDetail });

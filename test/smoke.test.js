@@ -19837,45 +19837,89 @@ test('provenance run: the DATE is in the key, so a divergent field restores itse
   }
 });
 
-test('provenance run: replayed over the real seed, and the worst gap', () => {
+test('provenance run: a PAIR is never collapsed, three or more is', () => {
   const gd = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
-  const region = sliceBetween(gd, 'function provenanceKey(field) {', 'function fieldHint(');
-  const provenanceKey = new Function(`${region}\nreturn provenanceKey;`)();
-  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  assert.match(gd, /const MIN_COLLAPSE_RUN = 3;/);
+  // THE NUMBER IS UNDER-DETERMINED BY THE DATA and the source says so: the seed
+  // holds runs of 1, 2, 4, 5 and 6 and NOT ONE of exactly 3, so 3 and 4 render
+  // byte-identical documents today. This asserts the reasoning is written down,
+  // because a bare constant would read as a measurement.
+  const why = sliceBetween(gd, '// HOW LONG A RUN HAS TO BE', 'const MIN_COLLAPSE_RUN')
+    .replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
+  assert.match(why, /a PAIR does not read as a group/i);
+  assert.match(why, /NOT ONE run of exactly 3/);
+  assert.match(why, /do not read the constant as a measurement/i);
+});
 
-  let full = 0;
-  let suppressed = 0;
-  let worst = 0;
-  const perAsset = {};
-  for (const a of DEFAULT_ASSETS) {
-    let prev = null;
-    let gap = 0;
-    let n = 0;
-    for (const f of a.fields) {
-      const key = provenanceKey({
-        specType: f.spec_type,
-        specSource: f.spec_source || a.spec_source,
-        specVerifiedAt: '2026-08-20',
-      });
-      if (key && key === prev) { suppressed += 1; gap += 1; worst = Math.max(worst, gap); }
-      else { full += 1; gap = 0; if (key) n += 1; }
-      prev = key;
-    }
-    if (n) perAsset[a.name] = n;
+test('provenance run: replayed through appendBody over the real seed', () => {
+  // DRIVEN THROUGH THE SHIPPED RENDERER, not through a second copy of the rule.
+  // The previous version of this test re-implemented the streaming comparison and
+  // would have kept passing when the length gate landed — measuring something the
+  // code no longer does, which is the assertion-relocates failure in this file's
+  // own list of species.
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { appendBody } = require('../src/destinations/googleDocs');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const VER = '2026-08-20';
+
+  const render = (a) => {
+    const b = new DocBuilder();
+    appendBody(b, {
+      summary: 's',
+      writerPrompt: 'w',
+      resolvedLinks: [],
+      referenceInsights: [],
+      assetSpecs: [{
+        assetType: a.name,
+        fields: a.fields.map((f) => ({
+          fieldName: f.field_name,
+          charMin: f.char_min,
+          charMax: f.char_max,
+          fieldType: f.field_type,
+          groupLabel: f.group_label,
+          specNote: f.spec_note,
+          specType: f.spec_type,
+          specSource: f.spec_source || a.spec_source,
+          specVerifiedAt: (f.spec_source || a.spec_source) !== 'quillio_default' ? VER : null,
+        })),
+      }],
+    });
+    return b.text.split('\n').map((x) => x.trim()).filter(Boolean);
+  };
+  // COLLAPSED means the boilerplate tail and the verification sentence are gone —
+  // NOT that the line is bare. LinkedIn's card note is deliberately not show-once
+  // (it carries a conditional second limit), so its collapsed cards render
+  // "<note> Platform limit (LinkedIn)." and a bare-line test would score them 0.
+  const bare = (a) => render(a).filter((l) => /(Recommended by [^.]+\.|Platform limit \([^)]+\)\.)/.test(l)
+    && !/Verified against/.test(l)).length;
+
+  // COLLAPSED — runs of 4, 5 and 6. These are the walls the rule was built for.
+  assert.strictEqual(bare(DEFAULT_ASSETS.find((a) => a.name === 'Meta Carousel Ad')), 5);
+  assert.strictEqual(bare(DEFAULT_ASSETS.find((a) => a.name === 'LinkedIn Carousel Ad')), 4);
+  assert.strictEqual(bare(DEFAULT_ASSETS.find((a) => a.name === 'Google Responsive Display Ad')), 3);
+
+  // NOT COLLAPSED — every run of two. A lone bare attribution between a full line
+  // for a different field and a block of house defaults reads as a field missing
+  // its provenance, not as the second of a pair.
+  for (const name of ['LinkedIn Single Image Ad', 'Meta Single Image Ad', 'Twitter/X Ad']) {
+    assert.strictEqual(bare(DEFAULT_ASSETS.find((a) => a.name === name)), 0, `${name} keeps full lines`);
   }
 
-  assert.strictEqual(full + suppressed, 173, 'every seeded field is accounted for');
-  assert.strictEqual(suppressed, 15, '15 of 173 fields lose their boilerplate');
-  // FIVE is the longest run — Meta Carousel's Card 1-5 Headline and Card
-  // Description. No field is more than five from a full line, and none of them
-  // has an EMPTY hint: the attribution and the link are on every one.
-  assert.strictEqual(worst, 5);
-  // The three assets whose sourced fields are split by an interleaved
-  // house_default group render two full lines rather than one.
-  assert.strictEqual(perAsset['Meta Carousel Ad'], 2);
-  assert.strictEqual(perAsset['LinkedIn Carousel Ad'], 2);
-  assert.strictEqual(perAsset['LinkedIn Single Image Ad'], 2);
-  assert.strictEqual(perAsset['Google Responsive Display Ad'], 1);
+  // AND EVERY FIELD STILL HAS A HINT LINE. The count of hint paragraphs is
+  // unchanged by the collapse — that is the parseDoc property, asserted here
+  // against the real renderer rather than against fieldHint alone.
+  const { fieldLabel } = require('../src/destinations/googleDocs');
+  for (const a of DEFAULT_ASSETS) {
+    const lines = render(a);
+    const labels = new Set(a.fields.map((f) => fieldLabel({
+      fieldName: f.field_name, charMin: f.char_min, charMax: f.char_max, fieldType: f.field_type,
+    })));
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!labels.has(lines[i])) continue;
+      assert.ok(!labels.has(lines[i + 1]),
+        `${a.name}: "${lines[i]}" is followed straight by another label — no hint paragraph`);
+    }
+  }
 });
 
 test('THE HINT LINE IS LOAD-BEARING: a field without one absorbs italic copy', () => {

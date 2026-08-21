@@ -689,8 +689,14 @@
        this section exists to answer.
        Matched to .section-label / .assets-label (Star Crush, uppercase, 0.06em)
        and stepped down from their 13px so it reads as subordinate to the
-       heading rather than competing with it. */
-    .doc-row .doc-row-kind { display: block; font-family: 'StarCrush', serif; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); opacity: 0.55; margin-bottom: 3px; }
+       heading rather than competing with it.
+
+       OPACITY 0.75, matching .section-label's, and the SIZE carries the
+       hierarchy instead. 0.55 measured 3.38:1 against the panel at 390px/3x —
+       better than the 0.42 it replaced, and still under the 4.5:1 floor for 11px
+       text. Dimming to signal "subordinate" is what fails on these surfaces; 11px
+       against the heading's 13px says the same thing and stays legible. */
+    .doc-row .doc-row-kind { display: block; font-family: 'StarCrush', serif; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); opacity: 0.75; margin-bottom: 3px; }
     .doc-row .doc-row-name { display: block; font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.02em; overflow-wrap: anywhere; }
     .doc-row .doc-row-note { display: block; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.5); margin-top: 4px; line-height: 1.45; }
     .doc-row .doc-row-go { font-size: 18px; color: rgba(26,26,46,0.35); flex-shrink: 0; }
@@ -747,7 +753,17 @@
        .asset-card-header wraps, and an asset name long enough to wrap would
        otherwise drop the chevron onto a second line, right-aligned under it. */
     button.asset-card-header .asset-card-name { flex: 1 1 auto; min-width: 0; }
-    .asset-card-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.45); flex: none; font-variant-numeric: tabular-nums; }
+    /* 0.7, NOT 0.45. Measured off rendered pixels at 390px/3x: 0.45 ink over the
+       header band's own fill composites to rgb(129,142,156) on rgb(212,237,246),
+       which is 2.74:1 — under the 4.5:1 AA floor this 11px text needs. The band
+       is 97% opaque so the sky behind barely moves it; the alpha was simply too
+       low. 0.7 measures 5.86:1.
+       This is the hazard CLAUDE.md documents under .glass-panel — alpha'd --ink
+       on these surfaces reads lighter than it looks in the declaration — arriving
+       through a NEW element rather than an old one. Collapsed, this count is the
+       only thing on the band that says whether the group still needs work, so it
+       is the last text here that can afford to be hard to read. */
+    .asset-card-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.7); flex: none; font-variant-numeric: tabular-nums; }
     .asset-card-chev { display: inline-block; flex: none; font-size: 13px; color: rgba(26,26,46,0.5); transition: transform 0.15s ease; transform: rotate(90deg); }
     .asset-card.collapsed .asset-card-chev { transform: none; }
     /* WHAT COLLAPSES: the group's fields and its creative-direction line. The

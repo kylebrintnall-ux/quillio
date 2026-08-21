@@ -16890,11 +16890,17 @@ test('a show-once note renders on the first of an ADJACENT run and nowhere after
   assert.strictEqual(withNote.length, 1, 'the sentence is emitted once across the run');
   const firstHint = run[run.indexOf('Card 1 Headline [20]') + 1];
   assert.ok(firstHint.startsWith(NOTE), 'and it is on Card 1');
-  // The rest keep their per-field claims — tier line and verification date.
+  // The rest keep the per-field CLAIM — the attribution, which names the source
+  // and carries the citation link. What they no longer carry is the boilerplate
+  // tail and the verification sentence: those are suppressed across a run of
+  // identical provenance by the same adjacency rule, so this assertion moved from
+  // "the whole tier line stays" to "the claim stays". See "the run key" below.
   const laterHint = run[run.indexOf('Card 3 Headline [20]') + 1];
   assert.ok(!laterHint.includes(NOTE));
-  assert.match(laterHint, /^Recommended by Meta\..*Verified against Meta's spec page on 2026-08-20\.$/,
-    'only the note is dropped; provenance stays on every field');
+  assert.strictEqual(laterHint, 'Recommended by Meta.',
+    'the attribution stays on every field — it is the claim, and it is the link');
+  assert.ok(!/Not a hard limit/.test(laterHint), 'the boilerplate tail goes');
+  assert.ok(!/Verified against/.test(laterHint), 'and the date it shares with Card 1 goes with it');
 
   // A GAP RESTORES IT. The same sentence after an intervening field is a
   // different reader, not a repetition — a Set of "seen in this asset" would
@@ -19743,6 +19749,179 @@ test('freshness dedup: replayed over the real seed, twelve blocks not twenty-sev
 // A citation to a Meta format URL names a platform and hides which of its
 // placements the number belongs to — Primary Text is 150 on Facebook Feed and 44
 // on Instagram Reels, from the same page. The qualifier is derived from the URL.
+// === Provenance repeats per RUN, and the hint line is never emptied ==========
+//
+// Meta Card 1-5 carried three identical sentences each. The repetition is the
+// boilerplate half of the tier line and the verification date; the ATTRIBUTION is
+// a per-field claim and carries the citation link, so it stays.
+
+test('provenance run: the attribution stays, the boilerplate and the date go', () => {
+  const { fieldHint } = require('../src/destinations/googleDocs');
+  const f = {
+    fieldName: 'Card 3 Headline',
+    specType: 'recommended',
+    specSource: 'https://www.facebook.com/business/ads-guide/update/carousel/facebook-feed',
+    specVerifiedAt: '2026-08-20',
+  };
+
+  assert.strictEqual(fieldHint(f).text,
+    'Recommended by Meta (Facebook Feed). Not a hard limit — adjust for your brand and goal. '
+    + "Verified against Meta's spec page on 2026-08-20.");
+  assert.strictEqual(fieldHint(f, { suppressDetail: true }).text,
+    'Recommended by Meta (Facebook Feed).');
+
+  // THE LINK RANGE IS UNMOVED. nameStart and nameLen both sit inside the
+  // attribution, so truncating the tail cannot shift them — asserted rather than
+  // reasoned, because every offset in a shorter paragraph is a chance to be wrong.
+  const full = fieldHint(f);
+  const supp = fieldHint(f, { suppressDetail: true });
+  assert.deepStrictEqual(supp.links, full.links);
+  assert.strictEqual(supp.text.slice(supp.links[0].start, supp.links[0].end), 'Meta');
+  assert.strictEqual(full.text.slice(full.links[0].start, full.links[0].end), 'Meta');
+
+  // A NOTE SURVIVES SUPPRESSION — the two are independent axes. LinkedIn's card
+  // note is not show-once (it carries a conditional second limit), so its cards
+  // keep the note and lose only the boilerplate.
+  assert.strictEqual(fieldHint({ ...f, specNote: 'Lead Gen Form CTA caps at 30.' },
+    { suppressDetail: true }).text,
+  'Lead Gen Form CTA caps at 30. Recommended by Meta (Facebook Feed).');
+});
+
+test('provenance run: the suppressed form still strips to nothing', () => {
+  const { fieldHint, stripReaderOnlyLines } = require('../src/destinations/googleDocs');
+  const f = {
+    specType: 'recommended',
+    specSource: 'https://www.facebook.com/business/ads-guide/update/carousel/facebook-feed',
+    specVerifiedAt: '2026-08-20',
+  };
+  // THE SHAPE THE STRIP REGEXES HAD NOT SEEN: an attribution with no sentence
+  // after it. RECOMMENDED_ATTRIBUTION's lookahead is `(?=\s|$)`, so the
+  // end-of-string branch is what carries this — it had only ever been exercised
+  // with a following sentence.
+  assert.strictEqual(stripReaderOnlyLines(fieldHint(f, { suppressDetail: true }).text), '');
+  assert.strictEqual(stripReaderOnlyLines(fieldHint(f).text), '');
+  // With a note, the note is all that reaches the prompt — which is the whole
+  // point of the strip, unchanged by the suppression.
+  assert.strictEqual(
+    stripReaderOnlyLines(fieldHint({ ...f, specNote: 'Front-load the first 40.' },
+      { suppressDetail: true }).text),
+    'Front-load the first 40.'
+  );
+});
+
+test('provenance run: the DATE is in the key, so a divergent field restores itself', () => {
+  const gd = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
+  const region = sliceBetween(gd, 'function provenanceKey(field) {', 'function fieldHint(');
+  const provenanceKey = new Function(`${region}\nreturn provenanceKey;`)();
+
+  const base = {
+    specType: 'recommended', specSource: 'https://x.example/p', specVerifiedAt: '2026-08-20',
+  };
+  assert.strictEqual(provenanceKey(base), provenanceKey({ ...base }));
+  // specReview.commitReview stamps spec_verified_at = NOW() in ONE UPDATE PER
+  // FIELD, so two fields on one asset diverge the moment a flag is approved for
+  // one and not the other. That field is not in the run and gets its full line
+  // back — the rule handling its own hard case, with no exception written.
+  assert.notStrictEqual(provenanceKey(base), provenanceKey({ ...base, specVerifiedAt: '2026-09-01' }));
+  assert.notStrictEqual(provenanceKey(base), provenanceKey({ ...base, specType: 'enforced' }));
+  assert.notStrictEqual(provenanceKey(base), provenanceKey({ ...base, specSource: 'https://y.example/p' }));
+  // A timestamp and a date on the same day are the same provenance.
+  assert.strictEqual(provenanceKey(base), provenanceKey({ ...base, specVerifiedAt: '2026-08-20T09:00:00Z' }));
+
+  // A field that names no source BREAKS a run, the same way a different note
+  // breaks a show-once note run. On both carousels this is what splits Card 1
+  // from Cards 2-5.
+  for (const f of [null, {}, { specType: null, specSource: 'https://x.example/p' },
+    { specType: 'house_default', specSource: 'quillio_default' }]) {
+    assert.strictEqual(provenanceKey(f), null);
+  }
+});
+
+test('provenance run: replayed over the real seed, and the worst gap', () => {
+  const gd = fs.readFileSync(require.resolve('../src/destinations/googleDocs'), 'utf8');
+  const region = sliceBetween(gd, 'function provenanceKey(field) {', 'function fieldHint(');
+  const provenanceKey = new Function(`${region}\nreturn provenanceKey;`)();
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  let full = 0;
+  let suppressed = 0;
+  let worst = 0;
+  const perAsset = {};
+  for (const a of DEFAULT_ASSETS) {
+    let prev = null;
+    let gap = 0;
+    let n = 0;
+    for (const f of a.fields) {
+      const key = provenanceKey({
+        specType: f.spec_type,
+        specSource: f.spec_source || a.spec_source,
+        specVerifiedAt: '2026-08-20',
+      });
+      if (key && key === prev) { suppressed += 1; gap += 1; worst = Math.max(worst, gap); }
+      else { full += 1; gap = 0; if (key) n += 1; }
+      prev = key;
+    }
+    if (n) perAsset[a.name] = n;
+  }
+
+  assert.strictEqual(full + suppressed, 173, 'every seeded field is accounted for');
+  assert.strictEqual(suppressed, 15, '15 of 173 fields lose their boilerplate');
+  // FIVE is the longest run — Meta Carousel's Card 1-5 Headline and Card
+  // Description. No field is more than five from a full line, and none of them
+  // has an EMPTY hint: the attribution and the link are on every one.
+  assert.strictEqual(worst, 5);
+  // The three assets whose sourced fields are split by an interleaved
+  // house_default group render two full lines rather than one.
+  assert.strictEqual(perAsset['Meta Carousel Ad'], 2);
+  assert.strictEqual(perAsset['LinkedIn Carousel Ad'], 2);
+  assert.strictEqual(perAsset['LinkedIn Single Image Ad'], 2);
+  assert.strictEqual(perAsset['Google Responsive Display Ad'], 1);
+});
+
+test('THE HINT LINE IS LOAD-BEARING: a field without one absorbs italic copy', () => {
+  const { Doc, H2, H3, LABEL, ITALIC, TEXT, BLANK } = require('./lib/docSim');
+  const { parseDoc, fieldHint } = require('../src/destinations/googleDocs');
+  const head = [H2('Campaign Summary'), TEXT('A launch.'), H3('Asset')];
+  const field = (paras) => parseDoc(Doc.from([...head, ...paras]).toJson()).assets[0].fields[0];
+
+  // THE HAZARD, AND IT IS WHY "RENDER NOTHING" WAS NEVER AN OPTION. parseDoc
+  // takes the FIRST italic paragraph after a label as the field's notes. Our hint
+  // claims that slot. Without one, a writer whose copy OPENS with an italicised
+  // word — runStyle classifies a paragraph by its first non-empty run — has their
+  // line read as permanent guidance: insertIndex advances past it, deleteEnd
+  // stays null, so Regenerate never deletes it and the next draft lands BELOW.
+  const exposed = field([LABEL('F [20]'), ITALIC('Some copy.')]);
+  assert.strictEqual(exposed.notes, 'Some copy.', 'the copy was absorbed as notes');
+  assert.strictEqual(exposed.deleteEnd, null, 'so Regenerate will not delete it');
+
+  // WITH a hint line, the same copy lands in the copy branch.
+  const safe = field([LABEL('F [20]'), ITALIC('Recommended by Meta.'), ITALIC('Some copy.')]);
+  assert.strictEqual(safe.notes, '', 'the tier line is recovered and stripped');
+  assert.ok(safe.deleteEnd > safe.insertIndex, 'and the copy is deletable copy');
+
+  // THE SUPPRESSED FORM STILL EMITS A PARAGRAPH — that is the property that keeps
+  // the run rule safe, and it is why suppressDetail truncates rather than empties.
+  const supp = fieldHint({
+    specType: 'recommended',
+    specSource: 'https://www.facebook.com/business/ads-guide/update/carousel/facebook-feed',
+    specVerifiedAt: '2026-08-20',
+  }, { suppressDetail: true });
+  assert.ok(supp && supp.text.length > 0, 'a suppressed hint is short, never absent');
+
+  // The exposed case is PRE-EXISTING, not introduced here: a tenant-authored
+  // field with no note has no hint line today. Pinned so the population cannot
+  // grow without somebody meeting this test.
+  assert.strictEqual(fieldHint({ specType: null, specSource: 'quillio_default' }), null);
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      assert.ok(fieldHint({
+        specType: f.spec_type, specSource: f.spec_source || a.spec_source, specNote: f.spec_note,
+      }, { suppressDetail: true }), `${a.name}/${f.field_name} always renders a hint line`);
+    }
+  }
+});
+
 test('placement: derived from the URL, never from a raw value', () => {
   const { specPlacementName } = require('../src/utils/specSource');
 

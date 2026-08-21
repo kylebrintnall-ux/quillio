@@ -560,17 +560,31 @@ function stripReaderOnlyLines(text) {
 // (createAssetType never writes spec_type), and a custom field has no house
 // default to go and set. scripts/migrateBackfillSeededSpecType.js exists to stop
 // a long-lived tenant's bundled fields sitting on the wrong side of it.
+//
+// `attributionLen` IS WHERE THE PER-FIELD CLAIM ENDS. Every tier line is an
+// attribution — "Recommended by Meta (Facebook Feed)." — followed by a tail that
+// is the same sentence on every field of that tier in the library. The
+// attribution names the source and carries the hyperlink, so it is a claim about
+// THIS field; the tail is boilerplate. Reported as a length so a caller can keep
+// the first and drop the second without re-parsing the sentence it just built,
+// and so nameStart/nameLen stay valid across the truncation (both sit inside the
+// attribution). See fieldHint's `suppressDetail`.
 function specTypeLine(specType, sourceName, detail, overridden) {
   if (specType === 'enforced') {
     if (sourceName) {
       const prefix = 'Platform limit (';
+      const attribution = `${prefix}${sourceName}).`;
       return {
-        text: `${prefix}${sourceName}). Stay within this count.`,
+        text: `${attribution} Stay within this count.`,
+        attributionLen: attribution.length,
         nameStart: prefix.length,
         nameLen: sourceName.length,
       };
     }
-    return { text: 'Platform limit. Stay within this count.', nameStart: -1, nameLen: 0 };
+    const bare = 'Platform limit.';
+    return {
+      text: `${bare} Stay within this count.`, attributionLen: bare.length, nameStart: -1, nameLen: 0,
+    };
   }
   if (specType === 'recommended') {
     if (sourceName) {
@@ -581,14 +595,18 @@ function specTypeLine(specType, sourceName, detail, overridden) {
       const tail = detail && detail.finding
         ? ` ${detail.finding}`
         : ' Not a hard limit — adjust for your brand and goal.';
+      const attribution = `${prefix}${sourceName}${scope}.`;
       return {
-        text: `${prefix}${sourceName}${scope}.${tail}`,
+        text: `${attribution}${tail}`,
+        attributionLen: attribution.length,
         nameStart: prefix.length,
         nameLen: sourceName.length,
       };
     }
+    const bare = 'Recommended.';
     return {
-      text: 'Recommended. Not a hard limit — adjust for your brand and goal.',
+      text: `${bare} Not a hard limit — adjust for your brand and goal.`,
+      attributionLen: bare.length,
       nameStart: -1,
       nameLen: 0,
     };
@@ -596,13 +614,27 @@ function specTypeLine(specType, sourceName, detail, overridden) {
   if (specType === 'house_default') {
     // No source is named and nothing is hyperlinked — the authority is the
     // tenant, so nameStart stays -1 and fieldHint adds no link for this line.
-    return {
-      text: overridden ? HOUSE_DEFAULT_LINE_SET : HOUSE_DEFAULT_LINE,
-      nameStart: -1,
-      nameLen: 0,
-    };
+    // ONE SENTENCE, so the attribution IS the whole line. A house default is
+    // never part of a run anyway — it names no source, so it breaks one.
+    const line = overridden ? HOUSE_DEFAULT_LINE_SET : HOUSE_DEFAULT_LINE;
+    return { text: line, attributionLen: line.length, nameStart: -1, nameLen: 0 };
   }
   return null; // no tier (a tenant-authored field) → no tier line
+}
+
+// What makes two adjacent fields' provenance the SAME provenance: the tier, the
+// page it is cited to, and the date a human last confirmed it. null when the
+// field names no source, which is what breaks a run.
+//
+// Composed from the three values the suppressed sentences are ABOUT, so the rule
+// cannot drift from what it suppresses: change what the tail says and this key
+// has to change with it.
+function provenanceKey(field) {
+  if (!field || !field.specType) return null;
+  const source = String(field.specSource || '');
+  if (!source || source === 'quillio_default') return null;
+  const day = field.specVerifiedAt ? String(field.specVerifiedAt).slice(0, 10) : '';
+  return `${field.specType}\u0000${source}\u0000${day}`;
 }
 
 // The italic grey guidance line under a field label, returned as { text, links }
@@ -628,11 +660,25 @@ function specTypeLine(specType, sourceName, detail, overridden) {
 // answer down. See SHOW_ONCE_NOTES in data/defaultAssets.js for which notes may
 // be dropped and the test for classifying a new one.
 //
-// Only the NOTE goes. The tier line and the verification date stay on every
-// field: those are per-field claims about that field's limit and that field's
-// source page, and four fields whose limit had no stated provenance is what the
-// last three changes were about removing.
-function fieldHint(field, { suppressNote = false } = {}) {
+// TWO INDEPENDENT SUPPRESSIONS, and they take different halves.
+//
+// `suppressNote` drops the tenant/seed NOTE, when an adjacent field already said
+// it (SHOW_ONCE_NOTES). `suppressDetail` drops the BOILERPLATE half of the tier
+// line and the verification sentence, when an adjacent field has identical
+// provenance (provenanceKey above).
+//
+// WHAT NEVER GOES IS THE ATTRIBUTION. "Recommended by Meta (Facebook Feed)." is
+// a claim about THIS field's limit and THIS field's source page, and it carries
+// the citation hyperlink — a writer on Card 4 with nothing to click is worse off
+// than one reading a sentence they have already read. Four fields whose limit had
+// no stated provenance is what the provenance work was about removing, and
+// collapsing a repetition must not put any field back there.
+//
+// This comment previously said "the tier line and the verification date stay on
+// every field". That was true when only the note could be suppressed; it is the
+// sentence this change made false, and it is corrected here rather than left to
+// teach the next reader a rule that no longer holds.
+function fieldHint(field, { suppressNote = false, suppressDetail = false } = {}) {
   const note = !suppressNote && field && field.specNote != null ? String(field.specNote).trim() : '';
   const tier = field
     ? specTypeLine(
@@ -642,7 +688,14 @@ function fieldHint(field, { suppressNote = false } = {}) {
       field.specOverridden === true
     )
     : null;
-  const parts = [note, tier && tier.text].filter(Boolean);
+  // ON A REPEAT, THE ATTRIBUTION SURVIVES AND THE BOILERPLATE GOES. `Recommended
+  // by Meta (Facebook Feed).` is a claim about THIS field and carries the
+  // citation link; `Not a hard limit — adjust for your brand and goal.` is the
+  // same sentence on all eleven recommended fields in the library, and the
+  // verification sentence is dropped with it. Both are restored the moment any
+  // part of the run key differs — see appendBody.
+  const tierText = tier && (suppressDetail ? tier.text.slice(0, tier.attributionLen) : tier.text);
+  const parts = [note, tierText].filter(Boolean);
   if (!parts.length) return null;
   // THE CLAUSE RIDES A TIER LINE THAT ACTUALLY NAMES A SOURCE — `nameStart >= 0`,
   // the same condition that decides whether the platform name gets hyperlinked
@@ -659,7 +712,11 @@ function fieldHint(field, { suppressNote = false } = {}) {
   // one decides whether a NAME exists, this decides whether the paragraph has
   // already introduced it. A test rendering a house_default field with a date
   // supplied produced exactly that dangling sentence before this was tightened.
-  const verified = tier && tier.nameStart >= 0
+  // Suppressed with the tail, and for the same reason: on a run every field
+  // carries the same date, so repeating it says nothing. A field whose date
+  // DIVERGES is not in the run — the key includes it — so it restores its own
+  // full line with no exception written anywhere.
+  const verified = !suppressDetail && tier && tier.nameStart >= 0
     ? verifiedSentence(field && field.specVerifiedAt, field && field.specSource)
     : '';
   if (verified) parts.push(verified);
@@ -871,6 +928,7 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
     // show it once, which is right because they are separate sections a reader
     // may not read in order.
     let prevNote = null;
+    let prevProvenance = null;
     for (const field of asset.fields) {
       const group = field.groupLabel || null;
       if (group !== openGroup) {
@@ -880,9 +938,33 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
       const note = field.specNote != null ? String(field.specNote).trim() : '';
       const suppressNote = !!note && note === prevNote && SHOW_ONCE_NOTES.has(note);
       prevNote = note || null;
+      // THE RUN KEY, and the third place this codebase applies the same rule:
+      // a repetition collapses over ADJACENT members and a gap restores it.
+      // Here the members are fields whose provenance is identical, so the
+      // boilerplate half of the tier line and the verification sentence say
+      // nothing the field above did not already say.
+      //
+      // THE DATE IS IN THE KEY AND IT IS THE PART THAT MATTERS. specReview's
+      // commitReview stamps `spec_verified_at = NOW()` in ONE UPDATE PER FIELD,
+      // so two fields on one asset diverge the moment a flag is approved for one
+      // and not the other. A field whose date differs is not in the run, so it
+      // restores its own full line — the rule handling its own hard case rather
+      // than an exception being written for it.
+      //
+      // A house_default or tenant-authored field names no source, so its key is
+      // null and it BREAKS the run, exactly as a different note breaks the
+      // show-once note run. On both carousels that is what splits Card 1 from
+      // Cards 2-5.
+      const provenance = provenanceKey(field);
+      const suppressDetail = !!provenance && provenance === prevProvenance;
+      prevProvenance = provenance;
       const indent = group ? GROUP_INDENT_PT : 0;
       b.boldLabel(fieldLabel(field), { indent });
-      const hint = fieldHint(field, { suppressNote });
+      const hint = fieldHint(field, { suppressNote, suppressDetail });
+      // A HINT PARAGRAPH IS ALWAYS EMITTED WHEN THERE IS ONE TO EMIT, and
+      // suppressDetail never empties it — it keeps the attribution. See the
+      // note on parseDoc's italic branch for why "render nothing" is not an
+      // option for a field a writer drafts into.
       if (hint) b.fieldNote(hint.text, { indent, links: hint.links });
       b.blankLine({ indent });
     }

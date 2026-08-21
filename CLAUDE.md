@@ -296,6 +296,22 @@ returns data instead of posting messages.
   are bold and end with `[limit]`, and drafts go in the blank line right after
   each label. `fieldHint` deliberately emits **one** paragraph — `parseDoc`
   treats a second paragraph after a label as drafted copy.
+
+  **AND THE HINT LINE IS LOAD-BEARING, WHICH IS NOT OBVIOUS FROM WHAT IT SAYS.**
+  `parseDoc` takes the FIRST italic paragraph after a label as that field's
+  `notes`, and the hint claims that slot. A field rendering NO hint line absorbs a
+  writer's copy as notes instead — `runStyle` classifies a paragraph by its first
+  non-empty run, so a line opening with an italicised word ("*Introducing* our
+  new…") is italic to the parser. The copy then becomes permanent guidance:
+  `insertIndex` advances past it, `deleteEnd` stays null, Regenerate never deletes
+  it, and the next draft lands below it. Silent, and it survives regeneration.
+
+  So **"render nothing" is not an available option for any field a writer drafts
+  into**, whatever the argument for it. A shorter line is; an absent one is not.
+  This is why the provenance run-collapse truncates the tier line to its
+  attribution rather than emitting an empty hint. The exposed case exists today on
+  tenant-authored fields with no `spec_note` — that population must not grow, and
+  a test walks the seed to make sure it does not.
 - **Destinations are pluggable**, but the contract is bigger than create+draft.
   `core/pipeline.js` and `services/copyReview.js` never call a Google API
   directly — they go through `getDestination()`. The **consumed** surface today

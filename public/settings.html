@@ -408,21 +408,41 @@
     .lib-frow.locked { opacity: 0.6; }
     .lib-fstatic { padding: 2px 0 0; }
     .lib-fstaticnote { margin: 4px 0 0; font-size: 12.5px; color: rgba(26,26,46,0.66); }
-    /* HOW CURRENT THIS NUMBER IS. Two lines, quieter than the note above them:
-       provenance is context for a number, not guidance about writing.
-       Deliberately NOT a badge — no tick, no pill, no green. A "clean" state has
-       no accent at all, because the whole point of the second sentence is that it
-       withdraws rather than reassures, and a green mark beside it would say the
-       opposite of its words. */
+    /* HOW CURRENT THIS NUMBER IS. Deliberately NOT a badge — no tick, no pill,
+       no green. A "clean" state has no accent at all, because the whole point of
+       the second sentence is that it withdraws rather than reassures, and a green
+       mark beside it would say the opposite of its words.
+
+       SUBORDINATION COMES FROM SIZE, NOT FROM ALPHA — 11px against the field
+       name's 14px. The first version used 0.5 on the block and 0.45 on the
+       machine line to say "quieter", and both FAIL AA on this surface:
+       .lib-asset is rgba(255,255,255,0.5) over backdrop-filter: blur(14px) on
+       the sky gradient, so the declared alpha is not the rendered colour. See
+       CLAUDE.md "DIMMING CANNOT CARRY HIERARCHY ON THESE SURFACES".
+
+       Measured through the shipped stylesheet at 390x844/3x, screenshotting the
+       element and sampling pixels (darkest 1% as the glyph, 90th percentile as
+       its background). Worst case is the TOP of the page, where the sky is
+       darkest — the gradient means position moves the number, which is why the
+       first measurement of this was confounded and had to be redone:
+
+         alpha 0.45  2.48:1     alpha 0.65  4.00:1
+         alpha 0.50  2.81:1     alpha 0.70  4.62:1
+         alpha 0.55  3.15:1     alpha 0.75  5.21:1  <- used here
+
+       0.75 is .section-label's known-safe value; 0.70 is the floor. The machine
+       line takes no extra dimming at all: it is the CONTENT of this block, not a
+       footnote to the line above it. */
     .lib-fresh { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px;
-      color: rgba(26,26,46,0.5); line-height: 1.5; margin-top: 4px; }
+      color: rgba(26,26,46,0.75); line-height: 1.5; margin-top: 4px; }
     .lib-fresh-v a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-    .lib-fresh-m { color: rgba(26,26,46,0.45); }
-    /* The one state that gets colour. Amber, matching the enforced tier chip's
-       family rather than introducing a fourth accent, and applied to the MACHINE
-       line only — the human verification is still true when the detector is
-       stuck, so dimming it too would withdraw the wrong sentence. */
-    .lib-fresh.flagged .lib-fresh-m { color: #8a4b00; }
+    /* The one state that gets colour, on the MACHINE line only — the human
+       verification is still true when the detector is stuck, so marking that too
+       would withdraw the wrong sentence. Amber rather than a fourth accent, and
+       #6b3a00 rather than the tier chip's #8a4b00: measured the same way, the
+       chip's value is 3.57:1 here against 4.95:1 for this one. The chip gets away
+       with it at 600 weight on its own line; this is body text on a busier row. */
+    .lib-fresh.flagged .lib-fresh-m { color: #6b3a00; }
     .lib-fresh.flagged .lib-fresh-m::before { content: '⚠ '; }
     /* The field name as TEXT, where the full form has an input. Same size and
        weight, so the two forms read as the same list with different powers. */

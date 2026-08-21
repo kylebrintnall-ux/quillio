@@ -19578,6 +19578,28 @@ test('freshness: rendered on both surfaces, and never as a badge', () => {
   const css = sliceBetween(html, '.lib-fresh {', '.lib-fname.static');
   assert.ok(!/#0[0-9a-f]*[89a-f][0-9a-f]*0/i.test(css) && !/green/i.test(css), 'no green');
   assert.ok(!/content: '✓/.test(css), 'no tick');
+
+  // CONTRAST, PINNED WITH THE MEASUREMENT BESIDE IT. .lib-asset is
+  // rgba(255,255,255,0.5) over backdrop-filter: blur(14px) on the sky gradient,
+  // so the declared alpha is not the rendered colour and neither of the first
+  // two values looked wrong in the source. Screenshotted through the shipped
+  // stylesheet at 390x844/3x, darkest 1% as the glyph and 90th percentile as its
+  // background, worst case at the top of the page where the sky is darkest:
+  //
+  //   0.45 -> 2.48:1   0.50 -> 2.81:1   0.55 -> 3.15:1
+  //   0.65 -> 4.00:1   0.70 -> 4.62:1   0.75 -> 5.21:1   (AA floor 4.5)
+  //   amber #8a4b00 -> 3.57:1        amber #6b3a00 -> 4.95:1
+  //
+  // This is a claim about the rendered page, so per CLAUDE.md's rule for a test
+  // that pins a value, the numbers it came from are here rather than implied.
+  assert.match(css, /color: rgba\(26,26,46,0\.75\)/, '0.75 measured 5.21:1; 0.70 is the floor');
+  // Anchored to the start of a rule, because `.lib-fresh-m {` is a SUBSTRING of
+  // `.lib-fresh.flagged .lib-fresh-m {` — an unanchored negative matched the
+  // flagged rule and reported the bare one as present.
+  assert.ok(!/\n\s*\.lib-fresh-m \{/.test(css),
+    'the machine line takes no extra dimming — it is the content, not a footnote');
+  assert.match(css, /\.lib-fresh\.flagged \.lib-fresh-m \{ color: #6b3a00; \}/,
+    'the tier chip\'s #8a4b00 measures 3.57:1 as body text here');
   // The one marker is on the MACHINE line of a flagged row. The human
   // verification is still true when the detector is stuck, so it is not dimmed.
   assert.match(css, /\.lib-fresh\.flagged \.lib-fresh-m::before \{ content: '⚠ '; \}/);

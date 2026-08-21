@@ -1158,12 +1158,60 @@ it was reported as fixed on the strength of having been *changed*. A partial fix
 on a threshold reads as done to everyone including the person who made it. The
 only thing that caught it was measuring the number rather than the delta.
 
-**How to measure it**, since no tool in the repo does: screenshot the element
-through Playwright, draw the PNG to a canvas, read `getImageData`, take the
-darkest 1% of pixels as the glyph colour and the 90th percentile as its
-background, and apply the WCAG ratio. That is the only method that sees through
-`backdrop-filter`. It costs about thirty lines and it swept every label on the
-screen in one run.
+**How to measure it: `scripts/checkContrast.js`.** It renders a committed fixture
+with the page's own stylesheet at 390x844/3x, screenshots each text element and
+takes the WCAG ratio from the pixels — darkest 1% as the glyph, 90th percentile
+as the surface. That is the only method that sees through `backdrop-filter`.
+Read-only, manual, and NOT in `npm test`: the suite runs with no credentials, no
+network and no browser in about ten seconds, and this needs one.
+
+    npm i --no-save playwright-core
+    node scripts/checkContrast.js
+    node scripts/checkContrast.js --probe=.lib-sub                    # alpha ladder
+    node scripts/checkContrast.js --color=.lib-tier.enforced=#6b3a00  # a candidate
+    node scripts/checkContrast.js --all                               # what it did NOT measure
+
+It exists because every visual number this project ever acted on came from a
+throwaway script and none of them can be re-derived. **A measurement nobody else
+can reproduce is an assertion.**
+
+**ALPHA IS NOT ALWAYS THE LEVER, and the probe is what tells you.** Three of the
+library panel's failures were HUE problems: the enforced tier chip at `#8a4b00`
+tops out at **3.14:1 at alpha 0.85** — no opacity reaches 4.5. The worst offender
+was `.lib-resetbtn` at **1.10:1**, `var(--sky-btm)` (`#4DD9D9`), a dark-surface
+token used on a near-white card. It is the control that CLEARS AN OVERRIDE, and
+it was invisible the whole time the form was writing overrides nobody chose.
+
+**AND A CONTAINER'S CEILING CAN BE SET BY ITS CHILD.** Probing `.lib-sub`
+plateaued at 3.78:1 however dark its own text went, because the darkest ink in
+the row belonged to the `.lib-tier` chip inside it. So the chip's colour had to
+land before any of the alpha changes could. Nothing in the stylesheet says that —
+the probe reports the WORST matching instance, which is what surfaced it, and
+which is also why a per-selector number is a lower bound rather than a summary.
+
+### The 46 unmeasured rules — recorded so they stay visible
+
+`settings.html` declares **78** rules carrying both a small font-size and a
+colour. The fixture measures **31** of them (all now above 4.5:1), one is a
+container with no text of its own, and **46 are not measured at all**. The script
+prints those three numbers on every run and `--all` lists the gap, so it cannot
+quietly become a clean sweep.
+
+The gap is not one thing:
+
+| | | Closing it costs |
+| --- | --- | --- |
+| Other panels of the same page — templates (`.tpl-*`), doc header (`.hdr-*`), naming (`.naming-*`), custom fields (`.cf-*`), the hub cards | ~35 | more fixture markup, kept in step with the page |
+| A DARK surface — `.nav-link`, `.terminal`, `.toast` are white-on-dark and the ratio runs the other way | ~6 | a second fixture; the existing one would measure them against the wrong ground |
+| Error and success states — `.tpl-warn`, `.lib-newerr`, `.error`, `.banner` | 4 | markup for states the fixture does not currently reach |
+| `.lib-funit::after` | 1 | **a tool limit**: it measures elements, and a pseudo-element is not one |
+
+**Not closed now, deliberately.** Each panel is fixture markup that has to be
+maintained alongside the page, and that cost only pays back if somebody runs the
+tool. The library panel is where the work was and it is clean. `app.html`,
+`onboarding.html` and `admin.html` have **no fixture at all** and are not in the
+78 — that is a larger number again, and the honest statement is that this page is
+measured and the others are not.
 
 ## Deploy
 

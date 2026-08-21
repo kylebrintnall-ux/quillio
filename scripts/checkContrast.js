@@ -282,11 +282,29 @@ async function main() {
 
     // COVERAGE, REPORTED RATHER THAN ASSUMED. A selector no fixture rendered is
     // unmeasured — not clean.
+    // THREE BUCKETS, NOT TWO. A rule whose element the fixture renders but which
+    // carries no text of its OWN — `.lib-fresh` wraps two lines that ARE measured
+    // — is neither measured nor absent, and counting it as a gap makes the number
+    // pessimistic in a way that teaches the reader to distrust the list. A
+    // pessimistic honest number is still a wrong one.
     const seen = new Set();
     for (const t of targets) for (const c of String(t.cls).split(/\s+/)) if (c) seen.add(c);
-    const uncovered = [...selectors.entries()]
-      .filter(([sel]) => { const c = targetClass(sel); return c && !seen.has(c); })
-      .sort((a, b) => a[1].px - b[1].px);
+    const present = new Set(await p.evaluate(() => {
+      const out = [];
+      for (const el of document.querySelectorAll('[class]')) {
+        for (const c of String(el.className).split(/\s+/)) if (c) out.push(c);
+      }
+      return out;
+    }));
+    const container = [];
+    const uncovered = [];
+    for (const [sel, d] of selectors) {
+      const c = targetClass(sel);
+      if (!c || seen.has(c)) continue;
+      (present.has(c) ? container : uncovered).push([sel, d]);
+    }
+    container.sort((a, b) => a[1].px - b[1].px);
+    uncovered.sort((a, b) => a[1].px - b[1].px);
     // PROBE MODE. `--probe=.lib-sub,.lib-hint` re-renders each named selector at a
     // ladder of alphas and reports the ratio each one lands at, on THIS surface.
     //
@@ -378,8 +396,9 @@ async function main() {
       });
     }
 
-    console.log(`\n${TAG} covered ${selectors.size - uncovered.length} of ${selectors.size} small-text rules; `
-      + `${uncovered.length} NOT rendered by this fixture and therefore NOT measured.`);
+    console.log(`\n${TAG} ${selectors.size - container.length - uncovered.length} of ${selectors.size} `
+      + `small-text rules MEASURED; ${container.length} render but carry no text of their own; `
+      + `${uncovered.length} NOT in this fixture and therefore NOT measured.`);
     if (SHOW_UNCOVERED) {
       for (const [sel, d] of uncovered) {
         console.log(`    unmeasured  ${String(d.px).padStart(5)}px  ${sel.padEnd(34)} ${d.color}`);

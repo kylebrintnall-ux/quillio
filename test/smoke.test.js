@@ -19158,6 +19158,209 @@ test('sweep: the bracket is composed in ONE place, shared with fieldLabel', () =
   assert.match(fn, /fieldBracket\(\{ charMin: field\.charMin/);
 });
 
+// === The provenance clause moves with the bracket ===========================
+//
+// REPLAYED, not asserted about. Every test below drives the real
+// correctFieldBrackets against test/lib/docSim's index model and reads the
+// resulting document, because the whole risk here is index arithmetic: a
+// paragraph gains a delete+insert pair whose range sits BELOW the label's, in a
+// batch that must still apply back to front. A source scan cannot see whether
+// the second edit addressed the right characters after the first had moved them.
+
+const HINT_VERIFIED = 'Platform limit (LinkedIn). Stay within this count. '
+  + "Verified against LinkedIn's spec page on 2026-08-20.";
+const HINT_SUPERSEDED = 'Platform limit (LinkedIn). Stay within this count. '
+  + 'Source unchanged as of 2026-08-20.';
+const HINT_NONE = 'Platform limit (LinkedIn). Stay within this count.';
+
+// One asset, one field, in the shape createDocument emits.
+function sweepDoc(hint, { copy = null, label = 'Intro Text [150]' } = {}) {
+  const { Doc, H2, H3, LABEL, ITALIC, TEXT, BLANK } = require('./lib/docSim');
+  const paras = [
+    H2('Campaign Summary'), TEXT('A launch.'),
+    H3('LinkedIn Single Image Ad'),
+    LABEL(label),
+  ];
+  if (hint) paras.push(ITALIC(hint));
+  paras.push(copy ? TEXT(copy) : BLANK());
+  return Doc.from(paras);
+}
+
+async function runSweep(doc, { correctedOn = '2026-09-14', expectMax = 150, newMax = 255,
+  fieldName = 'Intro Text' } = {}) {
+  const { simClients } = require('./lib/docSim');
+  const { correctFieldBrackets } = require('../src/destinations/googleDocs');
+  const sim = simClients(doc);
+  const res = await correctFieldBrackets(
+    'doc-1',
+    [{ assetType: 'LinkedIn Single Image Ad', instance: 0, fieldName, expectMax, newMax }],
+    sim.clients,
+    { correctedOn }
+  );
+  return { res, paras: doc.paragraphs(), batches: sim.batches };
+}
+
+test('sweep: the bracket and the provenance clause move in ONE batch', async () => {
+  const doc = sweepDoc(HINT_VERIFIED);
+  const { res, paras, batches } = await runSweep(doc);
+
+  assert.strictEqual(res.applied.length, 1);
+  assert.strictEqual(res.applied[0].provenance, 'rewritten');
+  assert.strictEqual(batches.length, 1, 'ONE batchUpdate — Docs applies it atomically');
+
+  assert.ok(paras.includes('Intro Text [255]'), 'the bracket moved');
+  // The clause is replaced, not joined, and the sentences before it survive
+  // byte for byte — which is what keeps the citation hyperlink, since the link
+  // sits on the platform name inside that prefix.
+  assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.'));
+  assert.ok(!doc.text.includes('Verified against'), 'the old claim is gone');
+  assert.strictEqual((doc.text.match(/Limit corrected/g) || []).length, 1, 'exactly one');
+});
+
+test('sweep: a field with NO provenance clause gets its bracket fixed and nothing else', async () => {
+  const doc = sweepDoc(HINT_NONE);
+  const before = doc.paragraphs()[4];
+  const { res, paras } = await runSweep(doc);
+
+  assert.strictEqual(res.applied[0].provenance, 'absent');
+  assert.ok(paras.includes('Intro Text [255]'), 'the bracket still moves');
+  assert.strictEqual(paras[4], before, 'the hint line is byte-identical');
+  // The rule this is really pinning: provenance is never INVENTED. A field that
+  // never carried a verification does not acquire a "corrected" sentence.
+  assert.ok(!doc.text.includes('Limit corrected'));
+});
+
+test('sweep: a field with no hint line at all is corrected and left alone', async () => {
+  const doc = sweepDoc(null);
+  const { res, paras } = await runSweep(doc);
+
+  assert.strictEqual(res.applied[0].provenance, 'absent');
+  assert.ok(paras.includes('Intro Text [255]'));
+  assert.ok(!doc.text.includes('Limit corrected'));
+});
+
+test('sweep: the SUPERSEDED wording is recognised and replaced', async () => {
+  // "Source unchanged as of DATE" was on main for 75 minutes on 2026-08-20
+  // (1e37918 -> b018606) and Railway auto-deploys main, so documents carry it.
+  // It is the wording where a stale claim is most misleading, because it asserts
+  // the source did not change.
+  const doc = sweepDoc(HINT_SUPERSEDED);
+  const { res, paras } = await runSweep(doc);
+
+  assert.strictEqual(res.applied[0].provenance, 'rewritten');
+  assert.strictEqual(res.applied[0].provenanceFrom, 'Source unchanged as of 2026-08-20.');
+  assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.'));
+  assert.ok(!doc.text.includes('Source unchanged'));
+});
+
+test('sweep: a SECOND correction replaces the date rather than stacking', async () => {
+  const doc = sweepDoc('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.');
+  const { res, paras } = await runSweep(doc, { correctedOn: '2026-10-01', expectMax: 150, newMax: 90 });
+
+  assert.strictEqual(res.applied[0].provenance, 'rewritten');
+  assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-10-01.'));
+  assert.strictEqual((doc.text.match(/Limit corrected/g) || []).length, 1,
+    'one sentence, the newest date — the history is in spec_change_log');
+});
+
+test('sweep: drafted copy is not touched by the provenance rewrite', async () => {
+  const copy = 'A line somebody wrote and signed off, which may now be over the new limit.';
+  const doc = sweepDoc(HINT_VERIFIED, { copy });
+  const { paras } = await runSweep(doc, { expectMax: 150, newMax: 90 });
+
+  assert.ok(paras.includes('Intro Text [90]'));
+  assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.'));
+  // The point of the whole feature: the limit dropped, the copy did not move.
+  assert.strictEqual(paras[paras.length - 1], copy, 'the copy is byte-identical and still last');
+});
+
+test('sweep: two fields, four edits, applied back to front', async () => {
+  const { Doc, H2, H3, LABEL, ITALIC, TEXT, BLANK, simClients } = require('./lib/docSim');
+  const { correctFieldBrackets } = require('../src/destinations/googleDocs');
+  // THE CASE THE MODEL EXISTS FOR. Four ranges, two of them below their own
+  // label, all expressed against indices from ONE parse. "[90]" -> "[100]" is not
+  // length-preserving, so anything but strict descending order corrupts the doc.
+  const doc = Doc.from([
+    H2('Campaign Summary'), TEXT('A launch.'),
+    H3('LinkedIn Single Image Ad'),
+    LABEL('Intro Text [90]'), ITALIC(HINT_VERIFIED), BLANK(),
+    LABEL('Headline [70]'), ITALIC(HINT_VERIFIED), BLANK(),
+  ]);
+  const sim = simClients(doc);
+  const res = await correctFieldBrackets('doc-1', [
+    { assetType: 'LinkedIn Single Image Ad', instance: 0, fieldName: 'Intro Text', expectMax: 90, newMax: 100 },
+    { assetType: 'LinkedIn Single Image Ad', instance: 0, fieldName: 'Headline', expectMax: 70, newMax: 200 },
+  ], sim.clients, { correctedOn: '2026-09-14' });
+
+  assert.strictEqual(res.applied.length, 2);
+  assert.strictEqual(sim.batches.length, 1, 'still one batch for the whole document');
+  const paras = doc.paragraphs();
+  assert.ok(paras.includes('Intro Text [100]'));
+  assert.ok(paras.includes('Headline [200]'));
+  assert.strictEqual((doc.text.match(/Limit corrected 2026-09-14\./g) || []).length, 2);
+  assert.ok(!doc.text.includes('Verified against'));
+  // Nothing bled between the two fields.
+  assert.deepStrictEqual(paras, [
+    'Campaign Summary', 'A launch.', 'LinkedIn Single Image Ad',
+    'Intro Text [100]', 'Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.', '',
+    'Headline [200]', 'Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.', '',
+  ]);
+});
+
+test('sweep: a malformed correctedOn throws BEFORE the document is touched', async () => {
+  const { simClients } = require('./lib/docSim');
+  const { correctFieldBrackets } = require('../src/destinations/googleDocs');
+  const doc = sweepDoc(HINT_VERIFIED);
+  const before = doc.text;
+  const sim = simClients(doc);
+
+  await assert.rejects(
+    () => correctFieldBrackets('doc-1',
+      [{ assetType: 'LinkedIn Single Image Ad', instance: 0, fieldName: 'Intro Text', expectMax: 150, newMax: 255 }],
+      sim.clients, { correctedOn: '14/09/2026' }),
+    /The document was NOT modified/
+  );
+  // Refused rather than defaulted to today: a date this code invents is a date
+  // nobody chose and nobody can check.
+  assert.strictEqual(doc.text, before, 'nothing was written');
+  assert.strictEqual(sim.batches.length, 0, 'no batchUpdate was issued');
+});
+
+test('sweep: parseDoc records the hint paragraph and the provenance sub-range', () => {
+  const { parseDoc } = require('../src/destinations/googleDocs');
+  const doc = sweepDoc(HINT_VERIFIED);
+  const f = parseDoc(doc.toJson()).assets[0].fields[0];
+
+  assert.ok(f.noteStart > 0 && f.noteEnd > f.noteStart, 'the hint paragraph has an extent');
+  // STRICTLY INSIDE the paragraph, which is what keeps the citation link: the
+  // link sits on the platform name earlier in the same paragraph, and only the
+  // characters from provenanceStart on are deleted.
+  assert.ok(f.provenanceStart > f.noteStart, 'the clause starts after the paragraph does');
+  assert.ok(f.provenanceEnd < f.noteEnd, 'and ends before its newline');
+  assert.strictEqual(f.provenanceText, "Verified against LinkedIn's spec page on 2026-08-20.");
+  // A field with no clause reports null — never an index of 0, which would be a
+  // valid-looking range at the top of the document.
+  const bare = parseDoc(sweepDoc(HINT_NONE).toJson()).assets[0].fields[0];
+  assert.strictEqual(bare.provenanceStart, null);
+  assert.strictEqual(bare.provenanceEnd, null);
+  assert.strictEqual(bare.noteStart > 0, true, 'the paragraph is still located');
+});
+
+test('the strip removes every provenance wording, not just the current one', () => {
+  const { stripReaderOnlyLines } = require('../src/destinations/googleDocs');
+  const base = 'Front-load the first 40 characters.';
+
+  assert.strictEqual(stripReaderOnlyLines(`${base} Verified against Meta's spec page on 2026-08-20.`), base);
+  // THE ONE THAT WAS LEAKING. When VERIFIED_LINE replaced CHECKED_LINE, the
+  // superseded wording stopped being stripped — so every document from that
+  // window had been shipping it into its own Field guidance.
+  assert.strictEqual(stripReaderOnlyLines(`${base} Source unchanged as of 2026-08-20.`), base);
+  // And the sentence the sweep writes is reader-facing by exactly the same test:
+  // it tells whoever opens the document that its limit moved. It tells a model
+  // writing copy nothing it can act on.
+  assert.strictEqual(stripReaderOnlyLines(`${base} Limit corrected 2026-09-14.`), base);
+});
+
 test('spec notice: the wording, the unit, and the drop warning', () => {
   const { specChangeNotification } = require('../src/utils/specNotice');
   const rose = specChangeNotification({

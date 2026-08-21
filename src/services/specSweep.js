@@ -193,7 +193,12 @@ function manifestHits(manifest, change) {
 }
 
 // Correct one project's document. Returns { corrected, skipped } or throws.
-async function correctProject(destination, project, hits, change, effectiveMax) {
+//
+// `correctedOn` is the whole RUN's date, computed once by runSpecSweep and passed
+// down. Not read from the clock per document: a sweep that crosses midnight would
+// otherwise date two documents differently for one event, and "Limit corrected"
+// is a claim about the event rather than about when a particular file was opened.
+async function correctProject(destination, project, hits, change, effectiveMax, correctedOn) {
   const clients = await getClientsForTenant({
     tenantId: project.tenantId,
     // The person who created the document. A sweep has no interactive session, so
@@ -212,7 +217,7 @@ async function correctProject(destination, project, hits, change, effectiveMax) 
     newMax: Number(change.newValue),
   }));
 
-  const result = await destination.correctFieldBrackets(project.copyDocId, corrections, clients);
+  const result = await destination.correctFieldBrackets(project.copyDocId, corrections, clients, { correctedOn });
 
   for (const a of result.applied) {
     await updateManifestMax(project.id, {
@@ -245,6 +250,11 @@ async function runSpecSweep({ dryRun = false, limit = 500 } = {}) {
   }
 
   const destination = getDestination();
+  // ONE DATE FOR THE RUN. Every document this sweep corrects gets the same
+  // "Limit corrected YYYY-MM-DD." — the sentence is about the correction, not
+  // about when a given file happened to be opened, and a run that crosses
+  // midnight must not split one event across two dates.
+  const correctedOn = new Date().toISOString().slice(0, 10);
   const library = indexLibrary(await getLibraryRows());
   const { projects, skippedNoManifest } = await getSweepableProjects();
 
@@ -312,7 +322,7 @@ async function runSpecSweep({ dryRun = false, limit = 500 } = {}) {
           continue;
         }
         try {
-          const res = await correctProject(destination, project, hits, change, verdict.effectiveMax);
+          const res = await correctProject(destination, project, hits, change, verdict.effectiveMax, correctedOn);
           if (res.applied.length > 0) {
             t.documentsCorrected += 1;
             documentsCorrected += 1;

@@ -23,6 +23,14 @@ const BLACK_BORDER = {
   dashStyle: 'SOLID',
 };
 
+// The hint line's own styling, named so a later editor of that paragraph can
+// reproduce it exactly rather than approximate it. See fieldNote below.
+const NOTE_TEXT_STYLE = {
+  italic: true,
+  foregroundColor: { color: { rgbColor: { red: 0.45, green: 0.45, blue: 0.45 } } },
+};
+const NOTE_TEXT_FIELDS = 'italic,foregroundColor';
+
 // Left-indent a paragraph by `pt` points (both the block and its first line, so
 // wrapped lines and the paragraph align). Used to nest grouped fields.
 function indentStyle(pt) {
@@ -141,15 +149,19 @@ class DocBuilder {
   // Italic + muted grey so it reads as guidance, distinct from drafted copy
   // (regular weight) and the asset meta line (plain italic). Parsers recognize
   // it by the italic style + its position right after the bold label.
+  //
+  // The style is a named constant and EXPORTED because a second writer now edits
+  // inside one of these paragraphs: the sweep replaces the provenance sentence at
+  // the end of a hint line, and text inserted there has to carry the same italic
+  // and the same grey. Inheritance would probably do it; a literal copied into
+  // googleDocs.js would drift the first time this grey moved, and a half-grey
+  // sentence is visible to every reader of that document.
   fieldNote(text, { indent = 0, links = [] } = {}) {
     const range = this._push(text, {
       paragraphStyle: indent ? indentStyle(indent) : undefined,
       paragraphFields: indent ? 'indentStart,indentFirstLine' : undefined,
-      textStyle: {
-        italic: true,
-        foregroundColor: { color: { rgbColor: { red: 0.45, green: 0.45, blue: 0.45 } } },
-      },
-      textFields: 'italic,foregroundColor',
+      textStyle: NOTE_TEXT_STYLE,
+      textFields: NOTE_TEXT_FIELDS,
     });
     // Layer standard blue+underlined hyperlinks over sub-ranges (e.g. the platform
     // name in the tier line). Pushed AFTER the base style so they win on their
@@ -349,4 +361,4 @@ class DocBuilder {
   }
 }
 
-module.exports = { DocBuilder };
+module.exports = { DocBuilder, NOTE_TEXT_STYLE, NOTE_TEXT_FIELDS };

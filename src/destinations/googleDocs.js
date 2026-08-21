@@ -12,7 +12,7 @@
 
 const config = require('../config');
 const { getClients } = require('../google');
-const { DocBuilder } = require('./docBuilder');
+const { DocBuilder, NOTE_TEXT_STYLE, NOTE_TEXT_FIELDS } = require('./docBuilder');
 const { findHeaderTable } = require('./docHeaderTable');
 const { isValidHeaderSchema } = require('./docHeaderSchema');
 const { isValidNamingPattern, applyNamingPattern } = require('./docNaming');
@@ -434,6 +434,68 @@ function verifiedSentence(specVerifiedAt, specSource) {
   return `Verified against ${sourceName}'s spec page on ${d.toISOString().slice(0, 10)}.`;
 }
 
+// EVERY PROVENANCE WORDING THIS CODEBASE HAS EVER WRITTEN INTO A DOCUMENT.
+//
+// A document is a FILE. Nothing reaches inside it again, so a sentence shipped
+// for one afternoon is still out there — and anything that READS a document back
+// has to know every form, even the ones nothing writes any more. There are three:
+//
+//   "Source unchanged as of 2026-08-20."         1e37918, superseded by b018606
+//   "Verified against Meta's spec page on …"     b018606, the current wording
+//   "Limit corrected 2026-09-14."                written by the sweep, below
+//
+// The first was live on main for 75 minutes on 2026-08-20, and Railway
+// auto-deploys main, so documents built in that window carry it. It is READ here
+// and WRITTEN nowhere: verifiedSentence cannot produce it. Do not delete it as
+// dead code — the documents are the reason it exists, and they outlive the
+// composer that made them.
+const CHECKED_LINE_SUPERSEDED = /\s*Source unchanged as of \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
+
+// THE CORRECTION SENTENCE, written by the sweep in place of whichever provenance
+// clause a field was carrying.
+//
+// Why it REPLACES rather than joins. The clause it displaces asserts that a
+// human confirmed this number against its page on a date — and the sweep is
+// moving the number precisely because that is no longer what the page says. A
+// stale date would be untidy; a stale VERIFICATION is a false claim about the one
+// field whose number just changed underneath the reader. Leaving it is worse than
+// leaving nothing.
+//
+// Why it names no source. "Verified against Meta's spec page" earns its
+// specificity because a human read that page; the sweep read a database row. A
+// platform name here would claim the same authority for a different event.
+const CORRECTED_PREFIX = 'Limit corrected ';
+const CORRECTED_LINE = /\s*Limit corrected \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
+
+// ISO only, and REFUSED rather than defaulted. A date this function invents is a
+// date nobody can check; a throw happens before any request is built, so the
+// document is untouched and the sweep logs it. (The same choice the overlapping-
+// range guard makes, for the same reason.)
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function correctedSentence(isoDate) {
+  if (!ISO_DATE.test(String(isoDate || ''))) {
+    throw new Error(
+      `correctFieldBrackets needs correctedOn as YYYY-MM-DD; got ${JSON.stringify(isoDate)}. `
+        + 'The document was NOT modified.'
+    );
+  }
+  return `${CORRECTED_PREFIX}${isoDate}.`;
+}
+
+// The provenance clause as it sits at the END of a hint paragraph — an
+// alternation over all three wordings, anchored the way LABEL_BRACKET_AT_END is
+// and for the same reason: fieldHint APPENDS the clause last, so "the last
+// sentence" is unambiguous, where a first-match search over a paragraph that also
+// contains a tenant's note is not.
+const PROVENANCE_AT_END = new RegExp(
+  '(?:'
+    + 'Verified against [^.]{1,60} on \\d{4}-\\d{2}-\\d{2}\\.'
+    + '|Source unchanged as of \\d{4}-\\d{2}-\\d{2}\\.'
+    + '|Limit corrected \\d{4}-\\d{2}-\\d{2}\\.'
+    + ')[ \\t\\r\\n]*$'
+);
+
 // The recommended tier's ATTRIBUTION clause — "Recommended by Meta.",
 // "Recommended by Constant Contact (2.1M customers, small-business campaigns)."
 // Removed for the reason the reference-stats block withholds a source name: a
@@ -463,7 +525,17 @@ function stripReaderOnlyLines(text) {
   let out = String(text == null ? '' : text);
   for (const line of READER_ONLY_LINES) out = out.split(line).join(' ');
   out = out.replace(RECOMMENDED_ATTRIBUTION, ' ');
+  // All three provenance wordings, not just the one the composer writes today.
+  // The strip's job is to keep reader-facing sentences out of a drafting prompt,
+  // and the prompt is built from a DOCUMENT — which may have been written by any
+  // version of this file. The superseded wording stopped being stripped the
+  // moment VERIFIED_LINE replaced CHECKED_LINE, so every document from that
+  // window has been shipping "Source unchanged as of 2026-08-20." into its own
+  // Field guidance ever since. Small, and exactly the class of silent failure
+  // this function exists to prevent.
   out = out.replace(VERIFIED_LINE, ' ');
+  out = out.replace(CHECKED_LINE_SUPERSEDED, ' ');
+  out = out.replace(CORRECTED_LINE, ' ');
   return out.replace(/\s+/g, ' ').trim();
 }
 
@@ -983,21 +1055,44 @@ function paragraphCharIndex(paragraph) {
 // paragraph's newline and any spacing exactly as it was.
 const LABEL_BRACKET_AT_END = /\[[^\]]*\][ \t\r\n]*$/;
 
-function labelBracketRange(paragraph) {
+// The span a trailing-anchored pattern matches, as an absolute document range.
+//
+// ONE implementation for two callers — the label's bracket and the hint line's
+// provenance clause. They ask the identical question of two different paragraphs,
+// and the part worth not writing twice is the contiguity guard: contiguity is not
+// assumed by paragraphCharIndex, but it IS required for a single delete range. A
+// span split across runs that are not adjacent in the document cannot be
+// expressed as one range, and silently deleting from the first character to the
+// last would take whatever sits between them with it.
+//
+// Returns null — "do not touch this paragraph" — for every failure: no character
+// map, no match, an empty match, or a non-contiguous one. Never an index of 0,
+// which would be a valid-looking range at the top of the document.
+function trailingRange(paragraph, pattern) {
   const idx = paragraphCharIndex(paragraph);
   if (!idx) return null;
-  const m = idx.raw.match(LABEL_BRACKET_AT_END);
+  const m = idx.raw.match(pattern);
   if (!m) return null;
   const start = m.index;
+  // The range EXCLUDES trailing whitespace, so replacing it leaves the
+  // paragraph's newline and any spacing exactly as it was.
   const text = m[0].replace(/[ \t\r\n]+$/, '');
   const end = start + text.length;
   if (!text || idx.map[start] == null || idx.map[end - 1] == null) return null;
-  // Contiguity is not assumed above, but it IS required for a single delete
-  // range: a bracket split across runs that are not adjacent in the document
-  // cannot be expressed as one range, and silently deleting the span between
-  // them would take the text in the middle with it.
   if (idx.map[end - 1] - idx.map[start] !== text.length - 1) return null;
   return { start: idx.map[start], end: idx.map[end - 1] + 1, text };
+}
+
+function labelBracketRange(paragraph) {
+  return trailingRange(paragraph, LABEL_BRACKET_AT_END);
+}
+
+// The provenance clause at the end of a hint paragraph, or null when the field
+// carries none — which is the common case and MUST stay distinguishable from a
+// clause at index 0. A field that never had provenance gets no sentence written
+// to it; see correctFieldBrackets.
+function noteProvenanceRange(paragraph) {
+  return trailingRange(paragraph, PROVENANCE_AT_END);
 }
 
 // Walks the document and reconstructs the campaign context needed to draft copy.
@@ -1227,6 +1322,23 @@ function parseDoc(doc) {
         // regeneration; stays null for a first draft so that path is untouched.
         deleteEnd: null,
         notes: '',
+        // WHERE THE HINT PARAGRAPH IS. `notes` has always kept the paragraph's
+        // TEXT and thrown its position away, which was enough while nothing edited
+        // inside it. Set by the notes branch below; null when the field has no
+        // hint line at all.
+        //
+        // noteStart/noteEnd are the paragraph's own extent, the sibling of
+        // labelStart/labelEnd. Nothing reads them today — the sweep edits the
+        // provenance SUB-RANGE, never the whole paragraph, because the paragraph
+        // carries the citation hyperlink and replacing it would drop the link.
+        noteStart: null,
+        noteEnd: null,
+        // The provenance clause's own range, and the text found there. null on a
+        // field that never carried one — which a caller must read as "write
+        // nothing", not as an index of 0.
+        provenanceStart: null,
+        provenanceEnd: null,
+        provenanceText: null,
         // Highest "Riff N" batch number seen under this field (0 = none). Drives
         // the next append batch's number (max+1). Set by the HEADING_6 branch.
         maxRiffN: 0,
@@ -1254,6 +1366,15 @@ function parseDoc(doc) {
       // grow (it is already required by this file — the other direction would be
       // a cycle). The doc still shows the line; the drafter never sees it.
       currentField.notes = stripReaderOnlyLines(text);
+      currentField.noteStart = item.startIndex;
+      currentField.noteEnd = item.endIndex;
+      // Computed from the paragraph, not from `notes` — `notes` is the STRIPPED
+      // text and the clause is the first thing the strip removes, so an offset
+      // into it would locate nothing.
+      const prov = noteProvenanceRange(p);
+      currentField.provenanceStart = prov ? prov.start : null;
+      currentField.provenanceEnd = prov ? prov.end : null;
+      currentField.provenanceText = prov ? prov.text : null;
       currentField.insertIndex = item.endIndex;
       continue;
     }
@@ -2606,7 +2727,54 @@ async function addUnanchoredComment(docId, content, clients) {
 // says which documents to open, the document itself decides what to change. That
 // is what makes a re-run after a partial failure a no-op on the documents already
 // corrected, rather than a second edit.
-async function correctFieldBrackets(id, corrections, clients) {
+//
+// ─── THE PROVENANCE CLAUSE MOVES WITH THE BRACKET ───────────────────────────
+// A corrected field's hint line ends "Verified against Meta's spec page on
+// 2026-08-20." — a claim that a human confirmed THIS number against that page.
+// The bracket is moving because that is no longer what the page says, so leaving
+// the sentence is not a stale date: it is the document asserting the source was
+// unchanged on the one field whose number just changed because the source
+// changed. It becomes "Limit corrected YYYY-MM-DD."
+//
+// IN THE SAME batchUpdate, which is the whole reason this is cheap. Docs applies
+// a batch atomically, so three more requests in the array already built means the
+// bracket and the sentence move together or neither does. There is no second
+// read, and no window in which a document says both things.
+//
+// ONLY THE SENTENCE, NEVER THE PARAGRAPH. The hint line carries the citation
+// HYPERLINK on the platform name. Replacing the paragraph would drop it, and a
+// corrected field that loses its citation while gaining a "corrected" sentence
+// has less provenance than it started with. The clause is appended last by
+// fieldHint, so its range is computable (noteProvenanceRange) and everything
+// before it — the tenant's note, the tier line, the link — is untouched.
+//
+// A FIELD CARRYING NO CLAUSE GETS NOTHING WRITTEN. Its bracket is corrected and
+// the hint line is left exactly as it is.
+//
+// THE HAND-EDITED HINT LINE IS THE RULE, NOT A SIDE EFFECT OF IT. A writer who
+// rewrites that line no longer matches the pattern, so the sweep leaves their
+// words alone instead of appending to them. This function has one licence — to
+// replace a sentence THIS CODEBASE WROTE with a more accurate one — and a line a
+// person has since edited is not that sentence any more. Matching on the wording
+// we composed is what keeps the licence honest; a positional rule ("the last
+// sentence of the hint paragraph") would have overwritten them.
+//
+// The same non-match covers every other no-clause case for free: a field that
+// never qualified for a date (house_default, a tenant-authored field, a source
+// resolving to no platform) and a document built before the feature existed.
+// Appending to those would be inventing provenance for a field that never had any.
+//
+// A SECOND CORRECTION REPLACES THE FIRST rather than stacking. "Limit corrected"
+// is one of the three wordings PROVENANCE_AT_END matches, so a field corrected
+// twice reads the newer date and no more: the sentence answers "when did this
+// document's limit last move", and the history it does not carry is in
+// spec_change_log, which is what that table is for.
+//
+// `correctedOn` is REQUIRED, ISO, and supplied by the caller — one date for a
+// whole sweep run, so a run spanning midnight does not date two documents
+// differently for one event. It is not defaulted from the clock here: a
+// destination inventing a date is a date nobody chose and nobody can check.
+async function correctFieldBrackets(id, corrections, clients, { correctedOn } = {}) {
   const { docs } = clients || (await getClients());
   const doc = (await docs.documents.get({ documentId: id })).data;
   const parsed = parseDoc(doc);
@@ -2660,19 +2828,68 @@ async function correctFieldBrackets(id, corrections, clients) {
       to: text,
       oldMax: field.charMax,
       newMax: c.newMax,
+      // Reported so the run can say what it did to the hint line as well as to
+      // the bracket. 'absent' is a normal outcome, not a failure.
+      provenance: field.provenanceStart != null && field.provenanceEnd != null ? 'rewritten' : 'absent',
+      provenanceFrom: field.provenanceText || null,
+      provenanceStart: field.provenanceStart,
+      provenanceEnd: field.provenanceEnd,
     });
   }
 
   if (applied.length === 0) return { docId: id, title: doc.title || '', applied: [], skipped };
 
-  // Two labels cannot overlap, so this can only fire on a bug in the range
-  // computation above. It refuses the whole document rather than half-editing it.
-  const ordered = [...applied].sort((a, b) => b.start - a.start);
+  // Composed once, and BEFORE anything is built: a malformed correctedOn throws
+  // here, with no requests written and the document untouched.
+  const correctedText = correctedSentence(correctedOn);
+
+  // Every span this document is about to change: each field's bracket, and the
+  // provenance clause of the fields that carry one. Flattened into one list
+  // because the ordering and the overlap guard are properties of the DOCUMENT,
+  // not of either kind of edit — a bracket and a hint line four characters apart
+  // would be just as unwritable as two brackets.
+  const edits = [];
+  for (const a of applied) {
+    edits.push({
+      start: a.start,
+      end: a.end,
+      to: a.to,
+      // Inserted text inherits the style of what precedes it, which here is the
+      // bold label — but "inherits" is a property of the API rather than of this
+      // document, and a label whose runs were split could put a non-bold
+      // character immediately before the bracket. Stating it costs one request
+      // and removes the question.
+      textStyle: { bold: true },
+      textFields: 'bold',
+      what: `${a.fieldName} bracket`,
+    });
+    if (a.provenance === 'rewritten') {
+      edits.push({
+        start: a.provenanceStart,
+        end: a.provenanceEnd,
+        to: correctedText,
+        // The hint line's own italic + grey, imported from the builder that
+        // wrote it rather than restated here. The character before this insertion
+        // point is the tier line's tail — italic, grey, and NOT part of the
+        // citation link, which sits earlier in the paragraph — so inheritance
+        // would probably do it; the same argument as the bracket's bold applies.
+        textStyle: NOTE_TEXT_STYLE,
+        textFields: NOTE_TEXT_FIELDS,
+        what: `${a.fieldName} provenance`,
+      });
+    }
+  }
+
+  // Two labels cannot overlap, and a label cannot overlap the paragraph below it,
+  // so this can only fire on a bug in the range computation above. It refuses the
+  // whole document rather than half-editing it.
+  const ordered = edits.sort((a, b) => b.start - a.start);
   for (let i = 1; i < ordered.length; i += 1) {
     if (ordered[i].end > ordered[i - 1].start) {
       throw new Error(
         `Bracket correction aborted before writing: overlapping ranges in ${id} — ` +
-          `[${ordered[i].start}, ${ordered[i].end}) and [${ordered[i - 1].start}, ${ordered[i - 1].end}). ` +
+          `${ordered[i].what} [${ordered[i].start}, ${ordered[i].end}) and ` +
+          `${ordered[i - 1].what} [${ordered[i - 1].start}, ${ordered[i - 1].end}). ` +
           'The document was NOT modified.'
       );
     }
@@ -2682,23 +2899,20 @@ async function correctFieldBrackets(id, corrections, clients) {
   for (const a of ordered) {
     requests.push({ deleteContentRange: { range: { startIndex: a.start, endIndex: a.end } } });
     requests.push({ insertText: { location: { index: a.start }, text: a.to } });
-    // Inserted text inherits the style of what precedes it, which here is the
-    // bold label — but "inherits" is a property of the API rather than of this
-    // document, and a label whose runs were split could put a non-bold character
-    // immediately before the bracket. Stating it costs one request and removes
-    // the question.
     requests.push({
       updateTextStyle: {
         range: { startIndex: a.start, endIndex: a.start + a.to.length },
-        textStyle: { bold: true },
-        fields: 'bold',
+        textStyle: a.textStyle,
+        fields: a.textFields,
       },
     });
   }
 
   await docs.documents.batchUpdate({ documentId: id, requestBody: { requests } });
+  const rewritten = applied.filter((a) => a.provenance === 'rewritten').length;
   console.log(
-    `[googleDocs] corrected ${applied.length} bracket(s) in ${id}: ` +
+    `[googleDocs] corrected ${applied.length} bracket(s) in ${id} ` +
+      `(${rewritten} provenance line(s) rewritten to "${correctedText}"): ` +
       applied.map((a) => `${a.assetType}/${a.fieldName} ${a.from} -> ${a.to}`).join('; ')
   );
   return { docId: id, title: doc.title || '', applied, skipped };

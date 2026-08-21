@@ -2059,6 +2059,20 @@ nothing could.
 written nowhere** — which reads as dead code to anyone who greps for it, so the
 constant carries the commit range and the reason it may not be deleted.
 
+**IT HAS RUN IN PRODUCTION (`--commit`).** `scripts/migrateMetaPlacementCitations.js`
+moved **18 `copy_fields` rows** — the nine cited Meta fields across two tenants —
+and **2 `spec_watch_list` rows** onto the `/facebook-feed` URLs, in one
+transaction. Both write-time refusals passed: no field left citing a bare URL,
+and no cited Meta URL unwatched. `checkSpecHealth` afterwards reports all nine
+watch rows healthy with both Meta rows on their placement URLs, and a brief built
+since renders "Recommended by Meta (Facebook Feed)."
+
+The watch rows moved WITH the citation rather than being added and retired,
+because the bare and `/facebook-feed` URLs hash identically after the content
+stop marker (`e5792dad455fcade` / `8fd92feee0d3025d`). `current_hash` and
+`affected_fields` were untouched, so there was no unbaselined window and no
+re-derivation.
+
 **THE PLACEMENT QUALIFIER IS SAFE ON `recommended` AND IS A TRAP ON `enforced`.**
 Written down before it fires rather than after, because the gap between the two
 is one migration wide.

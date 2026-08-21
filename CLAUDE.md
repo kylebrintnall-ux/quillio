@@ -5,6 +5,27 @@ Guidance for AI assistants (and humans) working in this repository.
 Everything here is meant to be verifiable against the code. If a claim in this
 file disagrees with the source, the source wins — fix this file.
 
+**AND WHEN A MECHANISM IS REPLACED, THE PROSE DESCRIBING IT HAS TO BE CHECKED,
+NOT ONLY THE CODE THAT CALLED IT.** A rename breaks a caller loudly; it leaves
+the paragraph explaining the old thing sitting there, correct-looking and false.
+
+The instance, August 2026: a section here was named after `getCheckedSourceDates`
+and every clause in it described what that function decided. The function had
+been **deleted** two commits earlier when the design moved from a weekly-moving
+date to a human verification event. Nothing broke. The section simply taught the
+next reader a mechanism that does not exist, in a file whose whole value is that
+it can be believed without re-deriving it.
+
+That is the **stale strip constant one surface over** — same rule, and the same
+reason it is silent. `VERIFIED_LINE` replaced `CHECKED_LINE` and the strip kept
+running, removing a wording nothing wrote any more and missing the one still in
+circulation. Code that reads something written earlier, and prose that describes
+something built earlier, both outlive the thing they were written against, and
+neither of them errors when it stops being true.
+
+So a commit that replaces a mechanism greps this file for its name before it
+lands. `git log -S` on the identifier is the cheap version.
+
 ## What this is
 
 Quillio is a Node.js + Express service that turns a free-form campaign brief

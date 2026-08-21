@@ -896,7 +896,12 @@ test('probeSpecPage: it uses the detector’s normalize, and never touches the d
   assert.ok(!/process\.env\.DATABASE_URL/.test(src), 'never reads process.env.DATABASE_URL');
   // …and no writes of any other kind.
   assert.ok(!/writeFileSync|createWriteStream|appendFileSync/.test(src), 'writes no files');
-  assert.ok(!/\b(INSERT|UPDATE|DELETE)\b/.test(src), 'contains no write SQL');
+  // NO SQL-KEYWORD SCAN HERE, deliberately. It used to assert the words INSERT /
+  // UPDATE / DELETE were absent, which goes red the moment somebody writes the
+  // comment "this never issues an INSERT" — the exact sentence a maintainer
+  // reaching for this property would write. `.query(` below covers the actual
+  // mechanism; a keyword scan only adds false positives.
+
 
   // The fetch options are the detector's, and are asserted BYTE-IDENTICAL rather
   // than trusted — the probe does its own fetch (fetchText discards the HTTP
@@ -938,11 +943,11 @@ test('probeSpecPage: it uses the detector’s normalize, and never touches the d
   // reports `failed` on its first real run.
   assert.match(det, /THE ANCHOR IS CHECKED AGAINST THE TRUNCATED TEXT/,
     'the detector still anchors against the truncated text');
-  assert.match(src, /hashOneRegion/, 'the probe searches a named hashed region');
-  assert.ok(src.indexOf('let markers = []') < src.indexOf("rule('ANCHOR CANDIDATES')"),
-    'the stop marker is decided BEFORE the anchors that depend on it');
   assert.match(src, /anchorCandidates\(hashOneRegion, hashOneRegion, hashTwoRegion/,
     'and the candidates come from that region, not the full normalized text');
+  // The ORDER of that computation is asserted behaviourally, in the test below —
+  // an earlier version compared the positions of two string literals in this
+  // file, which is a claim about today's line order and not about behaviour.
 
   // RANKED BY PROVENANCE, NOT BY DIGITS — and this assertion USED to say the
   // opposite. It pinned "DIGIT-BEARING CANDIDATES LAST", which is the sort that
@@ -1033,6 +1038,75 @@ test('probeSpecPage ranking: boilerplate at offset 0 never outranks a seeded can
   const seededCount = found.filter((c) => c.via === 'seeded').length;
   assert.strictEqual(citedRanked.filter((c) => c.via === 'seeded').length, seededCount,
     'and never moves one out of the seeded group');
+});
+
+test('probeSpecPage region: no anchor candidate is drawn from past the stop marker', () => {
+  const { anchorCandidates, rankCandidates, hashRegionFor } =
+    require('../scripts/probeSpecPage');
+
+  // DRIVES hashRegionFor — the function probe() itself calls — rather than
+  // replaying its steps here. A test that reimplements the pipeline it is
+  // checking can pass while the pipeline is wired wrong, which is the failure
+  // this project already paid for when an A/B called generateAssetDrafts
+  // directly and the production entry point rebuilt the field without notes.
+  //
+  // The fixture is the Meta shape: identical spec body, a tail that permutes.
+  const HEAD = 'Probe test ads have character limits. The headline fields support up to '
+    + '30 characters. The description fields support up to 90 characters each. ';
+  // BIG ENOUGH TO EXERCISE THE EARLY BIAS, which is the whole point of the last
+  // assertion in this test. The forward sweep only produces a bad marker when the
+  // prefix yields MORE candidates than the discovery limit of twelve — with a
+  // short prefix it finds them all and sorting afterwards is harmless, so a small
+  // fixture reports the backward sweep as unnecessary. Verified by mutation: at
+  // 30 sections, reverting to a forward sweep left this test green.
+  const BODY = Array.from({ length: 400 }, (_, i) =>
+    `Section ${i} covers delivery, billing and reporting for account tier ${i}. `).join('');
+  const TAIL_A = 'View available calls to action Learn More Sign Up Shop Now Book Now';
+  const TAIL_B = 'View available calls to action Sign Up Shop Now Book Now Learn More';
+  const one = HEAD + BODY + TAIL_A;
+  const two = HEAD + BODY + TAIL_B;
+
+  const region = hashRegionFor(one, two);
+  assert.strictEqual(region.stable, false, 'the fixture diverges');
+  assert.ok(region.firstDiff > 0 && region.firstDiff < one.length, 'and the divergence is located');
+  assert.ok(region.bestMarker, 'a stop marker was found before the divergence');
+
+  // THE REGION IS A PROPER PREFIX — truncation actually happened.
+  assert.ok(region.hashOneRegion.length < one.length, 'the region is shorter than the document');
+  assert.strictEqual(region.hashOneRegion, one.slice(0, region.hashOneRegion.length),
+    'and it is a prefix of it, not some other slice');
+
+  // THE PROPERTY. Every candidate the anchor search returns lies wholly inside
+  // the region the detector would hash. A candidate past the marker asserts that
+  // content we then throw away rendered — it looks perfect in a report and
+  // returns `failed` on its first real run.
+  const seeds = [one.indexOf('30 characters'), one.indexOf('90 characters')].filter((n) => n >= 0);
+  const candidates = rankCandidates(
+    anchorCandidates(region.hashOneRegion, region.hashOneRegion, region.hashTwoRegion, seeds, 10)
+  );
+  assert.ok(candidates.length > 0, 'the fixture yields candidates at all');
+  for (const c of candidates) {
+    assert.ok(c.at + c.text.length <= region.hashOneRegion.length,
+      `candidate at ${c.at} ends inside the hashed region (${region.hashOneRegion.length})`);
+    assert.ok(region.hashOneRegion.includes(c.text), 'and its text is present in that region');
+  }
+
+  // AND THE MARKER IS THE LATEST ONE FOUND, not the earliest. The sweep runs
+  // backward for exactly this: applying the limit during a FORWARD discovery
+  // samples only the start, so sorting afterwards reorders an early-biased
+  // sample and labels the result BEST. On an 18k fixture that proposed a marker
+  // retaining 7.3% and dropping every character number on the page.
+  const ats = region.markers.map((m) => m.at);
+  assert.deepStrictEqual(ats, ats.slice().sort((a, b) => b - a), 'markers print latest-first');
+  assert.ok(region.bestMarker.keptLen > one.length / 2,
+    `the best marker keeps most of the page (kept ${region.bestMarker.keptLen} of ${one.length})`);
+
+  // A STABLE page has no marker and the region is the whole text — the state
+  // every page currently watched is in.
+  const still = hashRegionFor(one, one);
+  assert.strictEqual(still.stable, true);
+  assert.strictEqual(still.bestMarker, null, 'no marker proposed for a stable page');
+  assert.strictEqual(still.hashOneRegion, one, 'and the region is the whole document');
 });
 
 test('Google Responsive Search Ad: the page text is in the header, and the seed matches the migration', () => {

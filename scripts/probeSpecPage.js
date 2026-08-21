@@ -116,11 +116,6 @@ function rule(title) {
   console.log(`\n${'─'.repeat(78)}\n${title}\n${'─'.repeat(78)}`);
 }
 
-function countOf(hay, needle) {
-  if (!needle) return 0;
-  return hay.split(needle).length - 1;
-}
-
 // "Exactly once" WITHOUT counting to the end. The candidate search asks this
 // question tens of thousands of times on a long page, and split() builds an
 // array of every piece before the caller throws all but the length away — so on
@@ -263,6 +258,12 @@ function anchorCandidates(source, corpusOne, corpusTwo, seeds, limit, opts = {})
   const spans = [];
   const tried = new Set();
 
+  // DECLARED BEFORE THE CLOSURE THAT READS IT. `consider` captures `via`, and
+  // with the declaration below the closure it works only because every call
+  // happens after that line executes — a ReferenceError waiting for whoever
+  // moves a call site up.
+  let via = 'seeded';
+
   const consider = (start, end) => {
     if (accepted.length >= limit) return;
     const [s, e] = snapToWords(one, start, end);
@@ -286,8 +287,7 @@ function anchorCandidates(source, corpusOne, corpusTwo, seeds, limit, opts = {})
   // A seeded candidate sits beside a character-adjacent number, so it is in the
   // spec BODY by construction; a swept one is wherever the sampler happened to
   // land, which on most pages is chrome.
-  let via = 'seeded';
-
+  //
   // Seeded first — a spec label beside a character number is the anchor shape
   // this project has settled on, and it is the opposite of site chrome.
   for (const p of seeds) {
@@ -360,6 +360,49 @@ function rankCandidates(candidates, { cited } = {}) {
     }
     return x.at - y.at;
   });
+}
+
+// --- the region the detector would hash --------------------------------------
+// EXTRACTED SO THE TEST DRIVES THE SAME CODE probe() DOES. The property — anchor
+// candidates never come from past the stop marker — used to be asserted by
+// comparing the POSITION OF TWO STRING LITERALS in this file, which is a claim
+// about today's line order rather than about behaviour. Refactor either of those
+// lines and the assertion breaks for no reason or silently stops checking
+// anything. That is the third time this file has been corrected for asserting a
+// property somewhere other than where it lives.
+//
+// Returns everything downstream needs, so probe() composes rather than computes.
+function hashRegionFor(normOne, normTwo) {
+  const stable = hashText(normOne) === hashText(normTwo);
+  const firstDiff = stable ? -1 : firstDifference(normOne, normTwo);
+
+  let markers = [];
+  let bestMarker = null;
+  if (!stable) {
+    // Drawn from the prefix, unique across BOTH whole documents. fromEnd, so the
+    // twelve DISCOVERED are the twelve latest rather than the twelve earliest —
+    // see anchorCandidates for the measured failure that makes this a fix and
+    // not a tidy-up. The sort then makes the print order explicit rather than
+    // dependent on discovery order.
+    markers = anchorCandidates(normOne.slice(0, firstDiff), normOne, normTwo, [], 12, { fromEnd: true })
+      .sort((x, y) => y.at - x.at)
+      .slice(0, 5);
+    if (markers.length) {
+      const kept = truncateAtMarker(normOne, markers[0].text);
+      bestMarker = { ...markers[0], keptLen: kept === null ? 0 : kept.length };
+    }
+  }
+
+  // truncateAtMarker is what the run loop would apply, so the region comes from
+  // it rather than from offset arithmetic that could disagree with it.
+  return {
+    stable,
+    firstDiff,
+    markers,
+    bestMarker,
+    hashOneRegion: bestMarker ? (truncateAtMarker(normOne, bestMarker.text) || normOne) : normOne,
+    hashTwoRegion: bestMarker ? (truncateAtMarker(normTwo, bestMarker.text) || normTwo) : normTwo,
+  };
 }
 
 // --- the report --------------------------------------------------------------
@@ -447,16 +490,18 @@ async function probe(url, opts = {}) {
   }
 
   // ---- STABILITY
+  // COMPUTED ONCE, HERE, for the whole report — the stop marker has to be
+  // decided before the anchors, because the anchors are searched inside the
+  // region it implies. Printed in the order you read them; computed in the order
+  // they depend on each other.
+  const region = hashRegionFor(normOne, normTwo);
+  const { stable, firstDiff, markers, bestMarker, hashOneRegion, hashTwoRegion } = region;
+
   rule('STABILITY');
-  const hashOne = hashText(normOne);
-  const hashTwo = hashText(normTwo);
-  const stable = hashOne === hashTwo;
-  console.log(`   fetch 1  ${hashOne}`);
-  console.log(`   fetch 2  ${hashTwo}`);
+  console.log(`   fetch 1  ${hashText(normOne)}`);
+  console.log(`   fetch 2  ${hashText(normTwo)}`);
   console.log(`   ${stable ? 'MATCH' : 'DIVERGENT'}`);
-  let firstDiff = -1;
   if (!stable) {
-    firstDiff = firstDifference(normOne, normTwo);
     console.log(`\n   first difference at character ${firstDiff} (${pct(firstDiff, normOne.length)} in)\n`);
     const from = Math.max(0, firstDiff - 100);
     console.log(`   FETCH 1: ${JSON.stringify(normOne.slice(from, from + 200))}`);
@@ -509,42 +554,12 @@ async function probe(url, opts = {}) {
   console.log('   shape: a page listing the places the specs live rather than the specs.');
   console.log('   THIS SECTION IS A SIGNAL, NOT A VERDICT. Read the page.');
 
-  // ---- THE REGION THE DETECTOR WOULD HASH
-  // COMPUTED BEFORE THE ANCHORS ARE, and printed after them, because the two
-  // sections have an order dependency the report's reading order does not.
-  //
-  // THE DETECTOR CHECKS AN ANCHOR AGAINST THE TRUNCATED TEXT — specDetector.js
-  // passes hashableText(row, html) to checkAnchor, and says so in a comment at
-  // that call site: "an anchor living past the stop marker would assert that
-  // content we then throw away rendered". So an anchor proposed from the FULL
-  // normalized text, on a page that then gets a stop marker, is a candidate that
-  // looks perfect here and reports `failed` on its first real run.
-  //
-  // That is the wrong-number-that-looks-like-a-result shape, so the search runs
-  // inside the truncated region instead. On a stable page there is no marker and
-  // the region is the whole text, which is what every page watched today does.
-  let markers = [];
-  let bestMarker = null;
-  if (!stable) {
-    // Drawn from the prefix, unique across BOTH whole documents.
-    // fromEnd, so the twelve DISCOVERED are the twelve latest rather than the
-    // twelve earliest — see anchorCandidates for the measured failure that
-    // makes this a fix and not a tidy-up. The sort then makes the print order
-    // explicit rather than dependent on discovery order.
-    markers = anchorCandidates(normOne.slice(0, firstDiff), normOne, normTwo, [], 12, { fromEnd: true })
-      .sort((x, y) => y.at - x.at)
-      .slice(0, 5);
-    if (markers.length) {
-      const kept = truncateAtMarker(normOne, markers[0].text);
-      bestMarker = { ...markers[0], keptLen: kept === null ? 0 : kept.length };
-    }
-  }
-  // truncateAtMarker is what the run loop would apply, so the region comes from
-  // it rather than from offset arithmetic that could disagree with it.
-  const hashOneRegion = bestMarker ? (truncateAtMarker(normOne, bestMarker.text) || normOne) : normOne;
-  const hashTwoRegion = bestMarker ? (truncateAtMarker(normTwo, bestMarker.text) || normTwo) : normTwo;
-
   // ---- ANCHOR CANDIDATES
+  // THE DETECTOR CHECKS AN ANCHOR AGAINST THE TRUNCATED TEXT — specDetector.js
+  // passes hashableText(row, html) to checkAnchor, and says so at that call
+  // site: "an anchor living past the stop marker would assert that content we
+  // then throw away rendered". So the search runs inside hashOneRegion, computed
+  // above. See hashRegionFor.
   rule('ANCHOR CANDIDATES');
   console.log(`   ${ANCHOR_MIN}-${ANCHOR_MAX} chars, occurring EXACTLY ONCE in both fetches, snapped to`);
   console.log('   whole words. Seeded near character-adjacent numbers first, because a spec');
@@ -574,11 +589,19 @@ async function probe(url, opts = {}) {
     console.log('   satisfied by chrome is worse than no anchor, because it reports a');
     console.log('   guarantee it is not providing.');
   }
+  // BOTH PERCENTAGES WHEN THEY DIFFER. The offset used to print as a share of the
+  // whole DOCUMENT while the search ran inside the truncated REGION, so a
+  // candidate at the very edge of a 40%-retained region read as "39.8%" — early
+  // in the page, when it is in fact at the boundary of everything that gets
+  // hashed. Cosmetic, and exactly the kind of number a reader would act on.
+  const truncated = hashOneRegion.length < normOne.length;
   for (const c of candidates) {
     const digits = /\d/.test(c.text);
-    console.log(`   ${c.via === 'seeded' ? '[SEEDED]' : '[SWEPT] '}` +
-      ` at ${pct(c.at, normOne.length).padStart(6)}  ${JSON.stringify(c.text)}` +
-      `${digits ? '   [CONTAINS A NUMBER]' : ''}`);
+    const where = truncated
+      ? `${pct(c.at, hashOneRegion.length).padStart(6)} of region (${pct(c.at, normOne.length)} of doc)`
+      : `${pct(c.at, normOne.length).padStart(6)} of doc`;
+    console.log(`   ${c.via === 'seeded' ? '[SEEDED]' : '[SWEPT] '} at ${where}  ` +
+      `${JSON.stringify(c.text)}${digits ? '   [CONTAINS A NUMBER]' : ''}`);
   }
   if (candidates.some((c) => c.via === 'swept')) {
     console.log('\n   [SWEPT] means the sampler landed there, not that anything about the page');
@@ -714,4 +737,6 @@ if (require.main === module) {
 // ordering is the part worth testing behaviourally rather than by scanning the
 // source, because "boilerplate outranks the spec body" is a property of the
 // COMPARATOR and no string match can see it.
-module.exports = { anchorCandidates, rankCandidates, citedFromArgv, snapToWords, occursExactlyOnce };
+module.exports = {
+  anchorCandidates, rankCandidates, citedFromArgv, snapToWords, occursExactlyOnce, hashRegionFor,
+};

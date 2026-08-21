@@ -19606,6 +19606,47 @@ test('freshness: rendered on both surfaces, and never as a badge', () => {
   assert.ok(!/\.lib-fresh\.flagged \.lib-fresh-v/.test(css), 'the verification line is untouched by the flag');
 });
 
+test('contrast harness: read-only, out of the suite, and its fixture is not inert', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'checkContrast.js'), 'utf8');
+
+  // READ-ONLY, like checkSpecHealth. It renders and measures; it writes nothing.
+  assert.ok(!/fs\.write|writeFile|appendFile|unlink|mkdir/.test(src), 'no filesystem writes');
+  assert.ok(!/UPDATE |INSERT |DELETE /.test(src), 'no database at all');
+
+  // NOT IN THE SUITE. npm test runs with no credentials, no network and no
+  // browser in about ten seconds, and that is worth keeping.
+  const pkg = require('../package.json');
+  assert.ok(!/checkContrast/.test(pkg.scripts.test || ''), 'not wired into npm test');
+  assert.ok(!(pkg.devDependencies || {})['playwright-core'], 'the browser stays out of the install');
+  assert.match(src, /npm i --no-save playwright-core/, 'and says how to get one');
+
+  // THE TRIPWIRE THAT MATTERS, and it exists because the first version of this
+  // fixture failed exactly here. It wrapped everything in `.glass-panel`, a class
+  // settings.html does not define. An unknown class is silently INERT — no
+  // background, no backdrop-filter — so every label was measured against the raw
+  // sky instead of the panel, and the run produced 32 plausible failures
+  // including 16px near-black ink at 4.79:1, which is impossible.
+  //
+  // Nothing errored. That is the fourth species of measurement failure: a rig
+  // that omits something the code under test needs reports the absence of its own
+  // fidelity as a result.
+  const fixture = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'fixtures', 'contrast', 'settings.html'), 'utf8'
+  );
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const css = page.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const cls of new Set([...fixture.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].split(/\s+/)))) {
+    if (!cls) continue;
+    assert.ok(
+      new RegExp(`\\.${cls.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s,.:{>]`).test(css),
+      `fixture uses .${cls}, which settings.html does not define — it would render inert`
+    );
+  }
+  // And the script refuses at run time as well, because a fixture can go inert
+  // through a rename in the page rather than an edit here.
+  assert.match(src, /Refusing to report numbers/);
+});
+
 test('spec notice: the wording, the unit, and the drop warning', () => {
   const { specChangeNotification } = require('../src/utils/specNotice');
   const rose = specChangeNotification({

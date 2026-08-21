@@ -1,0 +1,74 @@
+<!-- Contrast fixture — Settings → Asset library, at 390px.
+
+     COMMITTED MARKUP, NOT A SCREENSHOT OF ONE. scripts/checkContrast.js renders
+     this with the page's OWN stylesheet and measures every element in it, so the
+     numbers can be re-derived by anyone instead of living in somebody's
+     scratchpad.
+
+     WHAT IT HAS TO GET RIGHT IS THE CONTAINER, not the text. These labels sit on
+     .lib-asset — rgba(255,255,255,0.5) over backdrop-filter: blur(14px) over the
+     sky gradient — and that stack is why a declared alpha is not the rendered
+     colour. A swatch on a flat div measures a surface no tenant ever sees.
+
+     THE FIRST VERSION OF THIS FIXTURE GOT THAT WRONG and it is worth keeping the
+     reason. It wrapped everything in `.glass-panel`, a class this page does not
+     define, so the container painted NOTHING: backdrop-filter resolved to `none`,
+     the background stayed transparent, and every label was measured against the
+     raw blue sky. Thirty-two of thirty-five "failed", including 16px near-black
+     ink at 4.79:1, which is impossible. Nothing errored — an unknown class is
+     silently inert — so the run produced a full table of plausible numbers that
+     were all about a surface nobody sees.
+
+     That is why the script prints the container's computed backdrop-filter and
+     background before it measures anything: a fixture whose container is inert
+     reports the absence of its own fidelity as a result.
+
+     Add a row here when you add a small label. The script reports every
+     small-text rule this fixture does NOT render, so a gap is visible rather
+     than silent — but it cannot add the row for you. -->
+<main style="padding:12px">
+  <div class="lib-asset">
+    <div class="lib-name">LinkedIn Single Image Ad</div>
+    <div class="lib-group">Paid social</div>
+    <div class="lib-dir">Lead with the outcome. No product names.</div>
+    <ul class="lib-fields">
+      <li>
+        <div><span class="lib-fname">Intro Text</span> <span class="lib-limit">[150]</span></div>
+        <div class="lib-sub"><span class="lib-tier enforced">Platform limit</span> · In-feed preview truncates near 150.</div>
+        <div class="lib-fresh">
+          <div class="lib-fresh-v">Verified against LinkedIn's spec page on 2026-08-20.</div>
+          <div class="lib-fresh-m">We watch that page for edits — not the number. Last checked 2026-08-19: no change.</div>
+        </div>
+      </li>
+      <li>
+        <div><span class="lib-fname">Graphic Headline</span> <span class="lib-limit">[70]</span></div>
+        <div class="lib-sub"><span class="lib-tier house_default">House default</span> · <span class="lib-tier mine">Yours</span></div>
+        <!-- The SAME class with no styled child. A probe measures the darkest ink
+             in an element, so probing a container that holds a darker chip reports
+             the chip and not the container's own text. Both are here on purpose. -->
+        <div class="lib-sub">Recommended by Meta. Not a hard limit.</div>
+      </li>
+    </ul>
+    <div class="lib-fresh flagged">
+      <div class="lib-fresh-v">Verified against Meta's spec page on 2026-08-20.</div>
+      <div class="lib-fresh-m">This page changed on 2026-08-18 and is waiting on review — this number may be out of date.</div>
+    </div>
+    <p class="lib-hint">The platform enforces this one — copy over it and it gets cut.</p>
+    <p class="lib-fstaticnote">Front-load the first 40 characters.</p>
+    <div class="lib-reset"><span class="lib-basehint">Quillio's default: up to 70</span><button class="lib-resetbtn" type="button">Use Quillio's default</button></div>
+    <div class="lib-rowerr">Minimum is above the limit.</div>
+    <span class="pill">Beta</span>
+    <span class="badge-soon">Soon</span>
+    <div class="lib-fnotewrap"><span class="lib-fnotelab">Writing note — the drafter follows this</span></div>
+    <button class="lib-fnotebtn" type="button">+ Add a writing note</button>
+    <div class="lib-grouplabel">Graphic Copy</div>
+    <p class="lib-notewhy">Renaming affects new docs only.</p>
+    <p class="lib-kept">Three fields kept.</p>
+    <div class="tpl-meta">3 markers · uploaded 2026-08-01</div>
+    <div class="tpl-count">3 markers</div>
+    <div class="tpl-where">Used by 2 assets</div>
+    <p class="tpl-dropsub">Drop a .docx here</p>
+    <div class="cf-meta">chars · 40–90</div>
+    <div class="cf-marker">{{brand_line}}</div>
+  </div>
+</main>

@@ -857,6 +857,184 @@ test('LinkedIn Single Image Ad Intro Text seeds char_max 150 + note; Carousel In
   assert.strictEqual(carousel.spec_note, null, 'LinkedIn Carousel Intro Text has no note');
 });
 
+test('probeSpecPage: it uses the detector’s normalize, and never touches the database', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('../scripts/probeSpecPage'), 'utf8');
+
+  // IT IMPORTS normalize FROM THE DETECTOR — the module scripts/runDetection.js
+  // drives. A probe that normalizes differently measures a different string, so
+  // every number it prints would describe a page the detector never sees. This
+  // project has paid for that class of error once already, in a measurement rig
+  // whose shim implemented only the success path.
+  assert.match(src, /require\('\.\.\/src\/services\/specDetector'\)/,
+    'it loads the detector module');
+  assert.match(src, /const \{ normalize, truncateAtMarker, hashableText, hashText \} = detector;/,
+    'and destructures normalize (plus the rest) off it');
+
+  // AND DEFINES NO normalize OF ITS OWN. The failure this guards is not an
+  // import going missing — it is somebody adding a local copy beside the import
+  // and the two drifting, which nothing else would ever surface.
+  assert.ok(!/function\s+normalize\s*\(/.test(src), 'no local function normalize()');
+  assert.ok(!/(?:const|let|var)\s+normalize\s*=\s*(?:function|\()/.test(src),
+    'and none assigned to a local name either');
+  for (const fn of ['truncateAtMarker', 'hashableText', 'hashText']) {
+    assert.ok(!new RegExp(`function\\s+${fn}\\s*\\(`).test(src), `no local function ${fn}()`);
+  }
+
+  // A MISSING EXPORT IS A REFUSAL, NOT A FALLBACK.
+  assert.match(src, /does not export \$\{n\}\(\) — cannot continue/, 'it names which one is missing');
+  assert.match(src, /Fix the export rather than adding a local copy/);
+
+  // NO DATABASE, IN ANY FORM. The three ways this file could reach one: the pg
+  // driver, the pool, or any module under src/db.
+  assert.ok(!/require\(['"]pg['"]\)/.test(src), 'does not load pg');
+  assert.ok(!/require\('\.\.\/src\/db/.test(src), 'imports nothing from src/db');
+  // The READ, not the word — the file's own header says it needs no DATABASE_URL,
+  // and a bare /DATABASE_URL/ fails on that sentence. A pattern that matches the
+  // prose describing the property instead of the code holding it is the same
+  // mistake as a region asserted by two string literals nobody checked.
+  assert.ok(!/process\.env\.DATABASE_URL/.test(src), 'never reads process.env.DATABASE_URL');
+  // …and no writes of any other kind.
+  assert.ok(!/writeFileSync|createWriteStream|appendFileSync/.test(src), 'writes no files');
+  assert.ok(!/\b(INSERT|UPDATE|DELETE)\b/.test(src), 'contains no write SQL');
+
+  // The fetch options are the detector's, and are asserted BYTE-IDENTICAL rather
+  // than trusted — the probe does its own fetch (fetchText discards the HTTP
+  // status, which belongs at the top of every report), so this is the only thing
+  // stopping the two drifting apart.
+  const det = fs.readFileSync(require.resolve('../src/services/specDetector'), 'utf8');
+  const ua = /'(Quillio-LiveSpecs\/[^']+)'/.exec(det);
+  assert.ok(ua, 'the detector has a User-Agent');
+  assert.ok(src.includes(`'${ua[1]}'`), 'the probe sends the detector’s exact User-Agent');
+  const timeout = /const FETCH_TIMEOUT_MS = (\d+);/.exec(det);
+  assert.ok(timeout, 'the detector has a fetch timeout');
+  assert.match(src, new RegExp(`FETCH_TIMEOUT_MS = ${timeout[1]};`), 'and the probe uses the same one');
+
+  // THOSE TWO ARE NOT THE WHOLE OF A FETCH, and asserting them is the shape of
+  // measuring one property and feeling covered on the rest. Redirect handling,
+  // accept-encoding, cookie policy and retries are all implemented independently
+  // in the probe and unasserted above.
+  //
+  // What makes that survivable is that BOTH call sites pass the same two keys and
+  // nothing else, so the runtime's defaults govern the rest for both. This is the
+  // assertion that keeps it true: the day somebody adds `redirect: 'manual'` to
+  // the detector, it goes red here rather than in a report that quietly disagrees
+  // with production.
+  const detOpts = sliceBetween(det, 'const res = await fetch(url, {', '});');
+  const detKeys = (detOpts.match(/^\s*([a-zA-Z]+):/gm) || []).map((k) => k.trim().replace(':', ''));
+  assert.deepStrictEqual(detKeys.sort(), ['headers', 'signal'],
+    'fetchText passes only signal and headers — if this changed, the probe must follow');
+  const probeOpts = sliceBetween(src, 'const res = await fetch(url, {', '});');
+  const probeKeys = (probeOpts.match(/^\s*([a-zA-Z]+):/gm) || []).map((k) => k.trim().replace(':', ''));
+  assert.deepStrictEqual(probeKeys.sort(), detKeys.sort(), 'and the probe passes exactly the same keys');
+
+  // The report says so out loud rather than leaving the reader to infer it.
+  assert.match(src, /MATCHES THE DETECTOR ON USER-AGENT AND TIMEOUT ONLY/,
+    'the footer states what the fetch parity does not cover');
+
+  // THE ANCHOR SEARCH RUNS INSIDE THE TEXT THE DETECTOR HASHES. specDetector
+  // passes hashableText(row, html) to checkAnchor — normalize THEN truncate — so
+  // a candidate drawn from past a stop marker looks perfect in a report and
+  // reports `failed` on its first real run.
+  assert.match(det, /THE ANCHOR IS CHECKED AGAINST THE TRUNCATED TEXT/,
+    'the detector still anchors against the truncated text');
+  assert.match(src, /hashOneRegion/, 'the probe searches a named hashed region');
+  assert.ok(src.indexOf('let markers = []') < src.indexOf("rule('ANCHOR CANDIDATES')"),
+    'the stop marker is decided BEFORE the anchors that depend on it');
+  assert.match(src, /anchorCandidates\(hashOneRegion, hashOneRegion, hashTwoRegion/,
+    'and the candidates come from that region, not the full normalized text');
+
+  // RANKED BY PROVENANCE, NOT BY DIGITS — and this assertion USED to say the
+  // opposite. It pinned "DIGIT-BEARING CANDIDATES LAST", which is the sort that
+  // promoted nav boilerplate to the top of an 18k page, because the spec block
+  // was the only part carrying numbers. Correcting the sort correctly turned
+  // this red; the property it was really guarding — the first suggestion is a
+  // usable one — is now held behaviourally by the ranking test above.
+  assert.match(src, /RANK BY PROVENANCE, NOT BY DIGITS/, 'the source says which way it ranks');
+  assert.match(src, /\[CONTAINS A NUMBER\] stays as a MARK and stops being a DEMOTION/);
+  assert.match(src, /\[SEEDED\]/, 'and the report shows each candidate’s provenance');
+  assert.match(src, /\[SWEPT\]/);
+
+  // The sample caveat, beside the STABLE one.
+  assert.match(src, /THE ANCHOR CANDIDATE LIST IS A SAMPLE, NOT AN ENUMERATION/,
+    'the footer says a count of four means four found, not four existing');
+
+  // --cited is accepted, never queried. The probe having no database is the
+  // property that lets it be pointed at a URL nobody watches yet.
+  assert.match(src, /PASSED IN, NEVER QUERIED/, 'the flag is documented as such');
+  // THE MECHANISM, NOT THE WORD — again. The file says "affected_fields" in a
+  // comment explaining why it does not read them, and "SELECTOR CONTROL" in a
+  // report line, so a keyword scan flags prose that states the property it is
+  // checking for. A query is the only way this file could reach a database, and
+  // a query is a .query( call.
+  assert.ok(!/\.query\s*\(/.test(src), 'issues no query of any kind');
+
+  // The digit-run threshold comes from the detector's export, not a literal 12 —
+  // lowering it there has to lower it here, or the probe stops reporting the
+  // tokens normalize() is silently removing.
+  assert.match(src, /detector\.PER_REQUEST_TOKEN_MIN_DIGITS/, 'threshold is taken from the detector');
+});
+
+test('probeSpecPage ranking: boilerplate at offset 0 never outranks a seeded candidate', () => {
+  const { anchorCandidates, rankCandidates, citedFromArgv } =
+    require('../scripts/probeSpecPage');
+
+  // A page shaped like the ones this probe is pointed at: chrome first, spec
+  // body later. The nav is what a SWEPT candidate lands in; the sentence around
+  // "30 characters" is what a SEEDED candidate is drawn from.
+  //
+  // The nav line is deliberately DIGIT-FREE and the spec line deliberately holds
+  // numbers, because that is the exact configuration under which the previous
+  // sort — digit-bearing candidates to the bottom — put the nav on top.
+  const CHROME = 'Advertising help centre home page navigation and account settings menu ';
+  const SPEC = 'The headline fields for probe test ads support up to 30 characters and no more. ';
+  const FILLER = Array.from({ length: 40 }, (_, i) =>
+    `Unrelated paragraph number ${i} about billing, delivery and reporting options. `).join('');
+  const page = CHROME + FILLER + SPEC + 'Trailing content that closes the document body out.';
+
+  const specAt = page.indexOf('30 characters');
+  assert.ok(specAt > 0, 'the fixture has a character-adjacent number');
+  const found = anchorCandidates(page, page, page, [specAt], 10);
+
+  // Both kinds are present, or the fixture is not exercising the comparator.
+  assert.ok(found.some((c) => c.via === 'seeded'), 'fixture produced a seeded candidate');
+  assert.ok(found.some((c) => c.via === 'swept'), 'fixture produced a swept candidate');
+  const swept = found.filter((c) => c.via === 'swept');
+  assert.ok(swept.some((c) => c.at === 0), 'and one of them sits at offset 0 — the chrome');
+
+  const ranked = rankCandidates(found);
+
+  // THE ASSERTION. Every seeded candidate outranks every swept one, so the head
+  // of the list is spec body and the offset-0 boilerplate cannot lead it.
+  const lastSeeded = ranked.map((c) => c.via).lastIndexOf('seeded');
+  const firstSwept = ranked.map((c) => c.via).indexOf('swept');
+  assert.ok(lastSeeded < firstSwept, 'every [SEEDED] ranks above every [SWEPT]');
+  assert.strictEqual(ranked[0].via, 'seeded', 'the FIRST suggestion is from the spec body');
+  assert.notStrictEqual(ranked[0].at, 0, 'and it is not the offset-0 chrome');
+  assert.match(ranked[0].text, /30 characters/, 'it is the sentence carrying the limit');
+
+  // Document order holds inside each group.
+  for (const group of ['seeded', 'swept']) {
+    const ats = ranked.filter((c) => c.via === group).map((c) => c.at);
+    assert.deepStrictEqual(ats, ats.slice().sort((a, b) => a - b), `${group} keeps document order`);
+  }
+
+  // A CANDIDATE HOLDING A NUMBER IS MARKED, NOT DEMOTED — the two hazards are
+  // not symmetric. A number turns a real spec change into `failed`, which is bad
+  // and visible; chrome means no change ever reports anything, which is worse
+  // and invisible.
+  assert.ok(/\d/.test(ranked[0].text), 'the top candidate holds a number and still leads');
+
+  // THE --cited TIEBREAK: within seeded only, and silently skipped when absent.
+  assert.strictEqual(citedFromArgv(['http://x']), null, 'no flag → no tiebreak');
+  assert.deepStrictEqual([...citedFromArgv(['--cited=30,90'])], ['30', '90']);
+  const citedRanked = rankCandidates(found, { cited: new Set(['30']) });
+  assert.strictEqual(citedRanked[0].via, 'seeded', 'the tiebreak never promotes a swept candidate');
+  const seededCount = found.filter((c) => c.via === 'seeded').length;
+  assert.strictEqual(citedRanked.filter((c) => c.via === 'seeded').length, seededCount,
+    'and never moves one out of the seeded group');
+});
+
 test('Google Responsive Search Ad: the page text is in the header, and the seed matches the migration', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const mig = require('../scripts/migrateAddGoogleSearchAsset');

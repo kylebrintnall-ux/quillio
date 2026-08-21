@@ -1819,6 +1819,27 @@ guidance; the attribution around it goes. If a finding is worth sending it belon
 in `spec_note`, the writing-guidance channel; `spec_type` is the provenance
 channel, and keeping them apart is the rule.
 
+**A RENAMED OR REPLACED STRIP CONSTANT MUST BE CHECKED AGAINST EVERY WORDING
+STILL IN CIRCULATION.** The strip runs over a DOCUMENT, and a document is a file:
+nothing reaches inside it again, so every sentence this codebase has ever composed
+is still out there in whatever documents were built while it was live. The
+composer only has to know the current wording. Anything that READS a document back
+has to know all of them.
+
+The instance, and it is the second time in a week that a rename broke a strip rule
+silently — both times with reader-facing text reaching the model.
+`VERIFIED_LINE` replaced `CHECKED_LINE` when the provenance sentence was reworded
+(`1e37918` → `b018606`, 75 minutes apart on 2026-08-20, both on `main`, which
+Railway auto-deploys). The strip stopped removing the old wording that same
+minute, so every document built in that window has been shipping "Source unchanged
+as of 2026-08-20." into its own `Field guidance:` ever since. Nothing errored;
+nothing could.
+
+`stripReaderOnlyLines` now removes all three provenance wordings, and
+`PROVENANCE_AT_END` matches all three. The superseded one is **read here and
+written nowhere** — which reads as dead code to anyone who greps for it, so the
+constant carries the commit range and the reason it may not be deleted.
+
 **`enforced` is deliberately NOT stripped, and it IS redundant.** "Platform limit
 (LinkedIn). Stay within this count." sits beside "character limit 70 — stay within
 this limit" in the same bullet, on ~9 fields. Not wrong — it is the one tier line
@@ -2255,6 +2276,24 @@ two shares:
 | a count | measures the wrong property, or divides by the wrong population | read the copy |
 | a control arm | leaks the treatment and reports a mixture as a comparison | drive it with a stub |
 | **an assertion** | **checks a different region of the file and passes** | **nothing. It is green** |
+| **a test RIG** | **omits a field the code under test reads, so the path under test does nothing and reports success** | **nothing. It is green** |
+
+**The fourth species, August 2026: `test/lib/docSim.js`.** Its `toJson` emitted
+paragraph elements with no `startIndex`. `paragraphCharIndex` walks the elements
+and takes each one's own `startIndex` — deliberately, because a paragraph is not
+guaranteed to be one run — so it returned null, every in-paragraph range
+(`labelBracketRange`, `noteProvenanceRange`) read as "do not touch this
+paragraph", and a replay of the spec sweep would have corrected **nothing** and
+passed. Real Docs always supplies those indices; the model did not, and the gap
+was invisible because "do not touch" is a legitimate answer.
+
+**The common property across all four is the one worth carrying: the measurement
+was wrong in a way that LOOKED LIKE A RESULT.** Not an error, not a crash, not a
+red test — a number, a green suite, or an empty diff that a reader is entitled to
+believe. That is why "be careful" does not work on any of them and each needed its
+own structural fix: fetch the page, drive the arms with a stub, assert the
+anchors, and — for a rig — give it the fields the code under test actually reads,
+with the reason recorded in the RIG rather than in the test that needed it.
 
 The instance: `test/smoke.test.js` sliced a region with
 `draft.slice(draft.indexOf(a), draft.indexOf('const { title, fieldCount, url }'))`

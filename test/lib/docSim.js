@@ -122,11 +122,28 @@ class Doc {
         }
         cur.content += x.c;
       }
+      // PER-ELEMENT INDICES, which real Docs always supplies and this model did
+      // not. paragraphCharIndex walks the elements and takes each one's own
+      // startIndex — deliberately, because a paragraph is not guaranteed to be one
+      // run — so without these it returns null and every caller that edits INSIDE
+      // a paragraph (labelBracketRange, noteProvenanceRange) reads "do not touch
+      // this". A replay of the sweep would then correct nothing and pass, which is
+      // the model reporting the absence of its own fidelity as a result.
+      let elStart = start;
+      const withIndices = elements.map((e) => {
+        const el = {
+          startIndex: elStart,
+          endIndex: elStart + e.content.length,
+          textRun: { content: e.content, textStyle: e.textStyle },
+        };
+        elStart += e.content.length;
+        return el;
+      });
       content.push({
         startIndex: start,
         endIndex: start + buf.length,
         paragraph: {
-          elements: elements.map((e) => ({ textRun: { content: e.content, textStyle: e.textStyle } })),
+          elements: withIndices,
           paragraphStyle: { namedStyleType: buf[0].style.named },
         },
       });

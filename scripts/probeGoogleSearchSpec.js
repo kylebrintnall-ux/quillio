@@ -66,12 +66,18 @@ const ANCHOR = 'responsive search ads have character limits';
 
 // Quoted from the page by hand. Asserted here rather than trusted — a
 // transcription is a claim about the page like any other.
+//
+// THE APOSTROPHES ARE U+2019, NOT U+0027, and that is the page's character
+// rather than a typographic preference. The first run of this probe reported the
+// two "You’ll" quotes ABSENT, which reads identically to a quote whose CLAIM is
+// wrong — and it was neither: the transcription had straight apostrophes and the
+// page renders curly ones. See foldPunct below for how that case is now reported.
 const QUOTES = [
   'responsive search ads have character limits',
   'The headline fields for responsive search ads support up to 30 characters',
   'The description fields support up to 90 characters each, and the path fields support up to 15 each',
-  "You'll need to enter a minimum of 3 headlines, but you can enter up to 15",
-  "You'll need to enter a minimum of 2 descriptions",
+  'You’ll need to enter a minimum of 3 headlines, but you can enter up to 15',
+  'You’ll need to enter a minimum of 2 descriptions',
 ];
 
 // The three values the asset would store. Counted AND printed in context: a bare
@@ -119,6 +125,30 @@ function contexts(text, needle, { pad = 90, max = 6 } = {}) {
   return { shown: out, total: count(text, needle) };
 }
 
+// Curly punctuation folded to its ASCII form, and NOTHING ELSE folded.
+//
+// A quote that misses because the page renders U+2019 where the transcription
+// typed U+0027 looks EXACTLY like a quote that misses because the claim is
+// wrong — both print ABSENT — and the two are as far apart as a defect can be
+// from a typo. This makes them distinguishable: the comparison is run twice, and
+// a hit that needed the fold is reported as a PUNCTUATION difference by name.
+//
+// DELIBERATELY NARROW. Only the six quote characters fold. Dashes do NOT: an en
+// dash where a hyphen was typed can be the difference between a range and a
+// compound, and folding it would hide a real mismatch inside a number. The rule
+// this file lives under is that a quote is a claim about the page, so the fold
+// has to be small enough that nothing it hides could change the claim.
+const PUNCT_FOLD = [
+  [/[‘’ʼ′`]/g, "'"],
+  [/[“”″]/g, '"'],
+];
+
+function foldPunct(s) {
+  let out = String(s);
+  for (const [re, to] of PUNCT_FOLD) out = out.replace(re, to);
+  return out;
+}
+
 // The loosest diagnostic: whitespace permitted ANYWHERE inside the anchor. A tag
 // boundary opens a gap before ATTACHED PUNCTUATION rather than between words, so
 // a word-level check reports "absent" on a page that plainly renders the phrase.
@@ -158,20 +188,36 @@ async function probePage() {
     : 'VARIES  <- STOP. This page needs a marker or a token rule; do not seed it as-is.'}`);
 
   rule('THE QUOTES — asserted, not trusted');
+  const foldedPage = foldPunct(a.cut);
   let missing = 0;
+  let punctOnly = 0;
   for (const q of QUOTES) {
     const n = count(a.cut, q);
-    if (n === 0) missing += 1;
-    console.log(`   ${n > 0 ? 'PRESENT' : 'ABSENT '} ${n}x  ${JSON.stringify(q)}`);
-    if (n === 0) {
-      const loose = flexibleCount(a.cut, q);
-      console.log(`            ^ ${loose}x ignoring case and internal whitespace.`);
-      console.log('            Correct the quote to what the page renders — do NOT ship it as written.');
+    const folded = count(foldedPage, foldPunct(q));
+    if (n > 0) {
+      console.log(`   PRESENT      ${n}x  ${JSON.stringify(q)}`);
+      continue;
     }
+    if (folded > 0) {
+      // The case that cost a round: a character, not a fact.
+      punctOnly += 1;
+      console.log(`   PUNCTUATION  ${folded}x  ${JSON.stringify(q)}`);
+      console.log('        ^ the SENTENCE is on the page; only a quote character differs.');
+      console.log('          Retype it with the page\'s own characters (it renders U+2019 ’,');
+      console.log('          not U+0027 \'). This is NOT the claim being wrong.');
+      continue;
+    }
+    missing += 1;
+    console.log(`   ABSENT       0x  ${JSON.stringify(q)}`);
+    const loose = flexibleCount(a.cut, q);
+    console.log(`        ^ ${loose}x ignoring case and internal whitespace, and 0x after folding`);
+    console.log('          curly punctuation. The page does not say this. Do NOT ship it.');
   }
-  console.log(`\n   ${missing === 0
-    ? 'Every quoted sentence is on the page. The migration header can carry them verbatim.'
-    : `${missing} quote(s) ABSENT — the header would be making a claim the page does not support.`}`);
+  console.log(`\n   ${missing === 0 && punctOnly === 0
+    ? 'All five PRESENT verbatim. The migration header can carry them as written.'
+    : missing === 0
+      ? `${punctOnly} quote(s) differ only in punctuation — fix the characters and re-run.`
+      : `${missing} quote(s) ABSENT — the header would claim something the page does not say.`}`);
 
   rule('THE ANCHOR');
   const exact = count(a.cut, ANCHOR);
@@ -272,9 +318,15 @@ async function probeDb() {
     console.log('   A flag records the URL its row was watching when it fired, so a queue');
     console.log('   URL that differs from the row\'s current one PROVES a repoint. This is');
     console.log('   what checkSpecHealth surfaces as "URL CHANGED since a flag".\n');
+    // COLUMNS THE TABLE ACTUALLY HAS. The first version of this selected
+    // q.reviewed_at, which does not exist — spec_review_queue carries
+    // detected_at, created_at and status, and a review is recorded by moving
+    // status to 'reviewed' | 'dismissed' with no timestamp of its own. The whole
+    // section threw, so a probe whose stated job was "here is the evidence"
+    // produced none, which is worse than never having claimed to look.
     const q = await client.query(
       `SELECT q.id, q.watch_id, q.status, q.source_url AS flag_url, w.source_url AS row_url,
-              q.created_at::date AS flagged, q.reviewed_at::date AS reviewed
+              q.detected_at::date AS detected, q.created_at::date AS created
          FROM spec_review_queue q
          LEFT JOIN spec_watch_list w ON w.id = q.watch_id
         WHERE q.source_url IS DISTINCT FROM w.source_url
@@ -284,8 +336,8 @@ async function probeDb() {
       console.log('   no flag carries a URL differing from its row — nothing to report.');
     }
     for (const r of q.rows) {
-      console.log(`   flag #${r.id} on watch #${r.watch_id}  ${r.status}  flagged ${r.flagged}` +
-        `${r.reviewed ? `, reviewed ${r.reviewed}` : ''}`);
+      console.log(`   flag #${r.id} on watch #${r.watch_id}  status ${r.status}` +
+        `  detected ${r.detected || r.created || '(no date)'}`);
       console.log(`        fired against: ${r.flag_url}`);
       console.log(`        row now:       ${r.row_url}`);
     }

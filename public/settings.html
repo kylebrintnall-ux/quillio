@@ -1125,6 +1125,38 @@ __NAV:settings__
     // row watching the wrong page reads clean here forever — Meta's two assets
     // did exactly that for months. Only scripts/checkSpecHealth.js catches that,
     // and it fetches.
+    // THE ADJACENCY RULE, and it is the SHOW_ONCE_NOTES rule applied to a
+    // different repetition. Freshness is a property of the PAGE, not of the
+    // FIELD: three fields citing one spec page share one verification date and
+    // one watch state, so the second and third copies of the block carry nothing
+    // the first did not. On a flagged row that is worse than a wall of text — it
+    // says "this number may be out of date" three times about one fact, and an
+    // alarm that repeats with the field count is an alarm that gets ignored.
+    //
+    // A RUN, NOT A SET. The block renders on the first field citing a page and
+    // again after any field that does not cite it — so a tenant who scrolls into
+    // the middle of a long card still meets the provenance for what they are
+    // looking at, without anyone choosing between per-field and a card footer.
+    // Measured against the seeded library: LinkedIn Single Image is SS...S and
+    // renders TWICE; six of the nine sourced assets have contiguous sourced
+    // fields and correctly render once. Twelve blocks in total, against 27.
+    //
+    // THE "SOMETHING ELSE INTERVENES" BRANCH CANNOT FIRE TODAY, because every
+    // seeded asset cites exactly one page — a gap is always a house default, not
+    // a different source. It is implemented anyway: a tenant-authored asset or a
+    // re-source produces it, and a rule that only handles the shapes that exist
+    // is one that breaks silently when a new one arrives.
+    function libFreshRepeats(f, prevSource) {
+      var src = (f.freshness && f.freshness.sourceUrl) || null;
+      return !!src && src === prevSource;
+    }
+    // What the row leaves behind for the next one: the page it cites, or null,
+    // which is what BREAKS the run. Shared so the two surfaces cannot come to
+    // disagree about where a block repeats.
+    function libFreshCarry(f) {
+      return (f.freshness && f.freshness.sourceUrl) || null;
+    }
+
     function libFreshnessNode(f) {
       var fr = f.freshness;
       if (!fr) return null;
@@ -1284,6 +1316,7 @@ __NAV:settings__
       if (a.asset_direction) body.appendChild(el('div', 'lib-dir', a.asset_direction));
       var ul = el('ul', 'lib-fields');
       var openGroup = null;
+      var prevSource = null;
       (a.fields || []).forEach(function (f) {
         // Consecutive fields sharing a group_label render under it once — the
         // same nesting the doc uses, so the screen matches the output.
@@ -1315,8 +1348,9 @@ __NAV:settings__
           if (f.spec_note) { sep(); sub.appendChild(document.createTextNode(f.spec_note)); }
           li.appendChild(sub);
         }
-        var fresh = libFreshnessNode(f);
+        var fresh = libFreshRepeats(f, prevSource) ? null : libFreshnessNode(f);
         if (fresh) li.appendChild(fresh);
+        prevSource = libFreshCarry(f);
         ul.appendChild(li);
       });
       body.appendChild(ul);
@@ -1368,7 +1402,7 @@ __NAV:settings__
     // accepts input the server discards is the failure mode this whole panel
     // keeps refusing. Disabled says "not yours to change"; absent would leave a
     // tenant wondering where it went.
-    function libHouseRow(f) {
+    function libHouseRow(f, prevSource) {
       var editable = f.editable !== false;
       var wrap = el('div', 'lib-frow' + (editable ? '' : ' locked'));
       // ONLY A ROW THE USER TOUCHED IS SENT, AND ONLY THE VALUES THEY TOUCHED.
@@ -1426,7 +1460,7 @@ __NAV:settings__
         // The locked rows ARE the sourced fields, so this is where a tenant meets
         // a number they cannot change — and the second half of "Quillio keeps it
         // in step with the source" is what "in step" actually means.
-        var lockedFresh = libFreshnessNode(f);
+        var lockedFresh = libFreshRepeats(f, prevSource) ? null : libFreshnessNode(f);
         if (lockedFresh) wrap.appendChild(lockedFresh);
         wrap.readRow = function () { return null; };
         return wrap;
@@ -1566,7 +1600,13 @@ __NAV:settings__
 
       var rows = el('div');
       box.appendChild(rows);
-      (asset.fields || []).forEach(function (f) { rows.appendChild(libHouseRow(f)); });
+      // The run is tracked across the whole form, not per row, for the same
+      // reason it is on the card: a repeat is a property of what came before.
+      var prevFreshSource = null;
+      (asset.fields || []).forEach(function (f) {
+        rows.appendChild(libHouseRow(f, prevFreshSource));
+        prevFreshSource = libFreshCarry(f);
+      });
 
       var err = el('div', 'lib-newerr');
       err.style.display = 'none';

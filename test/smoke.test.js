@@ -12493,7 +12493,7 @@ test('a locked tier is skipped BEFORE the pair check, so it cannot refuse a save
 // are asserted structurally below, and the device remains the test for the page.
 test('the house form sends only the controls that fired', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
-  const houseRow = sliceBetween(src, 'function libHouseRow(f) {', 'function libOpenHouseForm(');
+  const houseRow = sliceBetween(src, "function libHouseRow(f, prevSource) {", "function libOpenHouseForm(");
   // The two-line anchor matters: the LOCKED branch above assigns wrap.readRow too,
   // on one line, and a one-line anchor finds that one first.
   const readRow = sliceBetween(houseRow, 'wrap.readRow = function () {\n        if (doReset)', '      return wrap;');
@@ -19615,6 +19615,85 @@ test('freshness: rendered on both surfaces, and never as a badge', () => {
   // verification is still true when the detector is stuck, so it is not dimmed.
   assert.match(css, /\.lib-fresh\.flagged \.lib-fresh-m::before \{ content: '⚠ '; \}/);
   assert.ok(!/\.lib-fresh\.flagged \.lib-fresh-v/.test(css), 'the verification line is untouched by the flag');
+});
+
+// The freshness block repeats per PAGE, not per FIELD — the SHOW_ONCE_NOTES rule
+// applied to a different repetition. Driven for real: the two functions are
+// lifted out of settings.html and called, because the defect a rule like this
+// produces is a missing condition, which no string match can see.
+test('freshness dedup: a run collapses, and anything else restores it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const region = sliceBetween(src, 'function libFreshRepeats(f, prevSource) {', 'function libFreshnessNode(f) {');
+  const rule = new Function(`${region}\nreturn { libFreshRepeats, libFreshCarry };`)();
+  const { libFreshRepeats, libFreshCarry } = rule;
+
+  const LI = 'https://linkedin.example/specs';
+  const META = 'https://meta.example/specs';
+  const sourced = (u) => ({ freshness: { sourceUrl: u } });
+  const house = { freshness: null };
+
+  // First of a run renders; the next one does not.
+  assert.strictEqual(libFreshRepeats(sourced(LI), null), false);
+  assert.strictEqual(libFreshRepeats(sourced(LI), LI), true);
+  // A house default BREAKS the run — it carries nothing forward — so the block
+  // renders again below it. This is what answers the scroll objection: a tenant
+  // reading the bottom of a long card still meets the provenance.
+  assert.strictEqual(libFreshCarry(house), null);
+  assert.strictEqual(libFreshRepeats(sourced(LI), libFreshCarry(house)), false);
+  // A field with no freshness never renders a block, run or not.
+  assert.strictEqual(libFreshRepeats(house, null), false);
+
+  // THE BRANCH THAT CANNOT FIRE ON TODAY'S DATA. Every seeded asset cites exactly
+  // one page, so a gap is always a house default rather than a different source.
+  // Implemented and tested anyway: a tenant-authored asset or a re-source
+  // produces it, and a rule that only handles the shapes that exist is one that
+  // breaks silently when a new one arrives.
+  assert.strictEqual(libFreshRepeats(sourced(LI), META), false, 'a different page restores the block');
+  assert.strictEqual(libFreshRepeats(sourced(META), LI), false);
+
+  // Both surfaces carry the run, and neither reconstructs the rule for itself.
+  // Each defined once and reached from both surfaces: 1 definition + 2 uses.
+  assert.strictEqual((src.match(/libFreshRepeats\(/g) || []).length, 3, 'defined once, gating twice');
+  assert.strictEqual((src.match(/libFreshCarry\(/g) || []).length, 3, 'defined once, advancing twice');
+  assert.match(src, /rows\.appendChild\(libHouseRow\(f, prevFreshSource\)\);/);
+});
+
+test('freshness dedup: replayed over the real seed, twelve blocks not twenty-seven', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+  const region = sliceBetween(src, 'function libFreshRepeats(f, prevSource) {', 'function libFreshnessNode(f) {');
+  const { libFreshRepeats, libFreshCarry } = new Function(
+    `${region}\nreturn { libFreshRepeats, libFreshCarry };`
+  )();
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  let blocks = 0;
+  let perField = 0;
+  const shape = {};
+  for (const a of DEFAULT_ASSETS) {
+    let prev = null;
+    let n = 0;
+    for (const raw of a.fields) {
+      const url = raw.spec_source || a.spec_source;
+      const f = { freshness: !url || url === 'quillio_default' ? null : { sourceUrl: url } };
+      if (f.freshness && !libFreshRepeats(f, prev)) n += 1;
+      if (f.freshness) perField += 1;
+      prev = libFreshCarry(f);
+    }
+    if (n) { blocks += n; shape[a.name] = n; }
+  }
+
+  assert.strictEqual(perField, 27, 'the seeded library cites a page on 27 fields');
+  assert.strictEqual(blocks, 12, 'and the adjacency rule renders 12 blocks');
+  // The three that render TWICE are the ones whose sourced fields are split by a
+  // Graphic Copy group. LinkedIn Single Image is SS...S — Intro Text and Headline
+  // share a block, and LAN Description gets its own below the gap.
+  assert.strictEqual(shape['LinkedIn Single Image Ad'], 2);
+  assert.strictEqual(shape['LinkedIn Carousel Ad'], 2);
+  assert.strictEqual(shape['Meta Carousel Ad'], 2);
+  // And the contiguous ones render once, which is correct rather than a
+  // compromise: there is no field below the block that it fails to cover.
+  assert.strictEqual(shape['Google Responsive Display Ad'], 1);
+  assert.strictEqual(shape['Meta Single Image Ad'], 1);
 });
 
 test('contrast harness: read-only, out of the suite, and its fixture is not inert', () => {

@@ -35,6 +35,44 @@ starts an in-memory **job** (`startJob`) and returns a `jobId` immediately; the
 browser polls `/api/{brief,draft,review}/:jobId/status`. Jobs are per-tenant and
 a cross-tenant read returns 404, not 403.
 
+## The one decision rule that recurs
+
+**WHEN ONE FAILURE IS VISIBLE AND THE OTHER IS NOT, TAKE THE VISIBLE ONE.**
+
+This file states it in four places and, until now, never said it was one rule —
+so anyone meeting a fifth case had to notice the pattern rather than apply it.
+
+| The decision | Made it visible | Made it invisible |
+| --- | --- | --- |
+| **The tier gate** is an allowlist `{ null, 'house_default' }`, not two `!==` checks | a locked field a tenant wanted is a support message | a fourth tier let through by default carries authority nobody granted |
+| **The sweep's authority check** (`CORRECTABLE_TIERS`, `src/services/specSweep.js`) fails closed on the same axis | a document not corrected is a stale number somebody can still read | a document corrected on an authority the tier never carried |
+| **The `''` guard** is narrow — over an absent base note only | nothing: there was no note to restore | a general fold silently restores a note the tenant deleted on purpose |
+| **Clearing a redundant override** rather than keeping it | the tenant watches the number move and the "Yours" chip disappear | a field nobody pinned stays pinned, and no correction ever reaches it |
+
+**What makes it a rule rather than a preference.** Recoverability is not about
+which error is more LIKELY. It is about whether anyone will ever find out. A
+wrong number a tenant watches change is a support message. A wrong number
+nothing surfaces is permanent — and every one of the four above had an
+invisible side whose cost does not decay, because nothing in the system ever
+raises it again.
+
+That is why "which is more probable" is the wrong question to open with. Two of
+these four were decided against the more likely outcome: a tenant re-typing
+Quillio's own number is rarer than the form having typed it, and a fourth
+`spec_type` may never be added at all.
+
+**THE DEPENDENCY, and it is the part a future case must check rather than
+inherit.** The override-clearing argument works because the chip and the number
+are *already rendered on the panel the tenant is looking at*. That is a property
+of the surface, not of the reasoning. A decision with no visible surface does not
+get to call its failure recoverable — the same choice would then be between two
+invisible outcomes, which this rule says nothing about. Ask what the tenant would
+SEE before deciding which side is the safe one.
+
+Related but distinct: `requireAdmin` answering 404 rather than 403 is a
+*confidentiality* choice (it refuses to confirm the route exists), not this one.
+Do not merge them.
+
 ## Architecture
 
 ```
@@ -343,7 +381,9 @@ says nothing about a house-default number, which no platform publishes.
 checks.** An unrecognised tier is locked, because a fourth tier would only ever
 be added to carry some authority. Failing closed on the authority axis is the
 point. It is decided from the **stored** `spec_type` inside `updateAssetType`'s
-`FOR UPDATE` lock, never from the submission.
+`FOR UPDATE` lock, never from the submission. (One instance of "The one decision
+rule that recurs" — a locked field is a support message, an unearned authority is
+not.)
 
 `updateAssetType(tenantId, id, asset, { mode })` takes `'full'` (the default —
 unchanged refusal for a seeded asset) or `'houseDefaultsOnly'`. The reduced mode
@@ -383,7 +423,10 @@ restore a note the tenant removed — the twelve Litmus email fields are
 is NULL there is no note to delete, so `''` and NULL say the same thing and
 `applyHouseDefaultOverrides` stores NULL. That cannot restore anything, because
 there is nothing there. It is the *effect* being compared, not the value — the
-same test `migrateClearRedundantOverrides` applies to all three columns.
+same test `migrateClearRedundantOverrides` applies to all three columns. The
+narrowness is "The one decision rule that recurs": a general fold's failure is a
+restored note nobody asked for and nobody is told about, and this one has no
+failure at all.
 
 **And the reason any of this matters is not "the tenant's value".** An override is
 a value **no future write can move**: every correction writes the BASE column by
@@ -392,6 +435,13 @@ base)`. So a corrected spec — Meta's carousel headline, LinkedIn's carousel in
 text, both fixed this month — reaches every tenant *except* the ones holding an
 override on that field, and nothing anywhere surfaces it. Correct for a number a
 tenant chose. Pure loss for one written as collateral.
+
+`scripts/migrateClearRedundantOverrides.js` clears an override whose EFFECT is
+identical to its base, per column. That a deliberate re-type of Quillio's own
+number is indistinguishable from collateral is stated in its header rather than
+argued away — the rule that decides it is "The one decision rule that recurs",
+and the visible side is that a tenant who loses a pin watches the number move and
+the "Yours" chip disappear on the panel they are already looking at.
 
 `spec_overridden` is a three-column OR, **not** "does the effective value differ
 from the seed" — a tenant who deliberately re-typed Quillio's own number has
@@ -711,12 +761,18 @@ is not a cheaper route; verify that before assuming it either way.
   phantom. The flag is per value now (`touched`), and
   `scripts/migrateClearRedundantOverrides.js` clears what was already written.
 
-  **The pair check moved to the server as a consequence.** `normalizeHouseDefaults`
-  compares `char_min` against `char_max` only when both arrive, which the old form
-  guaranteed. Now one can arrive alone, so `applyHouseDefaultOverrides` re-checks
-  the pair against the values in force — resolving an explicit null to the SEED,
-  because that is what clearing an override does. Do not "fix" a future version of
-  this form by sending both halves again: sending the untouched half is the defect.
+  **The pair check moved to the server as a consequence, and moved WHOLE.**
+  `normalizeHouseDefaults` is pure, so it could only compare `char_min` against
+  `char_max` when both arrived — which the old form guaranteed. Now one can arrive
+  alone, so `applyHouseDefaultOverrides` checks the pair against the values in
+  force, resolving an explicit null to the SEED because that is what clearing an
+  override does. The validator's copy was **deleted rather than kept**: two copies
+  meant two sentences for one condition — a positional `Field 3: …` when both
+  halves were touched, the field's own name when one was — so the tenant who
+  edited more got the vaguer error. Each value's own range check stays in the
+  validator, where it needs nothing but the request. Do not "fix" a future version
+  of this form by sending both halves again: sending the untouched half is the
+  defect.
 - **`counts.editable` did not change meaning.** It still counts assets that open
   the *full* form. The new state travels in `counts.houseEditable`. A stale client
   reads the old key to mean what it always meant.
@@ -2418,7 +2474,9 @@ The counter's allowlist was wrong in **both** directions and both are fixed:
 `2026` and `6` were false positives, while `3` and `2` were silently whitelisted
 out of "Q3" and "B2B", so a real invention of "3 ways" would have passed clean.
 Junk in an allowlist is worse than junk in a count — one is visible noise, the
-other is a hole. Spelled-out inventions remain invisible, so the column is a
+other is a hole. That is "The one decision rule that recurs" arriving in a
+measurement rather than in a gate: noise is read and dismissed, a hole is never
+read at all. Spelled-out inventions remain invisible, so the column is a
 **floor on invention, not a census**.
 
 ### Stating the floor works — measured, and the prediction was backwards

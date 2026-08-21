@@ -12214,10 +12214,16 @@ test('normalizeHouseDefaults accepts three values per field and cannot express a
   assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_max: 'abc' }] }).errors.length > 0);
   assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_max: -1 }] }).errors.length > 0);
   assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_max: MAX_CHAR_LIMIT + 1 }] }).errors.length > 0);
-  assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', char_min: 80, char_max: 70 }] }).errors.length > 0,
-    'a floor above the ceiling');
-  // char_max 0 is "no limit" (fieldLabel renders no bracket), so a floor is only
-  // wrong when there IS a ceiling to be above.
+  // THE PAIR IS NOT THIS FUNCTION'S TO JUDGE. It is pure, so it can only compare
+  // the two numbers when both arrive — and since the form began sending a control
+  // its own value alone, a minimum can arrive to be measured against a limit that
+  // is only in the stored row. applyHouseDefaultOverrides owns the rule, where
+  // every submission shape reaches the same test and the refusal names the field.
+  // Asserted here so the delegation is deliberate rather than lost:
+  assert.deepStrictEqual(
+    normalizeHouseDefaults({ fields: [{ id: '7', char_min: 80, char_max: 70 }] }).errors, [],
+    'a floor above the ceiling passes HERE and is refused at the write'
+  );
   assert.deepStrictEqual(normalizeHouseDefaults({ fields: [{ id: '7', char_min: 80, char_max: 0 }] }).errors, []);
   assert.ok(normalizeHouseDefaults({ fields: [{ id: '7', spec_note: 'x'.repeat(MAX_SPEC_NOTE + 1) }] }).errors.length > 0);
 
@@ -12412,6 +12418,20 @@ test('the min/max pair is checked against the values in force, not against the r
   assert.strictEqual(res.field, 'Graphic Headline', 'named by field, not by position');
   assert.deepStrictEqual([res.min, res.max], [40, 30]);
   assert.strictEqual(client.updates().length, 0, 'nothing is written on a refusal');
+});
+
+test('the pair refusal is the SAME refusal when both halves arrive', async () => {
+  const { applyHouseDefaultOverrides } = require('../src/db/assets');
+  // This case used to be caught by normalizeHouseDefaults, which could only see
+  // it when both numbers were in the request. The rule moved here rather than
+  // being written in two places — so the coverage moves with it, and a tenant who
+  // edits both halves gets the field's own name instead of "Field 3".
+  const client = houseTxnClient([houseStoredRow()]);
+  const res = await applyHouseDefaultOverrides(client, 99, [{ id: '7', char_min: 80, char_max: 70 }]);
+
+  assert.strictEqual(res.reason, 'range');
+  assert.strictEqual(res.field, 'Graphic Headline');
+  assert.deepStrictEqual([res.min, res.max], [80, 70]);
 });
 
 test('clearing one half of the pair resolves to the SEED, not to the override it replaces', async () => {

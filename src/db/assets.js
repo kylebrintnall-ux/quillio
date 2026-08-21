@@ -667,12 +667,17 @@ function isTenantEditableTier(specType) {
 //     are where that would land. Folding it only over an absent base cannot
 //     restore anything, because there is nothing there.
 //
-//   • char_min / char_max are re-checked AS A PAIR against the values in force.
-//     normalizeHouseDefaults checks them only when both arrive, which used to be
-//     guaranteed by the form posting all three values of any row it touched.
-//     Now that a control sends only its own value, one half can arrive alone —
-//     and a minimum above the stored limit would produce "[40-30]" in the doc and
-//     a prompt asking for at least 40 and at most 30.
+//   • char_min against char_max is checked HERE AND NOWHERE ELSE, against the
+//     values in force. A minimum above the limit would produce "[40-30]" in the
+//     doc and a prompt asking for at least 40 and at most 30.
+//
+//     normalizeHouseDefaults is pure, so it could only ever compare the two when
+//     both arrived — which the form guaranteed until a control began sending its
+//     own value alone. It no longer checks the pair at all: keeping its version
+//     would leave one rule in two places, and produce two different sentences for
+//     one condition (a positional "Field 3: …" when both halves were touched, the
+//     field's own name when one was). The tenant who edited more got the vaguer
+//     error. Each value's own range check stays there, where it belongs.
 async function applyHouseDefaultOverrides(client, assetTypeId, submitted) {
   // spec_note, char_min and char_max are the SEED's values; the two _override
   // columns are what is in force over them. Both are needed: the guards below ask

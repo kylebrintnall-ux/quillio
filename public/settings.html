@@ -408,6 +408,22 @@
     .lib-frow.locked { opacity: 0.6; }
     .lib-fstatic { padding: 2px 0 0; }
     .lib-fstaticnote { margin: 4px 0 0; font-size: 12.5px; color: rgba(26,26,46,0.66); }
+    /* HOW CURRENT THIS NUMBER IS. Two lines, quieter than the note above them:
+       provenance is context for a number, not guidance about writing.
+       Deliberately NOT a badge — no tick, no pill, no green. A "clean" state has
+       no accent at all, because the whole point of the second sentence is that it
+       withdraws rather than reassures, and a green mark beside it would say the
+       opposite of its words. */
+    .lib-fresh { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px;
+      color: rgba(26,26,46,0.5); line-height: 1.5; margin-top: 4px; }
+    .lib-fresh-v a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+    .lib-fresh-m { color: rgba(26,26,46,0.45); }
+    /* The one state that gets colour. Amber, matching the enforced tier chip's
+       family rather than introducing a fourth accent, and applied to the MACHINE
+       line only — the human verification is still true when the detector is
+       stuck, so dimming it too would withdraw the wrong sentence. */
+    .lib-fresh.flagged .lib-fresh-m { color: #8a4b00; }
+    .lib-fresh.flagged .lib-fresh-m::before { content: '⚠ '; }
     /* The field name as TEXT, where the full form has an input. Same size and
        weight, so the two forms read as the same list with different powers. */
     .lib-fname.static { font-size: 14px; font-weight: 600; padding: 6px 0; margin-right: 8px; }
@@ -1043,6 +1059,45 @@ __NAV:settings__
     // nothing could be done about it, and is the wrong silence once something can.
     // A NULL tier stays blank: that is a field the tenant authored, where "house
     // default" would be a label for a distinction that does not exist.
+    // HOW CURRENT IS THIS NUMBER — two sentences, composed server-side in
+    // utils/specFreshness so this panel and the generated document cannot come
+    // to say different things about the same field.
+    //
+    // Null on 146 of 173 seeded fields: a house default cites no page and makes
+    // no claim, so there is nothing to qualify and nothing renders.
+    //
+    // THE SECOND LINE WITHDRAWS. It is not a freshness badge — no tick, no
+    // green, no "up to date". A non-clean state gets a marker and a muted amber,
+    // which is as loud as this gets: a writer can do nothing about a stuck
+    // detector, so the line says what we cannot tell them and stops.
+    //
+    // AND IT IS NOT A HEALTH DISPLAY. Every state comes from stored state, so a
+    // row watching the wrong page reads clean here forever — Meta's two assets
+    // did exactly that for months. Only scripts/checkSpecHealth.js catches that,
+    // and it fetches.
+    function libFreshnessNode(f) {
+      var fr = f.freshness;
+      if (!fr) return null;
+      var wrap = el('div', 'lib-fresh' + (fr.state === 'clean' ? '' : ' flagged'));
+      if (fr.verified) {
+        var v = el('div', 'lib-fresh-v');
+        // The platform name links to the page it was verified against — the same
+        // citation the document hyperlinks, so a reader can go and look.
+        var a = document.createElement('a');
+        a.href = fr.sourceUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = fr.sourceName;
+        var parts = fr.verified.split(fr.sourceName);
+        v.appendChild(document.createTextNode(parts[0]));
+        v.appendChild(a);
+        v.appendChild(document.createTextNode(parts.slice(1).join(fr.sourceName)));
+        wrap.appendChild(v);
+      }
+      wrap.appendChild(el('div', 'lib-fresh-m', fr.machine));
+      return wrap;
+    }
+
     function libTierNode(f) {
       var label = { enforced: 'Platform limit', recommended: 'Recommended', house_default: 'House default' }[f.spec_type];
       if (!label) return null;
@@ -1210,6 +1265,8 @@ __NAV:settings__
           if (f.spec_note) { sep(); sub.appendChild(document.createTextNode(f.spec_note)); }
           li.appendChild(sub);
         }
+        var fresh = libFreshnessNode(f);
+        if (fresh) li.appendChild(fresh);
         ul.appendChild(li);
       });
       body.appendChild(ul);
@@ -1316,6 +1373,11 @@ __NAV:settings__
           f.spec_type === 'enforced'
             ? 'The platform enforces this one — copy over it and it gets cut.'
             : 'Someone measured this one. Quillio keeps it in step with the source.'));
+        // The locked rows ARE the sourced fields, so this is where a tenant meets
+        // a number they cannot change — and the second half of "Quillio keeps it
+        // in step with the source" is what "in step" actually means.
+        var lockedFresh = libFreshnessNode(f);
+        if (lockedFresh) wrap.appendChild(lockedFresh);
         wrap.readRow = function () { return null; };
         return wrap;
       }

@@ -10050,7 +10050,13 @@ test('rederive: the header says it re-freezes, and names what it does not repair
   assert.match(claude, /it does not fix the class/);
   assert.match(claude, /### The durable fix is an open decision/);
   assert.match(claude, /only as trustworthy as `spec_source`/);
-  assert.match(claude, /### Known gap: LinkedIn Carousel is watched by nobody/);
+  // The carousel gap is CLOSED — row #12 exists, anchored and baselined — so the
+  // heading changed. What this assertion was guarding is not the gap but the
+  // ORDERING rule it taught: add the new watch row BEFORE re-deriving the old
+  // entry, or six pairs go from gated-by-the-wrong-page to gated-by-nothing.
+  // That rule outlives the instance and is what `--only` exists for.
+  assert.match(claude, /### CLOSED: LinkedIn Carousel now has its own watch row/);
+  assert.match(claude, /gate-by-the-wrong-page into a gate-by-nothing/);
 });
 
 // --- Asset-library uniqueness (scripts/migrateAddAssetUniqueness.js) ---------
@@ -19359,6 +19365,223 @@ test('the strip removes every provenance wording, not just the current one', () 
   // it tells whoever opens the document that its limit moved. It tells a model
   // writing copy nothing it can act on.
   assert.strictEqual(stripReaderOnlyLines(`${base} Limit corrected 2026-09-14.`), base);
+});
+
+// === How current is this number: the two sentences ==========================
+//
+// The human event (spec_verified_at — fixed, and what a DOCUMENT carries) and the
+// machine state (the detector's row — moves weekly, so it can only live on a
+// surface that re-reads it). One module composes both so the settings library and
+// the generated document cannot come to say different things.
+
+const CLEAN_WATCH = {
+  lastCheckedAt: '2026-08-19T06:00:00Z',
+  baselined: true,
+  anchored: true,
+  hasError: false,
+  pendingCount: 0,
+  pendingSince: null,
+  failures: 0,
+  unconfirmed: 0,
+  sourceKind: 'platform_enforced',
+};
+const LI_SPECS = 'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs';
+const watch = (over) => Object.assign({}, CLEAN_WATCH, over);
+
+test('freshness: the state machine, most-withdrawing first', () => {
+  const { freshnessState, STATES } = require('../src/utils/specFreshness');
+
+  assert.strictEqual(freshnessState(null), 'unwatched');
+  assert.strictEqual(freshnessState(watch({ sourceKind: 'observed_practice' })), 'observed');
+  assert.strictEqual(freshnessState(watch({ baselined: false })), 'baselining');
+  assert.strictEqual(freshnessState(watch({ pendingCount: 1 })), 'pending');
+  assert.strictEqual(freshnessState(watch({ failures: 2 })), 'failing');
+  assert.strictEqual(freshnessState(watch({ hasError: true })), 'failing');
+  assert.strictEqual(freshnessState(watch({ unconfirmed: 3 })), 'unstable');
+  assert.strictEqual(freshnessState(watch({ anchored: false })), 'unanchored');
+  assert.strictEqual(freshnessState(watch()), 'clean');
+
+  // ONE FAILED READ IS NOT A PATTERN, and one unconfirmed run is the confirm step
+  // working as designed. Both are still clean.
+  assert.strictEqual(freshnessState(watch({ failures: 1 })), 'clean');
+  assert.strictEqual(freshnessState(watch({ unconfirmed: 2 })), 'clean');
+
+  // PENDING OUTRANKS THE MECHANICAL FAULTS. failing/unstable/unanchored say "we
+  // cannot tell you anything"; pending says "we saw this page change and nobody
+  // has looked". The writer is deciding whether to trust a limit, so the fact
+  // about the limit wins.
+  assert.strictEqual(freshnessState(watch({ pendingCount: 1, failures: 9, anchored: false })), 'pending');
+
+  assert.deepStrictEqual(STATES, ['unwatched', 'observed', 'baselining', 'pending',
+    'failing', 'unstable', 'unanchored', 'clean']);
+});
+
+test('freshness: the unconfirmed threshold is the DETECTOR\'s, not a second copy', () => {
+  const { freshnessState } = require('../src/utils/specFreshness');
+  const { UNCONFIRMED_STREAK_ALERT } = require('../src/services/specDetector');
+  // Google sat unconfirmed for five weeks and the health page called it stuck at
+  // three. This screen must call it stuck at the same number, or the two surfaces
+  // describe the same row differently.
+  assert.strictEqual(freshnessState(watch({ unconfirmed: UNCONFIRMED_STREAK_ALERT })), 'unstable');
+  assert.strictEqual(freshnessState(watch({ unconfirmed: UNCONFIRMED_STREAK_ALERT - 1 })), 'clean');
+});
+
+test('freshness: the second line withdraws — it is never a badge', () => {
+  const { freshnessLine } = require('../src/utils/specFreshness');
+
+  // THE CLEAN LINE LEADS WITH THE LIMIT ON WHAT WE KNOW. The date is second and
+  // incidental. Written the other way round it becomes a freshness badge, which
+  // is the mistake the document sentence made in its first version.
+  const clean = freshnessLine(watch());
+  assert.match(clean, /^We watch that page for edits — not the number\./);
+  assert.match(clean, /Last checked 2026-08-19: no change\.$/);
+
+  assert.strictEqual(freshnessLine(null), 'This page is not being watched for changes.');
+  assert.match(freshnessLine(watch({ sourceKind: 'observed_practice' })), /does not change, it ages/);
+  assert.strictEqual(freshnessLine(watch({ baselined: false })), 'Watching starts at the next check.');
+  assert.match(freshnessLine(watch({ pendingCount: 1, pendingSince: '2026-08-18T00:00:00Z' })),
+    /^This page changed on 2026-08-18 and is waiting on review — this number may be out of date\.$/);
+  assert.match(freshnessLine(watch({ unconfirmed: 4 })), /reads differently every time/);
+  assert.match(freshnessLine(watch({ anchored: false })), /cannot confirm these checks are reading the right page/);
+
+  // TWO STATES CARRY NO DATE, and it is a fact about the detector rather than a
+  // style choice: specDetector's bumpFailure stamps last_checked_at on a FAILED
+  // read too, so "we haven't been able to read this page since <date>" would name
+  // the last time we TRIED and read as the last time we succeeded.
+  const failing = freshnessLine(watch({ failures: 3 }));
+  assert.strictEqual(failing, 'The last few checks could not read this page.');
+  assert.ok(!/\d{4}-\d{2}-\d{2}/.test(failing), 'no date on a failing row');
+  assert.ok(!/\d{4}-\d{2}-\d{2}/.test(freshnessLine(watch({ unconfirmed: 4 }))), 'no date on an unstable row');
+
+  // No reassurance vocabulary anywhere in the set.
+  for (const w of [null, watch(), watch({ failures: 3 }), watch({ pendingCount: 1 }),
+    watch({ anchored: false }), watch({ unconfirmed: 4 }), watch({ baselined: false })]) {
+    assert.ok(!/up to date|verified|confirmed|✓|current\b/i.test(freshnessLine(w)),
+      `the machine line never reassures: ${freshnessLine(w)}`);
+  }
+});
+
+test('freshness: the verified sentence is the DOCUMENT\'s, byte for byte', () => {
+  const { verifiedSentence } = require('../src/utils/specFreshness');
+  const { fieldHint } = require('../src/destinations/googleDocs');
+
+  const sentence = verifiedSentence('2026-08-20', LI_SPECS);
+  assert.strictEqual(sentence, "Verified against LinkedIn's spec page on 2026-08-20.");
+  // The document composes its hint through the same function, so a reworded
+  // screen cannot describe a sentence the document no longer says.
+  const hint = fieldHint({ specType: 'enforced', specSource: LI_SPECS, specVerifiedAt: '2026-08-20' });
+  assert.ok(hint.text.endsWith(sentence), 'the doc ends with the identical sentence');
+
+  // "VERIFIED" IS RIGHT HERE and only here: a human read that page. The rule
+  // against the word covers the weekly mechanism, which compares a hash and never
+  // re-reads a number — so the machine line must not use it.
+  const { freshnessLine } = require('../src/utils/specFreshness');
+  assert.ok(!/verif/i.test(freshnessLine(watch())));
+
+  // Every failure renders NOTHING rather than something malformed.
+  assert.strictEqual(verifiedSentence(null, LI_SPECS), '');
+  assert.strictEqual(verifiedSentence('2026-08-20', 'quillio_default'), '');
+  assert.strictEqual(verifiedSentence('not a date', LI_SPECS), '');
+});
+
+test('freshness: a house default has nothing to qualify, so nothing renders', () => {
+  const { specFreshness } = require('../src/utils/specFreshness');
+  // 146 of 173 seeded fields carry the quillio_default sentinel. They cite no
+  // page and make no claim, so the panel shows no freshness block at all — this
+  // is the library being honest, not the feature being thin.
+  assert.strictEqual(specFreshness({ specVerifiedAt: null, specSource: 'quillio_default', watch: null }), null);
+  assert.strictEqual(specFreshness({ specVerifiedAt: '2026-08-20', specSource: null, watch: CLEAN_WATCH }), null);
+
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  let sourced = 0;
+  let total = 0;
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      total += 1;
+      if (specFreshness({ specSource: f.spec_source || a.spec_source, watch: null })) sourced += 1;
+    }
+  }
+  // A consistency check between this module and the seed, not a claim about the
+  // outside world: most of the library is house defaults.
+  assert.ok(sourced > 0 && sourced < total / 2, `${sourced} of ${total} seeded fields cite a page`);
+});
+
+test('freshness: the verification survives a stuck detector', () => {
+  const { specFreshness } = require('../src/utils/specFreshness');
+  // A person DID read that page on that date. The detector being stuck since is a
+  // fact about the machine, not about the reading — so the first line stays and
+  // only the second withdraws.
+  const f = specFreshness({ specVerifiedAt: '2026-08-20', specSource: LI_SPECS, watch: watch({ unconfirmed: 5 }) });
+  assert.strictEqual(f.verified, "Verified against LinkedIn's spec page on 2026-08-20.");
+  assert.strictEqual(f.state, 'unstable');
+  assert.match(f.machine, /reads differently every time/);
+});
+
+test('freshness: the tenant view carries no error text, no hash, and no test row', () => {
+  const src = fs.readFileSync(require.resolve('../src/db/specWatch'), 'utf8');
+  const fn = sliceBetween(src, 'async function getWatchStateBySource()', '\nmodule.exports');
+
+  // spec_watch_list has no tenant_id, so this is a DETAIL boundary rather than an
+  // authorization one — which is exactly why the omissions need asserting.
+  assert.match(fn, /if \(r\.is_test\) continue;/, 'the fake seed page is never a tenant field\'s source');
+  assert.match(fn, /hasError: !!r\.last_error/, 'the FACT of an error, never its text');
+  assert.ok(!/last_error \|\|/.test(fn), 'the error string does not cross');
+  assert.ok(!/current_hash:/.test(fn), 'no hashes');
+  assert.ok(!/affected_fields/.test(fn), 'the write gate is not tenant-facing');
+  // Derived from getWatchList, like getDetectionHealth, so the two views cannot
+  // describe different states.
+  assert.match(fn, /await getWatchList\(\)/);
+});
+
+test('freshness: the settings route asks for it and cannot fail the read', () => {
+  const src = fs.readFileSync(require.resolve('../src/routes/settings'), 'utf8');
+  const route = sliceBetween(src, "router.get('/api/settings/library'", "router.post('/api/settings/library/active'");
+
+  assert.match(route, /getWatchStateBySource\(\)/);
+  assert.match(route, /freshness: specFreshness\(\{/);
+  assert.match(route, /watchBySource\.get\(String\(f\.spec_source\)\)/, 'joined on spec_source -> source_url');
+  // A freshness line is worth having and is not worth failing a library read for.
+  const guard = sliceBetween(route, 'let watchBySource = new Map();', 'const decorated =');
+  assert.match(guard, /try \{/);
+  assert.match(guard, /catch \(err\)/);
+});
+
+test('freshness: it is documented as NOT a health display, where the code is', () => {
+  // Meta's two assets watched the ads-guide index for months and reported
+  // `unchanged` every week with both counters at zero. Every state in this module
+  // is derived from stored state, so that row would render clean here forever.
+  // The limit belongs beside the code, not only in a conversation.
+  const src = fs.readFileSync(require.resolve('../src/utils/specFreshness'), 'utf8');
+  const norm = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
+  assert.match(norm, /not a health display/i);
+  assert.match(norm, /checkSpecHealth/);
+  assert.ok(/wrong page/i.test(norm), 'names the failure it cannot catch');
+});
+
+// A TRIPWIRE, NOT COVERAGE. The suite executes no JS from public/*.html, so these
+// assertions can only say a line is present — they cannot say the block renders,
+// reads right at 390px, or that the amber is legible. Per CLAUDE.md the device is
+// the test for anything in this file; this stops the two call sites and the
+// no-badge rule disappearing silently.
+test('freshness: rendered on both surfaces, and never as a badge', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
+
+  assert.match(html, /function libFreshnessNode\(f\)/);
+  // The read-only card (where a tenant browses) and the locked row of the
+  // house-defaults form (where they meet a number they cannot change).
+  assert.strictEqual((html.match(/libFreshnessNode\(f\)/g) || []).length, 3, 'defined once, called twice');
+  // Null on a field with no cited page — the block must not render empty.
+  assert.match(html, /if \(!fr\) return null;/);
+
+  // NO BADGE. A clean state gets no accent at all: a tick or a green mark beside
+  // "we watch the page, not the number" would say the opposite of the sentence.
+  const css = sliceBetween(html, '.lib-fresh {', '.lib-fname.static');
+  assert.ok(!/#0[0-9a-f]*[89a-f][0-9a-f]*0/i.test(css) && !/green/i.test(css), 'no green');
+  assert.ok(!/content: '✓/.test(css), 'no tick');
+  // The one marker is on the MACHINE line of a flagged row. The human
+  // verification is still true when the detector is stuck, so it is not dimmed.
+  assert.match(css, /\.lib-fresh\.flagged \.lib-fresh-m::before \{ content: '⚠ '; \}/);
+  assert.ok(!/\.lib-fresh\.flagged \.lib-fresh-v/.test(css), 'the verification line is untouched by the flag');
 });
 
 test('spec notice: the wording, the unit, and the drop warning', () => {

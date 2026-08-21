@@ -422,6 +422,25 @@ async function getTenantLibrary(tenantId) {
     warnMissingSchema('copy_fields.char_max_override', 'getTenantLibrary', err);
   }
 
+  // WHEN A HUMAN LAST CONFIRMED THIS NUMBER, as its own query for exactly the
+  // reason the overrides above are: the field SELECT already has a
+  // template-column fallback, and folding a third optional column group into it
+  // would need eight variants to cover three migrations being absent
+  // independently. Separate query, separate catch, no combinatorics — and an
+  // empty map is right when the column is not there, because a field with no
+  // recorded verification renders no sentence either way.
+  const verified = new Map();
+  try {
+    const vRes = await pool.query(
+      `SELECT id, spec_verified_at FROM copy_fields WHERE asset_type_id = ANY($1::bigint[])`,
+      [typeIds]
+    );
+    for (const row of vRes.rows) verified.set(String(row.id), row.spec_verified_at || null);
+  } catch (err) {
+    if (!isUndefinedColumn(err)) throw err;
+    warnMissingSchema('copy_fields.spec_verified_at', 'getTenantLibrary', err);
+  }
+
   const fieldsByType = new Map();
   for (const row of fieldsRes.rows) {
     if (!fieldsByType.has(row.asset_type_id)) fieldsByType.set(row.asset_type_id, []);
@@ -446,6 +465,10 @@ async function getTenantLibrary(tenantId) {
       sort_order: row.sort_order,
       spec_type: row.spec_type || null,
       spec_source: row.spec_source || null,
+      // The HUMAN event — not the detector's weekly one. Read here so the panel
+      // can render the same sentence the generated document carries, beside the
+      // machine state the document cannot show.
+      spec_verified_at: verified.get(String(row.id)) || null,
       // An override of '' is the tenant having DELETED the note; folded to null
       // the same way an empty base note always has been.
       spec_note: hasNote ? ov.spec_note_override || null : baseNote,

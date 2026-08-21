@@ -35,6 +35,8 @@ const {
   isSeededAssetName,
   isTenantEditableTier,
 } = require('../db/assets');
+const { getWatchStateBySource } = require('../db/specWatch');
+const { specFreshness } = require('../utils/specFreshness');
 const {
   normalizeNewAsset,
   normalizeAssetEdit,
@@ -187,11 +189,39 @@ router.get('/api/settings/library', settingsReadLimiter, requireAuth, async (req
     //                     that is all enforced has nothing for a tenant to set.
     // Per field rather than per asset because the seeded assets are MIXED — the
     // paid-social ones carry three house defaults beside their platform limits.
+    // HOW CURRENT IS THIS NUMBER, per field. Two facts of different kinds — the
+    // human verification (fixed, and the same sentence the generated document
+    // carries) and the detector's state for that page (moves weekly, so it can
+    // only be shown on a surface that re-reads it). See utils/specFreshness.
+    //
+    // The join is spec_source -> source_url. spec_watch_list has no tenant_id —
+    // platform specs are universal — so this needs no tenant scoping, and the
+    // read returns booleans and dates only.
+    //
+    // NOT A HEALTH DISPLAY. Every state is derived from stored state, so a row
+    // watching the WRONG PAGE reports clean here forever; that is what
+    // scripts/checkSpecHealth.js exists for and it fetches. Null on any failure:
+    // a freshness line is worth having and is not worth failing a library read
+    // for, which is the same call the notification writer makes.
+    let watchBySource = new Map();
+    try {
+      watchBySource = await getWatchStateBySource();
+    } catch (err) {
+      console.error('[settings] watch state unavailable, rendering without it:', err.stack || err.message);
+    }
+
     const decorated = assets.map((a) => {
       const editable = !isSeededAssetName(a.name);
       const fields = a.fields.map((f) => ({
         ...f,
         editable: editable || isTenantEditableTier(f.spec_type),
+        // null on the 146 of 173 seeded fields carrying the quillio_default
+        // sentinel: no cited page, no claim, nothing to qualify.
+        freshness: specFreshness({
+          specVerifiedAt: f.spec_verified_at,
+          specSource: f.spec_source,
+          watch: watchBySource.get(String(f.spec_source)) || null,
+        }),
       }));
       return {
         ...a,

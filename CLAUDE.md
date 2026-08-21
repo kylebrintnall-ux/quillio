@@ -604,24 +604,61 @@ There is deliberately no `--all` on that script — see the note under
 "`affected_fields` is a snapshot" for why a loop over every entry would silently
 gain and lose pairs nobody priced.
 
-### The doc's freshness date rests on the health check being RUN
+### How current a limit is: two facts, two surfaces, one module
 
-`getCheckedSourceDates` (`db/specWatch.js`) decides which cited pages are in a
-state worth printing a date for, and every clause in it is about the DETECTION
-RUN: was the page reachable, did the anchor match, did the hash reproduce, is a
-flag pending. **None of it asks whether the page still contains our numbers.**
+A limit carries two different claims about its own currency, and they are
+different KINDS of claim. `src/utils/specFreshness.js` composes both, so the
+document and the settings panel cannot come to say different things.
+
+| | | Where it renders |
+| --- | --- | --- |
+| **The human event** | `copy_fields.spec_verified_at` — a person opened the cited page and confirmed this number. Fixed, historical, true when written and true forever. | The generated **document**, because a document is a file and a date written into one is frozen at creation. Also the settings panel. |
+| **The machine state** | `spec_watch_list` — when the detector last fetched that page and what it found. **Moves weekly.** | **Settings → Asset library only.** A surface that re-reads it every time somebody opens it. Never a document. |
+
+`verifiedSentence` is the one composer of "Verified against LinkedIn's spec page
+on 2026-08-20."; `destinations/googleDocs.js` delegates to it.
+
+**"Verified" is right in that sentence and only there.** The rule against the word
+— say *checked* — exists because the weekly detector compares a hash and never
+re-reads a number, so "verified" would claim something the machine does not do.
+That sentence is about a human who did read the page.
+
+**The machine line WITHDRAWS; it is not a badge.** "We watch that page for edits —
+not the number. Last checked 2026-08-19: no change." The first clause is the
+content and the date is incidental — written the other way round, with a tick
+beside it, it becomes the freshness badge the document sentence was in its first
+version. A clean state gets no accent at all; only a non-clean one is marked.
+
+Two of the eight states carry **no date**, and that is a fact about the detector
+rather than a style choice: `bumpFailure` stamps `last_checked_at` on a FAILED
+read too, so "we haven't been able to read this page since …" would name the last
+time we *tried* and read as the last time we *succeeded*.
+
+`spec_watch_list` has no `tenant_id` — platform specs are universal — so the
+tenant view is a **detail** boundary, not an authorization one. What does not
+cross: `last_error`'s text, hashes, `affected_fields`, and the `is_test` row.
+
+### IT IS NOT A HEALTH DISPLAY, and that rests on the health check being RUN
+
+**Every state on that screen is derived from STORED state. None of it reads the
+cited page.** So a row watching the WRONG PAGE reports clean there forever.
 
 That is the Meta-index defect exactly. That row reported `unchanged` every week,
 with `last_error` null and both counters at zero, while watching a page with no
-character limit on it. It would have passed this predicate on every one of those
-weeks and printed a confident date.
+character limit on it — 2,208 characters of nav, marketing copy and a signup
+form. It would have rendered "no change" with total confidence, on every one of
+those weeks, about a page that could never have flagged.
 
 What closes the gap is `scripts/checkSpecHealth.js` — it asks the structural
-questions the predicate cannot: does the hashed text contain the row's own
+questions stored state cannot: does the hashed text contain the row's own
 `char_max` values, is the anchor present in the hashed region today, does the
 page vary between fetches, is a cited URL watched by anybody. **It is manual and
 read-only by design, so the dependency is on somebody running it**, and the
-50 fields currently carrying a date rest on that having been done.
+fields carrying a verification date rest on that having been done.
+
+**A status rendering on a screen does not make that dependency weaker.** It makes
+it easier to forget, which is why the limit is written into
+`src/utils/specFreshness.js` itself and asserted by a test, not left here alone.
 
 Run it when a watch row is added, when a `spec_source` is repointed, and
 periodically otherwise. If it is ever scheduled, a red run is the signal to
@@ -2902,19 +2939,26 @@ Not chosen yet. Framed here so it is inherited rather than rediscovered.
 Whichever is chosen, `rederiveAffectedFields.js` becomes redundant rather than
 wrong; it is a repair for the state we are in, not a design.
 
-### Known gap: LinkedIn Carousel is watched by nobody
+### CLOSED: LinkedIn Carousel now has its own watch row
 
 `business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs` is
 cited by six **enforced** `copy_fields` rows (`migrateSpecIntegrityFixes.js`
 repointed them there, correctly — the single-image page does not carry the
-carousel's numbers) and it is on **no** `spec_watch_list` row. So a change to
-LinkedIn's carousel limits is never detected.
+carousel's numbers) and was on **no** `spec_watch_list` row, so a change to
+LinkedIn's carousel limits was never detected.
 
-Nothing is broken today: those six pairs are still inside the LinkedIn
-single-image entry's frozen `affected_fields`, so they resolve and can still be
-approved — through a flag raised by the wrong page. Re-deriving that entry would
-drop them and turn a wrong gate into no gate, which is why `--only` exists and
-why the carousel entry should be **added** before that entry is ever re-derived.
+`scripts/migrateAddLinkedInCarouselWatch.js` has run in production. Row **#12**
+exists, anchored on `Card headline`, six pairs derived, baselined and confirmed
+`unchanged` across two runs. The list is **nine rows**, `unanchored` reads **0**,
+and the health check reports every watched row healthy.
+
+**The ordering that mattered is now spent, and this is why it was insisted on.**
+Re-deriving the single-image entry BEFORE this row existed would have dropped
+those six pairs and turned a gate-by-the-wrong-page into a gate-by-nothing. The
+new row has produced its clean comparison, so the single-image entry can now be
+re-derived (`scripts/rederiveAffectedFields.js --only=<id>`, dry-run first)
+whenever somebody wants to — it will drop the six carousel pairs, which is
+correct, because they are gated by row #12 now.
 
 ## Vision & roadmap
 

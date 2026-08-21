@@ -118,11 +118,7 @@ async function getDetectionHealth() {
   if (!p) return { lastRun: null, watch: [] };
 
   const rows = await getWatchList(); // real-first, test-last; carries the fields we need
-  const counts = await p.query(
-    "SELECT watch_id, COUNT(*)::int AS n FROM spec_review_queue WHERE status = 'pending' GROUP BY watch_id"
-  );
-  const byWatch = new Map();
-  for (const c of counts.rows) byWatch.set(String(c.watch_id), c.n);
+  const byWatch = await pendingByWatch(p);
 
   const lr = await p.query('SELECT MAX(last_checked_at) AS last_run FROM spec_watch_list');
   const lastRun = (lr.rows && lr.rows[0] && lr.rows[0].last_run) || null;
@@ -135,7 +131,11 @@ async function getDetectionHealth() {
     last_checked_at: r.last_checked_at || null,
     baselined: !!r.current_hash,
     last_error: r.last_error || null,
-    pending_count: byWatch.get(String(r.id)) || 0,
+    pending_count: (byWatch.get(String(r.id)) || EMPTY_PENDING).n,
+    // When the OLDEST unreviewed flag was raised. Additive for this page; the
+    // settings library needs it, because "this page changed on <date> and is
+    // waiting on review" is the one withdrawal that can carry a real event date.
+    pending_since: (byWatch.get(String(r.id)) || EMPTY_PENDING).since,
     // An observed_practice row is not hash-watched at all, so every health column
     // beside it is historical from the moment it was reclassified. The page has
     // to say which rows they no longer describe, or they read as current.
@@ -160,10 +160,72 @@ async function getDetectionHealth() {
   return { lastRun, watch };
 }
 
+const EMPTY_PENDING = { n: 0, since: null };
+
+// Unreviewed flags per watch row: how many, and when the oldest was raised.
+// Shared by both readers below so a count on one surface cannot disagree with a
+// count on the other.
+async function pendingByWatch(p) {
+  const res = await p.query(
+    `SELECT watch_id, COUNT(*)::int AS n, MIN(detected_at) AS since
+       FROM spec_review_queue WHERE status = 'pending' GROUP BY watch_id`
+  );
+  const m = new Map();
+  for (const r of res.rows) m.set(String(r.watch_id), { n: r.n, since: r.since || null });
+  return m;
+}
+
+// THE TENANT-SAFE VIEW of the same state, keyed by source_url — what the settings
+// library joins onto a field's spec_source.
+//
+// spec_watch_list has NO tenant_id, deliberately: platform specs are universal.
+// So this is not an authorization boundary, it is a DETAIL boundary, and the
+// difference is what these omissions are about:
+//
+//   last_error's TEXT      raw fetch failures, HTTP status, possibly internal
+//                          hostnames. The tenant gets the fact, not the string.
+//   current_hash           meaningless to a reader and an internal detail.
+//   affected_fields        the write gate. Nothing tenant-facing reads it.
+//   the is_test row        /admin/test-spec is fake seed data and is not a page
+//                          any tenant's field is cited to.
+//
+// Booleans and dates only, so a future field added to the health row cannot leak
+// onto a tenant surface by being picked up automatically.
+async function getWatchStateBySource() {
+  const p = getPool();
+  if (!p) return new Map();
+  const rows = await getWatchList();
+  const pending = await pendingByWatch(p);
+  const out = new Map();
+  for (const r of rows) {
+    if (r.is_test) continue;
+    const pend = pending.get(String(r.id)) || EMPTY_PENDING;
+    out.set(String(r.source_url), {
+      lastCheckedAt: r.last_checked_at || null,
+      baselined: !!r.current_hash,
+      // Pre-migration these columns are ABSENT, not null, and the honest
+      // degradation is to report what can be read: with no expected_content
+      // column nothing anchors any row, which is exactly what `anchored: false`
+      // says. See WATCH_TIERS above for why absence is not defaulted in.
+      anchored: !!(r.expected_content && String(r.expected_content).trim()),
+      hasError: !!r.last_error,
+      pendingCount: pend.n,
+      pendingSince: pend.since,
+      failures: Number(r.consecutive_failures) || 0,
+      unconfirmed: Number(r.consecutive_unconfirmed) || 0,
+      sourceKind: r.source_kind === 'observed_practice' ? 'observed_practice' : 'platform_enforced',
+    });
+  }
+  return out;
+}
+
 module.exports = {
   getWatchList,
   getReviewQueue,
   getTestPageContent,
   setTestPageContent,
   getDetectionHealth,
+  // The tenant-facing subset of the same rows. Derived from getWatchList, like
+  // getDetectionHealth, so the two views cannot describe different states.
+  getWatchStateBySource,
 };

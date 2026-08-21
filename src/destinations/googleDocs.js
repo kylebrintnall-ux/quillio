@@ -40,6 +40,8 @@ const {
   describeLength,
 } = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
+const { specSourceName } = require('../utils/specSource');
+const { verifiedSentence } = require('../utils/specFreshness');
 // Which repeated spec_notes may be shown once per run of adjacent fields. Read
 // from the file where the notes themselves are written, so the decision sits
 // beside the sentence it is about — see the comment on SHOW_ONCE_NOTES for the
@@ -258,20 +260,11 @@ function assetHeadingTexts(doc) {
 // re-anchoring pass), so that value — and anything unrecognized — returns null.
 // The raw spec_source string is NEVER surfaced (we must never print
 // 'quillio_default' or a bogus source name).
-function specSourceName(specSource) {
-  const s = String(specSource || '').toLowerCase();
-  if (!s || s === 'quillio_default') return null;
-  if (s.includes('linkedin')) return 'LinkedIn';
-  if (s.includes('meta') || s.includes('facebook') || s.includes('fb.com')) return 'Meta';
-  if (s.includes('twitter') || s.includes('x.com')) return 'X';
-  if (s.includes('google') || s.includes('dv360') || s.includes('doubleclick')) return 'Google';
-  if (s.includes('instagram')) return 'Instagram';
-  if (s.includes('constantcontact')) return 'Constant Contact';
-  // 'gong.io', not 'gong' — a bare substring would match any URL that happens to
-  // contain those three letters.
-  if (s.includes('gong.io')) return 'Gong';
-  return null; // unrecognized → no source name (never print the raw value)
-}
+// MOVED to src/utils/specSource.js and re-exported here, so every existing
+// caller and test is unchanged. It went because three things outside the render
+// layer need it — the sweep's notification, checkSpecHealth, and the settings
+// library's freshness line — and the settings route cannot reach into a
+// destination without pulling googleapis into a page render.
 
 // What a RESEARCH source actually measured, and what it found — for the sources
 // that are studies rather than platform spec pages.
@@ -406,33 +399,16 @@ const READER_ONLY_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET, NOT_A_HAR
 // requires whitespace or end-of-string after the stop.
 const VERIFIED_LINE = /\s*Verified against [^.]{1,60} on \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
 
-// "Verified against LinkedIn's spec page on 2026-08-20.", or '' when there is
-// nothing to say.
+// verifiedSentence — the provenance clause itself — IS COMPOSED IN
+// src/utils/specFreshness.js, not here, and is re-exported below so this
+// module's callers are unchanged. The settings library renders the IDENTICAL
+// sentence beside the live watch state, and the whole point of that screen is to
+// qualify the claim this document makes: two copies of the wording is how the
+// qualification comes to describe a sentence the document no longer says.
 //
-// ISO, because a generated document is read in more than one locale and 08/09 is
-// ambiguous in exactly the way a provenance date must not be.
-//
-// EVERY FAILURE LANDS ON THE SAME SILENT PATH. No date, a value that is not a
-// date, an unparseable one, and a source that resolves to no platform name all
-// return '' — a field with no recorded verification must render with NO clause
-// rather than an empty or malformed one. "Verified against null's spec page on
-// Invalid Date." is what these guards make unreachable.
-//
-// KNOWN WORDING EDGE, currently unreachable. "spec page" is right for the six
-// platform pages and wrong for a study — Constant Contact and Gong are cited by
-// two `recommended` fields whose sources are research, and specSourceName does
-// resolve both. No such field carries a verification date today and the backfill
-// does not give them one, so the sentence cannot render for them. If one is ever
-// verified, the wording needs a second form rather than calling a study a spec
-// page.
-function verifiedSentence(specVerifiedAt, specSource) {
-  if (!specVerifiedAt) return '';
-  const sourceName = specSourceName(specSource);
-  if (!sourceName) return '';
-  const d = specVerifiedAt instanceof Date ? specVerifiedAt : new Date(specVerifiedAt);
-  if (Number.isNaN(d.getTime())) return '';
-  return `Verified against ${sourceName}'s spec page on ${d.toISOString().slice(0, 10)}.`;
-}
+// Its rules live with it — the ISO format, the four failure paths that all
+// render nothing rather than something malformed, why "Verified" is the right
+// word there and nowhere else, and the study-vs-spec-page wording edge.
 
 // EVERY PROVENANCE WORDING THIS CODEBASE HAS EVER WRITTEN INTO A DOCUMENT.
 //

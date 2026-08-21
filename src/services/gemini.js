@@ -99,6 +99,26 @@ function mediumKeywordsForAsset(assetType) {
   }
   if (a.includes('organic')) return ['organic social'];
   if (a.includes('display') || a.includes('banner')) return ['google display'];
+  // craft.md's "### Google Search" section has existed since the file's first
+  // commit and NOTHING HAS EVER SELECTED IT — there was no search asset, so no
+  // asset name reached this branch and the section only ever arrived through the
+  // fallback below, bundled with all seven others. 'Google Responsive Search Ad'
+  // is what makes it reachable.
+  //
+  // It goes AFTER the display branch on purpose: 'display' and 'search' are
+  // disjoint on every name in the library today, but the ordering states which
+  // wins if a tenant ever authors "Search Display Banner", and the display
+  // section is the one that describes a banner.
+  //
+  // KNOWN CONFLICT, and it is a prompt change rather than a wording one. That
+  // section ends "write all 15 headlines to give the algorithm room", and this
+  // asset has THREE headline fields. Before this branch the sentence was one of
+  // eight mediums in a fallback; now it is the only medium section a search-ad
+  // prompt carries, so its weight goes up sharply. Left as it is HERE because
+  // editing craft.md changes what every prompt produces and this file's own
+  // record says that needs its own commit and its own before/after — not a
+  // rider on a seed. Recorded in CLAUDE.md as the next thing to measure.
+  if (a.includes('search')) return ['google search'];
   if (a.includes('basho') || a.includes('sales') || a.includes('outbound')) return ['sales'];
   if (a.includes('email')) return ['email'];
   if (a.includes('form') || a.includes('confirm') || a.includes('thank')) return ['confirmation'];
@@ -766,6 +786,23 @@ const ASSET_PHRASE_HINTS = [
   {
     target: 'Google Responsive Display Ad',
     line: '- "responsive display", "dv360" or "programmatic" → Google Responsive Display Ad',
+  },
+  // EVERY PHRASE HERE NAMES SEARCH, and none of them is "google ads".
+  //
+  // That omission is the whole point. A bare "google ad" now has two plausible
+  // answers where it had one, and wiring the generic phrase to either sibling is
+  // exactly the edit that sent every "a landing page" brief to the EVENT asset —
+  // a generic phrase pointing at one specialisation, with nothing downstream able
+  // to notice, because a WRONG match is not an UNMATCHED one and unmatchedAssets
+  // only ever holds the latter.
+  //
+  // So the bare phrase stays unrouted and the model picks, which is the state
+  // "a couple of paid posts" is in (CLAUDE.md's open question on generic phrases
+  // over siblings). This asset makes that population two rather than one. It is
+  // not made worse by being left alone, and it would be made worse by a guess.
+  {
+    target: 'Google Responsive Search Ad',
+    line: '- "search ad", "responsive search", "rsa" or "paid search" → Google Responsive Search Ad',
   },
   { target: 'Demand Gen Nurture Email', line: '- "email" or "nurture" → Demand Gen Nurture Email' },
   { target: 'Event Invitation Email', line: '- "event email" or "invite" → Event Invitation Email' },

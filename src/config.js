@@ -16,6 +16,7 @@ const ALLOWED_ASSETS = [
   'Twitter/X Ad',
   'Display Banner — Standard',
   'Google Responsive Display Ad',
+  'Google Responsive Search Ad',
   'Demand Gen Nurture Email',
   'Event Invitation Email',
   'Event Reminder Email',

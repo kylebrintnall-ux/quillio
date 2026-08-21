@@ -172,9 +172,13 @@ test('copyCompleteBlocks builds Open in Drive + Regenerate', () => {
   );
 });
 
-test('config.ALLOWED_ASSETS is the 25-name v3 taxonomy, post-prune', () => {
+test('config.ALLOWED_ASSETS is the 26-name v3 taxonomy, post-prune', () => {
   const { ALLOWED_ASSETS } = require('../src/config');
-  assert.strictEqual(ALLOWED_ASSETS.length, 25);
+  // 25 after the prune, 26 since Google Responsive Search Ad. This is a
+  // consistency check between two files — src/config.js and the seed — and NOT a
+  // statement about the outside world; the test below asserts they name the same
+  // assets, which is the property that matters.
+  assert.strictEqual(ALLOWED_ASSETS.length, 26);
   assert.ok(ALLOWED_ASSETS.includes('Battle Card'));
   assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad'));
 });
@@ -546,9 +550,9 @@ test('resolveTenant falls back to a consistent env-var shape with no DB', async 
 
 // --- Week 7: per-tenant asset library ---
 
-test('defaultAssets is the 25-type v3 library with valid shape, post-prune', () => {
+test('defaultAssets is the 26-type v3 library with valid shape, post-prune', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
-  assert.strictEqual(DEFAULT_ASSETS.length, 25, 'exactly 25 asset types');
+  assert.strictEqual(DEFAULT_ASSETS.length, 26, 'exactly 26 asset types');
 
   const groups = new Set([
     'Paid Social',
@@ -559,6 +563,10 @@ test('defaultAssets is the 25-type v3 library with valid shape, post-prune', () 
     'Organic Social',
     'Direct Mail',
     'Sales Enablement',
+    // Its own group rather than 'Display', because a search ad is not one. The
+    // value is a display LABEL and nothing switches on it — no code path in src/
+    // compares a group to a literal — so the cost of an honest name is this line.
+    'Paid Search',
   ]);
 
   const seenSortOrders = new Set();
@@ -658,7 +666,13 @@ test('spec tiers: the seed equals what the migration chain produces, in both dir
     recommended.delete(k);
   }
 
-  assert.strictEqual(enforced.size, 16, '16 enforced pairs after the migration chain');
+  // migrateAddGoogleSearchAsset: a NEW ASSET rather than a re-tier — the first
+  // link in this chain that adds pairs by adding fields. Its seven come in at
+  // 'enforced' on Google's own limit language; see that file's header for why
+  // the LinkedIn open question does not transfer to it.
+  for (const [a, f] of require('../scripts/migrateAddGoogleSearchAsset').ENFORCE) enforced.add(`${a}||${f}`);
+
+  assert.strictEqual(enforced.size, 23, '16 after the earlier chain + 7 from the search asset');
   assert.strictEqual(recommended.size, 11, '9 platform recommendations + 2 research citations');
 
   // FORWARD: everything the migrations produce is in the seed at that tier.
@@ -699,6 +713,8 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     ...SOURCE_URLS,
     ...require('../scripts/migrateFixMetaSpecs').SOURCE_URLS,
     ...require('../scripts/migrateMetaPlacementCitations').SOURCE_URLS,
+    // The newest asset brings its own, the same way each Meta step did.
+    ...require('../scripts/migrateAddGoogleSearchAsset').SOURCE_URLS,
   };
   // Which sources name a placement, as a LITERAL rather than a call to the
   // function under test — composing the expectation with specPlacementName would
@@ -779,7 +795,7 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
       }
     }
   }
-  assert.strictEqual(enforcedSeen, 16, 'exactly 16 enforced fields carry a real spec_source');
+  assert.strictEqual(enforcedSeen, 23, 'exactly 23 enforced fields carry a real spec_source');
   // 9, not 10: Meta Single Image Ad / Description left the tier when
   // migrateFixMetaSpecs found that Meta publishes no Description recommendation.
   assert.strictEqual(recommendedSeen, 11, '9 platform recommendations + 2 research citations');
@@ -839,6 +855,113 @@ test('LinkedIn Single Image Ad Intro Text seeds char_max 150 + note; Carousel In
   assert.strictEqual(carousel.char_max, 255, 'LinkedIn Carousel Intro Text char_max is 255 (the page)');
   assert.notStrictEqual(carousel.char_max, sia.char_max, 'carousel and single-image are NOT the same number');
   assert.strictEqual(carousel.spec_note, null, 'LinkedIn Carousel Intro Text has no note');
+});
+
+test('Google Responsive Search Ad: the page text is in the header, and the seed matches the migration', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const mig = require('../scripts/migrateAddGoogleSearchAsset');
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('../scripts/migrateAddGoogleSearchAsset'), 'utf8');
+
+  // THE FETCHED TEXT IS PRESENT, not merely claimed — the same standard the Meta
+  // and LinkedIn corrections set. Every number this asset stores comes out of
+  // these two sentences, so a header that lost them would leave 30/90/15 as bare
+  // assertions and this test is what stops that happening quietly.
+  assert.match(src, /responsive search ads have character limits/,
+    'the limit sentence is in the header');
+  assert.match(src, /The headline fields for responsive search ads\s+\/\/\s+support up to 30 characters/,
+    'the 30 is quoted, not asserted');
+  assert.match(src, /support up to 90\s+\/\/\s+characters each, and the path fields support up to 15 each/,
+    'the 90 and the 15 are quoted, not asserted');
+  assert.match(src, /minimum of 3 headlines, but you can enter up to 15/,
+    'the 3 is the page’s own minimum, quoted');
+  assert.match(src, /minimum of 2 descriptions/, 'and so is the 2');
+
+  // THE APOSTROPHES ARE THE PAGE'S. A straight quote here reads ABSENT against
+  // the fetched text and looks exactly like a false claim, which cost one round.
+  for (const q of mig.QUOTES) {
+    assert.ok(!q.includes("'"), `quote uses the page’s U+2019, not U+0027: ${q}`);
+  }
+  // And the migration asserts them at RUN time too — the header being right in
+  // the repo says nothing about the page still saying it when somebody writes.
+  assert.match(src, /REFUSING TO WRITE/, 'a failed quote check stops the write');
+  assert.ok(src.indexOf('const page = await readPage();') < src.indexOf('new Client({ connectionString'),
+    'the page is read BEFORE the database is opened');
+
+  // SEED === MIGRATION, both directions. A tenant seeded today and a tenant
+  // migrated today must hold identical rows, or the two populations render
+  // different specs for the same field.
+  const seed = DEFAULT_ASSETS.find((a) => a.name === mig.ASSET);
+  assert.ok(seed, 'the asset is in the seed');
+  assert.strictEqual(seed.group, mig.GROUP);
+  assert.strictEqual(seed.fields.length, mig.FIELDS.length, 'same field count');
+  mig.FIELDS.forEach(([name, min, max, groupLabel, tier], i) => {
+    const f = seed.fields[i];
+    assert.strictEqual(f.field_name, name, `field ${i + 1} name`);
+    assert.strictEqual(f.char_min, min, `${name} char_min`);
+    assert.strictEqual(f.char_max, max, `${name} char_max`);
+    assert.strictEqual(f.group_label, groupLabel, `${name} group_label`);
+    assert.strictEqual(f.spec_type, tier, `${name} spec_type`);
+    // The cited fields carry the URL; the house defaults carry the sentinel and
+    // must never carry a page — a house default has no source to be verified
+    // against, which is why only the enforced seven get a date.
+    assert.strictEqual(f.spec_source, tier === 'enforced' ? mig.URL : 'quillio_default', `${name} spec_source`);
+  });
+
+  // THREE HEADLINES AND TWO DESCRIPTIONS, deliberately, against a page that
+  // accepts fifteen. Riffs covers the rest; fifteen empty slots is the wall.
+  const named = (re) => seed.fields.filter((f) => re.test(f.field_name)).length;
+  assert.strictEqual(named(/^Headline \d$/), 3, 'three headline fields, the page’s minimum');
+  assert.strictEqual(named(/^Description \d$/), 2, 'two description fields, the page’s minimum');
+  assert.strictEqual(named(/^Display Path \d$/), 2);
+
+  // THE PATH COUNT IS RECORDED AS UNSOURCED. This is the assertion that keeps an
+  // honest gap honest: the 15 is on the page and the 2 is not, and a library
+  // whose whole claim is that its numbers are traceable cannot carry an
+  // untraceable one silently. If somebody later finds the count on a page, they
+  // delete this assertion in the same commit that cites it.
+  assert.match(src, /THE PATH COUNT IS NOT ON THE PAGE/,
+    'the migration says outright which number has no page behind it');
+  assert.match(src, /publishes the LIMIT and states no\s+\/\/\s+COUNT/, 'and says exactly what is missing');
+
+  // ENFORCED, AND WHY IT IS NOT THE LinkedIn CASE. CLAUDE.md carries an open
+  // question about LinkedIn's nine, opened by a "Text Recommendations" heading.
+  // Nothing here has that tension, and the header has to say so or the next
+  // reader applies the caution to the wrong evidence.
+  for (const [name, , , , tier] of mig.FIELDS) {
+    if (/^(Headline|Description|Display Path) \d$/.test(name)) {
+      assert.strictEqual(tier, 'enforced', `${name} is enforced`);
+    }
+  }
+  assert.match(src, /Text Recommendations/, 'the header names the evidence that opened the LinkedIn question');
+  assert.match(src, /Different evidence, different tier/, 'and says why it does not transfer');
+});
+
+test('Google Responsive Search Ad: it is reachable, and only by phrases that name search', () => {
+  const fs = require('fs');
+  const gem = fs.readFileSync(require.resolve('../src/services/gemini'), 'utf8');
+  const { mediumKeywordsForAsset } = require('../src/services/gemini');
+
+  // craft.md's "### Google Search" section existed before any asset could select
+  // it. This is the branch that makes it reachable.
+  const craft = fs.readFileSync(require.resolve('../craft.md'), 'utf8');
+  assert.match(craft, /^### Google Search$/m, 'craft.md carries the section');
+  assert.deepStrictEqual(mediumKeywordsForAsset('Google Responsive Search Ad'), ['google search']);
+  // The sibling is unmoved — 'display' still wins for a banner, and the ordering
+  // in the source is what decides a name carrying both words.
+  assert.deepStrictEqual(mediumKeywordsForAsset('Google Responsive Display Ad'), ['google display']);
+  assert.ok(gem.indexOf("a.includes('display')") < gem.indexOf("a.includes('search')"),
+    'display is tested before search');
+
+  // NO GENERIC PHRASE POINTS AT IT. A bare "google ad" now has two plausible
+  // answers, and wiring the generic phrase to either sibling is the edit that
+  // sent every "a landing page" brief to the EVENT asset — invisible, because a
+  // WRONG match is not an UNMATCHED one.
+  const hint = sliceBetween(gem, "target: 'Google Responsive Search Ad'", 'Demand Gen Nurture Email');
+  assert.match(hint, /"search ad"/, 'the hint names search');
+  assert.match(hint, /"responsive search"/);
+  assert.match(hint, /"rsa"/);
+  assert.ok(!/"google ad"|"google ads"/.test(hint), 'and never claims the generic phrase');
 });
 
 test('LinkedIn carousel intro / X link-cost: the migration and the seed agree', () => {
@@ -976,7 +1099,7 @@ test('defaultAssets Graphic Copy group is contiguous and correctly placed', () =
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const grouped = DEFAULT_ASSETS.filter((a) => a.fields.some((f) => f.group_label === 'Graphic Copy'));
   // 14 before the prune; the four retired LinkedIn Variant copies each carried one.
-  assert.strictEqual(grouped.length, 10, '10 assets carry a Graphic Copy group');
+  assert.strictEqual(grouped.length, 11, '11 assets carry a Graphic Copy group');
   for (const a of grouped) {
     // Grouped fields must be one uninterrupted run so the Doc renders a single
     // sub-heading (and the Figma population step maps them as a unit).
@@ -2158,13 +2281,16 @@ test('20 seeded CHARACTER fields already carry a floor — this is not opt-in-on
       if (Number(f.char_min) > 0) floored.push({ asset: a.name, field: f.field_name });
     }
   }
-  // 167 since Event Reminder Email gained `Date / Location Line` — a reminder
-  // needs somewhere to put the time. char_min 0, so the floored count is unmoved.
-  assert.strictEqual(charFields, 167, 'character fields in the seed');
+  // 177 since Google Responsive Search Ad added ten. Its Subhead carries the
+  // same 20 floor the other graphic-copy groups do, so `floored` moves with it.
+  assert.strictEqual(charFields, 177, 'character fields in the seed');
   // 20 since migrateFixMetaSpecs gave Meta Single Image Ad / Primary Text the
   // 50 half of Meta's published "50-150 characters" — the first new floor on a
   // paid-social field since floorAB measured what a floor costs in spread.
-  assert.strictEqual(floored.length, 20, 'and 20 of them have a floor');
+  // 21 since Google Responsive Search Ad — its Subhead carries the same 20 floor
+  // every other graphic-copy Subhead does. A consistency check over the seed, not
+  // a claim about any platform.
+  assert.strictEqual(floored.length, 21, 'and 21 of them have a floor');
   // The shape of them: every Subhead, every Preheader, the landing-page meta
   // pairs — and now one Primary Text, the only one of the twenty whose floor is a
   // PLATFORM's published number rather than a house convention.
@@ -2184,7 +2310,7 @@ test('20 seeded CHARACTER fields already carry a floor — this is not opt-in-on
 // fieldHint's composed line — spec_note PLUS the tier sentence — so a spec_note,
 // a migration adding one, or a re-tier to enforced/recommended each silently
 // deleted the sentence-case rule from every Graphic Headline prompt. It has
-// never fired only because all 20 seeded Subhead / Graphic Headline fields are
+// never fired only because all 22 seeded Subhead / Graphic Headline fields are
 // house_default with a NULL note, which is a one-column safety margin.
 test('fieldGuidanceFor composes the built-in rule with the field note instead of being displaced by it', () => {
   const { fieldGuidanceFor, builtInFieldGuidance } = require('../src/services/gemini');
@@ -2287,7 +2413,7 @@ test('the composed fallback changes no seeded field: none carries both a note an
       );
     }
   }
-  assert.strictEqual(builtIn, 20, '20 seeded Subhead / Graphic Headline fields');
+  assert.strictEqual(builtIn, 22, '22 seeded Subhead / Graphic Headline fields');
   assert.deepStrictEqual(both, [], 'none of them renders an italic line, so none changes');
 });
 
@@ -7144,7 +7270,9 @@ test('parseBrief: the prompt asks for a plan and routes A/B tests to counts', as
   // were four of thirty names the parse had to choose between, and near-duplicates
   // are what a name match gets wrong, so the prune finished the job.
   const { ALLOWED_ASSETS } = require('../src/config');
-  assert.strictEqual(ALLOWED_ASSETS.length, 25);
+  // 26 — the four Variants left and Google Responsive Search Ad arrived. The
+  // COUNT is incidental to this test; the two assertions below are the subject.
+  assert.strictEqual(ALLOWED_ASSETS.length, 26);
   assert.ok(!ALLOWED_ASSETS.some((n) => /— Variant [A-D]$/.test(n)), 'no Variant types in the taxonomy');
   assert.ok(!prompt.includes('LinkedIn Single Image Ad — Variant A'), 'and none offered in the allowed list');
   // The RULE about them is gone too, for a stock tenant — `anyMatching` tests the
@@ -8782,6 +8910,8 @@ test('spec integrity: the seed and the migration agree on every band, both direc
     // union of every repointing migration is what it has to be compared against —
     // not this one file's map.
     ...Object.keys(require('../scripts/migrateFixMetaSpecs').SOURCE_URLS),
+    // ...and the search asset, which is cited by the migration that CREATES it.
+    ...Object.keys(require('../scripts/migrateAddGoogleSearchAsset').SOURCE_URLS),
     ...CITED_BANDS.map(([asset]) => asset),
     require('../scripts/migrateCiteColdEmailBand').ASSET,
   ]);
@@ -19708,7 +19838,7 @@ test('freshness dedup: a run collapses, and anything else restores it', () => {
   assert.match(src, /rows\.appendChild\(libHouseRow\(f, prevFreshSource\)\);/);
 });
 
-test('freshness dedup: replayed over the real seed, twelve blocks not twenty-seven', () => {
+test('freshness dedup: replayed over the real seed, thirteen blocks not thirty-four', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
   const region = sliceBetween(src, 'function libFreshRepeats(f, prevSource) {', 'function libFreshnessNode(f) {');
   const { libFreshRepeats, libFreshCarry } = new Function(
@@ -19732,8 +19862,13 @@ test('freshness dedup: replayed over the real seed, twelve blocks not twenty-sev
     if (n) { blocks += n; shape[a.name] = n; }
   }
 
-  assert.strictEqual(perField, 27, 'the seeded library cites a page on 27 fields');
-  assert.strictEqual(blocks, 12, 'and the adjacency rule renders 12 blocks');
+  assert.strictEqual(perField, 34, 'the seeded library cites a page on 34 fields');
+  // 13 since Google Responsive Search Ad. Its seven cited fields are CONTIGUOUS
+  // — the three graphic-copy fields are house_default and sit below them — so it
+  // adds exactly one block, which is the dedup rule working rather than an
+  // exception to it.
+  assert.strictEqual(blocks, 13, 'and the adjacency rule renders 13 blocks');
+  assert.strictEqual(shape['Google Responsive Search Ad'], 1);
   // The three that render TWICE are the ones whose sourced fields are split by a
   // Graphic Copy group. LinkedIn Single Image is SS...S — Intro Text and Headline
   // share a block, and LAN Description gets its own below the gap.

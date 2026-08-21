@@ -27,6 +27,12 @@
 //   • Preheaders 85–120 → 85–100; subject lines split by email type (cold 40,
 //     opt-in 130) and their char_min floor dropped.
 //
+// August 2026 (scripts/migrateAddGoogleSearchAsset.js adds the same asset to
+// already-seeded tenants):
+//   • 'Google Responsive Search Ad' added — the twenty-sixth asset, and the first
+//     new one since the prune. Every number read off
+//     support.google.com/google-ads/answer/7684791, quoted in that migration.
+//
 // Authored compactly as [name, group, [[fieldName, charMin, charMax, groupLabel?], …]]
 // and normalized below into the seed shape (adds sort_order, is_active, field_type,
 // spec metadata, asset_direction and spec_note). field_type is 'text' (characters)
@@ -253,6 +259,34 @@ const RAW = [
     ['Subhead', 20, 40, 'Graphic Copy'],
     ['CTA Button', 0, 30, 'Graphic Copy'],
   ]],
+  // THREE HEADLINES AND TWO DESCRIPTIONS ARE GOOGLE'S OWN MINIMUMS, not a
+  // sample of the fifteen it accepts: "You’ll need to enter a minimum of 3
+  // headlines, but you can enter up to 15" and "a minimum of 2 descriptions".
+  // (The apostrophe is the page's U+2019. A straight one here would not match
+  // the fetched text, which is how two quotes first read ABSENT.)
+  // Seeding fifteen headline fields would put a writer in front of a wall of
+  // empty slots before they have seen the product write anything, and Riffs is
+  // the feature that covers the gap — one field per SHAPE, more by riffing,
+  // which is what the Display asset above already does with its one Short
+  // Headline. The seed is the minimum viable ad; the ceiling is the writer's.
+  //
+  // THE PATH COUNT IS THE ONE NUMBER HERE WITH NO PAGE BEHIND IT. The page
+  // publishes the limit — "the path fields support up to 15 each" — and states
+  // no count. Two is the interface's shape, not a cited figure. Recorded in
+  // scripts/migrateAddGoogleSearchAsset.js rather than quietly shipped, because
+  // the alternative is a number in a sourced library that nobody can trace.
+  ['Google Responsive Search Ad', 'Paid Search', [
+    ['Headline 1', 0, 30],
+    ['Headline 2', 0, 30],
+    ['Headline 3', 0, 30],
+    ['Description 1', 0, 90],
+    ['Description 2', 0, 90],
+    ['Display Path 1', 0, 15],
+    ['Display Path 2', 0, 15],
+    ['Graphic Headline', 0, 70, 'Graphic Copy'],
+    ['Subhead', 20, 40, 'Graphic Copy'],
+    ['CTA Button', 0, 30, 'Graphic Copy'],
+  ]],
   ['Demand Gen Nurture Email', 'Email', [
     ['Subject Line 1', FROM_CLASS, FROM_CLASS],
     ['Subject Line 2', FROM_CLASS, FROM_CLASS],
@@ -444,6 +478,10 @@ const DIRECTIONS = {
   'Display Banner — Standard': 'Fewest possible words. Headline does all the work. CTA is a verb.',
   'Google Responsive Display Ad':
     'System assembles combinations. Every element must work alone and together.',
+  // PULL, not push — the reader typed the query. The one direction that
+  // separates this asset from every other paid one in the library.
+  'Google Responsive Search Ad':
+    'They are already looking. Match the intent, name the thing, skip the setup.',
   'Demand Gen Nurture Email': 'Curiosity or tension in the subject — they are mid-sequence, not meeting you.',
   'Event Invitation Email': 'Make the value of attending undeniable. Date and CTA above the fold.',
   'Event Reminder Email': 'Urgency without panic. They already said yes — reinforce, do not re-sell.',
@@ -471,6 +509,13 @@ const SPEC_NOTES = {
     'One copy set serves all standard banner sizes (300×250, 728×90, 160×600, 320×50, 300×600). Keep the headline short enough to read in the smallest format.',
   'Google Responsive Display Ad':
     'Responsive — the platform assembles combinations across sizes from one copy set. Every element must read on its own and in combination.',
+  // ASSET-LEVEL NOTES RENDER IN SETTINGS, NOT IN THE DOC — rowToSpecGroup carries
+  // asset_direction and not this. That is the right surface for it: "why only
+  // three headlines?" is a question a tenant asks of the LIBRARY, and the answer
+  // is the page's own minimum. Both numbers below are quoted in
+  // scripts/migrateAddGoogleSearchAsset.js.
+  'Google Responsive Search Ad':
+    'Google assembles each ad from the headlines and descriptions supplied, so every headline must read on its own and beside any other. Three headlines and two descriptions are Google’s stated minimum; it accepts up to 15 headlines — riff for more rather than seeding empty slots.',
 };
 
 // Field-level spec notes — per-field guidance rendered as an italic line under
@@ -750,6 +795,27 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'Google Responsive Display Ad||Long Headline',
   'Google Responsive Display Ad||Description',
   'Google Responsive Display Ad||Business Name',
+  // ENFORCED ON THE PAGE'S OWN WORDS, and this is NOT the LinkedIn case.
+  //
+  // CLAUDE.md carries an open question about LinkedIn's nine enforced fields,
+  // and the evidence that opened it was a HEADING: both LinkedIn spec pages put
+  // their numbers under "Text Recommendations", which is recommendation language
+  // sitting over a tier that claims a cap. Nothing on this page does that.
+  // Google states them as limits in prose — "responsive search ads have
+  // character limits", "The headline fields ... support up to 30 characters" —
+  // and "support up to" is a ceiling, not advice.
+  //
+  // So the LinkedIn caution does not transfer here, and nobody should read it as
+  // though it does. Different evidence, different tier. What WOULD reopen this is
+  // the same thing that would settle LinkedIn: pasting 200 characters into a
+  // 30-character headline in the ads interface and watching what happens.
+  'Google Responsive Search Ad||Headline 1',
+  'Google Responsive Search Ad||Headline 2',
+  'Google Responsive Search Ad||Headline 3',
+  'Google Responsive Search Ad||Description 1',
+  'Google Responsive Search Ad||Description 2',
+  'Google Responsive Search Ad||Display Path 1',
+  'Google Responsive Search Ad||Display Path 2',
   // X's 280 is a hard cap on an organic post exactly as it is on a paid one — the
   // same platform limit, and it was previously an uncited house default here.
   'Organic Social — Twitter/X||Post Copy',
@@ -858,6 +924,21 @@ const SPEC_SOURCE_URLS = {
   // / 25. The NAME was corrected to match the source and the numbers, rather than
   // the numbers changed to match the name.
   'Google Responsive Display Ad': 'https://support.google.com/google-ads/answer/17090561',
+  // answer/7684791 — "About responsive search ads". THE SAME URL THAT WAS ONCE
+  // WRONG ON THE DISPLAY ASSET, now on the asset it actually describes.
+  //
+  // That is worth stating rather than leaving as a coincidence for somebody to
+  // trip over: scripts/migrateFixGoogleSpecSource.js moved the four Display
+  // fields OFF this page in July because it is the search article, and
+  // checkSpecHealth still reports "URL CHANGED since a flag (was answer/7684791)"
+  // on the Display watch row from the flags that repoint dismissed. Anyone who
+  // meets that line and then finds this URL back in the file needs to know the
+  // two facts are the same fact seen twice.
+  //
+  // The Display numbers were confirmed against their own page in the 2026-08-20
+  // audit (scripts/migrateBackfillSpecVerifiedAt.js), so nothing is outstanding
+  // there.
+  'Google Responsive Search Ad': 'https://support.google.com/google-ads/answer/7684791',
 };
 
 // Per-FIELD spec source, for the handful of fields whose citation is not their

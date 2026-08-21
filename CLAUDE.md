@@ -1632,6 +1632,37 @@ Related and separate: §2.55 was reworded so it would stop arguing with the same
 permission ("a mark that makes a line turn is not a setup"). That fixed the
 setup-and-punchline collision. It did not touch §1.4.
 
+### SECOND LIVE CONTRADICTION — §7's Google Search section asks for 15 headlines
+
+`craft.md`'s `### Google Search` section ends "write all 15 headlines to give the
+algorithm room". `Google Responsive Search Ad` has **three** headline fields.
+
+**What changed is the WEIGHT, not the words.** That section has existed since
+`craft.md`'s first commit and, until August 2026, **nothing could ever select
+it** — `mediumKeywordsForAsset` had no branch that returned `google search`,
+because no asset in the library was a search ad. It reached a prompt only through
+the "unknown medium → inject them all" fallback, as one section of eight.
+Seeding the asset added the branch, so it is now the **only** medium section a
+search-ad prompt carries.
+
+**Why it is not simply reworded here.** Editing `craft.md` changes what every
+prompt produces, and this file's own record is that an example's grammar gets
+reproduced and that a prompt change needs its own before/after rather than
+riding along with something else. A seed commit is the wrong place to find out.
+
+**It is also not obviously wrong.** Google really does accept 15 and really does
+reward more of them; the seed carries 3 because that is Google's stated MINIMUM
+and because fifteen empty fields is a wall in front of a writer, with Riffs
+covering the gap. So the sentence is right about the platform and wrong about
+this document, which is exactly the §1.4-versus-§2 shape: two rules each correct
+on their own terms, meeting in one prompt.
+
+**What to measure if you pick it up:** whether the drafter treats three fields as
+a shortfall — hedged, near-identical headlines that read like three of fifteen —
+or writes three strong ones. `scripts/notesAB.js` is the harness shape, and the
+pre-registered failure is uniformity across the three headlines, so `shapes` and
+`openings` are the columns to watch rather than spread.
+
 ### Available and unplumbed — campaign signal the drafter never sees
 
 Measured 2026-08-05. A field-draft prompt is 15,405 characters: 66% `craft.md`

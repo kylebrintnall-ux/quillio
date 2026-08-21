@@ -19849,6 +19849,13 @@ test('provenance run: a PAIR is never collapsed, three or more is', () => {
   assert.match(why, /a PAIR does not read as a group/i);
   assert.match(why, /NOT ONE run of exactly 3/);
   assert.match(why, /do not read the constant as a measurement/i);
+  // AND THE GOOGLE FINDING, because it is the specific edit this constant needs
+  // protecting from: four different limits under one line was PREDICTED to read
+  // as loss and measured as the opposite — the differing brackets are what make
+  // the collapse legible. Without it written down, raising the threshold to five
+  // on that case looks like a fix.
+  assert.match(why, /DO NOT RAISE IT TO FIVE/);
+  assert.match(why, /differing brackets/i);
 });
 
 test('provenance run: replayed through appendBody over the real seed', () => {

@@ -644,6 +644,29 @@ function specTypeLine(specType, sourceName, detail, overridden) {
 // argument above and nothing else — do not read the constant as a measurement.
 // If a run of 3 ever appears, 3 collapses it and 4 does not, and that is the only
 // case where they differ.
+// AND DO NOT RAISE IT TO FIVE ON THE GOOGLE CASE. That is the specific edit this
+// paragraph exists to prevent, because the reasoning behind it is plausible and
+// measured wrong.
+//
+// THE PREDICTION. Google Responsive Display's run is four DIFFERENT fields at
+// four different limits — [30] [90] [90] [25] — where the carousel's is five
+// instances of one field shape at one limit. One line covering four different
+// numbers looked like it would read as loss: "why does Short Headline get the
+// explanation and Long Headline not — was something trimmed here?"
+//
+// READ ON A REAL DOCUMENT, IT IS THE OPPOSITE, and the mechanism is worth
+// keeping. The differing brackets are exactly what make the collapse legible:
+// [90], [90] and [25] each under "Platform limit (Google)." read as four fields
+// SHARING ONE SOURCE, because the only thing that varies is already visible in
+// the bracket. There is nothing a reader could suspect was cut. Meta's five
+// identical [20]s are the shape where "something got trimmed" is even available
+// as a misreading, and that one reads cleanest of all — the repetition is so
+// obvious that one explanation covering it is the natural reading.
+//
+// So the rule keying on PROVENANCE identity while a reader keys on FIELD
+// similarity is real, and it is not a risk. The bracket carries the per-field
+// fact and the collapsed line carries the shared one; the reader gets both and is
+// asked to hold neither.
 const MIN_COLLAPSE_RUN = 3;
 
 function provenanceKey(field) {

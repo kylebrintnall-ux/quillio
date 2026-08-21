@@ -15746,7 +15746,22 @@ test('the project detail view: documents index, one back route, top actions', ()
   //    telling a copy doc from a template document when both names are the
   //    campaign's, which on the index they are until the template is opened.
   assert.match(html, /\.doc-row \.doc-row-kind \{ display: block; font-family: 'StarCrush', serif;/);
-  assert.match(html, /text-transform: uppercase; color: var\(--ink\); opacity: 0\.55;/);
+  // 0.75 is a MEASURED FLOOR, not a look. Sampled off rendered pixels at
+  // 390px/3x: 0.42 (the original) composited to 2.41:1 and 0.55 to 3.38:1
+  // against the panel, both under the 4.5:1 AA floor this 11px text needs;
+  // 0.75 measures 5.88:1. Dimming to signal "subordinate" is what fails on
+  // these surfaces — the 11px against the heading's 13px carries that instead.
+  assert.match(html, /text-transform: uppercase; color: var\(--ink\); opacity: 0\.75;/);
+});
+
+// The other half of the same finding, on the other new element. 0.45 ink over
+// the header band's own fill composited to rgb(129,142,156) on rgb(212,237,246)
+// — 2.74:1, under the 4.5:1 floor for 11px. 0.7 measures 5.78:1. Collapsed,
+// this count is the only thing on the band saying whether the group still needs
+// work, so it is the last text here that can afford to be hard to read.
+test('the collapsed-band count clears the contrast floor', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.match(html, /\.asset-card-count \{[^}]*color: rgba\(26,26,46,0\.7\);/);
 });
 
 // A closed group still has to answer "does this one need work", so the band

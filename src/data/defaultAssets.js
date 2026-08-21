@@ -817,18 +817,34 @@ function fieldSpecType(assetName, fieldName) {
 // the citation to check the 45-character card headline would not have found it.
 //
 // URLs are kept BYTE-IDENTICAL to the SOURCE_URLS map of whichever migration is
-// the CURRENT authority for that asset (asserted by a smoke test, which unions
-// them): scripts/migrateFixMetaSpecs.js for the two Meta assets,
-// scripts/migrateSpecIntegrityFixes.js for the rest. Meta moved out because that
-// file's map pointed at the ads-guide index and is WRITTEN, so leaving the
-// entries there would re-point Meta back at a page with no limits on it.
+// the CURRENT authority for that asset (asserted by a smoke test, which spreads
+// them in order): scripts/migrateMetaPlacementCitations.js for the two Meta
+// assets, scripts/migrateSpecIntegrityFixes.js for the rest. Meta has moved twice
+// and each earlier map is LEFT AS IT WAS — they are WRITES, and editing one into
+// agreement with a later step would both re-point Meta on a re-run and turn the
+// replay chain into a false account of what each step did.
 const SPEC_SOURCE_URLS = {
-  // PER FORMAT, not per platform. .../ads-guide/update is the INDEX — 2,208 chars
-  // of nav, marketing copy and a signup form, containing no character limit at
-  // all and stating outright that the specs are elsewhere. Both Meta assets cited
-  // it, so a reader following the citation to check a number could never find it.
-  'Meta Single Image Ad': 'https://www.facebook.com/business/ads-guide/update/image',
-  'Meta Carousel Ad': 'https://www.facebook.com/business/ads-guide/update/carousel',
+  // PER PLACEMENT, and it took two corrections to get here — the same defect
+  // twice, one level apart each time.
+  //
+  //   .../ads-guide/update              the INDEX. 2,208 chars of nav, marketing
+  //                                     copy and a signup form, no character
+  //                                     limit anywhere, stating outright that the
+  //                                     specs are elsewhere.
+  //   .../ads-guide/update/image        the FORMAT page. Carries limits, and
+  //                                     serves Facebook Feed's by default while
+  //                                     naming no placement — so a reader could
+  //                                     find A number but not learn which of the
+  //                                     five it was.
+  //   .../update/image/facebook-feed    the PLACEMENT page. Primary Text is 150
+  //                                     here and 44 on instagram-reels, from the
+  //                                     same guide.
+  //
+  // Both times the test was the same: can a reader who doubts this number follow
+  // the link and settle it? The bare format URL passes that test by accident, on
+  // one placement, and says nothing about the accident.
+  'Meta Single Image Ad': 'https://www.facebook.com/business/ads-guide/update/image/facebook-feed',
+  'Meta Carousel Ad': 'https://www.facebook.com/business/ads-guide/update/carousel/facebook-feed',
   'LinkedIn Single Image Ad':
     'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
   'LinkedIn Carousel Ad':

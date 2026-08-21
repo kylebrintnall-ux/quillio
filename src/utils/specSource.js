@@ -36,4 +36,53 @@ function specSourceName(specSource) {
   return null; // unrecognized → no source name (never print the raw value)
 }
 
-module.exports = { specSourceName };
+// WHICH PLACEMENT a spec page describes, when the URL says so.
+//
+// Meta's ads guide serves DIFFERENT NUMBERS per placement from the same format
+// page. The bare .../ads-guide/update/image is Facebook Feed's view — measured
+// identical to .../image/facebook-feed after the content stop marker, same hash
+// — and the other placements publish their own:
+//
+//   facebook-feed          Primary Text 50-150,  Headline 27
+//   instagram-feed         Primary Text 125,     Headline 40
+//   instagram-story        Primary Text 125,     no headline
+//   instagram-reels        Primary Text 44,      no headline
+//   facebook-marketplace   Primary Text 125,     Headline 40, Description 30
+//
+// So a citation to a bare format URL is not wrong, it is UNDERSPECIFIED: the
+// page it points at serves one placement's numbers by default and names no
+// placement anywhere. Naming it is what makes the citation checkable, and it is
+// the same rule as naming the platform in the verification sentence — "the
+// source page" survives being pointed at the wrong page, "Facebook Feed" does
+// not.
+//
+// DERIVED FROM THE URL, NOT ENUMERATED, so a future placement URL carries its own
+// name without anyone remembering to add a table row.
+//
+// AND ONLY FROM A URL SHAPE WE RECOGNISE. `specSourceName` never prints a raw
+// spec_source and this must not either — but a segment of a path this function
+// has already matched against a known pattern is not a raw value, it is the
+// placement in Meta's own vocabulary. Anything that does not match returns null
+// and the caller renders no qualifier at all, which is every source in the
+// library today.
+//
+// KNOWN LIMIT: this names the URL SLUG, which is Meta's routing name and not
+// necessarily the heading their page displays. "instagram-story" renders
+// "Instagram Story" whatever the page calls it. That is a pointer to the page
+// rather than a quotation from it, and the page is one click away.
+const META_PLACEMENT_URL = /\/ads-guide\/update\/[a-z0-9-]+\/([a-z0-9-]+)\/?$/i;
+
+// Words whose casing a generic title-case would get wrong.
+const PLACEMENT_WORDS = { facebook: 'Facebook', instagram: 'Instagram' };
+
+function specPlacementName(specSource) {
+  const m = META_PLACEMENT_URL.exec(String(specSource || ''));
+  if (!m) return null;
+  const words = m[1].split('-').filter(Boolean);
+  if (!words.length) return null;
+  return words
+    .map((w) => PLACEMENT_WORDS[w] || (w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+module.exports = { specSourceName, specPlacementName };

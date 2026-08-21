@@ -2043,6 +2043,28 @@ nothing could.
 written nowhere** — which reads as dead code to anyone who greps for it, so the
 constant carries the commit range and the reason it may not be deleted.
 
+**THE PLACEMENT QUALIFIER IS SAFE ON `recommended` AND IS A TRAP ON `enforced`.**
+Written down before it fires rather than after, because the gap between the two
+is one migration wide.
+
+A Meta spec URL now names its placement — "Recommended by Meta (Facebook Feed)."
+— because the ads guide serves different numbers per placement from the same
+format page (150 on Facebook Feed, 44 on Instagram Reels). Measured through the
+real strip:
+
+| tier | reaches the drafting prompt |
+| --- | --- |
+| `recommended` + placement | `""` — `RECOMMENDED_ATTRIBUTION` takes the whole attribution, qualifier included |
+| `enforced` + placement | `"Platform limit (Google) (Search). Stay within this count."` |
+
+All nine Meta-cited fields are `recommended`, so nothing leaks today. **Google,
+LinkedIn and X are all `enforced`**, and the first placement-specific URL on any
+of them sends a bare parenthetical into a drafting prompt — a routing slug the
+model has no use for, attached to the one tier line this file already flags as
+redundant with the character-limit bullet beside it. A test asserts no `enforced`
+field carries a placement URL, so the day one does, it goes red here rather than
+in a document.
+
 **`enforced` is deliberately NOT stripped, and it IS redundant.** "Platform limit
 (LinkedIn). Stay within this count." sits beside "character limit 70 — stay within
 this limit" in the same bullet, on ~9 fields. Not wrong — it is the one tier line

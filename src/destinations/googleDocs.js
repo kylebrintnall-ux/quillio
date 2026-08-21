@@ -40,7 +40,7 @@ const {
   describeLength,
 } = require('../services/gemini');
 const { instanceTag, instanceCounter } = require('../utils/instanceKey');
-const { specSourceName } = require('../utils/specSource');
+const { specSourceName, specPlacementName } = require('../utils/specSource');
 const { verifiedSentence } = require('../utils/specFreshness');
 // Which repeated spec_notes may be shown once per run of adjacent fields. Read
 // from the file where the notes themselves are written, so the decision sits
@@ -269,12 +269,26 @@ function assetHeadingTexts(doc) {
 // What a RESEARCH source actually measured, and what it found — for the sources
 // that are studies rather than platform spec pages.
 //
-// A platform spec page needs no qualifier: "Recommended by Meta" is unambiguous
-// because Meta is describing its own product. A research finding is not. Constant
+// THE FIRST VERSION OF THIS COMMENT SAID "a platform spec page needs no
+// qualifier: 'Recommended by Meta' is unambiguous because Meta is describing its
+// own product." THAT IS FALSE, and it is the belief the placement investigation
+// disproved. Meta's ads guide serves different numbers per PLACEMENT from the
+// same format URL — Primary Text is 150 on Facebook Feed and 44 on Instagram
+// Reels — so "Recommended by Meta" names a platform and hides which of its
+// placements the number belongs to. A platform describing its own product is
+// exactly where the ambiguity was.
+//
+// A research finding needs a qualifier too, for a different reason. Constant
 // Contact's number comes from small-business campaigns, and a writer deciding
 // whether to apply it to a B2B nurture email needs to know that before they trust
 // it. Stating the population is the difference between a citation and an appeal to
 // authority.
+//
+// So there are TWO kinds of qualifier and they share one rendering slot: a
+// research POPULATION, enumerated below because only a human who read the study
+// can state it, and a platform PLACEMENT, derived from the URL by
+// utils/specSource.specPlacementName because the URL already says it. See
+// sourceDetail beneath this table.
 //
 // `scope` goes in parentheses after the name; `finding` replaces the generic
 // "Not a hard limit — adjust for your brand and goal." A source with no entry here
@@ -301,6 +315,24 @@ const SPEC_SOURCE_DETAIL = {
     finding: 'Drops sharply past 100 words.',
   },
 };
+
+// The qualifier for one source, from whichever of the two kinds applies.
+//
+// An explicit entry WINS OUTRIGHT rather than merging with a derived placement.
+// The two cannot co-occur today — every entry above is a study and no study URL
+// carries a placement segment — and if one ever did, a hand-written population
+// is a statement somebody made about what was measured, which is not a thing to
+// silently append a routing slug to.
+//
+// Returns undefined when neither applies, which is every source in the library
+// except the nine Meta fields: specTypeLine renders no parenthetical at all and
+// the sentence is byte-identical to what it has always been.
+function sourceDetail(specSource) {
+  const explicit = SPEC_SOURCE_DETAIL[specSource];
+  if (explicit) return explicit;
+  const placement = specPlacementName(specSource);
+  return placement ? { scope: placement } : undefined;
+}
 
 // Render-only citation links for hand-written spec_notes. Some notes end in a
 // plain-text source credit like "(Litmus)"; this maps a note to the specific
@@ -606,7 +638,7 @@ function fieldHint(field, { suppressNote = false } = {}) {
     ? specTypeLine(
       field.specType,
       specSourceName(field.specSource),
-      SPEC_SOURCE_DETAIL[field.specSource],
+      sourceDetail(field.specSource),
       field.specOverridden === true
     )
     : null;

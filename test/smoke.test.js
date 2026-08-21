@@ -692,7 +692,24 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
   // character limit on it — and that map is written, so leaving the entries there
   // would re-point Meta back at the index on any re-run. The later migration wins,
   // which is what a replay chain means.
-  const ASSET_SOURCES = { ...SOURCE_URLS, ...require('../scripts/migrateFixMetaSpecs').SOURCE_URLS };
+  // ...and then to the PLACEMENT pages, because a format URL serves one
+  // placement's numbers by default and names none. Three links, spread in order:
+  // the seed must match the LAST one.
+  const ASSET_SOURCES = {
+    ...SOURCE_URLS,
+    ...require('../scripts/migrateFixMetaSpecs').SOURCE_URLS,
+    ...require('../scripts/migrateMetaPlacementCitations').SOURCE_URLS,
+  };
+  // Which sources name a placement, as a LITERAL rather than a call to the
+  // function under test — composing the expectation with specPlacementName would
+  // make this half of the assertion tautological.
+  const PLACEMENT = { '/facebook-feed': 'Facebook Feed' };
+  const qualifierFor = (url) => {
+    for (const [suffix, name] of Object.entries(PLACEMENT)) {
+      if (String(url).endsWith(suffix)) return name;
+    }
+    return null;
+  };
   const { CITED_BANDS } = require('../scripts/migrateEmailClassesAndCitedBands');
   const cold = require('../scripts/migrateCiteColdEmailBand');
   const FIELD_SOURCES = Object.fromEntries([
@@ -705,7 +722,12 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
   // rather than a rule.
   const SENTENCE = {
     enforced: (p) => `Platform limit (${p}). Stay within this count.`,
-    recommended: (p) => `Recommended by ${p}. Not a hard limit — adjust for your brand and goal.`,
+    // Plain concatenation, not a nested template: the indexOf-slice scanner masks
+    // string contents and compile-checks the result, and a backtick inside a
+    // ${} desyncs its mask. It refused this file rather than under-reporting,
+    // which is the behaviour that guard exists for.
+    recommended: (p, q) => 'Recommended by ' + p + (q ? ' (' + q + ')' : '')
+      + '. Not a hard limit — adjust for your brand and goal.',
   };
 
   let enforcedSeen = 0;
@@ -743,10 +765,13 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
           'a research source states its own finding, not the generic hedge');
       } else {
         // Platform sources render exactly the sentence they always have.
-        const p = hint.text.match(/^Platform limit \((.+?)\)|^Recommended by (\S+?)\./);
+        // "Recommended by Meta." and "Recommended by Meta (Facebook Feed)." both
+        // name Meta; the qualifier is not part of the name and is not linked.
+        const p = hint.text.match(/^Platform limit \((.+?)\)|^Recommended by (\S+?)(?:\.| \()/);
         assert.ok(p, `${a.name}/${f.field_name} names a platform`);
         const name = p[1] || p[2];
-        assert.strictEqual(hint.text, SENTENCE[f.spec_type](name), `${a.name}/${f.field_name} renders its tier sentence`);
+        assert.strictEqual(hint.text, SENTENCE[f.spec_type](name, qualifierFor(f.spec_source)),
+          `${a.name}/${f.field_name} renders its tier sentence`);
         assert.strictEqual(
           hint.text.substring(hint.links[0].start, hint.links[0].end), name,
           `${a.name}/${f.field_name} link covers only the platform name`
@@ -8506,13 +8531,16 @@ test('spec integrity: the three tier sentences, rendered', () => {
   // RECOMMENDED — the branch that existed in the renderer but had no data. It says
   // "not a hard limit", and it still hyperlinks the platform name.
   const rec = hintOf('Meta Single Image Ad', 'Primary Text');
-  assert.strictEqual(rec.text, 'Recommended by Meta. Not a hard limit — adjust for your brand and goal.');
+  assert.strictEqual(rec.text,
+    'Recommended by Meta (Facebook Feed). Not a hard limit — adjust for your brand and goal.');
   assert.strictEqual(rec.links.length, 1, 'the platform name is still a link');
   assert.strictEqual(rec.text.substring(rec.links[0].start, rec.links[0].end), 'Meta');
-  // The PER-FORMAT page, not the ads-guide index. The index publishes no
-  // character limit at all, so the old citation sent a doubting writer somewhere
-  // that could not settle the number.
-  assert.strictEqual(rec.links[0].url, 'https://www.facebook.com/business/ads-guide/update/image');
+  // THE PER-PLACEMENT page. First it was the ads-guide index, which publishes no
+  // character limit at all; then the per-format page, which publishes one
+  // placement's numbers and names no placement. Both corrections were the same
+  // defect — a link that cannot settle the number in front of the reader.
+  assert.strictEqual(rec.links[0].url,
+    'https://www.facebook.com/business/ads-guide/update/image/facebook-feed');
 
   // HOUSE_DEFAULT with no note — the Settings line, and NO link. It still claims
   // no authority: it names no source and cites nothing, it says whose number it
@@ -8893,9 +8921,22 @@ test('meta specs: the seed and the migration agree on every band, both direction
     }
   }
 
-  // The citation is the per-FORMAT page, on every tiered field of both assets.
+  // THIS MIGRATION'S OWN MAP still points at the per-FORMAT page, and must: it is
+  // a WRITE, and editing it into agreement with a later migration is how a replay
+  // chain becomes a lie about what each step did.
   for (const [asset, url] of Object.entries(SOURCE_URLS)) {
     assert.match(url, /\/ads-guide\/update\/(image|carousel)$/, `${asset} cites a format page, not the index`);
+  }
+  // THE SEED HAS MOVED PAST IT, to the per-PLACEMENT page. A format URL serves
+  // one placement's numbers by default and names no placement, which is the same
+  // defect the index had one level down — a link that cannot settle the number in
+  // front of the reader. The LAST link in the chain is what the seed matches.
+  const PLACEMENTS = require('../scripts/migrateMetaPlacementCitations').SOURCE_URLS;
+  for (const [asset, url] of Object.entries(PLACEMENTS)) {
+    assert.match(url, /\/ads-guide\/update\/(image|carousel)\/facebook-feed$/,
+      `${asset} cites the placement its numbers belong to`);
+    assert.strictEqual(url.replace(/\/facebook-feed$/, ''), SOURCE_URLS[asset],
+      `${asset}'s placement URL is the format URL it superseded, plus the placement`);
     const a = DEFAULT_ASSETS.find((x) => x.name === asset);
     const tiered = a.fields.filter((x) => x.spec_type !== 'house_default');
     assert.ok(tiered.length > 0, `${asset} has at least one tiered field`);
@@ -9411,11 +9452,14 @@ test('cited bands: the research tier line says what was measured, and what staye
     'Offer Body 1 [50-140 words]'
   );
 
-  // A PLATFORM recommendation is untouched by adding the research branch.
+  // A PLATFORM recommendation is untouched by adding the research branch — it
+  // still renders the generic hedge rather than a finding, and names no
+  // population. The parenthetical it DOES carry is a placement, which is the
+  // other kind of qualifier and comes from the URL rather than from a table.
   const meta = f('Meta Single Image Ad', 'Primary Text');
   assert.strictEqual(
     fieldHint({ specType: meta.spec_type, specSource: meta.spec_source }).text,
-    'Recommended by Meta. Not a hard limit — adjust for your brand and goal.'
+    'Recommended by Meta (Facebook Feed). Not a hard limit — adjust for your brand and goal.'
   );
 
   // WHAT STAYED UNCITED — nobody measured these, so they claim nothing. An uncited
@@ -19694,6 +19738,136 @@ test('freshness dedup: replayed over the real seed, twelve blocks not twenty-sev
   // compromise: there is no field below the block that it fails to cover.
   assert.strictEqual(shape['Google Responsive Display Ad'], 1);
   assert.strictEqual(shape['Meta Single Image Ad'], 1);
+});
+
+// A citation to a Meta format URL names a platform and hides which of its
+// placements the number belongs to — Primary Text is 150 on Facebook Feed and 44
+// on Instagram Reels, from the same page. The qualifier is derived from the URL.
+test('placement: derived from the URL, never from a raw value', () => {
+  const { specPlacementName } = require('../src/utils/specSource');
+
+  assert.strictEqual(specPlacementName(
+    'https://www.facebook.com/business/ads-guide/update/image/facebook-feed'), 'Facebook Feed');
+  assert.strictEqual(specPlacementName(
+    'https://www.facebook.com/business/ads-guide/update/image/instagram-reels'), 'Instagram Reels');
+  assert.strictEqual(specPlacementName(
+    'https://www.facebook.com/business/ads-guide/update/carousel/facebook-marketplace'),
+  'Facebook Marketplace');
+  // Casing that a generic title-case gets wrong is the only thing enumerated.
+  assert.strictEqual(specPlacementName(
+    'https://www.facebook.com/business/ads-guide/update/video/instagram-story'), 'Instagram Story');
+
+  // EVERYTHING THAT IS NOT A RECOGNISED SHAPE RETURNS NULL, which is every source
+  // in the library except the nine Meta fields. Same rule as specSourceName: a
+  // segment of a path we matched against a known pattern may be printed; a raw
+  // spec_source may not.
+  for (const u of [
+    'https://www.facebook.com/business/ads-guide/update/image',
+    'https://support.google.com/google-ads/answer/17090561',
+    'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
+    'quillio_default', '', null, undefined,
+  ]) assert.strictEqual(specPlacementName(u), null, `no qualifier for ${u}`);
+});
+
+test('placement: the tier line qualifies the source, and the link still lands on the platform', () => {
+  const { fieldHint } = require('../src/destinations/googleDocs');
+  const hint = (specSource) => fieldHint({ specType: 'recommended', specSource });
+
+  assert.strictEqual(
+    hint('https://www.facebook.com/business/ads-guide/update/image/facebook-feed').text,
+    'Recommended by Meta (Facebook Feed). Not a hard limit — adjust for your brand and goal.'
+  );
+  // A source with an explicit research population is UNCHANGED — an entry in
+  // SPEC_SOURCE_DETAIL wins outright rather than merging with a derived slug.
+  assert.match(
+    hint('https://www.constantcontact.com/blog/best-length-email-newsletter/').text,
+    /^Recommended by Constant Contact \(2\.1M customers, small-business campaigns\)\./
+  );
+  // And a source with neither renders byte-identically to what it always did.
+  assert.strictEqual(
+    hint('https://www.facebook.com/business/ads-guide/update/image').text,
+    'Recommended by Meta. Not a hard limit — adjust for your brand and goal.'
+  );
+
+  // The qualifier follows the platform NAME, so the hyperlink range is unmoved.
+  const h = hint('https://www.facebook.com/business/ads-guide/update/image/facebook-feed');
+  assert.strictEqual(h.text.slice(h.links[0].start, h.links[0].end), 'Meta');
+});
+
+test('placement: the qualifier is reader-only on recommended, and enforced is the trap', () => {
+  const { stripReaderOnlyLines } = require('../src/destinations/googleDocs');
+
+  // RECOMMENDED strips the whole attribution, qualifier included, so a placement
+  // never reaches a drafting prompt. All nine Meta-cited fields are recommended.
+  assert.strictEqual(
+    stripReaderOnlyLines('Front-load it. Recommended by Meta (Facebook Feed). '
+      + 'Not a hard limit — adjust for your brand and goal.'),
+    'Front-load it.'
+  );
+
+  // ENFORCED IS NOT STRIPPED, and this is the constraint to know BEFORE it fires
+  // rather than after. Google, LinkedIn and X are all enforced. The first
+  // placement-specific URL on any of them sends a bare parenthetical into a
+  // drafting prompt, where it means nothing to the model. This asserts the
+  // current behaviour so the day it becomes wrong, it goes red here.
+  const enforced = stripReaderOnlyLines(
+    'Front-load it. Platform limit (Google) (Search). Stay within this count.'
+  );
+  assert.match(enforced, /Platform limit \(Google\) \(Search\)/,
+    'enforced survives the strip — see CLAUDE.md, the strip rules');
+
+  // Nothing enforced carries a placement URL today, so nothing is leaking.
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { specPlacementName } = require('../src/utils/specSource');
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      if (f.spec_type !== 'enforced') continue;
+      assert.strictEqual(specPlacementName(f.spec_source || a.spec_source), null,
+        `${a.name} / ${f.field_name} is enforced AND placement-specific — the strip needs a rule first`);
+    }
+  }
+});
+
+test('placement: the seed cites the placement, and the migration guards the old value', () => {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const { specPlacementName } = require('../src/utils/specSource');
+
+  const meta = [];
+  for (const a of DEFAULT_ASSETS) {
+    for (const f of a.fields) {
+      const url = f.spec_source || a.spec_source;
+      if (/facebook\.com/.test(url || '')) meta.push({ a: a.name, f: f.field_name, url });
+    }
+  }
+  assert.strictEqual(meta.length, 9, 'nine Meta fields carry a citation');
+  for (const m of meta) {
+    assert.strictEqual(specPlacementName(m.url), 'Facebook Feed',
+      `${m.a} / ${m.f} cites a placement-explicit URL`);
+  }
+
+  const mig = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateMetaPlacementCitations.js'), 'utf8'
+  );
+  // Guarded on the exact old value, so a re-run is a no-op and no row another
+  // migration moved is taken back. The house rule for any spec-value write.
+  assert.match(mig, /WHERE spec_source = \$2/);
+  assert.match(mig, /const COMMIT = process\.argv\.includes\('--commit'\)/);
+  // The watch row moves in the SAME transaction — checkSpecHealth compares URLs
+  // as strings, so repointing one without the other fires two checks forever.
+  assert.match(mig, /UPDATE spec_watch_list SET source_url/);
+  assert.match(mig, /cited but unwatched/);
+  // IT WRITES NO NUMBER, NO TIER AND NO NAME — asserted over the UPDATE statements
+  // only. Scanning the whole file catches `cf.spec_type` in the before-and-after
+  // SELECT, which is a READ; that is the same substring mistake the house-default
+  // guard made this month, and reading a column is not writing one.
+  const updates = mig.match(/UPDATE [\s\S]*?'/g) || [];
+  assert.ok(updates.length >= 2, 'found the field and watch-row updates');
+  for (const u of updates) {
+    assert.ok(!/char_max|char_min|spec_type|SET name/.test(u), `no value or name in: ${u.slice(0, 60)}`);
+  }
+  // The measured hashes are in the header, so the "same page" claim is checkable.
+  assert.match(mig, /e5792dad455fcade/);
+  assert.match(mig, /8fd92feee0d3025d/);
 });
 
 test('contrast harness: read-only, out of the suite, and its fixture is not inert', () => {

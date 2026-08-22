@@ -1203,11 +1203,47 @@ test('Pinterest: the page text is in the header, and 800 is the help centre’s 
   assert.match(prose, /only the first 30 characters will show/, 'the CJK figure, quoted but not seeded');
   assert.match(prose, /Description Enter up to 800 characters\./, 'the description cap');
 
-  // THE APOSTROPHES ARE THE PAGE'S U+2019. A straight one reads ABSENT against
-  // the fetched text and looks exactly like a false claim — that cost a round on
-  // the Google page.
-  for (const q of mig.QUOTES) {
-    assert.ok(!q.includes("'"), `quote uses U+2019, not U+0027: ${q.slice(0, 40)}`);
+  // THE APOSTROPHE FORM IS PER SENTENCE, BECAUSE THIS PAGE USES BOTH.
+  //
+  // This assertion used to read `!q.includes("'")` — no straight apostrophe in
+  // any quote — and that was an assumption about Pinterest's typography rather
+  // than something read off the page. The same failure shape as a test pinning a
+  // spec value with no source behind it: green, institutional, and wrong.
+  //
+  // --verify caught it. The CJK sentence reported ABSENT 0x and the migration
+  // refused to write, because the page renders U+0027 there and U+2019 in the
+  // sentence above it. scripts/probeSpecPage.js against that URL confirms both.
+  //
+  // A BLANKET ASSERTION IN EITHER DIRECTION IS THE MISTAKE. Requiring curly
+  // everywhere broke the CJK quote; requiring straight everywhere would break
+  // the other two. Each sentence is pinned to the form the page publishes for
+  // that sentence, and to NOT carrying the other — so a well-meaning
+  // normalisation of either one goes red here rather than at --verify.
+  const CURLY = '\u2019';
+  const STRAIGHT = '\u0027';
+  // Named as a codepoint in the failure message. The first version used escape(),
+  // which renders "%u2019" — a reader hitting that has to decode the assertion
+  // before they can act on it, and the whole point of this check is that the two
+  // characters are hard to tell apart by eye.
+  const codepoint = (c) => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+  const FORMS = [
+    { find: /Enter up to 100 characters/, uses: CURLY, not: STRAIGHT, label: 'the 100/40 sentence' },
+    { find: /double byte languages/, uses: STRAIGHT, not: CURLY, label: 'the CJK sentence' },
+    { find: /^Description Enter up to 800/, uses: null, not: null, label: 'the 800 sentence' },
+  ];
+  assert.strictEqual(FORMS.length, mig.QUOTES.length, 'every quote has a form pinned');
+  for (const f of FORMS) {
+    const q = mig.QUOTES.find((x) => f.find.test(x));
+    assert.ok(q, `${f.label} is in QUOTES`);
+    if (f.uses === null) {
+      assert.ok(!q.includes(CURLY) && !q.includes(STRAIGHT),
+        `${f.label} carries no apostrophe at all`);
+      continue;
+    }
+    assert.ok(q.includes(f.uses),
+      `${f.label} uses the form the page publishes here: ${codepoint(f.uses)}`);
+    assert.ok(!q.includes(f.not),
+      `${f.label} must NOT carry ${codepoint(f.not)} — this page mixes both forms`);
   }
   assert.match(src, /REFUSING TO WRITE/, 'a failed quote check stops the write');
   assert.ok(src.indexOf('const page = await readPage();') < src.indexOf('new Client({ connectionString'),

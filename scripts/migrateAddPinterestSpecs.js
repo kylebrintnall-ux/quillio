@@ -13,16 +13,30 @@
 //    the first 40 characters may show in people’s feeds."
 //
 //   "For Chinese, Japanese, Korean, Arabic and other double byte languages, only
-//    the first 30 characters will show in people’s feeds."
+//    the first 30 characters will show in people's feeds."
 //
 //   "Description Enter up to 800 characters."
 //
-// THE APOSTROPHES ABOVE ARE U+2019, the page's own character, and they are the
-// same bytes as the QUOTES array below asserts at run time. The first draft of
-// this header used a straight U+0027 while QUOTES used the curly form — so the
-// prose a reader checks the claim against and the string the migration refuses
-// on were different strings. Caught by a test comparing the two, which is the
-// only thing that would have.
+// THIS PAGE MIXES BOTH APOSTROPHE FORMS, and the quotes above reproduce that
+// exactly:
+//
+//   the 100 / 40 sentence   U+2019  (curly)   "in people’s feeds"
+//   the CJK sentence        U+0027  (straight) "in people's feeds"
+//
+// READ OFF THE PAGE, NOT ASSUMED ABOUT IT. This file first claimed every
+// apostrophe here was U+2019, which was a statement about Pinterest's typography
+// made without checking — and --verify caught it: the CJK sentence reported
+// ABSENT 0x and the migration refused to write, which is the refusal working
+// rather than a defect in it. scripts/probeSpecPage.js against this URL confirms
+// both forms.
+//
+// A blanket assertion in EITHER direction is the mistake. The smoke test now
+// pins each sentence to the form the page publishes for that sentence.
+//
+// And the header prose and the QUOTES array below must remain the SAME BYTES —
+// a header-scoped test asserts it, because the prose is what a reader checks the
+// claim against and the array is what the migration refuses on. Those were
+// briefly different strings once already.
 //
 // ─── WHY 800 AND NOT THE 500 THAT IS EVERYWHERE ELSE ────────────────────────
 // https://business.pinterest.com/creative-best-practices/ states 500. It is not
@@ -120,12 +134,17 @@ const VERIFIED_ON = '2026-08-21';
 // re-checked is the same unverified claim as an uncited number, and the header
 // above is where a future reader goes instead of the page.
 //
-// THE APOSTROPHE IN "people's" IS U+2019. A straight one reports ABSENT and
-// looks exactly like a false claim — that cost a round on the Google page, and
-// scripts/probeSpecPage.js reports the two cases differently because of it.
+// THE APOSTROPHE FORM IS PER SENTENCE, because this page uses both — U+2019 in
+// the 100/40 sentence, U+0027 in the CJK one. Getting either wrong reports
+// ABSENT and looks exactly like a false claim rather than a typographic
+// mismatch; that cost a round on the Google page, and scripts/probeSpecPage.js
+// reports the two cases differently because of it.
 const QUOTES = [
   'Character counts Title Enter up to 100 characters. Depending on the device, the first 40 characters may show in people’s feeds.',
-  'For Chinese, Japanese, Korean, Arabic and other double byte languages, only the first 30 characters will show in people’s feeds.',
+  // DOUBLE-QUOTED because the page renders a STRAIGHT apostrophe here and a
+  // single-quoted literal would terminate on it. The quoting style is forced
+  // by the page, not chosen.
+  "For Chinese, Japanese, Korean, Arabic and other double byte languages, only the first 30 characters will show in people's feeds.",
   'Description Enter up to 800 characters.',
 ];
 

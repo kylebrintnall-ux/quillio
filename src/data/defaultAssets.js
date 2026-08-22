@@ -755,19 +755,40 @@ const EMAIL_PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — 
 // split as the Litmus email notes. Byte-identical to
 // scripts/migrateAddPinterestSpecs.js.
 //
-// IT IS PHRASED AS AN INSTRUCTION, AND THE FIRST VERSION WAS NOT. It read "Only
-// the first 40 characters typically show in feeds." — a true statement about
-// Pinterest that tells the writer, and the model, to do nothing about it. The
-// note reaches the drafting prompt (confirmed by capturing the real prompt, not
-// inferred from output) as the `guidance:` clause of the field's line, beside
-// "character limit 100 — stay within this limit". Against a hard 100 stated
-// twice, a fact about display truncation lost: a run drafted a 45-character
-// title, which obeyed the 100 and ignored the 40.
+// THIS WORDING IS MEASURED, NOT ACCIDENTAL. It was rewritten into an instruction
+// — "Front-load the first 40 characters — that is typically all that shows in
+// feeds." — on the reasoning that a statement of fact tells the model to do
+// nothing, and the rewrite LOST. scripts/notesAB.js, Pinterest Pin / Title,
+// three arms x 10 runs, ceiling 100 in every arm:
 //
-// EMAIL_SUBJECT_NOTE above is the shape that works and the reason to copy it —
-// "front-load the first 40" is a thing to DO. The claim is unchanged; only its
-// grammar is. Nothing here asserts a number the page does not publish.
-const PINTEREST_TITLE_NOTE = 'Front-load the first 40 characters — that is typically all that shows in feeds.';
+//   arm   WITHIN<=40  median  spread  min   max
+//   NONE  0/10        65      17      58    75
+//   OLD   3/10        61      64      31    95      <- this wording
+//   NEW   0/10        63      13      54    67      <- the instruction rewrite
+//
+// The instruction arm was INDISTINGUISHABLE FROM HAVING NO NOTE AT ALL. This
+// wording beat the control by 3. The three shortest titles in the whole 30-call
+// run all came from this arm — 31, 37 and 40 characters — and the rewrite
+// produced nothing under 54 while its spread collapsed from 64 to 13. That is
+// the floorAB shape: uniformity bought, tail lost, and the tail was where the
+// good copy was.
+//
+// THE LIKELY MECHANISM, recorded as a hypothesis and not as a proven claim.
+// "Only the first 40 characters typically show in feeds" implies the rest is
+// WASTED, which pushes toward brevity. "Front-load the first 40 characters" says
+// where to put the important words but never says stop — and front-loading is
+// perfectly compatible with a 67-character title. The rewrite was more
+// actionable and less motivating.
+//
+// SO DO NOT REWORD THIS TOWARD THE IMPERATIVE. The assumption that instructions
+// outperform statements is the exact reasoning that produced the rewrite, and on
+// this field it reversed. If it is tried again, it needs a measurement that
+// beats 3/10, not an argument.
+//
+// AND THE OBSERVATION THAT STARTED IT WAS ONE 45-CHARACTER TITLE. The same arm
+// that produced it also produced a 31. A single sample out of a temperature-0.8
+// draft is not a defect report.
+const PINTEREST_TITLE_NOTE = 'Only the first 40 characters typically show in feeds.';
 
 // Performance Max, three fields. Each is ADVICE the page attaches to a limit
 // rather than a second limit — "include at least one with 15 characters or less",

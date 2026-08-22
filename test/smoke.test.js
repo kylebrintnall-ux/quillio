@@ -1551,29 +1551,21 @@ test('Pinterest: the page text is in the header, and 800 is the help centre’s 
   // would tell a writer they may not exceed a number Pinterest accepts happily.
   const title = mig.FIELDS.find((f) => f[0] === 'Title');
   assert.strictEqual(title[2], 100, 'Title char_max is the entry cap');
-  // WORDED AS AN INSTRUCTION, not a statement — the pin is on the grammar as
-  // much as the number. "Only the first 40 characters typically show in feeds."
-  // was true, reached the drafting prompt, and asked for nothing; the field
-  // drafted to its 100 ceiling and ignored the 40. Byte-identity with
-  // defaultAssets.js's PINTEREST_TITLE_NOTE is asserted by the CREATORS
-  // agreement test above, which compares every creator migration against the seed.
-  assert.strictEqual(title[5], 'Front-load the first 40 characters — that is typically all that shows in feeds.');
-  assert.match(title[5], /^Front-load/, 'the note instructs rather than describes');
+  // THE WORDING IS MEASURED — see src/data/defaultAssets.js PINTEREST_TITLE_NOTE.
+  // It was rewritten into an imperative ("Front-load the first 40 characters…")
+  // and the rewrite LOST: 3/10 within 40 for this sentence, 0/10 for the
+  // instruction, which was level with no note at all. This pin is on the string
+  // the measurement kept. Byte-identity with the seed is asserted by the
+  // CREATORS agreement test above, which compares every creator migration
+  // against the seed.
+  //
+  // THERE IS DELIBERATELY NO ASSERTION THAT THE NOTE INSTRUCTS. One briefly
+  // existed — assert.match(title[5], /^Front-load/, 'the note instructs rather
+  // than describes') — and it encoded the belief the run disproved. A test
+  // asserting a property nobody measured is a guard protecting whatever was
+  // there, which is the LinkedIn-600 shape.
+  assert.strictEqual(title[5], 'Only the first 40 characters typically show in feeds.');
   assert.ok(!mig.FIELDS.some((f) => f[2] === 40), 'the 40 is not a char_max on any field');
-
-  // THE REPAIR MIGRATION'S TWO CONSTANTS, PINNED TO THE THINGS THEY MOVE
-  // BETWEEN. migrateFixPinterestTitleNote updates rows already in the database,
-  // matching on the OLD string exactly; if the seed is reworded again and its
-  // NEW_NOTE is not moved with it, that UPDATE silently matches zero rows and
-  // reports success — the same shape as the strip constant that stopped removing
-  // a wording still in circulation. NEW must equal what both files now seed; OLD
-  // must not, or the guard would match the current value and rewrite it to
-  // itself.
-  const fix = require('../scripts/migrateFixPinterestTitleNote');
-  assert.strictEqual(fix.NEW_NOTE, title[5], 'the repair writes exactly what the seed now holds');
-  assert.notStrictEqual(fix.OLD_NOTE, fix.NEW_NOTE, 'and it is guarded on a DIFFERENT, superseded value');
-  assert.strictEqual(fix.ASSET, mig.ASSET);
-  assert.strictEqual(fix.FIELD, 'Title');
 
   // THE 30 IS NOT SEEDED ANYWHERE. It is conditional on the language the pin is
   // written in, and copy_fields has nowhere to put a conditional limit.

@@ -2566,6 +2566,38 @@ silent, and a writer who wants the 53-character line can take it.
 All 25 notes stay. They act on the constraint they name without costing variety,
 which is the opposite of what the `char_min` floor did.
 
+##### A SPEC_NOTE THAT STATES A CONSEQUENCE CAN BEAT ONE THAT STATES AN INSTRUCTION
+
+Measured on Pinterest Pin / Title, 3 arms x 10, ceiling 100 in every arm.
+
+| arm | WITHIN<=40 | median | spread | min | max |
+| --- | --- | --- | --- | --- | --- |
+| NONE (no note) | 0/10 | 65 | 17 | 58 | 75 |
+| **statement** — "Only the first 40 characters typically show in feeds" | **3/10** | 61 | **64** | **31** | 95 |
+| instruction — "Front-load the first 40 characters…" | 0/10 | 63 | **13** | 54 | 67 |
+
+Rewording the statement into an instruction took WITHIN-40 from **3/10 to
+0/10** — level with no note at all — and collapsed spread from **64 to 13**. The
+three shortest titles in the whole 30-call run all came from the statement arm
+(31, 37, 40); the instruction produced nothing under 54. That is the `floorAB`
+shape: uniformity bought, tail lost, and the tail was where the good copy was.
+
+**The likely mechanism, as a hypothesis rather than a proven claim.** "Only the
+first 40 characters typically show in feeds" implies the rest is WASTED, which
+pushes toward brevity. "Front-load the first 40 characters" says where to put the
+important words and never says stop — and front-loading is perfectly compatible
+with a 67-character title. It was made more actionable and less motivating.
+
+**Do not reword a note toward the imperative on the assumption that instructions
+outperform statements.** On this field it reversed. The rewrite was reverted and
+`PINTEREST_TITLE_NOTE` now carries the table, so the same "improvement" is not
+re-derived in six months.
+
+**AND THE OBSERVATION THAT STARTED IT WAS ONE 45-CHARACTER TITLE.** The same arm
+that produced it also produced a 31. A single sample from a temperature-0.8
+draft is not a defect report — it is the prompt to go and measure, and this time
+measuring reversed the conclusion the sample suggested.
+
 ##### THE READER MISREADS A COUNT TOO — an aggregate acted on at n=5
 
 Six entries in, and the first where the count was not the problem. `eventTimeAB`,

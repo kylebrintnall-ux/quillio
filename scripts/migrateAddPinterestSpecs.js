@@ -161,17 +161,13 @@ const FIELDS = [
     // split that keeps a research finding in spec_note and its attribution in
     // spec_type.
     //
-    // AND IT IS WORDED AS AN INSTRUCTION. The first version — "Only the first 40
-    // characters typically show in feeds." — stated the fact and asked for
-    // nothing, and it lost to the "character limit 100" in the same prompt line.
-    // The number and the page behind it are unchanged; see defaultAssets.js's
-    // PINTEREST_TITLE_NOTE, which this must stay byte-identical to.
-    //
-    // ROWS ALREADY IN THE DATABASE ARE NOT UPDATED BY THIS FILE. This migration
-    // has run against both tenants, and re-running it takes the 'exists' branch
-    // per tenant and writes no copy_fields at all. The wording is moved on
-    // existing rows by scripts/migrateFixPinterestTitleNote.js.
-    'Front-load the first 40 characters — that is typically all that shows in feeds.'],
+    // THE WORDING IS MEASURED. It was rewritten into an imperative and the
+    // rewrite lost — 3/10 within 40 for this sentence against 0/10 for the
+    // instruction, which was level with no note at all. The table and the
+    // mechanism are in src/data/defaultAssets.js's PINTEREST_TITLE_NOTE, which
+    // this must stay byte-identical to; it is recorded there rather than here
+    // because that is where a reader meets the string.
+    'Only the first 40 characters typically show in feeds.'],
   ['Description', 0, 800, null, 'enforced', null],
 ];
 

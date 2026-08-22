@@ -16,7 +16,9 @@
 // reworded to "Front-load the first 40 characters — that is typically all that
 // shows in feeds.", copying EMAIL_SUBJECT_NOTE, which instructs.
 //
-// THIS MEASURES WHETHER THAT REWORDING DID ANYTHING.
+// THAT REWORDING WAS MEASURED HERE, LOST, AND HAS BEEN REVERTED. The numbers
+// are below. This script is kept as the instrument that settled it and as the
+// bar any future reword has to clear.
 //
 // ─── THREE ARMS, AND WHY THE THIRD ──────────────────────────────────────────
 //
@@ -35,6 +37,92 @@
 // whose behaviour we have a production observation for.
 //
 // The comparison that carries the claim is OLD vs NEW. NONE is the floor.
+//
+// ─── THE RESULT — 3 ARMS x 10 RUNS, CEILING 100 IN EVERY ARM ───────────────
+//
+//   arm   WITHIN<=40  median  spread  min   max
+//   NONE  0/10        65      17      58    75
+//   OLD   3/10        61      64      31    95
+//   NEW   0/10        63      13      54    67
+//
+// THE REWORDING LOST AND WAS REVERTED. NEW — the instruction — is
+// indistinguishable from having no note at all. OLD beat the control by 3, the
+// three shortest titles in the whole 30-call run all came from OLD (31, 37, 40),
+// and NEW produced nothing under 54 with its spread collapsing 64 -> 13. The
+// floorAB shape: uniformity bought, tail lost, and the tail held the good copy.
+//
+// Against the bars below this is WITHIN -3: outside +/-1, nowhere near +4, so
+// the pre-registered verdict was UNANTICIPATED. That verdict stands as recorded
+// and nothing here re-scores it. What the revert rests on is not the verdict
+// label but the direction plus the spread collapse, which no bar was needed to
+// read.
+//
+// THE ARM NAMES ARE NOW INVERTED AGAINST WHAT SHIPS, and they are kept anyway.
+// OLD is the wording the product carries today, because it won; NEW is the
+// rejected rewrite, retained so this run can be reproduced rather than argued
+// about. The names are not corrected to SHIPPED/REJECTED for one reason: the
+// pre-registered bars below refer to "OLD" and "NEW" by name, and renaming them
+// would edit a pre-registration after seeing its results. A confusing label is
+// the cheaper cost.
+//
+// ─── PRE-REGISTRATION #2: THE FOLD — WRITTEN BEFORE THE FOLD RUN ────────────
+//
+// A SEPARATE QUESTION FROM THE ONE BELOW, NOT A RE-SCORING OF IT. The WITHIN
+// pre-registration that follows is unchanged and its bars are untouched; the
+// run it governed returned UNANTICIPATED (WITHIN moved -3, against bars of
+// +/-1 = did not work and >= +4 = worked) and that verdict stands as recorded.
+// Nothing here reinterprets it. This asks something the previous run could not
+// answer because it was not measured.
+//
+// THE QUESTION: does NEW produce more titles whose FOLD SLICE — the first 40
+// characters, which is all Pinterest shows in a feed — ends on a WORD BOUNDARY
+// than NONE does?
+//
+// THE BARS, set now, before the run:
+//     +/-1 arms   = did not work
+//     >= +3       = worked
+//     anything else = unanticipated
+//
+// MEASURED MECHANICALLY AND ONLY MECHANICALLY. MIDWORD is: character N and
+// character N+1 are both non-space, i.e. the cut lands inside a word. That is
+// all it is. It does NOT ask whether the fold slice reads as a complete
+// thought, whether it makes sense alone, or whether it is any good — those are
+// read-by-eye questions and this script must not pretend to answer them. The
+// fold slice is printed verbatim for exactly that reason.
+//
+// NO AUTOMATED VERDICT FOR THIS QUESTION, deliberately, unlike WITHIN below.
+// The counts are reported and the bars sit here in the file, in git, from
+// before the run — which is the same protection the automated verdict provides
+// (a bar cannot be moved afterwards without a visible edit) without the script
+// asserting a judgement on a measure this crude.
+//
+// ─── THE CONFOUND, AND IT IS THE WHOLE REASON THREE COUNTS ARE REPORTED ─────
+//
+// A TITLE SHORTER THAN 40 CHARACTERS NEVER FOLDS AT ALL. It has no cut, so it
+// can be neither MIDWORD nor BOUNDARY. And the entire point of the NEW note is
+// to produce shorter titles — so if it works, MORE of its titles fall under 40
+// and FEWER of them fold, which lowers its raw MIDWORD count for a reason that
+// has nothing to do with word boundaries.
+//
+// So a bare "NEW has fewer MIDWORD than NONE" can be satisfied trivially by the
+// note doing its other job. This is the denominator-moved failure CLAUDE.md
+// already records from eventTimeAB, where an aggregate over a CHANGED FIELD SET
+// read as "barely moved" while one field went 5/5 to 0/5 and six others did not
+// move at all.
+//
+// Therefore every run reports THREE mutually exclusive counts per arm:
+//
+//     NOFOLD    title <= 40 chars. No cut happens. Neither of the below.
+//     BOUNDARY  title > 40 and the cut lands on a space.
+//     MIDWORD   title > 40 and the cut lands inside a word.
+//
+//     NOFOLD + BOUNDARY + MIDWORD = n, always.
+//
+// The bars above are applied to BOUNDARY, as the question is worded — "titles
+// whose fold slice ends on a word boundary". Read it beside NOFOLD or it means
+// nothing. If NEW's BOUNDARY is flat while its NOFOLD rises, the note moved
+// length and said nothing about folding, and that is a different finding from
+// either bar.
 //
 // ─── PRE-REGISTRATION — WRITTEN BEFORE THE FIRST RUN ────────────────────────
 //
@@ -139,16 +227,20 @@ const WATCH = 'Title';
 // null is a real value here and means "this field has no spec_note" — NOT an
 // empty guidance clause. See the header.
 //
-// OLD_NOTE is byte-identical to scripts/migrateFixPinterestTitleNote.js's
-// OLD_NOTE, and NEW_NOTE to src/data/defaultAssets.js's PINTEREST_TITLE_NOTE.
-// Asserted at startup rather than trusted, because an arm carrying a string
-// nothing in the product ever wrote is measuring a wording that does not exist.
+// OLD_NOTE is byte-identical to src/data/defaultAssets.js's
+// PINTEREST_TITLE_NOTE — it is what the product ships, because it won. NEW_NOTE
+// is the rejected rewrite and matches nothing in the product by design.
+// Asserted at startup rather than trusted: the arm that claims to reproduce what
+// ships has to actually carry it, or the comparison is against a wording that
+// does not exist. (scripts/migrateFixPinterestTitleNote.js, which this used to
+// point at, was deleted with the revert — it never ran, so there was nothing in
+// any database to undo.)
 const OLD_NOTE = 'Only the first 40 characters typically show in feeds.';
 const NEW_NOTE = 'Front-load the first 40 characters — that is typically all that shows in feeds.';
 const ARMS = [
   { key: 'NONE', note: null, label: 'NONE  (no spec_note — tier line only, as if nobody wrote one)' },
-  { key: 'OLD', note: OLD_NOTE, label: 'OLD   (the statement — what shipped, and what drafted the 45)' },
-  { key: 'NEW', note: NEW_NOTE, label: 'NEW   (the instruction — what this commit changed it to)' },
+  { key: 'OLD', note: OLD_NOTE, label: 'OLD   (the statement — WHAT SHIPS TODAY, because it won)' },
+  { key: 'NEW', note: NEW_NOTE, label: 'NEW   (the instruction — REJECTED, kept so the run reproduces)' },
 ];
 
 const BRIEF =
@@ -261,6 +353,23 @@ function noteThreshold(note) {
   return chars ? Number(chars[1]) : null;
 }
 
+// THE FOLD SLICE AND WHETHER IT CUTS A WORD. Purely mechanical, and the limit
+// of what it claims is stated in the header: MIDWORD is "character N and N+1 are
+// both non-space", nothing more. It says nothing about whether the slice reads.
+//
+// A title at or under the threshold has NO CUT — it is neither midword nor
+// boundary, and it is reported as its own category rather than folded into
+// either, because the NEW note's other job is to produce exactly these and
+// counting them as boundaries would credit it twice for one effect.
+function foldOf(text, n) {
+  const t = String(text || '');
+  const slice = t.slice(0, n);
+  if (t.length <= n) return { slice, midword: false, nofold: true };
+  // 1-based "character N and character N+1" -> 0-based n-1 and n.
+  const midword = /\S/.test(t[n - 1] || '') && /\S/.test(t[n] || '');
+  return { slice, midword, nofold: false };
+}
+
 function modeOf(values) {
   const by = new Map();
   for (const v of values) by.set(v, (by.get(v) || 0) + 1);
@@ -283,12 +392,16 @@ function modeOf(values) {
   // assumed. If the seed is reworded again and NEW_NOTE here is not moved with
   // it, this measures a wording nothing ships — which is a measurement that
   // looks exactly like a result.
-  if (watched.spec_note !== NEW_NOTE) {
+  // OLD, NOT NEW. The arm that must match the seed is the one claiming to be
+  // what ships — which after the revert is OLD. This assertion pointed at
+  // NEW_NOTE while the rewrite was live and correctly refused to run the moment
+  // the seed went back, which is the guard working rather than a defect in it.
+  if (watched.spec_note !== OLD_NOTE) {
     throw new Error(
-      `NEW_NOTE does not match the seed's ${ASSET} / ${WATCH} spec_note.\n`
+      `OLD_NOTE does not match the seed's ${ASSET} / ${WATCH} spec_note.\n`
       + `  seed: ${JSON.stringify(watched.spec_note)}\n`
-      + `  here: ${JSON.stringify(NEW_NOTE)}\n`
-      + 'Refusing to run: an arm carrying a string the product never wrote measures nothing.'
+      + `  here: ${JSON.stringify(OLD_NOTE)}\n`
+      + 'Refusing to run: the arm that claims to reproduce what ships must carry what ships.'
     );
   }
   if (OLD_NOTE === NEW_NOTE) throw new Error('OLD_NOTE and NEW_NOTE are identical — there are only two arms.');
@@ -328,6 +441,15 @@ function modeOf(values) {
         const tag = lens[i] === null ? ' <- DEAD (no copy)'
           : s && lens[i] === s.min ? ' <- MIN' : s && lens[i] === s.max ? ' <- MAX' : '';
         console.log(`      ${String(lens[i] === null ? '--' : lens[i]).padStart(4)}  ${t}${tag}`);
+        // THE FOLD, WATCHED FIELD ONLY. Printed EXACTLY AS SLICED — no trim, no
+        // ellipsis, no tidying. The whole value of showing it is that it is what
+        // a Pinterest feed shows, and a slice that has been cleaned up is not
+        // that. A trailing space is real and is left visible.
+        if (f.fieldName === WATCH && lens[i] !== null) {
+          const fold = foldOf(t, TH);
+          console.log(`            FOLD[${TH}] |${fold.slice}|  MIDWORD ${fold.midword ? 'y' : 'n'}`
+            + (fold.nofold ? '   (no fold — title is within the threshold)' : ''));
+        }
       });
       // NOT dead, but not plausible copy either. A handful of characters inside
       // the threshold counts as a hit and is almost certainly a truncated or
@@ -346,10 +468,23 @@ function modeOf(values) {
         if (op.count > 1) console.log(`    shared opening x${op.count}: "${op.top}"`);
         // A DEAD RUN IS RECORDED, NOT AVERAGED AWAY. The header calls any arm
         // with one UNINFORMATIVE, so it has to survive to the summary table.
+        // THE THREE FOLD CATEGORIES, mutually exclusive and summing to n.
+        // Counted over the SAME live runs the other columns use, so a dead run
+        // is excluded from all of them rather than landing in NOFOLD as a
+        // zero-length title — which is the empty-is-not-zero rule again, one
+        // measure over.
+        const live = copies.filter((c, i) => lens[i] !== null);
+        const folds = live.map((t) => foldOf(t, TH));
+        const nofold = folds.filter((x) => x.nofold).length;
+        const midword = folds.filter((x) => x.midword).length;
+        const boundary = folds.length - nofold - midword;
+        console.log(`    FOLD at ${TH} — NOFOLD ${nofold}   BOUNDARY ${boundary}   MIDWORD ${midword}`
+          + `   (of ${folds.length})`);
         summary.push({ arm: armDef.key, n: real.length, dead: RUNS - real.length,
           within, median: s ? s.median : null, spread: s ? s.spread : null,
           min: s ? s.min : null, max: s ? s.max : null,
-          distinct: d.unique, shapes: sh.unique, openings: op.unique });
+          distinct: d.unique, shapes: sh.unique, openings: op.unique,
+          nofold, boundary, midword });
       }
     }
   }
@@ -363,6 +498,24 @@ function modeOf(values) {
       + `${`${r.distinct}/${r.n}`.padEnd(10)}${`${r.shapes}/${r.n}`.padEnd(9)}`
       + `${`${r.openings}/${r.n}`.padEnd(10)}${r.dead}`);
   }
+
+  // THE FOLD TABLE — pre-registration #2. Counts only; no verdict is computed
+  // here, deliberately (see the header). The bars are NEW-vs-NONE on BOUNDARY:
+  // +/-1 did not work, >= +3 worked, anything else unanticipated. Apply them by
+  // reading, and read NOFOLD in the same glance — a BOUNDARY that is flat while
+  // NOFOLD rises means the note moved LENGTH and said nothing about folding.
+  console.log(`\n${'-'.repeat(78)}\nTHE FOLD — first ${TH} characters, which is all a feed shows\n${'-'.repeat(78)}`);
+  console.log(`${'arm'.padEnd(6)}${'NOFOLD'.padEnd(9)}${'BOUNDARY'.padEnd(11)}${'MIDWORD'.padEnd(10)}n`);
+  for (const r of summary) {
+    console.log(`${r.arm.padEnd(6)}${String(r.nofold).padEnd(9)}${String(r.boundary).padEnd(11)}`
+      + `${String(r.midword).padEnd(10)}${r.n}`);
+  }
+  const nb = summary.find((r) => r.arm === 'NEW');
+  const zb = summary.find((r) => r.arm === 'NONE');
+  console.log(`\nBOUNDARY, NEW - NONE = ${nb.boundary - zb.boundary >= 0 ? '+' : ''}${nb.boundary - zb.boundary}`
+    + `   (bars: +/-1 did not work, >= +3 worked, else unanticipated)`);
+  console.log(`NOFOLD,   NEW - NONE = ${nb.nofold - zb.nofold >= 0 ? '+' : ''}${nb.nofold - zb.nofold}`
+    + '   <- read this before reading the line above');
 
   // THE PRE-REGISTERED BARS, EVALUATED BY THE SCRIPT rather than by whoever
   // reads the output. A human comparing two columns after the fact is the

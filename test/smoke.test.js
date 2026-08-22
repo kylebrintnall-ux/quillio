@@ -1551,8 +1551,29 @@ test('Pinterest: the page text is in the header, and 800 is the help centre’s 
   // would tell a writer they may not exceed a number Pinterest accepts happily.
   const title = mig.FIELDS.find((f) => f[0] === 'Title');
   assert.strictEqual(title[2], 100, 'Title char_max is the entry cap');
-  assert.strictEqual(title[5], 'Only the first 40 characters typically show in feeds.');
+  // WORDED AS AN INSTRUCTION, not a statement — the pin is on the grammar as
+  // much as the number. "Only the first 40 characters typically show in feeds."
+  // was true, reached the drafting prompt, and asked for nothing; the field
+  // drafted to its 100 ceiling and ignored the 40. Byte-identity with
+  // defaultAssets.js's PINTEREST_TITLE_NOTE is asserted by the CREATORS
+  // agreement test above, which compares every creator migration against the seed.
+  assert.strictEqual(title[5], 'Front-load the first 40 characters — that is typically all that shows in feeds.');
+  assert.match(title[5], /^Front-load/, 'the note instructs rather than describes');
   assert.ok(!mig.FIELDS.some((f) => f[2] === 40), 'the 40 is not a char_max on any field');
+
+  // THE REPAIR MIGRATION'S TWO CONSTANTS, PINNED TO THE THINGS THEY MOVE
+  // BETWEEN. migrateFixPinterestTitleNote updates rows already in the database,
+  // matching on the OLD string exactly; if the seed is reworded again and its
+  // NEW_NOTE is not moved with it, that UPDATE silently matches zero rows and
+  // reports success — the same shape as the strip constant that stopped removing
+  // a wording still in circulation. NEW must equal what both files now seed; OLD
+  // must not, or the guard would match the current value and rewrite it to
+  // itself.
+  const fix = require('../scripts/migrateFixPinterestTitleNote');
+  assert.strictEqual(fix.NEW_NOTE, title[5], 'the repair writes exactly what the seed now holds');
+  assert.notStrictEqual(fix.OLD_NOTE, fix.NEW_NOTE, 'and it is guarded on a DIFFERENT, superseded value');
+  assert.strictEqual(fix.ASSET, mig.ASSET);
+  assert.strictEqual(fix.FIELD, 'Title');
 
   // THE 30 IS NOT SEEDED ANYWHERE. It is conditional on the language the pin is
   // written in, and copy_fields has nowhere to put a conditional limit.
@@ -5664,6 +5685,204 @@ test('medium slicing still picks the right craft section per asset type', () => 
   const union = buildCraftContext(['LinkedIn Paid Social', 'Dynamic Email']);
   assert.ok(union.includes('### Paid Social') && union.includes('### Email'), 'union keeps both');
   assert.ok(!union.includes('### Google Display'), 'union drops unrelated mediums');
+});
+
+// EVERY SEEDED ASSET REACHES A BRANCH OF mediumKeywordsForAsset.
+//
+// The check that would have caught all three of August 2026's new assets on the
+// day they were added, and the reason it did not exist is instructive: nothing
+// about an unrouted asset is observable. Returning null is a documented, correct,
+// SAFE fallback — the prompt gets all eight medium sections instead of one — so
+// there is no error, no warning, no missing output and no wrong number. A
+// Pinterest title was being written with Print / Out-of-Home, Sales / 1:1
+// Outreach, Email and Confirmation guidance in its prompt, and the only way to
+// find out was to render a prompt and read it.
+//
+// This is the "surface the fallback" half of that fix. The fallback itself is
+// deliberately unchanged and must stay unchanged: returning everything is the
+// safe direction, and making it throw would turn a silent over-inclusion into a
+// broken draft run for any tenant who authors an asset name we did not predict.
+// The test carries the cost instead, where it is paid by whoever adds the asset.
+//
+// WHAT THIS ASSERTS AND WHAT IT DOES NOT. It asks whether a name reaches SOME
+// branch. It cannot ask whether it reaches the RIGHT one — that is a judgement
+// about craft.md's prose, and the two live cases prove the distinction is real:
+// "Google Performance Max" matched ['confirmation'] for its entire life, via
+// `a.includes('form')` matching "perFORMance", and this test would have passed
+// on it every time; and all three "Organic Social — <platform>" assets match the
+// PAID branch today, which this test also counts as matched. A green run here
+// means no asset is silently taking the eight-section fallback. It does not mean
+// the routing is correct.
+test('every seeded asset name matches a mediumKeywordsForAsset branch', () => {
+  const { mediumKeywordsForAsset } = require('../src/services/gemini');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  // THE ASSETS WITH NO CRAFT SECTION TO ROUTE TO — a recorded decision, not a
+  // backlog, and all four are here for ONE reason rather than a mixture:
+  // craft.md contains no section that describes them. A landing page, a
+  // one-pager and a battle card are not a medium this playbook has an opinion
+  // about, so the eight-section fallback is the CORRECT answer for these four
+  // and may stay correct permanently. Routing them would mean writing new
+  // craft.md prose, which changes what every prompt in the product produces and
+  // is a different job from routing an asset to a section that already exists.
+  //
+  // THE SIX PRINT ASSETS LEFT THIS LIST when they were routed to "### Print /
+  // Out-of-Home". They were the members whose presence here was a deferral
+  // rather than a decision, and a deferral in a green test is a thing nothing
+  // ever forces anyone back to.
+  //
+  // ADDING A NAME HERE IS THE THING TO NOT DO CASUALLY. The list exists so the
+  // test can be green on a real decision rather than green on an empty set — if
+  // it becomes the place new assets go to avoid the check, it has inverted into
+  // the silence it was written to break. A new asset belongs in a branch.
+  const NO_SECTION_YET = new Set([
+    'Event Landing Page',
+    'Campaign Landing Page',
+    'One-Pager',
+    'Battle Card',
+  ]);
+
+  const unmatched = DEFAULT_ASSETS
+    .map((a) => a.name)
+    .filter((n) => mediumKeywordsForAsset(n) === null)
+    .filter((n) => !NO_SECTION_YET.has(n));
+
+  assert.deepStrictEqual(
+    unmatched,
+    [],
+    `${unmatched.length} seeded asset(s) match no branch of mediumKeywordsForAsset, so every ` +
+    'medium section of craft.md — Print / Out-of-Home, Sales / 1:1 Outreach, Email, ' +
+    'Confirmation and the rest — is being injected into their drafting prompts:\n' +
+    unmatched.map((n) => `  - ${n}`).join('\n') +
+    '\n\nAdd a branch in src/services/gemini.js mediumKeywordsForAsset, or — only if ' +
+    'craft.md genuinely has no section describing this asset — add it to NO_SECTION_YET ' +
+    'above with the reason.'
+  );
+
+  // The three added August 2026, pinned by the section they resolve to rather
+  // than by "not null": Performance Max was NOT null before this branch existed,
+  // it was ['confirmation'], so a non-null assertion would have passed on the
+  // defect. The value is the claim.
+  assert.deepStrictEqual(mediumKeywordsForAsset('Pinterest Pin'), ['paid social']);
+  assert.deepStrictEqual(mediumKeywordsForAsset('Google Demand Gen Video Ad'), ['paid social']);
+  assert.deepStrictEqual(mediumKeywordsForAsset('Google Performance Max'), ['google display']);
+  // The collision itself, pinned so the branch cannot be reordered below the
+  // `form` test without going red here.
+  assert.ok(!mediumKeywordsForAsset('Google Performance Max').includes('confirmation'),
+    'performance max must not reach the confirmation branch via "perFORMance"');
+
+  assert.deepStrictEqual(mediumKeywordsForAsset('Direct Mail — Insert'), ['print']);
+  assert.deepStrictEqual(mediumKeywordsForAsset('On-Site Signage — Directional'), ['print']);
+  // "Directional" contains "direct". The mail branch is keyed on 'direct mail'
+  // for that reason, and this pins the distinction rather than the outcome —
+  // both route to print today, so only a keyword check can tell them apart.
+  assert.ok(!'on-site signage — directional'.includes('direct mail'),
+    'the signage asset must not be reachable through the direct-mail keyword');
+
+  // And the fallback still exists for a name nobody predicted.
+  assert.strictEqual(mediumKeywordsForAsset('Skywriting'), null);
+});
+
+// THE FULL ROUTING TABLE, PINNED BY VALUE. A SNAPSHOT, DELIBERATELY.
+//
+// The test above asks whether an asset name reaches SOME branch. This one asks
+// WHICH, and the difference is the entire defect that prompted both.
+//
+// A COVERAGE CHECK CANNOT SEE A MIS-ROUTE, BECAUSE A MIS-ROUTE IS COVERAGE.
+// "Google Performance Max" matched `a.includes('form')` — via "perFORMance" —
+// for its whole life, returning ['confirmation'] and receiving the
+// Confirmation / Post-Conversion section as the only medium guidance in its
+// prompt. Every "is it null?" assertion passes on that. So does every "does it
+// return an array?" assertion. The only thing that catches it is writing down
+// what each asset is supposed to get and comparing.
+//
+// AND IT CAUGHT ONE ON THE RUN THAT INTRODUCED IT, which is the strongest thing
+// that can be said for a test. The commit adding this table also added
+// `a.includes('demand gen')` to route the new "Google Demand Gen Video Ad" — a
+// string that is equally true of "Demand Gen Nurture Email", which was silently
+// rerouted from ['email'] to ['paid social'], losing every subject-line and
+// pre-header instruction it depends on. The suite was green. The coverage test
+// above was green. The email still matched a branch; it matched the wrong one.
+// Writing the table out by value is what surfaced it, in the same session.
+//
+// IT WILL FAIL WHEN AN ASSET IS ADDED, AND THAT IS THE POINT. A new seeded asset
+// has no entry here, so this goes red until somebody writes the array they
+// intend it to have. That is one deliberate line of work at the moment the asset
+// is created, in exchange for a substring collision being visible on the run
+// that introduces it rather than in a document months later. Do not "fix" a
+// failure here by deriving the expected value from mediumKeywordsForAsset — that
+// asserts the function equals itself and this test stops existing.
+//
+// A CHANGED VALUE IS NOT AUTOMATICALLY A BUG. Rerouting an asset on purpose
+// updates a line here and the diff shows exactly which asset moved and to what,
+// which is the review conversation this table exists to force.
+//
+// KNOWN AND DELIBERATE, so it is not read as an oversight: all three
+// "Organic Social — <platform>" rows say ['paid social'], not ['organic
+// social']. The platform regex is tested before the organic branch, so the
+// organic section is unreachable for every organic asset in the library. That
+// is a live defect with its own commit pending — see the note in
+// mediumKeywordsForAsset. It is pinned here AS IT BEHAVES rather than as it
+// should behave, because a snapshot that records intentions instead of
+// behaviour cannot detect a change in behaviour.
+test('the medium routing table, pinned per seeded asset', () => {
+  const { mediumKeywordsForAsset } = require('../src/services/gemini');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+
+  const EXPECTED = {
+    "LinkedIn Single Image Ad":              ["paid social"],
+    "LinkedIn Carousel Ad":                  ["paid social"],
+    "Meta Single Image Ad":                  ["paid social"],
+    "Meta Carousel Ad":                      ["paid social"],
+    "Twitter/X Ad":                          ["paid social"],
+    "Pinterest Pin":                         ["paid social"],
+    "Google Demand Gen Video Ad":            ["paid social"],
+    "Display Banner — Standard":             ["google display"],
+    "Google Responsive Display Ad":          ["google display"],
+    "Google Responsive Search Ad":           ["google search"],
+    "Google Performance Max":                ["google display"],
+    "Demand Gen Nurture Email":              ["email"],
+    "Event Invitation Email":                ["email"],
+    "Event Reminder Email":                  ["email"],
+    "Event Follow-Up / Recap Email":         ["email"],
+    "Sales Basho Email":                     ["sales"],
+    "Event Landing Page":                    null,
+    "On-Site Signage — General":             ["print"],
+    "On-Site Signage — Session Title Card":  ["print"],
+    "On-Site Signage — Directional":         ["print"],
+    "Campaign Landing Page":                 null,
+    "Organic Social — LinkedIn":             ["paid social"],
+    "Organic Social — Instagram":            ["paid social"],
+    "Organic Social — Twitter/X":            ["paid social"],
+    "Direct Mail — Box / Mailer":            ["print"],
+    "Direct Mail — Note Card / Rep Letter":  ["print"],
+    "Direct Mail — Insert":                  ["print"],
+    "One-Pager":                             null,
+    "Battle Card":                           null,
+  };
+
+  const actual = {};
+  for (const a of DEFAULT_ASSETS) actual[a.name] = mediumKeywordsForAsset(a.name);
+
+  // ONE deepStrictEqual over the whole map rather than a loop of per-asset
+  // assertions: a loop stops at the first failure and reports one name, where
+  // this prints every asset that moved in a single diff — which is what a
+  // reordered branch or a widened keyword actually looks like.
+  assert.deepStrictEqual(actual, EXPECTED,
+    'the medium routing table changed. Every differing key is an asset whose craft.md '
+    + 'medium section(s) moved. If that was intended, update EXPECTED above — one line per '
+    + 'asset, written by hand. If it was not, a branch in mediumKeywordsForAsset has been '
+    + 'reordered or its keyword has widened to catch a name it should not.');
+
+  // The table describes the seed exactly — no stale keys for retired assets, no
+  // seeded asset missing an entry. Without this a removed asset would leave a
+  // line here forever and a new one could be added to EXPECTED without ever
+  // being seeded.
+  assert.deepStrictEqual(
+    Object.keys(EXPECTED).sort(),
+    DEFAULT_ASSETS.map((a) => a.name).sort(),
+    'EXPECTED has one entry per seeded asset and no others'
+  );
 });
 
 test('copy review judges against BOTH craft and brand', () => {

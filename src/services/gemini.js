@@ -94,9 +94,126 @@ const VOICE_PARSED = parseVoice(VOICE_GUIDE);
 // include them all (safe fallback).
 function mediumKeywordsForAsset(assetType) {
   const a = String(assetType).toLowerCase();
+
+  // PERFORMANCE MAX GOES FIRST, AND THAT POSITION IS THE FIX RATHER THAN A
+  // PREFERENCE. It did not fall through to the null fallback — it MATCHED, on
+  // the last branch, because `a.includes('form')` is true of "perFORMance". So
+  // the one Google asset that assembles its own ad was receiving the
+  // Confirmation / Post-Conversion section and nothing else: not Display, not
+  // Search, not the fallback's eight. A substring collision reads as a working
+  // route from every direction — the function returns a non-null array, no test
+  // asked which one, and CLAUDE.md's own note about this file listed the asset
+  // as unmatched. Anchoring the branch above the loose keywords is what stops a
+  // future asset name being decided by a syllable.
+  //
+  // ONE SECTION, NOT TWO, and the argument is against the obvious reading.
+  // Performance Max serves Search, Display, YouTube, Gmail, Discover and Maps
+  // inventory, so "it spans both, give it both" is the natural call. Rejected on
+  // three counts, each checkable:
+  //
+  //   1. THE DISPLAY SECTION DESCRIBES THIS ASSET'S FIELD SHAPE and the Search
+  //      section does not. Display: "Short headline (30) carries the message
+  //      universally; long headline (90) should stand alone since description
+  //      sometimes doesn't render." PMax is Headline 1-3 [30], Long Headline
+  //      [90], Description 1-2 [90] — the responsive-assembly shape it shares
+  //      with Google Responsive Display Ad, whose asset_direction ("System
+  //      assembles combinations. Every element must work alone and together.")
+  //      is near word-for-word PMax's own. Search has no long-headline concept.
+  //
+  //   2. THE SEARCH SECTION'S CENTRAL INSTRUCTION IS FALSE HERE. "Match the
+  //      search intent. Include the keyword." Performance Max has no keywords —
+  //      that is the defining property of the campaign type. An instruction to
+  //      include a thing that does not exist is not neutral filler.
+  //
+  //   3. THE TWO SECTIONS CONTRADICT EACH OTHER IN THEIR OPENING CLAUSE.
+  //      Display: "Push advertising — interrupts browsing." Search: "Pull
+  //      advertising — the reader is actively looking." Injecting both puts two
+  //      mutually exclusive reader models in one prompt, which is the shape
+  //      CLAUDE.md records for craft.md §1.4 against the §2 punctuation
+  //      permission — where the measured adoption of the losing rule was 0/12.
+  //      The likely outcome is not a blend; it is one silently winning.
+  //
+  // And Search carries "write all 15 headlines to give the algorithm room",
+  // already flagged in CLAUDE.md as a live contradiction against Responsive
+  // Search Ad's three headline fields. PMax also has three. Routing Search here
+  // would propagate a known, unmeasured defect to a second asset.
+  //
+  // The counter-argument — PMax genuinely runs on Search inventory — is a fact
+  // about where the ad APPEARS, not about how the copy is WRITTEN. The writing
+  // problem is "every asset has to stand alone and beside any other", which is
+  // the Display section's subject and the whole of PMax's asset_direction.
+  if (a.includes('performance max') || a.includes('pmax')) return ['google display'];
+
+  // PINTEREST AND DEMAND GEN, both seeded August 2026, both previously null →
+  // all eight sections. Each is grouped 'Paid Social' in the seed and each is
+  // interruptive feed copy the reader did not ask for, which is exactly what
+  // that section opens by saying. Neither has a section of its own in craft.md
+  // and neither is close enough to Display or Email to borrow one, so this is
+  // the section that applies rather than the nearest available.
+  //
+  // What they LOSE by being routed is the point of routing them: Print /
+  // Out-of-Home, Sales / 1:1 Outreach, Email and Confirmation were all reaching
+  // a Pinterest title.
+  //
+  // 'demand gen VIDEO' AND NOT 'demand gen', AND THIS ONE ALREADY BIT. The first
+  // version of this branch tested `a.includes('demand gen')`, which is also true
+  // of "Demand Gen Nurture Email" — so the library's most-used email asset was
+  // silently rerouted from ['email'] to ['paid social'], losing the subject-line
+  // and pre-header guidance that is the whole reason that section exists.
+  //
+  // It survived a green suite, including the every-asset-matches-a-branch test
+  // added in this same commit: the email still MATCHED, just not correctly. It
+  // was caught the moment the full routing table below was written out by value,
+  // which is the argument for that test in one line — a coverage check cannot
+  // see a mis-route, because a mis-route is coverage.
+  //
+  // Second instance of `form`/"perFORMance" in one function, introduced by the
+  // person writing the comment warning about it.
+  if (a.includes('pinterest')) return ['paid social'];
+  if (a.includes('demand gen video')) return ['paid social'];
+
+  // DIRECT MAIL AND ON-SITE SIGNAGE → "### Print / Out-of-Home", six assets.
+  //
+  // The section is four sentences and every one of them is about these six:
+  // "No click, no link — the copy has to do everything. Fewer words, bigger
+  // idea. Memorable over detailed. The reader sees it for seconds — one message,
+  // cleanly delivered. Include a clear, simple way to act (URL, QR, search
+  // term)." The "no click, no link" premise is FALSE of all eight of the other
+  // sections and true of all six of these, which is as clean as a routing
+  // decision gets in this file.
+  //
+  // WHY THIS IS THE SAME CHANGE AS PINTEREST AND NOT A RISKIER ONE. Both narrow
+  // an asset from all eight sections to the single one that describes it — the
+  // direction is identical and so is the mechanism. What these six were getting
+  // instead included Google Search's "include the keyword" and Email's
+  // "~50 chars to avoid inbox truncation", advice about mediums a printed insert
+  // does not have. Deferring them while shipping Pinterest would have been an
+  // inconsistency in the commit, not caution.
+  //
+  // 'direct mail' AND NOT 'direct', deliberately: "On-Site Signage —
+  // Directional" contains "direct", and a shorter keyword here would route it
+  // through the mail branch instead of the signage one. Same answer either way
+  // today, which is exactly what makes it the kind of collision that survives —
+  // see the `form` note at the bottom of this function.
+  if (a.includes('direct mail') || a.includes('signage')) return ['print'];
+
   if (a.includes('paid social') || /\b(linkedin|meta|facebook|instagram|twitter)\b/.test(a)) {
     return ['paid social'];
   }
+  // UNREACHABLE FOR EVERY ORGANIC ASSET IN THE SEEDED LIBRARY, and deliberately
+  // NOT fixed in this commit. The three are named "Organic Social — LinkedIn",
+  // "— Instagram" and "— Twitter/X", so the platform regex above matches first
+  // and all three receive the PAID section. The Organic section is therefore
+  // dead the same way Google Search was before a search asset existed — and the
+  // sentence they never see is the one that matters: "Don't run paid copy as
+  // organic or it reads like an ad in the feed."
+  //
+  // Left alone because reordering it changes what three live assets produce,
+  // which this file's own record (CLAUDE.md, "Measuring a prompt change") says
+  // needs its own commit and its own before/after rather than riding along with
+  // a routing fix. The test below counts it as matched, because it IS matched —
+  // that test asks whether a name reaches a branch, not whether it reaches the
+  // right one, and those are different questions.
   if (a.includes('organic')) return ['organic social'];
   if (a.includes('display') || a.includes('banner')) return ['google display'];
   // craft.md's "### Google Search" section has existed since the file's first
@@ -121,6 +238,14 @@ function mediumKeywordsForAsset(assetType) {
   if (a.includes('search')) return ['google search'];
   if (a.includes('basho') || a.includes('sales') || a.includes('outbound')) return ['sales'];
   if (a.includes('email')) return ['email'];
+  // `form` IS A SUBSTRING TRAP. It matches "perFORMance", which is how Google
+  // Performance Max spent its whole life on this branch — see the top of this
+  // function. It also matches "transFORM", "inFORMation" and "plaTFORM". The
+  // Performance Max branch above is anchored ahead of it rather than this test
+  // being narrowed, because narrowing it to \bform\b would still match "Form
+  // Confirmation" and miss nothing today, but a word-boundary regex here is a
+  // second thing to keep in step with the seed; the test below is what actually
+  // catches the next collision, by asserting every seeded name reaches a branch.
   if (a.includes('form') || a.includes('confirm') || a.includes('thank')) return ['confirmation'];
   return null;
 }

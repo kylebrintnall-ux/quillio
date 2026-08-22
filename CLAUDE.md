@@ -1090,10 +1090,21 @@ node --env-file=.env src/server.js
 npm test                          # node --test → test/smoke.test.js
 ```
 
-**There is a test suite.** `test/smoke.test.js` is ~17,500 lines and currently
-runs **635 tests** in about ten seconds, with no credentials or network — it
-exercises wiring, parsing, rendering, and regression guards. `.github/workflows/ci.yml`
-runs `npm ci && npm test` on every push and pull request. Run it before you
+**There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
+credentials and no network, and exercises wiring, parsing, rendering, and
+regression guards. **As of this commit it is 21,384 lines and 749 tests** —
+written as a reading taken on a date rather than as a standing figure, because
+the previous version of this sentence said 635 and was wrong by 114 tests and
+about 3,900 lines. The number had been correct once. Nothing updates it, nothing
+checks it, and a stale count in the one file whose value is that it can be
+believed without re-deriving it is the same defect this file's own preamble is
+about.
+
+**Do not write a new number here unless you have just run the suite**, and write
+it the way this sentence does — attached to the commit that measured it. A count
+inherited from the paragraph you are editing is not a measurement.
+
+`.github/workflows/ci.yml` runs `npm ci && npm test` on every push and pull request. Run it before you
 commit, and add cases there when you change behavior.
 
 **`public/*.html` is effectively untested.** The suite reads those files as
@@ -2009,10 +2020,32 @@ the one matching the asset is injected. (Copy review spans several assets, so it
 gets the *union* of their mediums.) Two things the parser keys off: (1) a
 level-2 heading whose text contains **"Writing Across Mediums"**, and (2) its
 `### ` subsection titles, matched by keyword in `mediumKeywordsForAsset`
-(`paid social`, `organic social`, `google display`, `email`, `sales`,
-`confirmation`). If you rename that heading or those subsections, update
+(`paid social`, `organic social`, `google display`, `google search`, `email`,
+`print`, `sales`, `confirmation` — all eight, and this list has twice been
+short: `google search` was missing from it for the whole life of the search
+asset, and `print` since the six Direct Mail / On-Site Signage assets were
+routed). If you rename that heading or those subsections, update
 `mediumKeywordsForAsset` too — otherwise it safely falls back to injecting the
-whole file (more tokens, no lost guidance). Keep the CTA library and the
+whole file (more tokens, no lost guidance).
+
+**THE FALLBACK IS SAFE; A MIS-ROUTE IS NOT, AND THEY LOOK IDENTICAL FROM
+OUTSIDE.** Returning null over-includes and costs tokens. Returning the WRONG
+keyword replaces an asset's guidance with somebody else's, and nothing about it
+is observable — no error, no warning, no missing output. Two have happened, both
+substring collisions in this function: `a.includes('form')` matched
+"per**FORM**ance", so Google Performance Max received the Confirmation /
+Post-Conversion section and nothing else for its entire life; and
+`a.includes('demand gen')` matched "**Demand Gen** Nurture Email", rerouting the
+library's most-used email asset to `paid social` — caught in the same session it
+was written, by the table below rather than by review.
+
+Two tests in `test/smoke.test.js` cover the two different questions, and both are
+needed: *every seeded asset name matches a branch* (catches the silent
+eight-section fallback) and *the medium routing table, pinned per seeded asset*
+(catches the mis-route — a coverage check cannot, because a mis-route IS
+coverage). The second is a deliberate snapshot: adding an asset fails it until
+somebody writes the array by hand. Do not derive its expected values from
+`mediumKeywordsForAsset`; that asserts the function equals itself. Keep the CTA library and the
 words-to-cut list *outside* the mediums section so they stay universal. The same slicing is applied to a tenant
 guide that happens to carry its own mediums section; a typical one has none and
 passes through whole.

@@ -754,7 +754,20 @@ const EMAIL_PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — 
 // writing-guidance channel and char_max keeps the number Pinterest accepts. Same
 // split as the Litmus email notes. Byte-identical to
 // scripts/migrateAddPinterestSpecs.js.
-const PINTEREST_TITLE_NOTE = 'Only the first 40 characters typically show in feeds.';
+//
+// IT IS PHRASED AS AN INSTRUCTION, AND THE FIRST VERSION WAS NOT. It read "Only
+// the first 40 characters typically show in feeds." — a true statement about
+// Pinterest that tells the writer, and the model, to do nothing about it. The
+// note reaches the drafting prompt (confirmed by capturing the real prompt, not
+// inferred from output) as the `guidance:` clause of the field's line, beside
+// "character limit 100 — stay within this limit". Against a hard 100 stated
+// twice, a fact about display truncation lost: a run drafted a 45-character
+// title, which obeyed the 100 and ignored the 40.
+//
+// EMAIL_SUBJECT_NOTE above is the shape that works and the reason to copy it —
+// "front-load the first 40" is a thing to DO. The claim is unchanged; only its
+// grammar is. Nothing here asserts a number the page does not publish.
+const PINTEREST_TITLE_NOTE = 'Front-load the first 40 characters — that is typically all that shows in feeds.';
 
 // Performance Max, three fields. Each is ADVICE the page attaches to a limit
 // rather than a second limit — "include at least one with 15 characters or less",

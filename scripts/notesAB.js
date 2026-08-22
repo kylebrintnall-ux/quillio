@@ -1,52 +1,158 @@
 'use strict';
 
-// A/B: per-field guidance has never reached the copy-doc drafter. Does sending it
-// improve the draft, or does a batch of untested instructions arriving at once
-// flatten it?
+// A/B/C: does the GRAMMAR of a spec_note change what gets drafted?
 //
-// THE QUESTION IS NOT WHETHER THE GUIDANCE APPEARS — it will. It is whether
-// guidance the system was designed to send and never sent actually helps. It may
-// not. Every measured prompt change in this project has spent variance, and the
-// sign has only ever been decided by reading the copy.
+// Pinterest Pin / Title. char_max is 100 — the number Pinterest accepts — and
+// the feed shows about 40. The 40 lives in spec_note, in the writing-guidance
+// channel, because a display truncation is not a cap. So the drafter is told
+// 100 as a hard ceiling and 40 as guidance, in the same line of the same prompt:
 //
-// THE PRE-REGISTERED FAILURE, NAMED BEFORE THE RUN: UNIFORMITY IN THE OPENING.
-// Twelve of the twenty-five newly-arriving notes are the Litmus line — "Mobile
-// inboxes cut around 40 characters — front-load the first 40." — on every Subject
-// Line and Preheader across the five email assets. That is precisely the
-// instruction that produces five subject lines sharing their first four words.
-// If invention goes to zero and the openings converge, this is the `char_min`
-// floor result in a new place: the Subhead scored 5/5 in band in BOTH arms while
-// its spread collapsed from 31 characters to 9, and the punchiest line in the run
-// was the one that disappeared.
+//   - "Title" — character limit 100 — stay within this limit; guidance:
+//     <the note> Platform limit (Pinterest). Stay within this count.
 //
-// So `distinct` and `shapes` run on Subject Line 1 in both arms, alongside
-// spread and never instead of it, plus an OPENING metric this run adds: how many
-// of N samples share their first four words. Spread measures range; templating is
-// a property of mode; and neither sees a shared opening with different tails.
+// A production run drafted a 45-character title. That obeyed the 100 and
+// ignored the 40, and the note it was carrying said "Only the first 40
+// characters typically show in feeds." — true, and asking for nothing. It was
+// reworded to "Front-load the first 40 characters — that is typically all that
+// shows in feeds.", copying EMAIL_SUBJECT_NOTE, which instructs.
 //
-// THE CONTROL IS ONE PARAMETER. `notes: ''` reproduces the prompt exactly as it
-// was while assetTargets dropped them — same builder, same call, same model.
-// Nothing is stubbed and no old code is checked out.
+// THIS MEASURES WHETHER THAT REWORDING DID ANYTHING.
 //
-// DEMAND GEN NURTURE EMAIL, because it exercises four of the twelve Litmus notes
-// in a single draft (two Subject Lines, the Preheader) plus the Offer Body 1 note.
+// ─── THREE ARMS, AND WHY THE THIRD ──────────────────────────────────────────
 //
-// MAKES REAL MODEL CALLS — 2 arms x N runs, one batch call each. Writes NOTHING.
-// Read-only against Gemini, safe to run in production.
+//   NONE   spec_note absent. The field still renders its tier line, because
+//          spec_type is 'enforced' — so this arm is what Pinterest Title would
+//          look like if nobody had ever written a note, NOT an empty guidance
+//          clause. That is the honest control: it holds the tier line constant
+//          across all three arms, so the only thing that varies is the note.
+//   OLD    "Only the first 40 characters typically show in feeds."   (statement)
+//   NEW    "Front-load the first 40 characters — …"                  (instruction)
 //
-//   node scripts/notesAB.js        # 5 runs per arm (10 calls)
-//   node scripts/notesAB.js 3      # 6 calls
+// Two arms would confound the claim. NEW-vs-NONE can only show that A NOTE
+// helps; it cannot separate that from the specific claim being made, which is
+// that an INSTRUCTION beats a STATEMENT of the same fact. OLD is the arm that
+// actually shipped and actually produced the 45, so it is also the only arm
+// whose behaviour we have a production observation for.
+//
+// The comparison that carries the claim is OLD vs NEW. NONE is the floor.
+//
+// ─── PRE-REGISTRATION — WRITTEN BEFORE THE FIRST RUN ────────────────────────
+//
+// CLAUDE.md's rule: the bar is set before the run, because this repo has an
+// aggregate that REVERSED between two runs of the same cell (eventTimeAB), and
+// because a reader who sets the bar afterwards will set it where the data
+// already is. NOTHING BELOW MOVES AFTER RESULTS ARE SEEN. If the outcome is one
+// this section did not anticipate, it is recorded as UNANTICIPATED and the
+// section is left as written — an amended pre-registration is not one.
+//
+// PRIMARY METRIC: WITHIN — how many Title drafts come in at 40 characters or
+// fewer, out of n, per arm. This is the note's own claim, measured; the
+// threshold is pulled from the note text rather than hardcoded here.
+//
+// SECONDARY, REPORTED ALWAYS AND NEVER INSTEAD: median, SPREAD (max − min), the
+// min and max themselves, distinct, shapes, openings.
+//
+//   WORKED
+//     NEW's WITHIN exceeds OLD's by >= 4 of 10
+//     AND NEW's median is below OLD's
+//     AND NEW's spread is at least half of OLD's spread.
+//   The third clause is not decoration. floorAB measured a note that took the
+//   Subhead from 5/5 in band to 5/5 in band — changing nothing by hit rate —
+//   while its spread collapsed from 31 characters to 9 and the best line in the
+//   run was the one that disappeared. A note that pulls every title to exactly
+//   40 has bought compliance with uniformity, and the hit rate alone cannot
+//   tell that from a note that moved the whole distribution.
+//
+//   DID NOT WORK
+//     NEW's WITHIN is within +/-1 of OLD's.
+//   Then the grammar is inert on this field, the 45-character title was a tail
+//   sample rather than a mechanism, and the rewording should be described in
+//   CLAUDE.md as unmeasured-and-harmless rather than as a fix.
+//
+//   WORKED, AT A COST  (a real outcome, not a hedge)
+//     NEW's WITHIN improves by >= 4 but spread collapses below half of OLD's,
+//     or distinct drops below 7/10, or openings drop below 5/10.
+//   Report as a COST and read the lines that disappeared. This is the floorAB
+//   result arriving in a new place, and it is the single most likely way for
+//   this change to be wrong while looking right.
+//
+//   UNINFORMATIVE — the run settles nothing and must not be reported as if it
+//   did. Any of:
+//     * OLD's WITHIN is within +/-1 of NONE's AND NEW's is within +/-1 of OLD's.
+//       All three arms behave the same, the field does not respond to spec_note
+//       in any grammar, and the question is misframed rather than answered.
+//
+//       BOTH CLAUSES ARE REQUIRED, and the first draft of this file had only the
+//       first — which would have thrown away the best outcome the run can
+//       produce. OLD == NONE with NEW moving is not a disqualifier; it is the
+//       CLEANEST FORM OF THE CLAIM: the statement is indistinguishable from
+//       having no note at all, and the instruction is not. Caught by driving
+//       this script with a stub that made exactly that pattern and watching it
+//       print UNINFORMATIVE over a 0/10 -> 10/10 move. Fixed before any real
+//       data existed, which is the only time a bar may be corrected.
+//     * All three arms read 10/10 or all three read 0/10. Ceiling or floor; no
+//       resolution available at any n.
+//     * Any arm contains a dead run — a thrown error, or an EMPTY Title. Per
+//       the dead-cell rule a cell that produced no copy did not happen, and
+//       reporting it as a zero is the contaminated-arm failure.
+//
+//       AN EMPTY TITLE IS ZERO CHARACTERS, WHICH IS INSIDE THE THRESHOLD. The
+//       first draft of this file took `copy || ''` and measured its length, so a
+//       total model failure — every field blank — scored WITHIN 10/10 with a
+//       median near zero and would have read as PERFECT COMPLIANCE. That is the
+//       August 2026 outage's own shape (1 of 40 fields drafted, reported as
+//       ready) arriving inside the instrument built to measure the fix. Empty is
+//       now dead, never a length.
+//
+//   AND ONE THAT WOULD WEAKEN THE PREMISE ITSELF, pre-registered because it is
+//   entirely possible and would be easy to skip past:
+//     * OLD's WITHIN is already >= 7/10. Then the shipped note was mostly
+//       working, the observed 45 was the tail, and NEW is improving something
+//       that was not very broken. Say so plainly if it happens.
+//
+// n = 10 PER ARM, 30 CALLS TOTAL. Why 10 and not the 5 this script used to use:
+// the primary metric is a PROPORTION, and at n=5 one sample is 20 points, so
+// the smallest move the metric can even express is larger than the effect worth
+// detecting. At n=10 a sample is 10 points and the >= 4/10 bar above is four
+// samples rather than two. It is still far too small for a subtle effect, which
+// is why the bar is set at a coarse difference rather than a plausible one —
+// n=10 can clear "the note moved the field" and cannot clear "the note moved
+// the field a little", and no bar here pretends otherwise.
+// Pinterest Pin has two fields, so a batch call is small; 30 of them is cheap.
+//
+//   node scripts/notesAB.js        # 10 runs per arm (30 calls)
+//   node scripts/notesAB.js 3      # 9 calls — a smoke check, NOT a measurement
+//
+// MAKES REAL MODEL CALLS. Writes NOTHING — no Docs, no Postgres. Read-only
+// against Gemini and safe to run in production.
 
 const { generateAssetDrafts } = require('../src/services/gemini');
 const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
 const { fieldHint, stripReaderOnlyLines } = require('../src/destinations/googleDocs');
 
-const RUNS = Number(process.argv[2]) || 5;
-const ASSET = 'Demand Gen Nurture Email';
-const WATCH = 'Subject Line 1';
+const RUNS = Number(process.argv[2]) || 10;
+const ASSET = 'Pinterest Pin';
+const WATCH = 'Title';
+
+// THE ARMS. `note` is the raw spec_note the arm substitutes for the seed's own,
+// so all three go through the identical composer below and differ in one string.
+// null is a real value here and means "this field has no spec_note" — NOT an
+// empty guidance clause. See the header.
+//
+// OLD_NOTE is byte-identical to scripts/migrateFixPinterestTitleNote.js's
+// OLD_NOTE, and NEW_NOTE to src/data/defaultAssets.js's PINTEREST_TITLE_NOTE.
+// Asserted at startup rather than trusted, because an arm carrying a string
+// nothing in the product ever wrote is measuring a wording that does not exist.
+const OLD_NOTE = 'Only the first 40 characters typically show in feeds.';
+const NEW_NOTE = 'Front-load the first 40 characters — that is typically all that shows in feeds.';
+const ARMS = [
+  { key: 'NONE', note: null, label: 'NONE  (no spec_note — tier line only, as if nobody wrote one)' },
+  { key: 'OLD', note: OLD_NOTE, label: 'OLD   (the statement — what shipped, and what drafted the 45)' },
+  { key: 'NEW', note: NEW_NOTE, label: 'NEW   (the instruction — what this commit changed it to)' },
+];
 
 const BRIEF =
-  'Nurture email for our Q3 launch push. Quillio turns a campaign brief into a '
+  'Pinterest pin for our Q3 launch push. Quillio turns a campaign brief into a '
   + 'formatted, on-brand copy doc in about a minute, so marketing teams stop '
   + 'rewriting the same brief into six different asset templates. The audience is '
   + 'marketing leads at mid-size B2B companies who are drowning in asset requests.';
@@ -59,15 +165,19 @@ const WRITER_PROMPT =
 
 // EXACTLY WHAT THE DOC WOULD CARRY, composed the way createDocument composes it
 // and recovered the way parseDoc recovers it — so the arm sends the real string
-// rather than the seed's raw spec_note. That difference is the whole point: the
-// tier line joins the note, and the reader-only sentences are stripped back out.
-function noteFor(field) {
+// rather than a raw spec_note. That difference is the whole point: the tier line
+// joins the note, and the reader-only sentences are stripped back out.
+//
+// `noteOverride` is the ARM's spec_note, substituted for the seed's. Passing
+// undefined keeps the seed's own, which is what the threshold lookup wants.
+function noteFor(field, noteOverride) {
+  const specNote = noteOverride === undefined ? (field.spec_note || null) : noteOverride;
   const hint = fieldHint({
     fieldName: field.field_name,
     charMin: field.char_min,
     charMax: field.char_max,
     fieldType: field.field_type,
-    specNote: field.spec_note || null,
+    specNote,
     specType: field.spec_type || null,
     specSource: field.spec_source || null,
     specOverridden: false,
@@ -75,17 +185,21 @@ function noteFor(field) {
   return stripReaderOnlyLines(hint ? hint.text : '');
 }
 
-function fieldsFor(asset, withNotes) {
+// ONLY THE WATCHED FIELD'S NOTE VARIES BETWEEN ARMS. Description carries its
+// seed value (null) in every arm — swapping a note on a field nobody is
+// measuring would put a second difference in the prompt and make the comparison
+// two changes wide.
+function fieldsFor(asset, arm) {
   return (asset.fields || []).map((f) => ({
     fieldName: f.field_name,
     charMin: f.char_min || 0,
     charMax: f.char_max || 0,
     fieldType: f.field_type === 'words' ? 'words' : 'text',
-    notes: withNotes ? noteFor(f) : '',
+    notes: noteFor(f, f.field_name === WATCH ? arm.note : undefined),
   }));
 }
 
-async function arm(asset, withNotes) {
+async function arm(asset, armDef) {
   const runs = [];
   for (let i = 0; i < RUNS; i++) {
     try {
@@ -95,7 +209,7 @@ async function arm(asset, withNotes) {
         brief: BRIEF,
         summary: SUMMARY,
         writerPrompt: WRITER_PROMPT,
-        fields: fieldsFor(asset, withNotes),
+        fields: fieldsFor(asset, armDef),
         voiceGuide: '',
       });
       const byName = {};
@@ -118,24 +232,25 @@ function stats(ns) {
 
 const NUM = /(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z0-9])/g;
 const shapeOf = (t) => String(t).toLowerCase().replace(NUM, '#').replace(/[^\w#\s]/g, '').replace(/\s+/g, ' ').trim();
-// THE METRIC THIS RUN ADDS. "Front-load the first 40" acts on the OPENING, so the
-// failure it can cause is five lines that begin identically and diverge after.
-// `distinct` counts those as 5 distinct and `shapes` as 5 shapes; only this sees it.
+// "Front-load the first 40" acts on the OPENING, so the failure it can cause is
+// N lines that begin identically and diverge after. `distinct` counts those as
+// N distinct and `shapes` as N shapes; only this sees it.
 const openingOf = (t) => shapeOf(t).split(' ').slice(0, 4).join(' ');
 
-// THE NOTE'S OWN CLAIM, MEASURED. Added after the first run, where every column
-// read clean and the real change was invisible to all of them: Subject Line 1's
-// median went 55 -> 44 and four of five AFTER lines landed at or near the
-// 40-character mobile cut, where NONE of the BEFORE lines had. "Front-load the
-// first 40" did not collapse the opening — it moved the whole field inside the
-// constraint it describes, which is the thing the field is FOR.
+// THE NOTE'S OWN CLAIM, MEASURED. Added after a run where every column read
+// clean and the real change was invisible to all of them: the median moved and
+// the samples crossed the number the note names, and no column was watching
+// that number. So when a note carries one, this pulls it out and reports how
+// many samples fall inside it.
 //
-// No column saw it because none of them measured what the note actually says. So
-// when a note carries a number, this pulls it out and reports how many samples
-// fall inside it. It leads the read instead of following it.
+// TAKEN FROM THE NEW NOTE AND APPLIED TO ALL THREE ARMS. The control has no
+// note and therefore no threshold of its own; measuring it against a different
+// number, or not at all, would leave the improvement with nothing to be an
+// improvement over.
 //
-// Deliberately crude: the FIRST number in a "first N" or "N-M characters" phrase.
-// A note with no number yields null and this reports nothing rather than guessing.
+// Deliberately crude: the FIRST number in a "first N" or "N-M characters"
+// phrase. A note with no number yields null and this reports nothing rather
+// than guessing.
 function noteThreshold(note) {
   const t = String(note || '');
   const window = t.match(/(\d{1,3})\s*[–-]\s*(\d{1,3})\s*characters/i);
@@ -161,69 +276,158 @@ function modeOf(values) {
   }
   const asset = DEFAULT_ASSETS.find((x) => x.name === ASSET);
   if (!asset) throw new Error(`asset not in the bundled library: ${ASSET}`);
+  const watched = (asset.fields || []).find((f) => f.field_name === WATCH);
+  if (!watched) throw new Error(`${ASSET} has no field named ${WATCH}`);
 
-  console.log(`${ASSET} — ${RUNS} runs per arm`);
-  console.log('\nWHAT THE AFTER ARM NEWLY SENDS:');
-  for (const f of asset.fields) {
-    const n = noteFor(f);
-    if (n) console.log(`  ${f.field_name.padEnd(22)} ${n}`);
+  // THE ARMS CARRY STRINGS THE PRODUCT ACTUALLY WROTE, asserted rather than
+  // assumed. If the seed is reworded again and NEW_NOTE here is not moved with
+  // it, this measures a wording nothing ships — which is a measurement that
+  // looks exactly like a result.
+  if (watched.spec_note !== NEW_NOTE) {
+    throw new Error(
+      `NEW_NOTE does not match the seed's ${ASSET} / ${WATCH} spec_note.\n`
+      + `  seed: ${JSON.stringify(watched.spec_note)}\n`
+      + `  here: ${JSON.stringify(NEW_NOTE)}\n`
+      + 'Refusing to run: an arm carrying a string the product never wrote measures nothing.'
+    );
   }
+  if (OLD_NOTE === NEW_NOTE) throw new Error('OLD_NOTE and NEW_NOTE are identical — there are only two arms.');
+
+  const TH = noteThreshold(noteFor(watched));
+  if (!TH) throw new Error(`no threshold could be read out of the ${WATCH} note — nothing to measure against.`);
+
+  console.log(`${ASSET} / ${WATCH} — ${ARMS.length} arms x ${RUNS} runs (${ARMS.length * RUNS} calls)`);
+  console.log(`threshold ${TH}, read from the note text. Ceiling is ${watched.char_max} in EVERY arm.`);
+  if (RUNS < 10) {
+    console.log('\n*** RUNS < 10 — this is a smoke check, not a measurement. The pre-registered');
+    console.log('*** bars in this file\'s header are written for n=10 and do not apply below it.');
+  }
+  console.log('\nWHAT EACH ARM SENDS AS THE WATCHED FIELD\'S GUIDANCE:');
+  for (const a of ARMS) console.log(`  ${a.key.padEnd(5)} ${JSON.stringify(noteFor(watched, a.note))}`);
 
   const summary = [];
-  for (const withNotes of [false, true]) {
-    const label = withNotes ? 'AFTER  (per-field guidance arrives)' : 'BEFORE (notes dropped, as shipped)';
-    console.log(`\n${'='.repeat(78)}\n${label}\n${'='.repeat(78)}`);
-    const runs = await arm(asset, withNotes);
+  for (const armDef of ARMS) {
+    console.log(`\n${'='.repeat(78)}\n${armDef.label}\n${'='.repeat(78)}`);
+    const runs = await arm(asset, armDef);
 
-    for (const f of fieldsFor(asset, withNotes)) {
+    for (const f of fieldsFor(asset, armDef)) {
       const copies = runs.map((r) => (r.__error ? `ERROR: ${r.__error}` : (r[f.fieldName] || '')));
-      const lens = copies.map((c) => (c.startsWith('ERROR:') ? null : c.length));
+      // NULL, NOT ZERO. An empty draft is a run that did not happen — scoring it
+      // as a 0-character title puts it INSIDE the threshold and turns a model
+      // failure into perfect compliance. See the header.
+      const lens = copies.map((c) => (c.startsWith('ERROR:') || c === '' ? null : c.length));
       const s = stats(lens);
-      const watched = f.fieldName === WATCH ? '   <<< WATCHED' : '';
-      console.log(`\n  ${f.fieldName}  [${f.charMin}-${f.charMax}]${watched}`);
-      console.log(`    lengths: ${lens.join(', ')}` + (s ? `   median ${s.median}   SPREAD ${s.spread} (${s.min}-${s.max})` : ''));
-      // THE NOTE'S OWN CLAIM. Reported in BOTH arms — the threshold comes from
-      // the AFTER note but the BEFORE arm is measured against it too, or there is
-      // nothing to compare the improvement with.
-      const th = noteThreshold(noteFor(asset.fields.find((x) => x.field_name === f.fieldName)));
-      if (th) {
-        const real = lens.filter((x) => typeof x === 'number');
-        const within = real.filter((x) => x <= th).length;
-        console.log(`    threshold ${th} (from the note) — WITHIN ${within}/${real.length}`);
-      }
+      const mark = f.fieldName === WATCH ? '   <<< WATCHED' : '';
+      console.log(`\n  ${f.fieldName}  [${f.charMin}-${f.charMax}]${mark}`);
+      console.log(`    lengths: ${lens.join(', ')}`
+        + (s ? `   median ${s.median}   SPREAD ${s.spread} (min ${s.min}, max ${s.max})` : ''));
+      const real = lens.filter((x) => typeof x === 'number');
+      const within = real.filter((x) => x <= TH).length;
+      console.log(`    threshold ${TH} — WITHIN ${within}/${real.length}`);
       copies.forEach((t, i) => {
-        const mark = s && lens[i] === s.min ? ' <- MIN' : s && lens[i] === s.max ? ' <- MAX' : '';
-        console.log(`      ${String(lens[i]).padStart(4)}  ${t}${mark}`);
+        const tag = lens[i] === null ? ' <- DEAD (no copy)'
+          : s && lens[i] === s.min ? ' <- MIN' : s && lens[i] === s.max ? ' <- MAX' : '';
+        console.log(`      ${String(lens[i] === null ? '--' : lens[i]).padStart(4)}  ${t}${tag}`);
       });
+      // NOT dead, but not plausible copy either. A handful of characters inside
+      // the threshold counts as a hit and is almost certainly a truncated or
+      // malformed response, so it is flagged for a human rather than dropped —
+      // dropping it silently is the same class of error as counting it.
+      const runty = real.filter((x) => x < 10).length;
+      if (runty) console.log(`    *** ${runty} draft(s) under 10 characters — READ THEM. Counted as WITHIN.`);
 
       if (f.fieldName === WATCH) {
-        const real = copies.filter((c) => c && !c.startsWith('ERROR:'));
-        const d = modeOf(real);
-        const sh = modeOf(real.map(shapeOf));
-        const op = modeOf(real.map(openingOf));
-        console.log(`    distinct ${d.unique}/${real.length}   shapes ${sh.unique}/${real.length}   OPENINGS ${op.unique}/${real.length}`);
+        const texts = copies.filter((c) => c && !c.startsWith('ERROR:'));
+        const d = modeOf(texts);
+        const sh = modeOf(texts.map(shapeOf));
+        const op = modeOf(texts.map(openingOf));
+        console.log(`    distinct ${d.unique}/${texts.length}   shapes ${sh.unique}/${texts.length}`
+          + `   OPENINGS ${op.unique}/${texts.length}`);
         if (op.count > 1) console.log(`    shared opening x${op.count}: "${op.top}"`);
-        summary.push({ arm: withNotes ? 'AFTER' : 'BEFORE', n: real.length,
-          distinct: d.unique, shapes: sh.unique, openings: op.unique, spread: s ? s.spread : null });
+        // A DEAD RUN IS RECORDED, NOT AVERAGED AWAY. The header calls any arm
+        // with one UNINFORMATIVE, so it has to survive to the summary table.
+        summary.push({ arm: armDef.key, n: real.length, dead: RUNS - real.length,
+          within, median: s ? s.median : null, spread: s ? s.spread : null,
+          min: s ? s.min : null, max: s ? s.max : null,
+          distinct: d.unique, shapes: sh.unique, openings: op.unique });
       }
     }
   }
 
-  console.log(`\n${'='.repeat(78)}\n${WATCH} — the watched field\n${'='.repeat(78)}`);
-  console.log(`${'arm'.padEnd(9)}${'spread'.padEnd(9)}${'distinct'.padEnd(11)}${'shapes'.padEnd(9)}openings`);
+  console.log(`\n${'='.repeat(78)}\n${WATCH} — the watched field, all arms\n${'='.repeat(78)}`);
+  console.log(`${'arm'.padEnd(6)}${`WITHIN<=${TH}`.padEnd(12)}${'median'.padEnd(8)}${'spread'.padEnd(8)}`
+    + `${'min'.padEnd(6)}${'max'.padEnd(6)}${'distinct'.padEnd(10)}${'shapes'.padEnd(9)}${'openings'.padEnd(10)}dead`);
   for (const r of summary) {
-    console.log(`${r.arm.padEnd(9)}${String(r.spread).padEnd(9)}${`${r.distinct}/${r.n}`.padEnd(11)}`
-      + `${`${r.shapes}/${r.n}`.padEnd(9)}${r.openings}/${r.n}`);
+    console.log(`${r.arm.padEnd(6)}${`${r.within}/${r.n}`.padEnd(12)}${String(r.median).padEnd(8)}`
+      + `${String(r.spread).padEnd(8)}${String(r.min).padEnd(6)}${String(r.max).padEnd(6)}`
+      + `${`${r.distinct}/${r.n}`.padEnd(10)}${`${r.shapes}/${r.n}`.padEnd(9)}`
+      + `${`${r.openings}/${r.n}`.padEnd(10)}${r.dead}`);
   }
+
+  // THE PRE-REGISTERED BARS, EVALUATED BY THE SCRIPT rather than by whoever
+  // reads the output. A human comparing two columns after the fact is the
+  // failure the pre-registration exists to prevent, and printing the verdict
+  // beside the numbers is what makes moving the bar afterwards a visible edit
+  // to this file rather than a different sentence in a summary.
+  const by = Object.fromEntries(summary.map((r) => [r.arm, r]));
+  const none = by.NONE; const old = by.OLD; const neu = by.NEW;
+  console.log(`\n${'='.repeat(78)}\nPRE-REGISTERED VERDICT (bars set before the run — see the file header)\n${'='.repeat(78)}`);
+
+  const dead = summary.filter((r) => r.dead > 0);
+  const allSame = summary.every((r) => r.within === r.n) || summary.every((r) => r.within === 0);
+  // BOTH CLAUSES. OLD == NONE alone is a FINDING (the statement does nothing a
+  // missing note would not do), and only becomes uninformative if NEW is flat too.
+  const noteInert = Math.abs(old.within - none.within) <= 1 && Math.abs(neu.within - old.within) <= 1;
+
+  if (dead.length) {
+    console.log(`UNINFORMATIVE — dead run(s) in: ${dead.map((r) => `${r.arm} (${r.dead})`).join(', ')}.`);
+    console.log('  A cell that produced no copy did not happen. Re-run before reading anything else.');
+  } else if (allSame) {
+    console.log(`UNINFORMATIVE — every arm is at the floor or the ceiling of WITHIN<=${TH}.`);
+    console.log('  No resolution is available here at any n.');
+  } else if (noteInert) {
+    console.log(`UNINFORMATIVE — OLD (${old.within}/${old.n}) is within 1 of NONE (${none.within}/${none.n}).`);
+    console.log('  The field does not respond to spec_note in either grammar, so OLD-vs-NEW has');
+    console.log('  nothing to sit on. The question is misframed rather than answered.');
+  } else {
+    const gain = neu.within - old.within;
+    const medianDown = neu.median < old.median;
+    const spreadHeld = old.spread === 0 ? true : neu.spread >= old.spread / 2;
+    const varietyHeld = neu.distinct >= Math.ceil(neu.n * 0.7) && neu.openings >= Math.ceil(neu.n * 0.5);
+    const statementInert = Math.abs(old.within - none.within) <= 1;
+    if (gain >= 4 && medianDown && spreadHeld && varietyHeld) {
+      console.log(`WORKED — WITHIN ${old.within}/${old.n} -> ${neu.within}/${neu.n} (+${gain}),`
+        + ` median ${old.median} -> ${neu.median}, spread held (${old.spread} -> ${neu.spread}).`);
+      if (statementInert) {
+        console.log(`  AND IN ITS CLEANEST FORM: OLD (${old.within}/${old.n}) is indistinguishable from`);
+        console.log(`  NONE (${none.within}/${none.n}), so the STATEMENT did nothing a missing note would`);
+        console.log('  not have done, and the INSTRUCTION did. That is the claim, isolated.');
+      }
+    } else if (gain >= 4 && (!spreadHeld || !varietyHeld)) {
+      console.log(`WORKED, AT A COST — WITHIN +${gain}, but`
+        + `${!spreadHeld ? ` spread collapsed ${old.spread} -> ${neu.spread}` : ''}`
+        + `${!varietyHeld ? ` variety fell (distinct ${neu.distinct}/${neu.n}, openings ${neu.openings}/${neu.n})` : ''}.`);
+      console.log('  This is the floorAB result in a new place. READ THE LINES THAT DISAPPEARED');
+      console.log(`  — compare OLD's MIN/MAX against NEW's before calling this a win.`);
+    } else if (Math.abs(gain) <= 1) {
+      console.log(`DID NOT WORK — WITHIN ${old.within}/${old.n} -> ${neu.within}/${neu.n} (${gain >= 0 ? '+' : ''}${gain}).`);
+      console.log('  The grammar is inert on this field. The 45-character title was a tail sample,');
+      console.log('  not a mechanism. Describe the rewording as unmeasured-and-harmless, not a fix.');
+    } else {
+      console.log(`UNANTICIPATED — WITHIN moved by ${gain >= 0 ? '+' : ''}${gain}, which falls between the`);
+      console.log('  pre-registered bars (+/-1 = did not work, >=+4 = worked). Record it as');
+      console.log('  unanticipated. DO NOT move a bar in this file to accommodate it.');
+    }
+  }
+  if (old.within >= Math.ceil(old.n * 0.7)) {
+    console.log(`\nAND NOTE, pre-registered: OLD is already ${old.within}/${old.n}. The shipped note was`);
+    console.log('  mostly working and the observed 45 was the tail. Whatever NEW did, it improved');
+    console.log('  something that was not very broken. Say so plainly.');
+  }
+
   console.log('');
-  console.log('READ IT LIKE THIS:');
-  console.log('  openings collapse, distinct holds  -> "front-load the first 40" is acting on');
-  console.log('     the opening. Five lines that begin the same and diverge after read as');
-  console.log('     5/5 distinct AND 5/5 shapes — only the openings column sees it.');
-  console.log('  spread collapses                   -> the floorAB result in a new place.');
-  console.log('  nothing moves                      -> the guidance is inert, and 25 notes of');
-  console.log('     prompt is being paid for nothing.');
-  console.log('');
-  console.log('AND READ THE COPY. The question is whether the drafts got BETTER, and no');
-  console.log('column above answers that. Compare the MIN and MAX of each arm by eye.');
+  console.log('THEN READ THE COPY. No column above says whether the titles got BETTER, and');
+  console.log('that is the only question that matters. Read each arm\'s MIN and MAX by eye:');
+  console.log('a title that fits 40 by saying less is not the same as one that fits by');
+  console.log('saying it tighter, and only one of those is worth shipping.');
 })();

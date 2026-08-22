@@ -5809,14 +5809,18 @@ test('every seeded asset name matches a mediumKeywordsForAsset branch', () => {
 // updates a line here and the diff shows exactly which asset moved and to what,
 // which is the review conversation this table exists to force.
 //
-// KNOWN AND DELIBERATE, so it is not read as an oversight: all three
-// "Organic Social — <platform>" rows say ['paid social'], not ['organic
-// social']. The platform regex is tested before the organic branch, so the
-// organic section is unreachable for every organic asset in the library. That
-// is a live defect with its own commit pending — see the note in
-// mediumKeywordsForAsset. It is pinned here AS IT BEHAVES rather than as it
-// should behave, because a snapshot that records intentions instead of
-// behaviour cannot detect a change in behaviour.
+// THE ORGANIC ROWS MOVED, AND THIS TABLE IS WHY THE MOVE IS VISIBLE. They read
+// ['paid social'] for the whole life of the library — the platform regex was
+// tested before the organic branch, so all three "Organic Social — <platform>"
+// assets matched on "linkedin"/"instagram"/"twitter" and craft.md's "### Organic
+// Social" section was unreachable. They were pinned here AS THEY BEHAVED rather
+// than as they should, precisely so that fixing it would show up as three lines
+// of diff in a snapshot instead of as nothing at all.
+//
+// That is what happened: reordering the branch in mediumKeywordsForAsset turned
+// these three rows red and they were updated by hand, which is the review
+// conversation this table exists to force. A snapshot recording intentions
+// instead of behaviour could not have done it.
 test('the medium routing table, pinned per seeded asset', () => {
   const { mediumKeywordsForAsset } = require('../src/services/gemini');
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
@@ -5843,9 +5847,9 @@ test('the medium routing table, pinned per seeded asset', () => {
     "On-Site Signage — Session Title Card":  ["print"],
     "On-Site Signage — Directional":         ["print"],
     "Campaign Landing Page":                 null,
-    "Organic Social — LinkedIn":             ["paid social"],
-    "Organic Social — Instagram":            ["paid social"],
-    "Organic Social — Twitter/X":            ["paid social"],
+    "Organic Social — LinkedIn":             ["organic social"],
+    "Organic Social — Instagram":            ["organic social"],
+    "Organic Social — Twitter/X":            ["organic social"],
     "Direct Mail — Box / Mailer":            ["print"],
     "Direct Mail — Note Card / Rep Letter":  ["print"],
     "Direct Mail — Insert":                  ["print"],

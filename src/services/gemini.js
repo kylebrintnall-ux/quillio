@@ -197,24 +197,30 @@ function mediumKeywordsForAsset(assetType) {
   // see the `form` note at the bottom of this function.
   if (a.includes('direct mail') || a.includes('signage')) return ['print'];
 
+  // ORGANIC BEFORE PAID, AND THE ORDER IS THE WHOLE FIX.
+  //
+  // All three seeded organic assets are named "Organic Social — LinkedIn",
+  // "— Instagram" and "— Twitter/X". The platform regex below matches
+  // "linkedin", "instagram" and "twitter", so with paid tested first every one
+  // of them received the PAID section and craft.md's "### Organic Social" was
+  // unreachable for the entire seeded library — dead the same way "### Google
+  // Search" was before a search asset existed.
+  //
+  // The sentence they never saw is the one that matters, and it is aimed
+  // precisely at the mistake the mis-route was making: "Don't run paid copy as
+  // organic or it reads like an ad in the feed."
+  //
+  // REORDERED RATHER THAN NARROWING THE PLATFORM REGEX. Both would work.
+  // Reordering is the smaller change and 'organic' is unambiguous — no asset
+  // that is not organic contains it — where a narrowed regex would need a
+  // negative lookahead per platform and would have to be kept in step with the
+  // seed. This ordering also states the precedence outright: an asset naming
+  // both a platform and organic is organic, which is the correct reading of
+  // every name in the library today.
+  if (a.includes('organic')) return ['organic social'];
   if (a.includes('paid social') || /\b(linkedin|meta|facebook|instagram|twitter)\b/.test(a)) {
     return ['paid social'];
   }
-  // UNREACHABLE FOR EVERY ORGANIC ASSET IN THE SEEDED LIBRARY, and deliberately
-  // NOT fixed in this commit. The three are named "Organic Social — LinkedIn",
-  // "— Instagram" and "— Twitter/X", so the platform regex above matches first
-  // and all three receive the PAID section. The Organic section is therefore
-  // dead the same way Google Search was before a search asset existed — and the
-  // sentence they never see is the one that matters: "Don't run paid copy as
-  // organic or it reads like an ad in the feed."
-  //
-  // Left alone because reordering it changes what three live assets produce,
-  // which this file's own record (CLAUDE.md, "Measuring a prompt change") says
-  // needs its own commit and its own before/after rather than riding along with
-  // a routing fix. The test below counts it as matched, because it IS matched —
-  // that test asks whether a name reaches a branch, not whether it reaches the
-  // right one, and those are different questions.
-  if (a.includes('organic')) return ['organic social'];
   if (a.includes('display') || a.includes('banner')) return ['google display'];
   // craft.md's "### Google Search" section has existed since the file's first
   // commit and NOTHING HAS EVER SELECTED IT — there was no search asset, so no

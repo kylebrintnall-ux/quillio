@@ -2031,13 +2031,29 @@ whole file (more tokens, no lost guidance).
 **THE FALLBACK IS SAFE; A MIS-ROUTE IS NOT, AND THEY LOOK IDENTICAL FROM
 OUTSIDE.** Returning null over-includes and costs tokens. Returning the WRONG
 keyword replaces an asset's guidance with somebody else's, and nothing about it
-is observable — no error, no warning, no missing output. Two have happened, both
-substring collisions in this function: `a.includes('form')` matched
-"per**FORM**ance", so Google Performance Max received the Confirmation /
-Post-Conversion section and nothing else for its entire life; and
-`a.includes('demand gen')` matched "**Demand Gen** Nurture Email", rerouting the
-library's most-used email asset to `paid social` — caught in the same session it
-was written, by the table below rather than by review.
+is observable — no error, no warning, no missing output. THREE have happened in
+this one function, and the third is a different KIND, which is why the count is
+worth keeping accurate.
+
+Two were substring collisions: `a.includes('form')` matched "per**FORM**ance", so
+Google Performance Max received the Confirmation / Post-Conversion section and
+nothing else for its entire life; and `a.includes('demand gen')` matched
+"**Demand Gen** Nurture Email", rerouting the library's most-used email asset to
+`paid social` — caught in the same session it was written, by the table below
+rather than by review.
+
+The third was an ORDERING collision, and no amount of care about keywords would
+have caught it: `/\b(linkedin|meta|facebook|instagram|twitter)\b/` was tested
+*before* `a.includes('organic')`, so all three "Organic Social — <platform>"
+assets matched on their platform name and craft.md's `### Organic Social` section
+was unreachable for the entire seeded library. Both branches were correct; their
+sequence was not. The fix was to move the organic test above the paid one —
+'organic' is unambiguous, where narrowing the platform regex would need a
+negative lookahead per platform kept in step with the seed.
+
+**So the question to ask of a new branch is not only "what else does this string
+match" but "what matches FIRST".** A keyword audit finds the first kind and is
+blind to the second; only the pinned routing table finds both.
 
 Two tests in `test/smoke.test.js` cover the two different questions, and both are
 needed: *every seeded asset name matches a branch* (catches the silent

@@ -29,6 +29,12 @@ function specSourceName(specSource) {
   if (s.includes('twitter') || s.includes('x.com')) return 'X';
   if (s.includes('google') || s.includes('dv360') || s.includes('doubleclick')) return 'Google';
   if (s.includes('instagram')) return 'Instagram';
+  // Matches BOTH help.pinterest.com (what the library cites) and
+  // business.pinterest.com (the best-practices page it deliberately does not).
+  // That is correct: this function maps a URL to the platform that published it,
+  // and both pages are Pinterest's. WHICH Pinterest page a number came from is a
+  // question for the citation, not for the display name.
+  if (s.includes('pinterest')) return 'Pinterest';
   if (s.includes('constantcontact')) return 'Constant Contact';
   // 'gong.io', not 'gong' — a bare substring would match any URL that happens to
   // contain those three letters.

@@ -32,6 +32,9 @@
 //   • 'Google Responsive Search Ad' added — the twenty-sixth asset, and the first
 //     new one since the prune. Every number read off
 //     support.google.com/google-ads/answer/7684791, quoted in that migration.
+//   • 'Pinterest Pin' added (scripts/migrateAddPinterestSpecs.js) — Title 100 and
+//     Description 800, read off help.pinterest.com and quoted in that migration.
+//     NOT the 500 the best-practices page and every third-party summary carry.
 //
 // Authored compactly as [name, group, [[fieldName, charMin, charMax, groupLabel?], …]]
 // and normalized below into the seed shape (adds sort_order, is_active, field_type,
@@ -243,6 +246,22 @@ const RAW = [
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 40, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
+  ]],
+  // PAID SOCIAL, NOT ORGANIC. The help centre page scopes these fields to AD
+  // formats in its own words — "Descriptions do not appear when viewing the ad
+  // in the home feed" — and a page describing what happens when you view THE AD
+  // is not documenting an organic pin. It also puts Pinterest beside Meta and
+  // LinkedIn, which is where a copywriter working from a creative brief looks.
+  //
+  // TWO FIELDS AND NO GRAPHIC COPY GROUP. Pinterest publishes Title and
+  // Description on this page and nothing else; the group is added where an asset
+  // has on-image copy to map to a Figma layer, and a Pin's creative is the image
+  // itself. Kept BYTE-IDENTICAL to scripts/migrateAddPinterestSpecs.js FIELDS —
+  // a smoke test walks every migration-created asset and asserts the two agree
+  // field by field, not merely on tier and source.
+  ['Pinterest Pin', 'Paid Social', [
+    ['Title', 0, 100],
+    ['Description', 0, 800],
   ]],
   ['Display Banner — Standard', 'Display', [
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
@@ -482,6 +501,7 @@ const DIRECTIONS = {
   // separates this asset from every other paid one in the library.
   'Google Responsive Search Ad':
     'They are already looking. Match the intent, name the thing, skip the setup.',
+  'Pinterest Pin': 'Written for someone saving it for later. Useful over clever; the title does the finding.',
   'Demand Gen Nurture Email': 'Curiosity or tension in the subject — they are mid-sequence, not meeting you.',
   'Event Invitation Email': 'Make the value of attending undeniable. Date and CTA above the fold.',
   'Event Reminder Email': 'Urgency without panic. They already said yes — reinforce, do not re-sell.',
@@ -689,6 +709,14 @@ const LINKEDIN_CAROUSEL_CARD_FIELDS = new Set([
 const EMAIL_SUBJECT_NOTE = 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)';
 const EMAIL_PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — keep the key part first. (Litmus)';
 
+// Pinterest Title. The page publishes 100 as the entry cap AND says the feed
+// shows about 40 — "Depending on the device, the first 40 characters may show in
+// people's feeds." The 40 is a DISPLAY TRUNCATION, not a limit, so it goes in the
+// writing-guidance channel and char_max keeps the number Pinterest accepts. Same
+// split as the Litmus email notes. Byte-identical to
+// scripts/migrateAddPinterestSpecs.js.
+const PINTEREST_TITLE_NOTE = 'Only the first 40 characters typically show in feeds.';
+
 // The 5 email assets that carry the subject/preheader notes above.
 const EMAIL_NOTE_ASSETS = new Set([
   'Demand Gen Nurture Email',
@@ -711,6 +739,7 @@ function fieldSpecNote(assetName, fieldName) {
   // field name, because "Headline" exists on the same asset.
   if (assetName === 'Twitter/X Ad' && fieldName === 'Ad Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Organic Social — Twitter/X' && fieldName === 'Post Copy') return X_LINK_COST_NOTE;
+  if (assetName === 'Pinterest Pin' && fieldName === 'Title') return PINTEREST_TITLE_NOTE;
   if (assetName === 'Demand Gen Nurture Email' && fieldName === 'Offer Body 1') return OFFER_BODY_1_NOTE;
   if (assetName === 'Sales Basho Email' && fieldName === 'Body Copy') return BASHO_BODY_NOTE;
   if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
@@ -816,6 +845,11 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'Google Responsive Search Ad||Description 2',
   'Google Responsive Search Ad||Display Path 1',
   'Google Responsive Search Ad||Display Path 2',
+  // "Enter up to" is entry language — what the field will accept — the same
+  // construction as Google's "support up to" and tiered the same way. Not the
+  // "Text Recommendations" heading that left LinkedIn's nine an open question.
+  'Pinterest Pin||Title',
+  'Pinterest Pin||Description',
   // X's 280 is a hard cap on an organic post exactly as it is on a paid one — the
   // same platform limit, and it was previously an uncited house default here.
   'Organic Social — Twitter/X||Post Copy',
@@ -939,6 +973,13 @@ const SPEC_SOURCE_URLS = {
   // audit (scripts/migrateBackfillSpecVerifiedAt.js), so nothing is outstanding
   // there.
   'Google Responsive Search Ad': 'https://support.google.com/google-ads/answer/7684791',
+  // The HELP CENTRE page, not business.pinterest.com/creative-best-practices.
+  // That one states 500 once, unscoped, in a marketing summary; this one states
+  // 800 as a field-entry cap and repeats it across all seven format sections.
+  // Third-party sources reporting 500 are consistent with copying the
+  // best-practices page, so their agreement is circulation rather than
+  // publication — see scripts/migrateAddPinterestSpecs.js for the full argument.
+  'Pinterest Pin': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
 };
 
 // Per-FIELD spec source, for the handful of fields whose citation is not their

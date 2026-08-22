@@ -17,6 +17,7 @@ const ALLOWED_ASSETS = [
   'Display Banner — Standard',
   'Google Responsive Display Ad',
   'Google Responsive Search Ad',
+  'Pinterest Pin',
   'Demand Gen Nurture Email',
   'Event Invitation Email',
   'Event Reminder Email',

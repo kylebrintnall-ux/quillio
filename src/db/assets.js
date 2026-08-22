@@ -254,7 +254,7 @@ async function getTenantAssets(tenantId) {
       fieldsRes = await pool.query(
         `SELECT asset_type_id, field_name,
                 ${valueCols},
-                field_type, sort_order, spec_source, spec_version, group_label,
+                field_type, sort_order, spec_source, group_label,
                 spec_type, ${factCol}, ${verifiedCol}
            FROM copy_fields
           WHERE asset_type_id = ANY($1::bigint[])
@@ -280,7 +280,30 @@ async function getTenantAssets(tenantId) {
       field_type: row.field_type,
       sort_order: row.sort_order,
       spec_source: row.spec_source,
-      spec_version: row.spec_version,
+      // spec_version IS DELIBERATELY NOT SELECTED. It is written once at seed
+      // time as the literal '1.0', copied forward by two field-inserting
+      // migrations, and moved by nothing — not by specReview.commitReview, not
+      // by any migration, not by a tenant. Every row in production holds '1.0'
+      // and always will.
+      //
+      // Reading it into this shape put it one template change away from being
+      // rendered as though it meant something, and it would render '1.0' on
+      // every field forever — a value that looks authoritative because it is in
+      // the shape of an authority, which is the LinkedIn 600 exactly.
+      //
+      // Nothing renders it today, so dropping it from the SELECT is a no-op for
+      // every consumer and closes the accidental-render path for one line. The
+      // COLUMN stays until a migration is being written for another reason;
+      // eighteen references across nine files do not justify one of their own.
+      //
+      // WHY NOT STAMP IT INSTEAD: a version earns its place when it is a compact
+      // handle for a state you cannot otherwise reconstruct, and all of it is
+      // reconstructable — spec_change_log holds old/new/when/who/which-page,
+      // projects.field_manifest holds the effective limits at document creation,
+      // and the document itself carries "Verified against X's spec page on
+      // DATE." It would also have no coherent meaning per row: what does
+      // 1.0 -> 1.1 signify on a field one tenant has overridden and another has
+      // not? See CLAUDE.md, "A COLUMN WRITTEN ONCE AT SEED IS A CONSTANT".
       group_label: row.group_label || null,
       // Which supplied fact this field CARRIES, if any ('datetime' today). NULL on
       // every generative field and on any database predating the column.

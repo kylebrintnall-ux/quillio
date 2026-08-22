@@ -2948,9 +2948,14 @@ row in the migration so nobody re-proposes a rejected string:
 | X creative specs | seeded | `post copy:`, 9x — see the colon note below |
 | Google responsive display | seeded | `Responsive display ads`, 5x |
 | Test page | seeded | `Quillio Test Spec`, 1x |
-| Meta ads guide | **unanchored by decision** | see below |
+| ~~Meta ads guide~~ | **SUPERSEDED — see below** | the row no longer exists |
 | Litmus subject line | **unanchored by decision** | see below |
 | Litmus preview text | **unanchored by decision** | see below |
+
+**LinkedIn carousel** was added later (`migrateAddLinkedInCarouselWatch`, anchor
+`Card headline`) and **Meta's single row became two** (`migrateSplitMetaWatchRows`,
+anchors `Primary Text` and `Description`). Seven hash-watched rows now, and
+`summary.unanchored` reads **0** — every one of them is anchored.
 
 **X, and the colon.** Its first candidate, `Creative ad specifications`, came
 from the URL slug rather than the page — the heading reads "Creative ad specs" —
@@ -2966,16 +2971,41 @@ drop it. `Creative ad specs` stays on the row as a **recorded fallback**, not
 seeded, and `--verify` measures it automatically if the stored anchor ever stops
 matching.
 
-**Meta.** The candidate was a raw-body check for the canonical URL fragment. It
-was rejected because it asserts the *document was served*, not that the *content
+**Meta — AND THIS PARAGRAPH DESCRIBED A ROW THAT NO LONGER EXISTS.** Left in
+place, corrected rather than deleted, because the correction is the point.
+
+What it used to say, and what was true when written: the ads-guide INDEX row's
+only candidate was a raw-body check for the canonical URL fragment, rejected
+because it asserts the *document was served* rather than that the *content
 rendered* — so it would pass on exactly the broken page the feature exists to
-catch. An anchor that cannot fail is worse than none: it reports a guarantee it
-is not providing. The row is **not removed** either; it carries 10 pairs in
-`affected_fields`, which is the write gate, and deleting it leaves those fields
-gated by nothing — the same trade as the LinkedIn Carousel gap. **Whether that
-row belongs on the watch list at all is an open decision**, not one taken here:
-Meta was retiered enforced → recommended, and this list is for pages publishing
-enforced limits.
+catch. An anchor that cannot fail is worse than none.
+
+**`scripts/migrateSplitMetaWatchRows.js` replaced that row with two**, both
+anchored, and `scripts/migrateMetaPlacementCitations.js` then moved them to the
+`/facebook-feed` URLs without touching `expected_content`:
+
+| Row | Anchor | Why that string |
+| --- | --- | --- |
+| `Meta – image` | `Primary Text` | Meta's own label for a limit we store — content, not chrome, since a 404 on this host still carries Facebook nav |
+| `Meta – carousel` | `Description` | 1x on carousel, **0x on image, video and collection** — the only label that differs between the format pages, so it catches a redirect between siblings |
+
+**THE KNOWN LIMIT ON THE IMAGE ROW IS STILL OPEN, and it is the reason to point
+the probe at it.** `Primary Text` appears on `/video` and `/collection` too, so a
+redirect from `/image` to a sibling passes the anchor. The numbers would change
+and the row would flag `changed` rather than `failed` — a wrong answer wearing
+the right status. `/image` and `/video` are byte-identical on Text
+Recommendations ("50-150" and "27" on both), so nothing in the measured output
+tells them apart. The carousel row has no such gap; `Description` was chosen
+precisely to close it.
+
+**HOW THIS SECTION WENT STALE IS THE INSTRUCTIVE PART.** Two migrations replaced
+the mechanism and neither touched the prose describing it, so a table reading
+"Meta ads guide — unanchored by decision" sat here for four days after Meta
+became two anchored rows. It was then read as current and acted on: a review
+concluded Meta's rows had no anchor to re-derive and were the weakest on the
+board, which was exactly backwards. That is the preamble's rule firing on the
+file that states it — **a commit replacing a mechanism greps this file for its
+name before it lands.**
 
 **Both Litmus rows.** Not a search for a better phrase — a blog post does not
 change, it *ages*, so hash-diffing it measures the wrong variable and a working
@@ -3036,17 +3066,52 @@ So: say *checked*, everywhere, including for platform_enforced rows. "Verified"
 reads better and claims something the mechanism does not do. If you find
 "verified" in a user-facing string, that is a regression, not a style choice.
 
-`copy_fields.spec_verified_at` is the trap. It is written by
-`specReview.commitReview` (`spec_verified_at = NOW()`) on an approved edit and is
-**SELECTed by nothing** — `getTenantAssets` lists its columns explicitly and that
-is not among them. It reaches no doc, no settings panel, no admin view. Its
-existence is not evidence that a verification date is shown anywhere.
+`copy_fields.spec_verified_at` **was** the trap, and this paragraph used to say
+so — written by `specReview.commitReview` on an approved edit and SELECTed by
+nothing, reaching no doc, no settings panel and no admin view. That is no longer
+true: the freshness work added it to `getTenantLibrary`, `rowToSpecGroup` carries
+it as `specVerifiedAt`, and `verifiedSentence` renders it into the document and
+the settings panel. It is now a column that says what it means.
+
+### A COLUMN WRITTEN ONCE AT SEED IS A CONSTANT, and calling it a version invents a history
+
+**`copy_fields.spec_version` is the trap now, and it is the sharper one.** Second
+instance of the same species, which is what makes it a rule rather than a note.
+
+It is written at seed time as the literal `'1.0'`, copied forward by the two
+field-inserting migrations (defaulting to `'1.0'`), and **moved by nothing** — not
+`specReview.commitReview`, whose SET clause is `char_max`, `spec_note` and
+`spec_verified_at = NOW()` and nothing else; not any migration; not a tenant, who
+is refused it in three separate places. Every row in production holds `'1.0'` and
+always will.
+
+**A name that asserts a history the system does not keep is worse than no
+column.** `spec_verified_at` was invisible, so it merely failed to inform.
+`spec_version` reads like a moving value, so a reader who finds it believes there
+is a sequence behind it. That is the LinkedIn 600 shape: a value that looks
+authoritative because it is in the shape of an authority.
+
+**It was DROPPED FROM THE SELECT rather than stamped**, and the reasoning
+generalises. A version earns its place when it is a compact handle for a state
+you cannot otherwise reconstruct, and every part of this one is reconstructable:
+`spec_change_log` holds old/new/when/who/which-page per approved edit,
+`projects.field_manifest` holds the effective limits at document creation, and
+the document itself carries "Verified against X's spec page on DATE." Stamping it
+would add a label carrying no information those three do not already hold. It
+would also have no coherent per-row meaning — what does `1.0 → 1.1` signify on a
+field one tenant has overridden and another has not?
+
+The **column** stays until a migration is being written for another reason;
+eighteen references across nine files do not justify one of their own. What
+closed today is the accidental-render path: `getTenantLibrary` no longer reads it
+into the shape the doc and the settings panel are built from, so it cannot become
+visible by way of a template change.
 
 The accurate description of what the system does: every limit is cited to its
-source; platform spec pages are checked weekly for changes, with anchors on four
-of the seven rows asserting the fetch read the right page; any detected change
-goes to a human before a stored number moves; and email guidance is dated
-observed practice that is never hash-watched.
+source; platform spec pages are checked weekly for changes, with **every one of
+the seven hash-watched rows** anchored so the fetch is asserted to have read the
+right page; any detected change goes to a human before a stored number moves; and
+email guidance is dated observed practice that is never hash-watched.
 
 ### The 15 email fields have no AUTOMATED update path — accepted 2026-08-05
 

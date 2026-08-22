@@ -1,0 +1,26 @@
+{
+  "_what": "Two Meta ad-format pages, reduced to the structure the image row's anchor has to discriminate between.",
+  "_synthetic": true,
+  "_readThisBeforeTrustingIt": [
+    "THESE ARE NOT CAPTURED PAGES. They were written by hand to carry the structural",
+    "difference the anchor rests on: both pages publish an identical Text",
+    "Recommendations block and the SAME 'Primary Text' label, and they differ on the",
+    "File Type line — JPG or PNG on image, MP4/MOV/GIF on video.",
+    "",
+    "WHAT A TEST ON THIS FIXTURE PROVES: that anchorDiscriminates() reports the right",
+    "verdict when given a page pair shaped this way — that it rejects an anchor",
+    "present on both, and accepts one present only on the image page.",
+    "",
+    "WHAT IT DOES NOT PROVE: that Meta's real video page lacks the new anchor. Only a",
+    "live fetch settles that, which is why scripts/migrateFixMetaImageAnchor.js",
+    "fetches BOTH pages on every run and refuses to write if the new anchor turns up",
+    "on the video page. A fixture cannot stand in for that check and must not be read",
+    "as having done so.",
+    "",
+    "If somebody later captures the real pages, replace these strings and delete",
+    "_synthetic — but keep the migration's live check either way. A fixture ages; the",
+    "page is the authority."
+  ],
+  "image": "Meta Ads Guide Image Facebook Feed Design Recommendations File Type: JPG or PNG Ratio: 4:5 Resolution: 1440 x 1800 pixels Text Recommendations Primary Text: 50-150 characters Headline: 27 characters View available calls to action Learn More Sign Up Shop Now",
+  "video": "Meta Ads Guide Video Facebook Feed Design Recommendations File Type: MP4, MOV or GIF Ratio: 4:5 Resolution: 1080 x 1350 pixels Video Duration: 1 second to 241 minutes Text Recommendations Primary Text: 50-150 characters Headline: 27 characters View available calls to action Learn More Sign Up Shop Now"
+}

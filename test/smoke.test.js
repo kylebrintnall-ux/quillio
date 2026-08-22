@@ -1114,6 +1114,93 @@ test('probeSpecPage region: no anchor candidate is drawn from past the stop mark
   assert.strictEqual(still.hashOneRegion, one, 'and the region is the whole document');
 });
 
+test('Meta image anchor: the new one discriminates, the old one does not', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const mig = require('../scripts/migrateFixMetaImageAnchor');
+  const pages = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'fixtures', 'metaFormatPages.json'), 'utf8')
+  );
+
+  // WHAT THIS PROVES AND WHAT IT DOES NOT, stated here as well as in the fixture
+  // because a reader arriving at a green test is entitled to think the question
+  // is settled.
+  //
+  // It drives anchorDiscriminates — the same function the migration calls — over
+  // a page pair carrying the structure the anchor has to tell apart. It proves
+  // the COMPARISON is right.
+  //
+  // It does NOT prove Meta's real video page lacks the new anchor. The fixture is
+  // synthetic; this repo has no egress to that host. Only the migration's live
+  // fetch settles it, and that is why the migration refuses to write when the new
+  // anchor turns up on the video page rather than trusting a stored file.
+  assert.strictEqual(pages._synthetic, true,
+    'the fixture says outright that it is not a captured page');
+
+  // THE DEFECT REPRODUCES. "Primary Text" is on both, so a redirect from /image
+  // to /video passes the anchor and the row reports `changed` — the spec moved —
+  // when what actually happened is that it read a different format's page.
+  const old = mig.anchorDiscriminates(pages.image, pages.video, mig.OLD_ANCHOR);
+  assert.strictEqual(old.onImage, 1, 'the old anchor is on the image page');
+  assert.strictEqual(old.onVideo, 1, 'AND on the video page — that is the defect');
+  assert.strictEqual(old.ok, false, 'so it is rejected');
+  assert.match(old.why, /ALSO on the video page/);
+
+  // THE FIX DISCRIMINATES. Present once on image, absent from video.
+  const fresh = mig.anchorDiscriminates(pages.image, pages.video, mig.NEW_ANCHOR);
+  assert.strictEqual(fresh.onImage, 1, 'the new anchor is on the image page, exactly once');
+  assert.strictEqual(fresh.onVideo, 0, 'and not on the video page');
+  assert.strictEqual(fresh.ok, true);
+  assert.strictEqual(fresh.why, null);
+
+  // THE PAGES ARE IDENTICAL WHERE IT MATTERS MOST, which is why the anchor cannot
+  // be drawn from the spec block. If this ever stops holding, the premise of the
+  // whole change has changed and the header needs re-reading.
+  const specBlock = 'Text Recommendations Primary Text: 50-150 characters Headline: 27 characters';
+  assert.ok(pages.image.includes(specBlock) && pages.video.includes(specBlock),
+    'both pages publish the same Text Recommendations — nothing there tells them apart');
+
+  // AND THE ANCHOR HOLDS NO WATCHED LIMIT. A missed anchor is `failed` — the page
+  // could not be READ — while a moved number is `changed`. An anchor containing
+  // 150 or 27 would convert the event this row exists to catch into a broken-page
+  // report, which is the one failure mode that teaches a reviewer to dismiss the
+  // queue. Its digits are image dimensions, which Meta can restyle without
+  // touching a character limit and vice versa.
+  for (const n of mig.WATCHED_LIMITS) {
+    assert.ok(!mig.NEW_ANCHOR.includes(n),
+      `the new anchor must not contain ${n}, a limit this row watches`);
+  }
+  assert.match(mig.NEW_ANCHOR, /4:5|1440|1800/, 'its numbers are dimension recommendations');
+
+  // WHERE THE DISCRIMINATION ACTUALLY COMES FROM. "File Type:" is on both pages —
+  // it is the VALUE after it that differs — so an anchor stopping at the label
+  // would sail through on either. This pins the discrimination to the JPG-or-PNG
+  // part rather than to the line being present at all.
+  //
+  // The first version of this check derived the weak anchor with
+  // `NEW_ANCHOR.slice(0, NEW_ANCHOR.indexOf('File Type'))`. NEW_ANCHOR STARTS
+  // with that string, so indexOf returned 0, the slice was empty, and the guard
+  // below it meant the block never ran — a vacuous assertion. Caught by the
+  // indexOf-slice tripwire, which is what that tripwire is for.
+  const weak = mig.anchorDiscriminates(pages.image, pages.video, 'File Type:');
+  assert.strictEqual(weak.onImage, 1, 'the label alone is on the image page');
+  assert.strictEqual(weak.onVideo, 1, 'and on the video page');
+  assert.strictEqual(weak.ok, false, 'so the label alone does not discriminate');
+  assert.ok(mig.NEW_ANCHOR.includes('JPG or PNG'),
+    'the anchor carries the value that differs, not just the label');
+
+  // THE WRITE IS ONE COLUMN. current_hash in particular must survive: the hashed
+  // content does not change when an anchor does, and a cleared hash sends the next
+  // run down the baseline branch, where it writes a hash and CANNOT flag — so a
+  // real spec change landing that week would be absorbed silently.
+  const src = fs.readFileSync(require.resolve('../scripts/migrateFixMetaImageAnchor'), 'utf8');
+  const update = sliceBetween(src, 'UPDATE spec_watch_list SET', 'RETURNING id');
+  assert.match(update, /expected_content = \$1/, 'it sets the anchor');
+  for (const col of ['current_hash', 'content_stop_marker', 'affected_fields', 'source_url']) {
+    assert.ok(!update.includes(col), `the UPDATE does not touch ${col}`);
+  }
+});
+
 test('every asset-creating migration and the seed produce IDENTICAL field rows', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
 

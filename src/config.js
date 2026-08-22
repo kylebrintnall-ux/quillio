@@ -18,6 +18,8 @@ const ALLOWED_ASSETS = [
   'Google Responsive Display Ad',
   'Google Responsive Search Ad',
   'Pinterest Pin',
+  'Google Performance Max',
+  'Google Demand Gen Video Ad',
   'Demand Gen Nurture Email',
   'Event Invitation Email',
   'Event Reminder Email',

@@ -35,6 +35,10 @@
 //   • 'Pinterest Pin' added (scripts/migrateAddPinterestSpecs.js) — Title 100 and
 //     Description 800, read off help.pinterest.com and quoted in that migration.
 //     NOT the 500 the best-practices page and every third-party summary carry.
+//   • 'Google Performance Max' and 'Google Demand Gen Video Ad' added
+//     (scripts/migrateAddGoogleVideoAssets.js), read off answer/17091269 and
+//     answer/17091270 and quoted there. In-feed video and YouTube Masthead are on
+//     those pages and are deliberately NOT seeded — see that file.
 //
 // Authored compactly as [name, group, [[fieldName, charMin, charMax, groupLabel?], …]]
 // and normalized below into the seed shape (adds sort_order, is_active, field_type,
@@ -263,6 +267,22 @@ const RAW = [
     ['Title', 0, 100],
     ['Description', 0, 800],
   ]],
+  // PAID SOCIAL, not Paid Search, and the split is Google's own: Demand Gen runs
+  // on YouTube, Discover and Gmail against an audience that did not search for
+  // anything. Performance Max above sits in Paid Search because search inventory
+  // is part of what it buys.
+  //
+  // FOUR FIELDS. The page's Demand Gen video table publishes exactly these. The
+  // IN-FEED video and YOUTUBE MASTHEAD formats on the same page are deliberately
+  // not seeded — see scripts/migrateAddGoogleVideoAssets.js for the per-line
+  // limit that copy_fields cannot store, and for the one word in a table header
+  // that makes Masthead a different tier.
+  ['Google Demand Gen Video Ad', 'Paid Social', [
+    ['Headline', 0, 30],
+    ['Long Headline', 0, 90],
+    ['Description', 0, 90],
+    ['Call to Action', 0, 10],
+  ]],
   ['Display Banner — Standard', 'Display', [
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 20, 40, 'Graphic Copy'],
@@ -305,6 +325,23 @@ const RAW = [
     ['Graphic Headline', 0, 70, 'Graphic Copy'],
     ['Subhead', 20, 40, 'Graphic Copy'],
     ['CTA Button', 0, 30, 'Graphic Copy'],
+  ]],
+  // MINIMUM COUNTS, NOT A SAMPLE. Google states minimums of 3 headlines, 1 long
+  // headline and 2 descriptions and accepts up to 15 / 5 / 5 — the same shape as
+  // Responsive Search above, seeded the same way and for the same reason.
+  //
+  // Kept BYTE-IDENTICAL to scripts/migrateAddGoogleVideoAssets.js. A smoke test
+  // walks every asset-creating migration and compares field by field.
+  ['Google Performance Max', 'Paid Search', [
+    ['Headline 1', 0, 30],
+    ['Headline 2', 0, 30],
+    ['Headline 3', 0, 30],
+    ['Long Headline', 0, 90],
+    ['Description 1', 0, 90],
+    ['Description 2', 0, 90],
+    ['Business Name', 0, 25],
+    ['Display Path 1', 0, 15],
+    ['Display Path 2', 0, 15],
   ]],
   ['Demand Gen Nurture Email', 'Email', [
     ['Subject Line 1', FROM_CLASS, FROM_CLASS],
@@ -502,6 +539,8 @@ const DIRECTIONS = {
   'Google Responsive Search Ad':
     'They are already looking. Match the intent, name the thing, skip the setup.',
   'Pinterest Pin': 'Written for someone saving it for later. Useful over clever; the title does the finding.',
+  'Google Performance Max': 'The system assembles the ad. Every asset has to stand alone and beside any other.',
+  'Google Demand Gen Video Ad': 'Watched, not read. Say the one thing before the thumb moves.',
   'Demand Gen Nurture Email': 'Curiosity or tension in the subject — they are mid-sequence, not meeting you.',
   'Event Invitation Email': 'Make the value of attending undeniable. Date and CTA above the fold.',
   'Event Reminder Email': 'Urgency without panic. They already said yes — reinforce, do not re-sell.',
@@ -717,6 +756,24 @@ const EMAIL_PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — 
 // scripts/migrateAddPinterestSpecs.js.
 const PINTEREST_TITLE_NOTE = 'Only the first 40 characters typically show in feeds.';
 
+// Performance Max, three fields. Each is ADVICE the page attaches to a limit
+// rather than a second limit — "include at least one with 15 characters or less",
+// "try to make sure headlines are at least 30 characters long", and the domain
+// requirement on the business name. Advice goes in the writing-guidance channel;
+// char_min stays 0 because a floor this project invented would collapse the
+// spread of the copy without being anybody's rule (scripts/floorAB.js).
+//
+// THE CJK DOUBLE-COUNTING NOTE IS NOT HERE, deliberately. The page states that
+// each character in Korean, Japanese or Chinese counts as 2 toward every limit —
+// which is conditional on the language and applies to ALL NINE fields. Repeating
+// it nine times would put noise on nine fields to carry one fact about the asset.
+// It is quoted in scripts/migrateAddGoogleVideoAssets.js and stored nowhere.
+//
+// Byte-identical to that migration.
+const PMAX_HEADLINE_NOTE = 'Include at least one headline of 15 characters or less.';
+const PMAX_LONG_HEADLINE_NOTE = 'Aim for at least 30 characters.';
+const PMAX_BUSINESS_NAME_NOTE = 'Must exactly match your domain name or legally verified business name.';
+
 // The 5 email assets that carry the subject/preheader notes above.
 const EMAIL_NOTE_ASSETS = new Set([
   'Demand Gen Nurture Email',
@@ -740,6 +797,14 @@ function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'Twitter/X Ad' && fieldName === 'Ad Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Organic Social — Twitter/X' && fieldName === 'Post Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Pinterest Pin' && fieldName === 'Title') return PINTEREST_TITLE_NOTE;
+  // Matched on the ASSET too. "Headline 1" is also a Responsive Search field,
+  // "Long Headline" a Responsive Display one and "Business Name" both — none of
+  // which carries these notes.
+  if (assetName === 'Google Performance Max') {
+    if (fieldName === 'Headline 1') return PMAX_HEADLINE_NOTE;
+    if (fieldName === 'Long Headline') return PMAX_LONG_HEADLINE_NOTE;
+    if (fieldName === 'Business Name') return PMAX_BUSINESS_NAME_NOTE;
+  }
   if (assetName === 'Demand Gen Nurture Email' && fieldName === 'Offer Body 1') return OFFER_BODY_1_NOTE;
   if (assetName === 'Sales Basho Email' && fieldName === 'Body Copy') return BASHO_BODY_NOTE;
   if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
@@ -850,6 +915,22 @@ const ENFORCED_SPEC_FIELDS = new Set([
   // "Text Recommendations" heading that left LinkedIn's nine an open question.
   'Pinterest Pin||Title',
   'Pinterest Pin||Description',
+  // "Maximum length" as a table header, "characters max" and "characters
+  // maximum" in the rows. Entry language, tiered exactly as Responsive Search
+  // was — see scripts/migrateAddGoogleSearchAsset.js for the argument.
+  'Google Performance Max||Headline 1',
+  'Google Performance Max||Headline 2',
+  'Google Performance Max||Headline 3',
+  'Google Performance Max||Long Headline',
+  'Google Performance Max||Description 1',
+  'Google Performance Max||Description 2',
+  'Google Performance Max||Business Name',
+  'Google Performance Max||Display Path 1',
+  'Google Performance Max||Display Path 2',
+  'Google Demand Gen Video Ad||Headline',
+  'Google Demand Gen Video Ad||Long Headline',
+  'Google Demand Gen Video Ad||Description',
+  'Google Demand Gen Video Ad||Call to Action',
   // X's 280 is a hard cap on an organic post exactly as it is on a paid one — the
   // same platform limit, and it was previously an uncited house default here.
   'Organic Social — Twitter/X||Post Copy',
@@ -980,6 +1061,10 @@ const SPEC_SOURCE_URLS = {
   // best-practices page, so their agreement is circulation rather than
   // publication — see scripts/migrateAddPinterestSpecs.js for the full argument.
   'Pinterest Pin': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
+  'Google Performance Max': 'https://support.google.com/google-ads/answer/17091269',
+  // The SAME page carries in-feed video and YouTube Masthead, neither of which is
+  // seeded. Only the Demand Gen video table's four fields cite it.
+  'Google Demand Gen Video Ad': 'https://support.google.com/google-ads/answer/17091270',
 };
 
 // Per-FIELD spec source, for the handful of fields whose citation is not their

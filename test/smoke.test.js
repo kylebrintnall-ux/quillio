@@ -172,13 +172,14 @@ test('copyCompleteBlocks builds Open in Drive + Regenerate', () => {
   );
 });
 
-test('config.ALLOWED_ASSETS is the 27-name v3 taxonomy, post-prune', () => {
+test('config.ALLOWED_ASSETS is the 29-name v3 taxonomy, post-prune', () => {
   const { ALLOWED_ASSETS } = require('../src/config');
-  // 25 after the prune, 26 with Google Responsive Search Ad, 27 with Pinterest
-  // Pin. This is a consistency check between two files — src/config.js and the
-  // seed — and NOT a statement about the outside world; the test below asserts
-  // they name the same assets, which is the property that matters.
-  assert.strictEqual(ALLOWED_ASSETS.length, 27);
+  // 25 after the prune, then one per asset-creating migration: Google Responsive
+  // Search, Pinterest Pin, and Performance Max + Demand Gen Video together. This
+  // is a consistency check between two files — src/config.js and the seed — and
+  // NOT a statement about the outside world; the test below asserts they name the
+  // same assets, which is the property that matters.
+  assert.strictEqual(ALLOWED_ASSETS.length, 29);
   assert.ok(ALLOWED_ASSETS.includes('Battle Card'));
   assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad'));
 });
@@ -550,9 +551,9 @@ test('resolveTenant falls back to a consistent env-var shape with no DB', async 
 
 // --- Week 7: per-tenant asset library ---
 
-test('defaultAssets is the 27-type v3 library with valid shape, post-prune', () => {
+test('defaultAssets is the 29-type v3 library with valid shape, post-prune', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
-  assert.strictEqual(DEFAULT_ASSETS.length, 27, 'exactly 27 asset types');
+  assert.strictEqual(DEFAULT_ASSETS.length, 29, 'exactly 29 asset types');
 
   const groups = new Set([
     'Paid Social',
@@ -675,8 +676,12 @@ test('spec tiers: the seed equals what the migration chain produces, in both dir
   // 'enforced' on "Enter up to", the same entry language as Google's "support up
   // to" — see that file's header for why the LinkedIn caution does not transfer.
   for (const [a, f] of require('../scripts/migrateAddPinterestSpecs').ENFORCE) enforced.add(`${a}||${f}`);
+  // migrateAddGoogleVideoAssets: the first link adding TWO assets, so its ENFORCE
+  // spans both. Same entry language as Responsive Search — "Maximum length" as a
+  // table header, "characters max" in the rows.
+  for (const [a, f] of require('../scripts/migrateAddGoogleVideoAssets').ENFORCE) enforced.add(`${a}||${f}`);
 
-  assert.strictEqual(enforced.size, 25, '16 after the earlier chain + 7 Google + 2 Pinterest');
+  assert.strictEqual(enforced.size, 38, '16 earlier + 7 Google Search + 2 Pinterest + 13 Google video');
   assert.strictEqual(recommended.size, 11, '9 platform recommendations + 2 research citations');
 
   // FORWARD: everything the migrations produce is in the seed at that tier.
@@ -720,6 +725,7 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     // Each asset-creating migration brings its own, the same way each Meta step did.
     ...require('../scripts/migrateAddGoogleSearchAsset').SOURCE_URLS,
     ...require('../scripts/migrateAddPinterestSpecs').SOURCE_URLS,
+    ...require('../scripts/migrateAddGoogleVideoAssets').SOURCE_URLS,
   };
   // Which sources name a placement, as a LITERAL rather than a call to the
   // function under test — composing the expectation with specPlacementName would
@@ -800,7 +806,7 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
       }
     }
   }
-  assert.strictEqual(enforcedSeen, 25, 'exactly 25 enforced fields carry a real spec_source');
+  assert.strictEqual(enforcedSeen, 38, 'exactly 38 enforced fields carry a real spec_source');
   // 9, not 10: Meta Single Image Ad / Description left the tier when
   // migrateFixMetaSpecs found that Meta publishes no Description recommendation.
   assert.strictEqual(recommendedSeen, 11, '9 platform recommendations + 2 research citations');
@@ -1201,6 +1207,179 @@ test('Meta image anchor: the new one discriminates, the old one does not', () =>
   }
 });
 
+test('Google video assets: the anchor is chosen against the page, not asserted', () => {
+  const fs = require('fs');
+  const mig = require('../scripts/migrateAddGoogleVideoAssets');
+  const src = fs.readFileSync(require.resolve('../scripts/migrateAddGoogleVideoAssets'), 'utf8');
+  const prose = src.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+  const header = sliceBetween(src, "'use strict';", "const TAG =")
+    .replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+
+  // THE PAGE TEXT IS IN THE HEADER, and byte-identical to what the migration
+  // refuses on at run time. Same standard as every earlier spec migration.
+  for (const asset of mig.ASSETS) {
+    for (const q of asset.quotes) {
+      assert.ok(header.includes(q.replace(/\s+/g, ' ')),
+        `the HEADER quotes this verbatim: ${q.slice(0, 46)}…`);
+    }
+  }
+  assert.match(prose, /REFUSING TO WRITE/, 'a failed quote check stops the write');
+  assert.ok(src.indexOf('const pages = await readPages();') < src.indexOf('new Client({ connectionString'),
+    'both pages are read BEFORE the database is opened');
+
+  // THE SELECTOR, driven directly. The refusal paths below are NOT reachable
+  // through a stubbed page run, and that is worth saying rather than leaving as a
+  // gap: every in-section candidate on BOTH pages is a substring of a sentence
+  // the header already quotes, so a page missing the candidates is a page missing
+  // the quotes, and the quote check fires first. Unit-driving chooseAnchor is the
+  // only way to exercise them.
+  //
+  // THE FIXTURE IS SHAPED LIKE THE REAL PAGE, and that shape is the subject: a
+  // WATCHED table, then a SECOND table for a format this migration does not seed.
+  // Both tables are real page content, so both can furnish a clean unique
+  // candidate; only one of them says anything about the rows being watched.
+  const LIMITS = ['30', '90', '25', '15'];
+  const SECTION = { name: 'the watched table', from: 'Type Maximum length', to: 'ends the table' };
+  const clean = { text: 'exactly matches your domain name', why: 'x' };
+  const dirty = { text: 'at least 30 characters long', why: 'y' };
+  const twice = { text: 'repeated phrase', why: 'z' };
+  const outside = { text: 'a different format entirely', why: 'w' };
+  const page = 'Type Maximum length exactly matches your domain name and at least 30 characters '
+    + 'long, repeated phrase and ends the table. Other formats: a different format entirely, '
+    + 'repeated phrase again';
+  const choose = (cands, text = page) => mig.chooseAnchor(text, cands, LIMITS, SECTION);
+
+  // THE SPAN IS LOCATED FROM THE PAGE, and it stops where the section stops.
+  const span = mig.sectionSpan(page, SECTION);
+  assert.strictEqual(page.slice(span.start, span.end).endsWith('ends the table'), true);
+  assert.ok(!page.slice(span.start, span.end).includes(outside.text), 'the second table is outside it');
+  assert.strictEqual(mig.sectionSpan(page, { from: 'Type Maximum length', to: 'absent' }), null,
+    'and an unlocatable span is null rather than the whole page');
+
+  // CLEAN WINS over a dirty candidate listed before it.
+  const preferClean = choose([dirty, clean]);
+  assert.strictEqual(preferClean.chosen.text, clean.text, 'a clean candidate outranks a dirty one');
+  assert.strictEqual(preferClean.chosen.clean, true);
+  assert.strictEqual(preferClean.tier, '1 — clean and in-section');
+
+  // A DIRTY CANDIDATE IS TAKEN ONLY WHEN NOTHING CLEAN QUALIFIES, and it is
+  // marked so the run can say so loudly.
+  const fallback = choose([dirty]);
+  assert.strictEqual(fallback.chosen.text, dirty.text);
+  assert.strictEqual(fallback.chosen.clean, false, 'and it is flagged as not clean');
+  assert.deepStrictEqual(fallback.chosen.holds, ['30'], 'naming which limit it holds');
+  assert.strictEqual(fallback.tier, '2 — in-section, HOLDS 30', 'and which option was taken');
+
+  // A REPEATED CANDIDATE IS NOT A CANDIDATE. An anchor occurring twice says
+  // nothing about WHICH section rendered.
+  assert.strictEqual(choose([twice]).chosen, null, 'a candidate present twice is rejected');
+
+  // AND NONE PRESENT IS A REFUSAL, not a fallback to something weaker.
+  assert.strictEqual(choose([clean, dirty], 'nothing here').chosen, null);
+  assert.match(prose, /no candidate anchor is present exactly once INSIDE/,
+    'and the run says so rather than substituting a string nobody measured');
+
+  // ─── THE SECTION RULE ──────────────────────────────────────────────────────
+  // AN OUT-OF-SECTION CLEAN CANDIDATE NEVER OUTRANKS AN IN-SECTION ONE, even
+  // listed first. `outside` is clean, unique and useless: it proves the OTHER
+  // table rendered. This is the defect the first version of this migration
+  // shipped — it chose "Headlines 2 lines 40 characters per line", the in-feed
+  // row, on a page whose Demand Gen table is what the row exists to watch.
+  const beaten = choose([outside, dirty]);
+  assert.strictEqual(beaten.chosen.text, dirty.text,
+    'an in-section candidate holding a limit beats a clean one from another section');
+  const rejectedOutside = beaten.seen.find((c) => c.text === outside.text);
+  assert.strictEqual(rejectedOutside.clean, true, 'the loser really is clean and unique');
+  assert.strictEqual(rejectedOutside.unique, true);
+  assert.strictEqual(rejectedOutside.inSection, false, 'it just is not in the watched section');
+  assert.match(rejectedOutside.reason, /OUT OF SECTION/, 'and the run prints why it lost');
+
+  // AND ALONE IT IS A REFUSAL, not a last resort. Option 3 is never taken: an
+  // anchor asserting the wrong format rendered reports healthy every week once
+  // the watched one is gone, which is silent and permanent.
+  assert.strictEqual(choose([outside]).chosen, null,
+    'a clean out-of-section candidate is refused even when it is the only one left');
+
+  // A MISSING SECTION FAILS CLOSED. An asset that forgets to declare one gets
+  // nothing, not a quiet fall back to the old two-way rule.
+  assert.strictEqual(mig.chooseAnchor(page, [clean], LIMITS, undefined).chosen, null,
+    'no section declared, nothing eligible');
+  assert.strictEqual(mig.chooseAnchor(page, [clean], LIMITS, { from: 'x', to: 'y' }).chosen, null,
+    'an unlocatable section is not a permissive one');
+
+  // EVERY DECLARED SECTION IS LOCATABLE FROM QUOTED TEXT. Both markers have to be
+  // substrings of sentences the header already quotes, or the span is built out
+  // of page text nobody read — which is the whole failure the fetch rule exists
+  // to stop, arriving through the anchor instead of through a number.
+  for (const asset of mig.ASSETS) {
+    assert.ok(asset.section && asset.section.from && asset.section.to && asset.section.name,
+      `${asset.name} declares a section`);
+    const quoted = asset.quotes.join(' ');
+    for (const marker of [asset.section.from, asset.section.to]) {
+      assert.ok(quoted.includes(marker),
+        `${asset.name}: the section marker ${JSON.stringify(marker.slice(0, 34))} is inside a quoted sentence`);
+    }
+  }
+
+  // AND THE STRING THAT WAS WRONGLY CHOSEN IS STILL IN THE LIST, so every run
+  // prints it being refused. A rejection nobody can see gets re-proposed.
+  const dgenAnchors = mig.ASSETS[1].anchors.map((c) => c.text);
+  assert.ok(dgenAnchors.includes('Headlines 2 lines 40 characters per line'),
+    'the in-feed row is kept as a recorded rejection, not deleted');
+  assert.match(prose, /RULE 2 IS THE ONE THIS FILE LEARNED THE HARD WAY/,
+    'and the header says which rule it broke');
+  assert.match(prose, /migrateFixMetaImageAnchor/, 'naming the Meta row as the same shape');
+
+  // EVERY DECLARED CANDIDATE IS EVALUATED AND REPORTED, so the choice is
+  // auditable rather than an assertion.
+  const seen = choose([dirty, clean, twice, outside]).seen;
+  assert.strictEqual(seen.length, 4, 'all four evaluated');
+  for (const c of seen) {
+    assert.ok('count' in c && 'holds' in c && 'inSection' in c, 'each reports its counts and section');
+    assert.ok(c === seen[1] || c.reason, 'and every loser carries a reason');
+  }
+
+  // STORED LIMITS COME OFF THE FIELDS, not a hand-kept list that could drift from
+  // them — which is the same failure affected_fields already has on the board.
+  assert.deepStrictEqual(mig.storedLimits(mig.ASSETS[0]).sort(), ['15', '25', '30', '90']);
+  assert.deepStrictEqual(mig.storedLimits(mig.ASSETS[1]).sort(), ['10', '30', '90']);
+
+  // WHAT IS NOT SEEDED, AND WHY — recorded where a reader meets the asset rather
+  // than only in a commit message. Both figures are quoted so they are findable
+  // if copy_fields ever grows a per-line concept; neither is stored.
+  assert.match(prose, /Headlines 2 lines 40 characters per line/, 'the in-feed per-line figure');
+  assert.match(prose, /Descriptions 2 lines 35 characters per line/);
+  assert.match(prose, /copy_fields stores ONE number per field/, 'and why it cannot be stored');
+  const allFields = mig.ASSETS.flatMap((a) => a.fields);
+  for (const n of [40, 35, 80, 70]) {
+    assert.ok(!allFields.some((f) => f[2] === n), `${n} is not a char_max on any seeded field`);
+  }
+
+  // MASTHEAD IS A DIFFERENT TIER, and the evidence is one word in a table header.
+  assert.match(prose, /"Recommended length" where the other two formats read "Maximum length"/,
+    'the header names the wording difference as the evidence');
+  assert.ok(!mig.ASSETS.some((a) => /masthead/i.test(a.name)), 'and no Masthead asset is seeded');
+
+  // THE CJK NOTE IS STORED NOWHERE — not as a limit, and not on nine spec_notes.
+  assert.match(prose, /counts as 2 towards the limit instead of one/, 'quoted in the header');
+  for (const f of allFields) {
+    assert.ok(!f[5] || !/double-width|Korean|Japanese|Chinese/i.test(f[5]),
+      `${f[0]} does not repeat the CJK rule in its note`);
+  }
+  assert.ok(!allFields.some((f) => f[1] === 2 || f[2] === 2), 'and the 2 is not a limit anywhere');
+
+  // BOTH enforced, and char_min 0 throughout. "try to make sure headlines are at
+  // least 30 characters long" is ADVICE and lives in spec_note — a floor this
+  // project invented would collapse the spread of the copy without being
+  // anybody's rule (scripts/floorAB.js measured exactly that).
+  for (const f of allFields) {
+    assert.strictEqual(f[4], 'enforced', `${f[0]} is enforced`);
+    assert.strictEqual(f[1], 0, `${f[0]} has no invented floor`);
+  }
+  assert.strictEqual(mig.PMAX_LONG_HEADLINE_NOTE, 'Aim for at least 30 characters.');
+  assert.strictEqual(mig.VERIFIED_ON, '2026-08-21');
+});
+
 test('every asset-creating migration and the seed produce IDENTICAL field rows', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
 
@@ -1216,27 +1395,43 @@ test('every asset-creating migration and the seed produce IDENTICAL field rows',
   const CREATORS = [
     '../scripts/migrateAddGoogleSearchAsset',
     '../scripts/migrateAddPinterestSpecs',
+    '../scripts/migrateAddGoogleVideoAssets',
   ];
-  assert.ok(CREATORS.length >= 2, 'the loop below has something to compare');
 
-  for (const path of CREATORS) {
+  // ONE ASSET OR MANY, read the same way. The first two migrations carry a single
+  // asset as ASSET/GROUP/FIELDS/URL; migrateAddGoogleVideoAssets carries two in an
+  // ASSETS table. Normalising here rather than branching per migration is what
+  // keeps this test general — the next multi-asset migration joins the list and
+  // needs nothing else.
+  const declared = CREATORS.flatMap((path) => {
     const mig = require(path);
-    assert.ok(mig.ASSET && Array.isArray(mig.FIELDS) && mig.FIELDS.length,
-      `${path} exports ASSET and FIELDS`);
+    const list = Array.isArray(mig.ASSETS)
+      ? mig.ASSETS.map((a) => ({ name: a.name, group: a.group, fields: a.fields, url: a.url, path }))
+      : [{ name: mig.ASSET, group: mig.GROUP, fields: mig.FIELDS, url: mig.URL, path }];
+    for (const a of list) {
+      assert.ok(a.name && Array.isArray(a.fields) && a.fields.length,
+        `${path} declares a name and fields for every asset it creates`);
+    }
+    return list;
+  });
+  assert.ok(declared.length >= CREATORS.length,
+    'every creator contributed at least one asset — a migration exporting neither ASSET nor '
+    + 'ASSETS would otherwise contribute zero and be silently skipped');
 
-    const seed = DEFAULT_ASSETS.find((a) => a.name === mig.ASSET);
-    assert.ok(seed, `${mig.ASSET} is in the seed — a migration-only asset means a tenant `
-      + 'created tomorrow does not get what a tenant migrated today gets');
-    assert.strictEqual(seed.group, mig.GROUP, `${mig.ASSET} group`);
-    assert.strictEqual(seed.fields.length, mig.FIELDS.length, `${mig.ASSET} field count`);
+  for (const mig of declared) {
+    const seed = DEFAULT_ASSETS.find((a) => a.name === mig.name);
+    assert.ok(seed, `${mig.name} is in the seed — a migration-only asset means a tenant `
+      + `created tomorrow does not get what a tenant migrated today gets (${mig.path})`);
+    assert.strictEqual(seed.group, mig.group, `${mig.name} group`);
+    assert.strictEqual(seed.fields.length, mig.fields.length, `${mig.name} field count`);
 
-    mig.FIELDS.forEach((row, i) => {
-      // The two migrations carry different tuple widths — Google's fields have no
-      // spec_note and stop at five. Defaulting the sixth keeps one comparison for
-      // both rather than branching on which migration is being read.
+    mig.fields.forEach((row, i) => {
+      // The migrations carry different tuple widths — Google Search's fields have
+      // no spec_note and stop at five. Defaulting the sixth keeps one comparison
+      // for all of them rather than branching on which file is being read.
       const [name, min, max, groupLabel, tier, note = null] = row;
       const f = seed.fields[i];
-      const at = `${mig.ASSET}/${name}`;
+      const at = `${mig.name}/${name}`;
       assert.strictEqual(f.field_name, name, `${at} name and ORDER`);
       assert.strictEqual(f.char_min, min, `${at} char_min`);
       assert.strictEqual(f.char_max, max, `${at} char_max`);
@@ -1246,7 +1441,7 @@ test('every asset-creating migration and the seed produce IDENTICAL field rows',
       // A cited field carries the migration's URL; a house default carries the
       // sentinel and must never carry a page — it has no source to have been read
       // against, which is why only the cited ones take a verification date.
-      assert.strictEqual(f.spec_source, tier === 'enforced' ? mig.URL : 'quillio_default',
+      assert.strictEqual(f.spec_source, tier === 'enforced' ? mig.url : 'quillio_default',
         `${at} spec_source`);
     });
   }
@@ -2819,11 +3014,16 @@ test('20 seeded CHARACTER fields already carry a floor — this is not opt-in-on
       if (Number(f.char_min) > 0) floored.push({ asset: a.name, field: f.field_name });
     }
   }
-  // 179: Google Responsive Search Ad added ten, Pinterest Pin two. Pinterest
-  // publishes no floor and carries char_min 0 on both, so `floored` is unmoved
-  // by it — the two counts move independently and that is the point of having
-  // both.
-  assert.strictEqual(charFields, 179, 'character fields in the seed');
+  // 192: Google Responsive Search Ad added ten, Pinterest Pin two, and the two
+  // Google video assets thirteen. NONE of the last three publishes a floor — all
+  // carry char_min 0 — so `floored` is unmoved by any of them. The two counts
+  // move independently, which is the point of having both.
+  //
+  // Performance Max in particular publishes advice that LOOKS like a floor:
+  // "try to make sure headlines are at least 30 characters long". That is in
+  // spec_note, not char_min — scripts/floorAB.js measured what an invented floor
+  // costs, and a band the platform does not enforce is not a band.
+  assert.strictEqual(charFields, 192, 'character fields in the seed');
   // 20 since migrateFixMetaSpecs gave Meta Single Image Ad / Primary Text the
   // 50 half of Meta's published "50-150 characters" — the first new floor on a
   // paid-social field since floorAB measured what a floor costs in spread.
@@ -7810,10 +8010,10 @@ test('parseBrief: the prompt asks for a plan and routes A/B tests to counts', as
   // were four of thirty names the parse had to choose between, and near-duplicates
   // are what a name match gets wrong, so the prune finished the job.
   const { ALLOWED_ASSETS } = require('../src/config');
-  // 27 — the four Variants left, Google Responsive Search Ad and Pinterest Pin
-  // arrived. The COUNT is incidental to this test; the two assertions below are
-  // the subject.
-  assert.strictEqual(ALLOWED_ASSETS.length, 27);
+  // 29 — the four Variants left, and four assets arrived across three
+  // asset-creating migrations. The COUNT is incidental to this test; the two
+  // assertions below are the subject.
+  assert.strictEqual(ALLOWED_ASSETS.length, 29);
   assert.ok(!ALLOWED_ASSETS.some((n) => /— Variant [A-D]$/.test(n)), 'no Variant types in the taxonomy');
   assert.ok(!prompt.includes('LinkedIn Single Image Ad — Variant A'), 'and none offered in the allowed list');
   // The RULE about them is gone too, for a stock tenant — `anyMatching` tests the
@@ -9454,6 +9654,7 @@ test('spec integrity: the seed and the migration agree on every band, both direc
     // ...and the two assets cited by the migrations that CREATE them.
     ...Object.keys(require('../scripts/migrateAddGoogleSearchAsset').SOURCE_URLS),
     ...Object.keys(require('../scripts/migrateAddPinterestSpecs').SOURCE_URLS),
+    ...Object.keys(require('../scripts/migrateAddGoogleVideoAssets').SOURCE_URLS),
     ...CITED_BANDS.map(([asset]) => asset),
     require('../scripts/migrateCiteColdEmailBand').ASSET,
   ]);
@@ -20380,7 +20581,7 @@ test('freshness dedup: a run collapses, and anything else restores it', () => {
   assert.match(src, /rows\.appendChild\(libHouseRow\(f, prevFreshSource\)\);/);
 });
 
-test('freshness dedup: replayed over the real seed, fourteen blocks not thirty-six', () => {
+test('freshness dedup: replayed over the real seed, sixteen blocks not forty-nine', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
   const region = sliceBetween(src, 'function libFreshRepeats(f, prevSource) {', 'function libFreshnessNode(f) {');
   const { libFreshRepeats, libFreshCarry } = new Function(
@@ -20404,14 +20605,16 @@ test('freshness dedup: replayed over the real seed, fourteen blocks not thirty-s
     if (n) { blocks += n; shape[a.name] = n; }
   }
 
-  assert.strictEqual(perField, 36, 'the seeded library cites a page on 36 fields');
-  // 14: Google Responsive Search Ad's seven cited fields are CONTIGUOUS (its
-  // three graphic-copy fields are house_default and sit below them) and
-  // Pinterest Pin's two are its whole field list, so each adds exactly one
-  // block. That is the dedup rule working rather than an exception to it.
-  assert.strictEqual(blocks, 14, 'and the adjacency rule renders 14 blocks');
+  assert.strictEqual(perField, 49, 'the seeded library cites a page on 49 fields');
+  // 16: each of the four newest assets cites every field it has, contiguously, so
+  // each adds exactly ONE block however many fields it carries — Performance Max
+  // has nine and still renders one. That is the dedup rule doing its whole job:
+  // the block is per RUN of adjacent fields sharing a source, not per field.
+  assert.strictEqual(blocks, 16, 'and the adjacency rule renders 16 blocks');
   assert.strictEqual(shape['Google Responsive Search Ad'], 1);
   assert.strictEqual(shape['Pinterest Pin'], 1);
+  assert.strictEqual(shape['Google Performance Max'], 1, 'nine cited fields, one block');
+  assert.strictEqual(shape['Google Demand Gen Video Ad'], 1);
   // The three that render TWICE are the ones whose sourced fields are split by a
   // Graphic Copy group. LinkedIn Single Image is SS...S — Intro Text and Headline
   // share a block, and LAN Description gets its own below the gap.

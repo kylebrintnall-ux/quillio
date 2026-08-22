@@ -2954,8 +2954,17 @@ row in the migration so nobody re-proposes a rejected string:
 
 **LinkedIn carousel** was added later (`migrateAddLinkedInCarouselWatch`, anchor
 `Card headline`) and **Meta's single row became two** (`migrateSplitMetaWatchRows`,
-anchors `Primary Text` and `Description`). Seven hash-watched rows now, and
-`summary.unanchored` reads **0** — every one of them is anchored.
+anchors `Primary Text` and `Description` — the image row's has since been
+replaced, see below). That took it to **seven** hash-watched rows with
+`summary.unanchored` reading **0**, which is the last count anybody measured.
+
+**Two more have been added since and the total has NOT been re-measured**:
+`migrateAddGoogleSearchAsset` and `migrateAddPinterestSpecs` both ran in August
+2026, each creating one row for one URL, so the list should now stand at nine
+hash-watched. That is arithmetic off the two migrations, not a reading — and this
+file's own rule is that a derived number is not a measured one. **Take the count
+from `node scripts/checkSpecHealth.js`, which is the only thing that reads the
+table.** `migrateAddGoogleVideoAssets` will add two more when it runs.
 
 **X, and the colon.** Its first candidate, `Creative ad specifications`, came
 from the URL slug rather than the page — the heading reads "Creative ad specs" —
@@ -2986,17 +2995,24 @@ anchored, and `scripts/migrateMetaPlacementCitations.js` then moved them to the
 
 | Row | Anchor | Why that string |
 | --- | --- | --- |
-| `Meta – image` | `Primary Text` | Meta's own label for a limit we store — content, not chrome, since a 404 on this host still carries Facebook nav |
+| `Meta – image` | the `File Type: JPG or PNG …` line (was `Primary Text`) | see the CLOSED note below — the original anchor did not discriminate `/image` from `/video` |
 | `Meta – carousel` | `Description` | 1x on carousel, **0x on image, video and collection** — the only label that differs between the format pages, so it catches a redirect between siblings |
 
-**THE KNOWN LIMIT ON THE IMAGE ROW IS STILL OPEN, and it is the reason to point
-the probe at it.** `Primary Text` appears on `/video` and `/collection` too, so a
-redirect from `/image` to a sibling passes the anchor. The numbers would change
+**CLOSED, August 2026 — `scripts/migrateFixMetaImageAnchor.js` has run.** What
+was wrong: `Primary Text` appears on `/video` and `/collection` too, so a
+redirect from `/image` to a sibling passed the anchor. The numbers would change
 and the row would flag `changed` rather than `failed` — a wrong answer wearing
 the right status. `/image` and `/video` are byte-identical on Text
 Recommendations ("50-150" and "27" on both), so nothing in the measured output
-tells them apart. The carousel row has no such gap; `Description` was chosen
+told them apart. The carousel row never had that gap; `Description` was chosen
 precisely to close it.
+
+The image row now anchors on the File Type line, which is where the two format
+pages actually differ (JPG or PNG against MP4/MOV/GIF). The migration fetches
+BOTH pages on every run and refuses to write if the new anchor turns up on the
+video page, because the discrimination is the whole point of the change and a
+fixture cannot stand in for it — see `test/fixtures/metaFormatPages.json`, which
+says so in its own header.
 
 **HOW THIS SECTION WENT STALE IS THE INSTRUCTIVE PART.** Two migrations replaced
 the mechanism and neither touched the prose describing it, so a table reading
@@ -3021,6 +3037,107 @@ misses are a capital letter and a tag boundary. The gap a tag opens is before
 *attached punctuation*, not between words, so a word-level check reports "absent"
 on a page that plainly renders the label — that is why the flexible variant
 allows whitespace anywhere inside the anchor.
+
+### AN ANCHOR MUST COME FROM THE SECTION THAT PUBLISHES THE WATCHED FIELDS
+
+Clean and unique are **not sufficient**, and the third requirement is the one a
+reader will not think of, because the first two feel like the whole question.
+
+**An anchor must be drawn from the section of the page that publishes the fields
+its row watches.** A page carrying several formats can satisfy *present exactly
+once* and *holds no watched limit* with a sentence describing a format the row
+does not seed — and such a sentence is often the BEST-looking candidate on the
+page, because the format nobody watches is the one whose prose is not crowded
+with the numbers being stored.
+
+Two ways it is wrong, and the expensive one is silent:
+
+| The page changes | The row says | Which is |
+| --- | --- | --- |
+| the watched section is dropped, the other format stays | `unchanged`, every week, forever | **silent and permanent** — it is watching a page it no longer has a reason to read |
+| the other format is dropped, the watched section stays | `failed` | noisy and wrong, but somebody looks |
+
+**Clean and unique are properties of a STRING. In-section is the only one of the
+three that is a property of the page's STRUCTURE** — which is what a watch row
+exists to have an opinion about.
+
+**Found on `Google Demand Gen Video Ad`**, August 2026, in the migration that
+created it. `scripts/migrateAddGoogleVideoAssets.js` measured
+`"Headlines 2 lines 40 characters per line"` as clean and unique on
+`support.google.com/google-ads/answer/17091270` and took it. That is the **in-feed
+video** row — a format the same migration goes out of its way *not* to seed,
+because its limit is per-line across two lines and `copy_fields` stores one
+number. The row would have watched a table it stores nothing from.
+
+**Same shape as the Meta image row's `Primary Text`**, which appeared on
+`/image`, `/video` and `/collection` alike and is what
+`scripts/migrateFixMetaImageAnchor.js` exists to replace. That one was caught by
+asking *does this discriminate between sibling pages*; this one needed the same
+question asked *within* a page. They are one rule: **the anchor has to assert
+that the thing being watched rendered, not that a page did.**
+
+**The ranking, when a clean in-section candidate does not exist** — and on a bare
+table of limits it often will not, because almost every phrase in it holds a
+number:
+
+1. **clean, in-section** — ideal.
+2. **in-section, holds a watched limit** — acceptable, and the run must say WHICH
+   limit and why holding *that* one is survivable. See the next rule for what
+   makes that argument, because it is not a property of this row.
+3. **clean, OUT of section** — **never taken.** If nothing else exists, refuse and
+   name the candidate being refused. Taking it is the defect above, a second time,
+   with a measurement behind it.
+
+#### WHICH LIMIT IS SAFE TO HOLD IS A QUESTION ABOUT THE WATCH LIST, NOT THE ROW
+
+The part of the Demand Gen decision worth keeping, because it generalises and
+because nothing about it is visible from inside the row being written.
+
+An anchor holding limit X converts a move on X from `changed` into `failed` — the
+spec edit arrives dressed as a broken page. Whether that is survivable is decided
+**by the other rows**: if X is published on other watched pages whose anchors do
+*not* hold it, the move still reaches the queue as `changed` from those rows, and
+this row's `failed` is a second, noisier report of an event somebody is already
+looking at. If X is published on **one** page and stored by **one** asset, this
+row is the only instrument there is, and holding X converts the only available
+signal into a broken-page report.
+
+Worked, for Demand Gen, and every clause of it is checkable in the repo:
+
+| | Where else it is published | Do those rows' anchors hold it | Verdict |
+| --- | --- | --- | --- |
+| **90** | all three watched Google pages | no — Responsive Search is anchored on "responsive search ads have character limits", Performance Max on a digit-free clause of its Business name row | **safe to hold** |
+| **30** | same three | same | safe, but ranked below the 90-only candidate purely because that candidate holds one limit and this one holds two |
+| **10** | Demand Gen only; stored by no other asset | n/a — nothing else watches it | **do not hold** |
+
+So the ranking within option 2 is not "which number is Google least likely to
+change" — that is a guess about a publisher, and this file's record on guesses
+about publishers is the whole `migrateSpecIntegrityFixes` section. It is "which
+number would this row be the sole witness to", which is a fact about
+`spec_watch_list` and `copy_fields` that can be read off the database today.
+
+**The consequence for future rows: this argument has to be REDONE, not
+inherited.** It depends on which pages are watched and what their anchors are
+*right now*. Adding a watch row, repointing a `spec_source`, or changing another
+row's anchor can all move a limit from the top of that table to the bottom —
+silently, because nothing recomputes it and no test can. If a row is anchored on
+option 2, the argument is in the candidate's `why` string, and that string ages
+the same way `affected_fields` does.
+
+**The section is passed in explicitly per asset, never inferred.** Inferring which
+table a sentence belongs to *from the sentence* is precisely the guess that
+failed. It is declared as a `from`/`to` pair of markers, and both must be
+substrings of sentences the migration's header already quotes — otherwise the span
+is built out of page text nobody read, which is the fetch rule's own failure
+arriving through the anchor instead of through a number. **A missing or
+unlocatable section makes nothing eligible** (fail closed, same axis as
+`TENANT_EDITABLE_TIERS`): an asset that forgets to declare one gets a refusal, not
+a quiet fall back to the two-way rule.
+
+**Keep the rejected candidate in the list.** `migrateAddGoogleVideoAssets` still
+carries the in-feed string, so every run prints it being refused and says why. A
+rejection recorded only in a commit message gets re-proposed by the next person to
+look at the page and notice how clean it is.
 
 ### `source_kind`: not every cited source is hash-watchable
 
@@ -3272,8 +3389,12 @@ LinkedIn's carousel limits was never detected.
 
 `scripts/migrateAddLinkedInCarouselWatch.js` has run in production. Row **#12**
 exists, anchored on `Card headline`, six pairs derived, baselined and confirmed
-`unchanged` across two runs. The list is **nine rows**, `unanchored` reads **0**,
-and the health check reports every watched row healthy.
+`unchanged` across two runs. The list was **nine rows** at that point (seven
+hash-watched plus the two Litmus observed_practice rows), `unanchored` read **0**,
+and the health check reported every watched row healthy. Two asset-creating
+migrations have added a row each since — see the note under "What is anchored,
+what isn't" for why the current total is derived rather than measured, and run
+`checkSpecHealth.js` for the real one.
 
 **The ordering that mattered is now spent, and this is why it was insisted on.**
 Re-deriving the single-image entry BEFORE this row existed would have dropped

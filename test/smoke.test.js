@@ -10472,6 +10472,105 @@ test('craft.md §3 owns the bullets rule and lengthClause stops contradicting it
   assert.ok(!/material between them/.test(clause(60, 'text', 40)), 'including the floored character form');
 });
 
+// THE ENVELOPE RULE IS ABOUT THE WRAPPER, NOT THE COPY INSIDE IT.
+//
+// Both JSON copy prompts used to end on a bare "no markdown":
+//   generateAssetDrafts    'Respond with valid JSON only, no markdown, no backticks.'
+//   buildVariationsPrompt  'Valid JSON only — no markdown, no backticks, no commentary.'
+// Two wordings for one rule, and neither said which layer it governed. On the
+// real batch prompt the first sat 650 chars after the field it governs and 56
+// from the end — the most recent instruction in the prompt — while craft.md §3
+// asks for bullets, which are markdown.
+//
+// DRIVEN THROUGH THE ENTRY POINTS PRODUCTION CALLS. generateAssetDrafts builds
+// its prompt inline, so a stubbed transport is the only way to read what it
+// actually sends; buildVariationsPrompt is the exported pure builder and is
+// called directly. A source-level grep would pass on a string the prompt never
+// emits.
+//
+// THE EXPECTED TEXT IS WRITTEN OUT LITERALLY, not read off JSON_ENVELOPE_RULE.
+// Asserting the prompt contains the constant it is built from asserts the
+// function equals itself; the constant is checked separately, for drift.
+test('the JSON envelope rule scopes itself to the response, on every path that emits it', async () => {
+  const gemini = require('../src/services/gemini');
+
+  const LINE_1 = 'Raw JSON only — no code fences, no backticks, nothing before or after it.';
+  const LINE_2 = 'That governs the response, not the copy: a copy string may carry any formatting the copy needs.';
+
+  // --- path 1: the batch drafter, through its real entry point --------------
+  // callGemini refuses without a key, so the key is set the way geminiWith sets
+  // it. Without this the stub is never reached, the prompt stays null, and the
+  // test would report a captured-nothing run as a pass if it did not assert
+  // below that something WAS captured.
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  let batchPrompt = null;
+  cfg.GEMINI_API_KEY = 'test-key';
+  global.fetch = async (url, opts) => {
+    batchPrompt = JSON.parse(opts.body).contents[0].parts[0].text;
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ Headline: 'x' }) }] } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await gemini.generateAssetDrafts({
+      assetType: 'Demand Gen Nurture Email',
+      fields: [{ fieldName: 'Headline', charMax: 60, fieldType: 'text' }],
+      summary: 's', writerPrompt: 'w', voiceGuide: '',
+    });
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+  }
+  assert.ok(batchPrompt, 'the batch drafter issued a call and the prompt was captured');
+
+  // --- path 2: the variations builder, called directly ----------------------
+  const varPrompt = gemini.buildVariationsPrompt({
+    assetType: 'Demand Gen Nurture Email',
+    fieldName: 'Offer Body 1',
+    charMax: 140, charMin: 50, fieldType: 'words',
+    summary: 's', writerPrompt: 'w', voiceGuide: '',
+    doorways: ['Pain'], distance: 'near', count: 1,
+  });
+
+  for (const [name, prompt] of [['batch drafter', batchPrompt], ['variations', varPrompt]]) {
+    assert.ok(prompt.includes(LINE_1), `${name}: emits the envelope line`);
+    assert.ok(prompt.includes(LINE_2), `${name}: emits the scope line`);
+
+    // THE REGRESSION ITSELF. A bare "no markdown" anywhere in a prompt whose
+    // JSON values are copy is the ambiguity this replaced — it reads as a ban
+    // on formatting the copy, not on fencing the response.
+    assert.ok(!/no markdown/i.test(prompt),
+      `${name}: no bare "no markdown" — say what the constraint applies to`);
+
+    // The two superseded wordings, pinned by name so restoring either goes red.
+    assert.ok(!prompt.includes('Respond with valid JSON only, no markdown, no backticks.'),
+      `${name}: the old batch wording is gone`);
+    assert.ok(!prompt.includes('Valid JSON only — no markdown, no backticks, no commentary.'),
+      `${name}: the old variations wording is gone`);
+
+    // It is the LAST thing the model reads, which is the whole reason the
+    // ambiguity mattered. If a future edit appends below it, that edit owns the
+    // recency and should say so.
+    assert.ok(prompt.trimEnd().endsWith(LINE_2), `${name}: the scope line is last`);
+  }
+
+  // --- one definition, so the two paths cannot drift again -------------------
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  assert.strictEqual((src.match(/const JSON_ENVELOPE_RULE = \[/g) || []).length, 1,
+    'JSON_ENVELOPE_RULE is defined exactly once');
+  assert.strictEqual((src.match(/\.\.\.JSON_ENVELOPE_RULE,/g) || []).length, 2,
+    'both prompts spread the constant rather than restating it');
+  assert.deepStrictEqual(gemini.JSON_ENVELOPE_RULE, [LINE_1, LINE_2],
+    'the constant holds the text this test pins');
+
+  // reviewCopyFields already scoped its envelope rule correctly and is what the
+  // above is modelled on. Asserted so a "tidy-up" does not flatten it back to a
+  // bare "no markdown".
+  assert.match(src, /Do NOT wrap the JSON in markdown code fences \(no ``` and no ```json\)\./);
+});
+
 test('word units: the client counts words, and the layout heuristic is not fooled', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   const grab = (n) => html.match(new RegExp(`^(\\s*)function ${n}\\([^)]*\\) \\{[\\s\\S]*?\\n\\1\\}`, 'm'))[0];
@@ -15252,7 +15351,13 @@ async function geminiWith(reply, fn) {
   }
 }
 
-const isBatchPrompt = (p) => /Respond with valid JSON only/.test(p);
+// THE BATCH DISCRIMINATOR KEYS ON THE BATCH CONTRACT, NOT ON AN ENVELOPE
+// SENTENCE. It was /Respond with valid JSON only/, which is a shared closing
+// line — parseBrief emits it too, so it identified the batch prompt only
+// because these rigs never see a parse prompt. Rewording the envelope rule
+// then broke four tests at once, none of them about envelopes. This phrase is
+// generateAssetDrafts' own output contract and appears nowhere else.
+const isBatchPrompt = (p) => /Return a JSON object mapping each field name/.test(p);
 // 120 words — what a correctly-drafted 120-WORD body looks like, and ~850 chars.
 const WORDS_120 = Array.from({ length: 120 }, (_, i) => `word${i + 1}`).join(' ');
 

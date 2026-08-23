@@ -340,6 +340,42 @@ const FUNNEL_STAGE_INFERENCE = [
 const FUNNEL_STAGE_FOR_REVIEW = 'Funnel stage shapes which doorway fits.';
 const FUNNEL_STAGE_FOR_DRAFT = 'Funnel stage shapes what this copy has to do.';
 
+// THE JSON ENVELOPE RULE — one wording, two prompts, and the SCOPE is the point.
+//
+// This was two sentences that had drifted apart already:
+//   generateAssetDrafts    'Respond with valid JSON only, no markdown, no backticks.'
+//   buildVariationsPrompt  'Valid JSON only — no markdown, no backticks, no commentary.'
+//
+// Both mean the RESPONSE ENVELOPE — do not wrap the JSON in a fenced code block
+// — and neither said so. Read literally, "no markdown" forbids markdown
+// ANYWHERE, and the JSON's string values are the copy. A bulleted body is
+// markdown, so the sentence forbade the thing the copy might need.
+//
+// IT WAS WRONG ON ITS OWN TERMS BEFORE ANY BULLETS RULE EXISTED. The constraint
+// is about the wrapper; the copy is inside it; one sentence covered both without
+// distinguishing them. craft.md §3 only made the cost visible: measured on the
+// real batch prompt for Demand Gen Nurture Email, the old line sat 650 chars
+// after the field it governs and 56 from the end of a 20,189-char prompt — the
+// most recent instruction the model reads, contradicting a rule 13,643 chars
+// back.
+//
+// ONE CONSTANT, because two prompts each carrying their own wording is exactly
+// the review-overlay duplication CLAUDE.md names as the lesson not to repeat.
+//
+// MODELLED ON reviewCopyFields, which already gets the envelope half right
+// ("Do NOT wrap the JSON in markdown code fences (no ``` and no ```json)"). It
+// is not folded in here: its output is an ARRAY with a first-character rule and
+// no copy strings, so it needs neither the scope clause nor this shape.
+//
+// generateFieldDraft composes NO envelope line at all — it returns bare text —
+// so it never carried the ambiguity and needs nothing. That asymmetry is worth
+// knowing: batch and rescue drafted the same field under different formatting
+// instructions, and only the batch one said "no markdown".
+const JSON_ENVELOPE_RULE = [
+  'Raw JSON only — no code fences, no backticks, nothing before or after it.',
+  'That governs the response, not the copy: a copy string may carry any formatting the copy needs.',
+];
+
 // THE BRIEF, AND WHICH OF THE THREE CAMPAIGN SOURCES OUTRANKS WHICH.
 //
 // A draft prompt can carry three descriptions of the same campaign, and until the
@@ -2183,7 +2219,7 @@ async function generateAssetDrafts({
     fieldLines,
     '',
     'Return a JSON object mapping each field name (exactly as written above, including any parentheses) to its copy string. Exactly one copy per field, no commentary.',
-    'Respond with valid JSON only, no markdown, no backticks.',
+    ...JSON_ENVELOPE_RULE,
   ].join('\n');
 
   let parsed = {};
@@ -2609,7 +2645,7 @@ function buildVariationsPrompt({
     '',
     `Return ONLY a JSON array of exactly ${n} object${n === 1 ? '' : 's'}, in the SAME order as the rows`,
     'above, each {"doorway": "<doorway name for that row>", "copy": "<copy>"}.',
-    'Valid JSON only — no markdown, no backticks, no commentary.',
+    ...JSON_ENVELOPE_RULE,
   ]
     // Drop only ABSENT conditional lines (null); keep the intentional '' blanks
     // that separate sections so the model reads a structured prompt, not a wall.
@@ -3588,6 +3624,9 @@ module.exports = {
   FUNNEL_STAGE_INFERENCE,
   FUNNEL_STAGE_FOR_DRAFT,
   FUNNEL_STAGE_FOR_REVIEW,
+  // The response-envelope rule both JSON copy prompts emit. Exported for tests
+  // only — no caller has a reason to reach for it.
+  JSON_ENVELOPE_RULE,
   siblingContextBlock,
   overLimit,
   // The measure/trim primitives generateFieldDraft's own ladder is built from.

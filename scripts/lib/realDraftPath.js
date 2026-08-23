@@ -133,7 +133,10 @@ async function draftOnce({ assetName, fields, summary, writerPrompt, noteFor, br
     try {
       const json = await res.clone().json();
       const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      if (/Respond with valid JSON only/.test(prompt)) {
+      // Keyed on generateAssetDrafts' own output contract. The previous
+      // discriminator was the shared envelope line, which parseBrief also
+      // emits and which any reword of that rule silently breaks.
+      if (/Return a JSON object mapping each field name/.test(prompt)) {
         const parsed = JSON.parse(String(text).replace(/^```(?:json)?|```$/gm, '').trim());
         for (const [k, v] of Object.entries(parsed)) {
           copy[k] = typeof v === 'string' ? v : (v && v.copy) || '';

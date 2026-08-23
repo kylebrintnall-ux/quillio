@@ -5821,6 +5821,114 @@ test('every seeded asset name matches a mediumKeywordsForAsset branch', () => {
 // these three rows red and they were updated by hand, which is the review
 // conversation this table exists to force. A snapshot recording intentions
 // instead of behaviour could not have done it.
+// THE X ANCHOR MIGRATION'S LIMITS QUERY — the one that failed on the box.
+//
+// It shipped as
+//
+//     WHERE (at.name, cf.field_name) = ANY($1::text[][])
+//     $1 = [['Twitter/X Ad', 'Ad Copy'], ['Twitter/X Ad', 'Headline']]
+//
+// and Postgres answered `operator does not exist: record = text`. A row
+// constructor is a RECORD; ANY iterates an array's ELEMENTS, and the elements of
+// a text[][] are TEXT SCALARS — Postgres multidimensional arrays are rectangular,
+// not nested. So the comparison was record against text, and no cast fixes it:
+// ANY cannot iterate the rows of a 2-D array at all.
+//
+// WHAT THIS TEST CAN AND CANNOT DO, because the distinction decides how much a
+// green run here is worth. It drives the REAL exported SQL and the REAL
+// parameter construction against a stub, so it catches a parameter that stops
+// matching the query's shape and it pins the broken pattern out. It CANNOT prove
+// the SQL is valid Postgres — nothing without a database can, and the suite runs
+// with no credentials and no network by design. A --verify against the real row
+// is still the thing that settles it.
+//
+// So the pattern assertion below is a TRIPWIRE, in this file's own sense: it
+// cannot tell a good query from a bad one, it only stops this specific defect
+// coming back.
+test('migrateFixXAnchor: the limits query takes pairs as parallel arrays, not a tuple IN-list', async () => {
+  const mig = require('../scripts/migrateFixXAnchor');
+
+  // THE TRIPWIRE. Not coverage — it holds one shape out.
+  assert.ok(!/=\s*ANY\s*\(\s*\$\d+::text\[\]\[\]/.test(mig.LIMITS_SQL),
+    'the tuple-vs-scalar shape must not come back: (a, b) = ANY($1::text[][]) is record = text');
+  assert.ok(!/\(\s*at\.name\s*,\s*cf\.field_name\s*\)\s*=/.test(mig.LIMITS_SQL),
+    'no row constructor compared to an array element');
+  assert.match(mig.LIMITS_SQL, /unnest\(\$1::text\[\], \$2::text\[\]\)/,
+    'the pairs are unnested into a joinable set');
+  // The retirement predicate, matching specReview.currentValues and
+  // rederiveAffectedFields. affected_fields outlives an asset retirement, and a
+  // retired asset's limit is not in play for an anchor decision.
+  assert.match(mig.LIMITS_SQL, /at\.is_active/, 'inactive assets are excluded');
+
+  // THE REAL SHAPE, as the row on the box actually holds it.
+  const pairs = [
+    { asset: 'Twitter/X Ad', field: 'Ad Copy' },
+    { asset: 'Twitter/X Ad', field: 'Headline' },
+  ];
+  const calls = [];
+  const stub = {
+    async query(text, params) {
+      calls.push({ text, params });
+      return {
+        rows: [
+          { asset: 'Twitter/X Ad', field: 'Ad Copy', char_min: 0, char_max: 280, spec_type: 'enforced' },
+          { asset: 'Twitter/X Ad', field: 'Headline', char_min: 0, char_max: 70, spec_type: 'enforced' },
+        ],
+      };
+    },
+  };
+
+  const { rows, limits } = await mig.resolveStoredLimits(stub, pairs);
+
+  assert.strictEqual(calls.length, 1, 'one query');
+  assert.strictEqual(calls[0].text, mig.LIMITS_SQL, 'it runs the exported SQL, not a copy');
+  // TWO PARALLEL ARRAYS OF SCALARS. The defect was one argument whose
+  // dimensionality had to be reasoned about; this asserts the shape directly.
+  assert.deepStrictEqual(calls[0].params, [
+    ['Twitter/X Ad', 'Twitter/X Ad'],
+    ['Ad Copy', 'Headline'],
+  ], 'params are assets[] and fields[], index-aligned');
+  assert.strictEqual(calls[0].params.length, 2, 'exactly two parameters');
+  assert.strictEqual(calls[0].params[0].length, calls[0].params[1].length, 'the arrays are the same length');
+  for (const arr of calls[0].params) {
+    for (const v of arr) assert.strictEqual(typeof v, 'string', 'every element is a scalar string, never a nested array');
+  }
+
+  assert.strictEqual(rows.length, 2);
+  assert.deepStrictEqual(limits, ['70', '280'], 'sorted numerically, deduped, as strings for substring tests');
+});
+
+test('migrateFixXAnchor: char_max 0 is NO LIMIT and never reaches the anchor arithmetic', async () => {
+  const mig = require('../scripts/migrateFixXAnchor');
+  const stub = {
+    async query() {
+      return {
+        rows: [
+          { asset: 'A', field: 'x', char_min: 0, char_max: 0, spec_type: 'enforced' },
+          { asset: 'A', field: 'y', char_min: 0, char_max: 280, spec_type: 'enforced' },
+        ],
+      };
+    },
+  };
+  const { limits } = await mig.resolveStoredLimits(stub, [{ asset: 'A', field: 'x' }]);
+  // A 0 in the limits list would be tested as a SUBSTRING against every anchor
+  // candidate — "280" contains "0" — so every candidate would read as holding a
+  // stored limit and the run would refuse on option 2 forever.
+  assert.deepStrictEqual(limits, ['280'], 'char_max 0 is dropped');
+});
+
+test('migrateFixXAnchor: empty pairs produce empty parallel arrays rather than throwing', async () => {
+  const mig = require('../scripts/migrateFixXAnchor');
+  let seen = null;
+  const stub = { async query(t, p) { seen = p; return { rows: [] }; } };
+  const { rows, limits } = await mig.resolveStoredLimits(stub, []);
+  assert.deepStrictEqual(seen, [[], []], 'two empty arrays, still index-aligned');
+  assert.deepStrictEqual(rows, []);
+  assert.deepStrictEqual(limits, []);
+  // The caller refuses on this, and the refusal is the point — the query itself
+  // does not need to be the thing that objects.
+});
+
 test('the medium routing table, pinned per seeded asset', () => {
   const { mediumKeywordsForAsset } = require('../src/services/gemini');
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');

@@ -411,6 +411,61 @@ async function readPage(limits) {
   return { ok: true, anchor: chosen.text, tier };
 }
 
+// --- the stored limits behind this row's gate -------------------------------
+//
+// THE FIRST VERSION OF THIS QUERY WAS A TYPE ERROR, and the shape of the mistake
+// is worth keeping because it looks correct:
+//
+//   WHERE (at.name, cf.field_name) = ANY($1::text[][])
+//   $1 = [['Twitter/X Ad', 'Ad Copy'], ['Twitter/X Ad', 'Headline']]
+//
+// `(at.name, cf.field_name)` is a ROW CONSTRUCTOR — a record. `ANY` over an
+// array iterates that array's ELEMENTS, and the elements of a text[][] are TEXT
+// SCALARS, not one-dimensional sub-arrays: Postgres multidimensional arrays are
+// rectangular, not nested. So the comparison is record = text and Postgres
+// answers `operator does not exist: record = text`.
+//
+// There is no version of that shape that works. It is not a cast away from
+// correct — ANY cannot iterate rows of a 2-D array at all, so even with a
+// working operator it would be comparing a pair against a single string.
+//
+// UNNEST OF TWO PARALLEL ARRAYS, joined as a set. The tuple structure lives in
+// the FROM clause where Postgres can see it, and the parameters are visibly the
+// two columns rather than one argument whose dimensionality has to be reasoned
+// about. It also reads as what it is: "the pairs this row gates, joined to the
+// fields behind them".
+//
+// AND IT CARRIES `at.is_active`, matching specReview.currentValues and
+// scripts/rederiveAffectedFields.js. affected_fields is a frozen snapshot that
+// outlives asset retirement, so a pair can name an asset nothing renders any
+// more. A retired asset's limit is not "in play" for an anchor decision, and
+// including it could put a number in the sole-witness arithmetic that no
+// document has carried for months.
+const LIMITS_SQL = `
+  SELECT at.name AS asset, cf.field_name AS field, cf.char_min, cf.char_max, cf.spec_type
+    FROM unnest($1::text[], $2::text[]) AS want(asset, field)
+    JOIN asset_types at ON at.name = want.asset AND at.is_active
+    JOIN copy_fields cf ON cf.asset_type_id = at.id AND cf.field_name = want.field
+   GROUP BY 1, 2, 3, 4, 5
+   ORDER BY 1, 2`;
+
+// Pure but for the one query, and exported so a test drives the same SQL and the
+// same parameter construction the migration does rather than restating them.
+// `runner` is anything with .query(text, params) — the client here, a stub there.
+async function resolveStoredLimits(runner, pairs) {
+  const list = Array.isArray(pairs) ? pairs : [];
+  const res = await runner.query(LIMITS_SQL, [
+    list.map((p) => p.asset),
+    list.map((p) => p.field),
+  ]);
+  const rows = (res && res.rows) || [];
+  // char_max 0 is NO LIMIT everywhere else in this codebase, so it is not a
+  // value an anchor could hold and does not belong in the arithmetic.
+  const limits = [...new Set(rows.map((r) => String(r.char_max)).filter((v) => v && v !== '0'))]
+    .sort((x, y) => Number(x) - Number(y));
+  return { rows, limits };
+}
+
 // --- the sole-witness arithmetic, recomputed live ---------------------------
 // The header states which other rows would still report a move on each stored
 // limit. That argument depends on which pages are watched and what their anchors
@@ -469,6 +524,26 @@ async function main() {
   await client.connect();
   console.log(`${TAG} mode: ${VERIFY ? 'VERIFY (no write)' : COMMIT ? 'COMMIT (writes)' : 'DRY RUN (rolls back — pass --commit to write)'}`);
 
+  // WHETHER A TRANSACTION IS ACTUALLY OPEN, tracked rather than assumed.
+  //
+  // Everything up to and including the page fetch runs OUTSIDE a transaction —
+  // the reads that pick the anchor, and the --verify path in full. The catch
+  // used to issue an unconditional ROLLBACK and print "FAILED (rolled back)"
+  // regardless, so a --verify failure reported a rollback that never happened:
+  // Postgres answers ROLLBACK-with-no-transaction with a WARNING, which the
+  // `.catch(() => {})` swallowed, and the message then described a transaction
+  // that was never opened.
+  //
+  // It is cosmetic in effect and not in what it TELLS YOU. "Rolled back" on a
+  // read-only path sends a reader looking for a write that does not exist, and
+  // the first thing anyone does with a failing migration is ask what it touched.
+  //
+  // scripts/migrateFixMetaImageAnchor.js — the file this one copies its shape
+  // from — carried the identical defect and was fixed in the same commit, so the
+  // two do not diverge. Any future migration built on either should carry the
+  // flag rather than the unconditional ROLLBACK.
+  let inTxn = false;
+
   try {
     // READ-ONLY, and BEFORE any transaction. See the ordering note in the header.
     const found = await client.query(
@@ -510,26 +585,19 @@ async function main() {
     // THE STORED LIMITS, CONFIRMED AGAINST copy_fields IN THE SAME RUN. The
     // anchor choice depends on which values are in play, so they are read rather
     // than believed — the header says 70 and 280 and this is what checks it.
-    const lim = await client.query(
-      `SELECT at.name AS asset, cf.field_name AS field, cf.char_min, cf.char_max, cf.spec_type
-         FROM copy_fields cf JOIN asset_types at ON at.id = cf.asset_type_id
-        WHERE (at.name, cf.field_name) = ANY($1::text[][])
-        GROUP BY 1,2,3,4,5 ORDER BY 1,2`,
-      [pairs.map((p) => [p.asset, p.field])]
-    );
-    console.log(`\n${TAG} those pairs resolve to ${lim.rowCount} distinct copy_fields shape(s):`);
-    for (const r of lim.rows) {
+    const { rows: limRows, limits } = await resolveStoredLimits(client, pairs);
+    console.log(`\n${TAG} those pairs resolve to ${limRows.length} distinct copy_fields shape(s):`);
+    for (const r of limRows) {
       console.log(`    ${(r.asset + ' / ' + r.field).padEnd(44)} ${r.char_min}-${r.char_max}  ${r.spec_type}`);
     }
-    if (lim.rowCount === 0) {
+    if (limRows.length === 0) {
       throw new Error(
-        'the row\'s affected_fields resolve to no copy_fields rows. The gate is stale — that is a '
-        + 're-derivation problem (scripts/rederiveAffectedFields.js), not an anchor problem.'
+        'the row\'s affected_fields resolve to no ACTIVE copy_fields rows. Either the gate is stale — '
+        + 'a re-derivation problem (scripts/rederiveAffectedFields.js), not an anchor problem — or every '
+        + 'asset behind it has been retired, in which case the row gates nothing and the anchor is the '
+        + 'least of it.'
       );
     }
-
-    const limits = [...new Set(lim.rows.map((r) => String(r.char_max)).filter((v) => v && v !== '0'))]
-      .sort((x, y) => Number(x) - Number(y));
     console.log(`\n${TAG} stored limits in play: ${limits.join(', ')}`);
 
     await soleWitness(client, row.id, limits);
@@ -553,6 +621,7 @@ async function main() {
     }
 
     await client.query('BEGIN');
+    inTxn = true;
 
     // expected_content AND NOTHING ELSE. current_hash in particular is untouched:
     // the hashed content does not change when an anchor does, so the row must not
@@ -588,17 +657,27 @@ async function main() {
 
     if (COMMIT) {
       await client.query('COMMIT');
+      inTxn = false;
       console.log(`\n${TAG} COMMITTED.`);
       console.log(`${TAG} Next: node scripts/runDetection.js — expect this row to report 'unchanged',`);
       console.log(`${TAG} NOT 'baseline'. A baseline here would mean current_hash was cleared.`);
       console.log(`${TAG} Then: node scripts/checkSpecHealth.js — an anchor was repointed.`);
     } else {
       await client.query('ROLLBACK');
+      inTxn = false;
       console.log(`\n${TAG} DRY RUN — rolled back. Pass --commit to write.`);
     }
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error(`\n${TAG} FAILED (rolled back): ${err.message}`);
+    // ONLY ROLL BACK WHAT WAS ACTUALLY OPENED, and say which happened. A failure
+    // before BEGIN wrote nothing because there was nothing to write, and saying
+    // "rolled back" there is a claim about the database that is not true.
+    if (inTxn) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error(`\n${TAG} FAILED (rolled back): ${err.message}`);
+    } else {
+      console.error(`\n${TAG} FAILED before any transaction was opened — nothing was written, `
+        + `and nothing needed rolling back: ${err.message}`);
+    }
     process.exitCode = 1;
   } finally {
     await client.end();
@@ -616,5 +695,6 @@ if (require.main === module) {
 // rests on, exported so a test drives the same code the migration does rather
 // than reimplementing the ranking beside it.
 module.exports = {
-  chooseAnchor, sectionSpan, occurrences, CANDIDATES, SECTION, QUOTES, OLD_ANCHOR, URL,
+  chooseAnchor, sectionSpan, occurrences, resolveStoredLimits, LIMITS_SQL,
+  CANDIDATES, SECTION, QUOTES, OLD_ANCHOR, URL,
 };

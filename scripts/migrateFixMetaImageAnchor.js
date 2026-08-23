@@ -247,6 +247,26 @@ async function main() {
   await client.connect();
   console.log(`${TAG} mode: ${VERIFY ? 'VERIFY (no write)' : COMMIT ? 'COMMIT (writes)' : 'DRY RUN (rolls back — pass --commit to write)'}`);
 
+  // WHETHER A TRANSACTION IS ACTUALLY OPEN, tracked rather than assumed.
+  //
+  // Everything up to and including the page fetches runs OUTSIDE a transaction —
+  // the row read, both fetches, the anchor comparison, and the --verify path in
+  // full. The catch below used to issue an unconditional ROLLBACK and print
+  // "FAILED (rolled back)" regardless, so a failure on any of those reported a
+  // rollback that never happened: Postgres answers ROLLBACK-with-no-transaction
+  // with a WARNING, which the `.catch(() => {})` swallowed, and the message then
+  // described a transaction that was never opened.
+  //
+  // Cosmetic in EFFECT and not in what it TELLS YOU. The first thing anyone does
+  // with a failing migration is ask what it touched, and "rolled back" on a
+  // read-only path sends them looking for a write that does not exist.
+  //
+  // Found when scripts/migrateFixXAnchor.js — which copies this file's shape —
+  // failed in --verify on a query error and announced a rollback. That file
+  // carried a note saying this one wants the same fix; this is that fix, so the
+  // note does not outlive the defect it describes.
+  let inTxn = false;
+
   try {
     // READ-ONLY, and BEFORE any transaction. The marker lives on the row, so the
     // page checks cannot run without reading it first — see the ordering note in
@@ -293,6 +313,7 @@ async function main() {
     }
 
     await client.query('BEGIN');
+    inTxn = true;
 
     // expected_content AND NOTHING ELSE. current_hash in particular is untouched:
     // the hashed content does not change when an anchor does, so the row must not
@@ -327,17 +348,27 @@ async function main() {
 
     if (COMMIT) {
       await client.query('COMMIT');
+      inTxn = false;
       console.log(`\n${TAG} COMMITTED.`);
       console.log(`${TAG} Next: node scripts/runDetection.js — expect this row to report 'unchanged',`);
       console.log(`${TAG} NOT 'baseline'. A baseline here would mean current_hash was cleared.`);
       console.log(`${TAG} Then: node scripts/checkSpecHealth.js — an anchor was repointed.`);
     } else {
       await client.query('ROLLBACK');
+      inTxn = false;
       console.log(`\n${TAG} DRY RUN — rolled back. Pass --commit to write.`);
     }
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error(`\n${TAG} FAILED (rolled back): ${err.message}`);
+    // ONLY ROLL BACK WHAT WAS ACTUALLY OPENED, and say which happened. A failure
+    // before BEGIN wrote nothing because there was nothing to write, and saying
+    // "rolled back" there is a claim about the database that is not true.
+    if (inTxn) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error(`\n${TAG} FAILED (rolled back): ${err.message}`);
+    } else {
+      console.error(`\n${TAG} FAILED before any transaction was opened — nothing was written, `
+        + `and nothing needed rolling back: ${err.message}`);
+    }
     process.exitCode = 1;
   } finally {
     await client.end();

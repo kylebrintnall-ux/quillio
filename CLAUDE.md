@@ -3036,16 +3036,39 @@ row in the migration so nobody re-proposes a rejected string:
 **LinkedIn carousel** was added later (`migrateAddLinkedInCarouselWatch`, anchor
 `Card headline`) and **Meta's single row became two** (`migrateSplitMetaWatchRows`,
 anchors `Primary Text` and `Description` — the image row's has since been
-replaced, see below). That took it to **seven** hash-watched rows with
-`summary.unanchored` reading **0**, which is the last count anybody measured.
+replaced, see below). That took it to **seven** hash-watched rows, and four more
+have been added since: `migrateAddGoogleSearchAsset`, `migrateAddPinterestSpecs`
+and `migrateAddGoogleVideoAssets` (which creates TWO — Performance Max and Demand
+Gen video, and has now run; both appear by name in the summary below).
 
-**Two more have been added since and the total has NOT been re-measured**:
-`migrateAddGoogleSearchAsset` and `migrateAddPinterestSpecs` both ran in August
-2026, each creating one row for one URL, so the list should now stand at nine
-hash-watched. That is arithmetic off the two migrations, not a reading — and this
-file's own rule is that a derived number is not a measured one. **Take the count
-from `node scripts/checkSpecHealth.js`, which is the only thing that reads the
-table.** `migrateAddGoogleVideoAssets` will add two more when it runs.
+**MEASURED 2026-08-23, from a `node scripts/runDetection.js` summary:**
+
+```
+{"total":13,"baseline":0,"unchanged":11,"changed":0,"unconfirmed":0,
+ "failed":0,"error":0,"unanchored":0,"stuck":0,"not_watched":2}
+```
+
+**Eleven hash-watched rows**, all `unchanged`; two `not_watched` (both Litmus,
+`observed_practice`); `unanchored` **0** and `stuck` **0**. One of the eleven is
+the `is_test` row, so **ten real platform rows**.
+
+**THE PROVENANCE IS PART OF THE NUMBER.** That reading came from the DETECTOR's
+own run summary, not from `node scripts/checkSpecHealth.js`, which is what this
+paragraph used to name as the authority and which asks structural questions
+`runDetection` does not — whether the hashed text still contains the row's own
+`char_max` values, whether the anchor sits in the hashed region, whether a cited
+URL is watched by anybody. Both enumerate the table and either can be quoted for
+a COUNT; they are not interchangeable for HEALTH, and a count taken from one
+should say which one produced it rather than borrowing the other's authority.
+Run `checkSpecHealth` when a watch row is added or a `spec_source` is repointed.
+
+**And the previous version of this paragraph is the reason the rule exists.** It
+said seven was "the last count anybody measured", derived nine by arithmetic, and
+refused to write nine down as a reading — correctly. The arithmetic turned out to
+be right, and by the time somebody measured, the answer was eleven, because a
+third migration had landed in between. A derived number is not wrong so much as
+undated: it is right about the migrations it knows and silent about the ones it
+does not.
 
 **X, and the colon.** Its first candidate, `Creative ad specifications`, came
 from the URL slug rather than the page — the heading reads "Creative ad specs" —
@@ -3307,9 +3330,10 @@ visible by way of a template change.
 
 The accurate description of what the system does: every limit is cited to its
 source; platform spec pages are checked weekly for changes, with **every one of
-the seven hash-watched rows** anchored so the fetch is asserted to have read the
-right page; any detected change goes to a human before a stored number moves; and
-email guidance is dated observed practice that is never hash-watched.
+the eleven hash-watched rows** anchored so the fetch is asserted to have read the
+right page (`unanchored: 0`, measured 2026-08-23 — see the count above and note
+where it came from); any detected change goes to a human before a stored number
+moves; and email guidance is dated observed practice that is never hash-watched.
 
 ### The 15 email fields have no AUTOMATED update path — accepted 2026-08-05
 
@@ -3472,10 +3496,11 @@ LinkedIn's carousel limits was never detected.
 exists, anchored on `Card headline`, six pairs derived, baselined and confirmed
 `unchanged` across two runs. The list was **nine rows** at that point (seven
 hash-watched plus the two Litmus observed_practice rows), `unanchored` read **0**,
-and the health check reported every watched row healthy. Two asset-creating
-migrations have added a row each since — see the note under "What is anchored,
-what isn't" for why the current total is derived rather than measured, and run
-`checkSpecHealth.js` for the real one.
+and the health check reported every watched row healthy. THREE asset-creating
+migrations have added FOUR rows since (`migrateAddGoogleVideoAssets` creates
+two), taking it to thirteen — eleven hash-watched plus the two Litmus rows,
+measured 2026-08-23. See the note under "What is anchored, what isn't" for that
+reading and where it came from.
 
 **The ordering that mattered is now spent, and this is why it was insisted on.**
 Re-deriving the single-image entry BEFORE this row existed would have dropped

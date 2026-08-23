@@ -10408,6 +10408,70 @@ test('word units: the Gemini prompt states the constraint in words, not characte
     'the copy-review payload names the unit rather than implying characters');
 });
 
+// THE BULLETS RULE AND THE LENGTH CLAUSE MUST NOT COMPETE.
+//
+// craft.md §3 now says that where the brief supplies three or more parallel
+// points, the middle of a body becomes bullets. lengthClause's word branch —
+// the six email body fields, which is exactly where §3 says the rule works best
+// — used to end "…the ask in one, the next step in one.", prescribing a sentence
+// for every part of the email including that middle. Two rules in one prompt,
+// one of them silently losing: the §1.4-versus-§2 shape CLAUDE.md records at
+// 0/12 adoption.
+//
+// WHY THE EXISTING PIN DID NOT CATCH IT. The assertion above is
+// /context in one or two sentences, the ask in one, the next step in one/ and
+// the reworded clause still CONTAINS that substring, so it stayed green through
+// the change. That is the right thing to pin — the frame is what must not move —
+// but it means nothing was asserting the part that does the compatibility work.
+// This is that assertion.
+test('craft.md §3 owns the bullets rule and lengthClause stops contradicting it', () => {
+  const craft = fs.readFileSync(path.join(__dirname, '..', 'craft.md'), 'utf8');
+  const gem = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+
+  // --- craft.md §3 carries the rule, and it is in the UNIVERSAL block --------
+  const body = sliceBetween(craft, '## 3. Body Copy', '## 4. CTA Copy');
+  assert.match(body, /\*\*Bullets — when the brief supplies parallel points\.\*\*/);
+  assert.match(body, /three or more genuinely parallel points/);
+  assert.match(body, /The condition is the brief, not the field/);
+  assert.match(body, /Three is the shape/);
+  // §3 sits above "## 7. Writing Across Mediums", so parseVoice keeps it in
+  // preMedium and every asset gets it. A future edit that moves the section
+  // under a medium heading would silently scope the rule to one medium.
+  //
+  // Comments are stripped FIRST, exactly as loadGuide does it — the maintainer
+  // note at the top of craft.md quotes the mediums heading, so a raw indexOf
+  // finds that mention rather than the heading and reports §3 as being below it.
+  const served = craft.replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(served.indexOf('## 3. Body Copy') < served.indexOf('## 7. Writing Across Mediums'),
+    '§3 must stay in the universal block or the rule stops reaching every asset');
+
+  // The rule it must not be confused with is untouched. These constrain
+  // different things — how much the copy covers, and how it is laid out.
+  assert.match(body, /- One core message — don't list every feature/);
+
+  // --- the length clause leaves the middle open -----------------------------
+  const clause = new Function(`${gem.match(/^function lengthClause[\s\S]*?\n\}/m)[0]}\nreturn lengthClause;`)();
+  const w = clause(140, 'words', 50);
+  assert.match(w, /context in one or two sentences, the ask in one, the next step in one/,
+    'the frame is still prescribed — this half must not move');
+  assert.match(w, /and the material between them in whatever form carries it/,
+    'and the middle is explicitly left open');
+
+  // THE RULE LIVES IN ONE PLACE. A bullets instruction here would be a second
+  // wording for one rule, which is the review-overlay duplication CLAUDE.md
+  // names as the lesson not to repeat.
+  assert.ok(!/bullet/i.test(w), 'lengthClause states no bullets instruction');
+
+  // Character fields are untouched — this is every field but six.
+  assert.strictEqual(
+    clause(70, 'text', 0),
+    'Character limit: 70. Stay within this limit — write a COMPLETE, self-contained thought and finish it, ' +
+      'even a few characters short; never run up to the limit and get cut off mid-sentence.'
+  );
+  assert.ok(!/material between them/.test(clause(70, 'text', 0)), 'the reword is word-typed only');
+  assert.ok(!/material between them/.test(clause(60, 'text', 40)), 'including the floored character form');
+});
+
 test('word units: the client counts words, and the layout heuristic is not fooled', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   const grab = (n) => html.match(new RegExp(`^(\\s*)function ${n}\\([^)]*\\) \\{[\\s\\S]*?\\n\\1\\}`, 'm'))[0];

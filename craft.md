@@ -162,6 +162,62 @@ nothing where it does not.
 - End by pointing toward the action
 - In truncated formats (Meta primary text, LinkedIn intro), put everything that matters before the "see more" cutoff
 
+<!--
+  BULLETS — why this rule is here, and what it is NOT.
+
+  It is ADDITIVE. Before this, craft.md said nothing anywhere about bullets,
+  lists, line breaks or white space. The only near-miss was §2's "they are prose
+  and take normal sentence punctuation", which is a terminal-punctuation
+  exemption for body copy, not a format mandate — do not read it as one.
+
+  IT DOES NOT TOUCH "One core message — don't list every feature" ABOVE. That
+  rule constrains how many things the copy covers; this one constrains how
+  parallel material is laid out. A three-bullet body making ONE argument does
+  not violate it, and a running-prose body enumerating eight features still
+  does. If a future edit tries to reconcile them, they were never in conflict.
+
+  IT IS THE MECHANISM TWO asset_directions ALREADY ASSUME. One-Pager reads
+  "Scannable in 30 seconds. Problem, solution, proof, CTA. Nothing extra." and
+  Battle Card reads "Arm the rep, not the reader. Crisp, confident, scannable
+  under pressure." Both ask for scannable and neither says what scannable looks
+  like. Both are also null-routed by mediumKeywordsForAsset, so they receive all
+  eight medium sections and nothing tailored — this section is the whole of the
+  guidance they get on the point.
+
+  NO WORKED EXAMPLE, DELIBERATELY. See the FORM/FACT note at the top of this
+  file: a worked bullet set would be FACT-shaped (a named proof point, a figure)
+  and the measured behaviour of this file is that such examples are reproduced
+  as literal strings. There is no bullet set here for that reason.
+
+  The ONE concrete instance — "a nurture email with three proof points" — names
+  an ASSET and a COUNT, and the count is the same three the rule above states.
+  It asserts nothing a model could reproduce as a false claim, which is the test
+  the FORM/FACT note actually applies. It is here because a heading saying email
+  is the best case without saying what that looks like is the same gap One-Pager
+  and Battle Card already have — "scannable" with no mechanism behind it.
+-->
+
+**Bullets — when the brief supplies parallel points.** Where the brief gives
+three or more genuinely parallel points of value — features, proof points,
+differentiators, objections — set them as three bullets, not as prose.
+
+**The condition is the brief, not the field.** Length is not the trigger. One
+idea developed stays prose; forcing prose into a list to look scannable is worse
+than the prose was.
+
+**Three is the shape.** Two reads as an incomplete pair. Five or more becomes the
+wall of text with different punctuation.
+
+**Bullets do not exempt the rules above.** The first bullet still earns the
+second, each still carries concrete proof over adjectives, and the body still
+ends by pointing toward the action — the bullets are the middle of the case, not
+the whole of it.
+
+**Email is where this works best, not an exception.** A nurture email with three
+proof points is the strongest case for bullets anywhere in this playbook. The
+frame does not change: context in a sentence, the ask in a sentence, the next
+step in a sentence. The bullets are what the material between them becomes.
+
 **By medium:** see Section 7.
 
 -----

@@ -1850,11 +1850,25 @@ function lengthClause(charMax, fieldType, charMin) {
   const max = Number(charMax) > 0 ? Number(charMax) : null;
   if (!max) return null;
   const min = Number(charMin) > 0 && Number(charMin) < max ? Number(charMin) : null;
+  // THE FRAME IS PRESCRIBED; THE MIDDLE IS NOT. This clause used to end
+  // "…the ask in one, the next step in one." — which reads as a sentence for
+  // EVERY part of the email, the middle included. craft.md §3 now says the
+  // material between the frame becomes bullets when the brief supplies three or
+  // more parallel points, so the old wording had this clause quietly arguing
+  // against the playbook in the same prompt. That is the §1.4-versus-§2 shape
+  // CLAUDE.md records, where measured adoption of the losing rule was 0/12.
+  //
+  // The fix is subtractive: the frame still names a sentence each for context,
+  // ask and next step, and the middle is left to whatever form carries it. NO
+  // BULLETS INSTRUCTION BELONGS HERE — the rule lives in craft.md, reaches every
+  // asset through the universal block, and a second copy here would be two
+  // wordings for one rule. This clause only has to stop contradicting it.
   if (String(fieldType || '') === 'words') {
     const range = min ? `${min}-${max} words` : `up to ${max} words`;
     return (
       `Length: ${range}. This is a WORD count, not characters. Structure matters more than ` +
-      'hitting a number: context in one or two sentences, the ask in one, the next step in one. ' +
+      'hitting a number: context in one or two sentences, the ask in one, the next step in one, ' +
+      'and the material between them in whatever form carries it. ' +
       'A well-structured email at the top of the range beats a cramped one at the bottom.'
     );
   }

@@ -724,6 +724,37 @@ regular. Moving the date's source to the health check is the wrong fix and was
 declined: it would have to write, which destroys the read-only property its own
 test asserts, and a manual date is a worse date than a weekly one.
 
+### Getting the specs OUT: `scripts/exportActiveSpecs.js`
+
+Read-only. Dumps the active, human-verified tiered specs as CSV or JSON with a
+count summary — for comparing what we store against what a platform publishes.
+`--selftest` drives it on a stub with no DB and no network.
+
+Three things about it that a caller will otherwise get wrong, because the obvious
+reading of each is the wrong one:
+
+- **It reads `copy_fields`, not `spec_review_queue`.** There is no `spec_review`
+  table. The near-miss holds the detector's FLAGS — watch_id, old_hash, new_hash,
+  status — with no asset, no field, no limit and no tier, so a "spec export" built
+  from it is an export of hash diffs. A smoke test asserts the script never names
+  it.
+- **`platform` is DERIVED, and the derivation is imported.** There is no platform
+  column; it comes from the citation URL through `src/utils/specSource`. A test
+  asserts no local copy of that mapping — the one-implementation rule this file
+  states for `normalize()` applies here for the same reason.
+- **It exports the BASE `char_min`/`char_max`, not `COALESCE(override, base)`.**
+  Same call `specReview.currentValues` makes: an override is the tenant's own
+  number, and resolving it would put a house preference in a row labelled as
+  Meta's published limit. `overridden_by_tenants` counts them so nothing is
+  hidden.
+
+`copy_fields` is per tenant, so one spec is N rows. The default collapses them and
+reports `tenants`; two tenants holding DIFFERENT values do not collapse and are
+named under DIVERGENT. That split is computed from the collapsed set in both
+modes — under `--per-tenant` a test over the printed rows called every ordinary
+two-tenant spec a disagreement, which is the schema working correctly reported as
+a library-wide fault.
+
 ### OPEN QUESTION: are LinkedIn's nine `enforced` fields actually enforced?
 
 **This is a question with two live answers, not a correction waiting to be made.**

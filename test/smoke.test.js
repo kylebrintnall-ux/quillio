@@ -21655,3 +21655,77 @@ test('shared nav: onboarding and admin are deliberately NOT in it', () => {
   const admin = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
   assert.ok(!admin.includes('<nav'), 'admin has no nav to share');
 });
+
+// ─── scripts/exportActiveSpecs.js ───────────────────────────────────────────
+//
+// The script carries its own --selftest, which is the deep instrument. These are
+// the CI tripwires for the two properties that would break SILENTLY: the read-
+// only guarantee, and the platform mapping staying imported rather than copied.
+
+test('exportActiveSpecs: read-only by construction', () => {
+  // Asserted HERE as well as in the script's own selftest, deliberately. The
+  // selftest scans a region of its own file, so an edit that moved the anchors
+  // could weaken the scan and still report OK. This copy is in a different file
+  // and cannot be relaxed by editing the script.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'exportActiveSpecs.js'), 'utf8');
+  const body = sliceBetween(src, 'const SPEC_SQL', 'async function selftest(');
+  [/\bINSERT\s+INTO\b/i, /\bUPDATE\s+[a-z_]+\s+SET\b/i, /\bDELETE\s+FROM\b/i,
+    /\bDROP\s+TABLE\b/i, /\bALTER\s+TABLE\b/i, /\bCREATE\s+TABLE\b/i].forEach((re) => {
+    assert.ok(!re.test(body), `exportActiveSpecs must not ${re}`);
+  });
+  assert.match(body, /FROM copy_fields cf/, 'it reads the spec source of truth');
+  assert.ok(!/spec_review_queue/.test(body),
+    'the specs come from copy_fields, never from the detector flag queue');
+});
+
+test('exportActiveSpecs: the platform mapping is imported, never copied', () => {
+  // src/utils/specSource.js exists because a second copy of this mapping is how
+  // surfaces come to disagree about who published a limit. A local CASE
+  // expression or if-chain here would be that second copy.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'exportActiveSpecs.js'), 'utf8');
+  assert.match(src, /require\('\.\.\/src\/utils\/specSource'\)/);
+  const body = sliceBetween(src, 'const SPEC_SQL', 'async function selftest(');
+  ['linkedin', 'facebook', 'pinterest', 'constantcontact'].forEach((host) => {
+    assert.ok(!body.toLowerCase().includes(host),
+      `no local platform mapping: '${host}' must not appear outside the fixtures`);
+  });
+});
+
+test('exportActiveSpecs: the requested columns, the tier split, and the sentinel', async () => {
+  const mod = require('../scripts/exportActiveSpecs.js');
+  const rows = [
+    {
+      tenant_id: 'T1', asset_type: 'LinkedIn Carousel Ad', field_name: 'Intro Text',
+      spec_type: 'enforced', char_min: 0, char_max: 255, field_type: 'characters',
+      spec_source: 'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs',
+      last_verified_date: '2026-08-20', overridden: false,
+    },
+    {
+      tenant_id: 'T1', asset_type: 'Nurture Email', field_name: 'Subject Line 1',
+      spec_type: 'house_default', char_min: 0, char_max: 40, field_type: 'characters',
+      spec_source: 'quillio_default', last_verified_date: '2026-08-20', overridden: false,
+    },
+  ];
+  const pool = { query: async () => ({ rows }) };
+
+  const csv = await mod.buildExport(pool, { format: 'csv', allTiers: true });
+  const header = csv.text.split('\n').find((l) => l.indexOf('asset_type,') === 0);
+  assert.deepStrictEqual(mod.parseCsvLine(header).slice(0, 8), [
+    'asset_type', 'platform', 'field_name', 'enforced_value',
+    'recommended_value', 'spec_source', 'last_verified_date', 'spec_url',
+  ], 'the eight requested columns come first, in the requested order');
+
+  // The 'quillio_default' sentinel is never printed — specSourceName's rule, and
+  // the export must not route around it via the raw spec_source column.
+  assert.ok(!csv.text.includes('quillio_default'));
+
+  const li = csv.rows.find((r) => r.field_name === 'Intro Text');
+  assert.strictEqual(li.enforced_value, '255');
+  assert.strictEqual(li.recommended_value, '', 'exactly one tier column is populated');
+  assert.strictEqual(li.limit, '255 chars', 'the unit rides with the number');
+
+  // A house default has no platform, so no URL either.
+  const hd = csv.rows.find((r) => r.field_name === 'Subject Line 1');
+  assert.strictEqual(hd.platform, '');
+  assert.strictEqual(hd.spec_url, '');
+});

@@ -21729,3 +21729,109 @@ test('exportActiveSpecs: the requested columns, the tier split, and the sentinel
   assert.strictEqual(hd.platform, '');
   assert.strictEqual(hd.spec_url, '');
 });
+
+// ─── scripts/migrateFixGoogleDisplayAnchor.js ───────────────────────────────
+
+test('migrateFixGoogleDisplayAnchor: a digit-free loser is not accused of carrying digits', () => {
+  // REGRESSION TEST, and the bug it pins was live.
+  //
+  // rejectionReason() gated the digit branch on `c.digits` — an ARRAY, which is
+  // truthy even when empty. So every in-section candidate that lost on ranking
+  // was reported as "in-section and unique, but CONTAINS DIGITS ()", with an
+  // empty list, while the column beside it correctly printed "digit-free".
+  //
+  // A WRONG REASON THAT LOOKS LIKE A RESULT: nothing errors, the right anchor is
+  // still chosen, and the only casualty is the reader — who goes looking for a
+  // number that was never in the string. It is the species this whole file's
+  // slice-anchor preamble is about, arriving in an explanation rather than in a
+  // region.
+  //
+  // It survived every earlier run because the fixtures all carried numbers: the
+  // branch was right by accident until the first genuinely digit-free candidate
+  // went through it.
+  const mig = require('../scripts/migrateFixGoogleDisplayAnchor.js');
+
+  const LIMITS = ['25', '30', '90'];
+  const SECTION = {
+    name: 'the watched table',
+    from: 'Type Maximum length Quantity Required',
+    to: 'end of table',
+  };
+  // Two digit-free unique in-section phrases, one digit-bearing in-section
+  // phrase, and one digit-free phrase outside the span.
+  const page = 'Preamble here. Type Maximum length Quantity Required alpha beta gamma '
+    + 'delta epsilon zeta 30 characters end of table. Elsewhere on the page: a different '
+    + 'table entirely.';
+
+  const winner = { text: 'Type Maximum length Quantity Required', why: 'w' };
+  const loser = { text: 'alpha beta gamma delta', why: 'l' };
+  const dirty = { text: 'zeta 30 characters', why: 'd' };
+  const outside = { text: 'a different table entirely', why: 'o' };
+
+  const r = mig.chooseAnchor(page, [winner, loser, dirty, outside], LIMITS, SECTION);
+  const seen = (t) => r.seen.find((c) => c.text === t);
+
+  // The premise: the loser really is in-section, unique and digit-free, so the
+  // ONLY reason it can lose is ranking. If this drifts the assertion below stops
+  // meaning what it says.
+  assert.strictEqual(seen(loser.text).inSection, true, 'the loser is in-section');
+  assert.strictEqual(seen(loser.text).unique, true, 'the loser is unique');
+  assert.deepStrictEqual(seen(loser.text).digits, [], 'the loser contains no digits');
+  assert.deepStrictEqual(seen(loser.text).holds, [], 'and holds no stored limit');
+  assert.strictEqual(r.chosen.text, winner.text, 'the first eligible candidate wins');
+
+  // THE ASSERTION THIS TEST EXISTS FOR. Reverting `c.digits.length` to
+  // `c.digits` makes this line fail.
+  assert.match(seen(loser.text).reason, /ranked above it/,
+    'a digit-free in-section loser is told it was outranked');
+  assert.ok(!/digit/i.test(seen(loser.text).reason),
+    'and its reason does NOT mention digits it does not have');
+
+  // THE OTHER SIDE OF THE BOUNDARY, and it is not optional. Without it, deleting
+  // the digit branch outright would pass the assertion above — the same
+  // two-sided discipline PER_REQUEST_TOKEN_MIN_DIGITS is tested with.
+  assert.match(seen(dirty.text).reason, /CONTAINS DIGITS \(30\)/,
+    'a candidate that DOES carry a digit still says so, and names it');
+  assert.match(seen(dirty.text).reason, /stored limit\(s\) 30/,
+    'and names it as one of ours when it is');
+
+  // Unrelated losers keep their own reasons — the digit branch must not swallow
+  // the section rule on its way past.
+  assert.match(seen(outside.text).reason, /OUT OF SECTION/,
+    'an out-of-section candidate is refused on that ground, not on digits');
+});
+
+test('migrateFixGoogleDisplayAnchor: digit-free is a PRECONDITION of eligibility', () => {
+  // The deliberate divergence from migrateFixXAnchor, asserted so it cannot be
+  // "fixed" back into the looser rule by someone copying that file. There, a
+  // digit-bearing in-section candidate is eligible so option 2 can be considered
+  // and then refused with its cost stated. Here it is never eligible at all.
+  const mig = require('../scripts/migrateFixGoogleDisplayAnchor.js');
+  const SECTION = { name: 's', from: 'Type Maximum length', to: 'end of table' };
+  const page = 'Type Maximum length zeta 30 characters end of table';
+  const r = mig.chooseAnchor(page, [{ text: 'zeta 30 characters', why: 'd' }], ['30'], SECTION);
+  assert.strictEqual(r.chosen, null,
+    'the only in-section candidate carries a digit, so nothing is eligible');
+  assert.strictEqual(r.tier, null, 'and no tier is claimed');
+  assert.strictEqual(r.seen[0].eligible, false);
+});
+
+test('migrateFixGoogleDisplayAnchor: the header evidence gate is satisfied by the shipped constants', () => {
+  // The file shipped with QUOTES/SECTION empty and refused to write. They are
+  // filled now, from an operator's --discover run. This asserts the three
+  // structural properties requireHeaderEvidence() checks, so a future edit that
+  // rewords a quote without moving the markers fails here rather than at 3am in
+  // the Railway console.
+  const mig = require('../scripts/migrateFixGoogleDisplayAnchor.js');
+  assert.deepStrictEqual(mig.requireHeaderEvidence(), { ok: true });
+  assert.ok(mig.QUOTES.length > 0, 'there is a quoted reading of the page');
+  for (const marker of [mig.SECTION.from, mig.SECTION.to]) {
+    assert.ok(mig.QUOTES.some((q) => q.includes(marker)),
+      `the section marker ${JSON.stringify(marker.slice(0, 34))} comes from quoted text`);
+  }
+  // Every candidate that could be CHOSEN must be digit-free — the refused-by-
+  // design incumbent is exempt because it can never be selected.
+  for (const c of mig.CANDIDATES.filter((x) => !x.refusedByDesign)) {
+    assert.ok(!mig.hasDigit(c.text), `candidate is digit-free: ${JSON.stringify(c.text)}`);
+  }
+});

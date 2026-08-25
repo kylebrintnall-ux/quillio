@@ -49,35 +49,63 @@
 //    the honest first move is to go and look, and "this page cannot be anchored
 //    well" is a result this run is allowed to return. See the REFUSAL section.
 //
-// ─── THE PAGE TEXT — UNFILLED, AND THIS FILE REFUSES TO WRITE UNTIL IT IS ───
+// ─── THE PAGE TEXT, AND WHERE IT CAME FROM ──────────────────────────────────
 // ┌──────────────────────────────────────────────────────────────────────────┐
-// │ QUOTES and SECTION below are EMPTY. That is deliberate and it is the      │
-// │ single most important thing about this file.                             │
+// │ READ THIS BEFORE TRUSTING THE QUOTE BELOW.                               │
 // │                                                                          │
-// │ The session that authored it could not reach support.google.com — the     │
-// │ egress proxy answers 403 to CONNECT — and no operator supplied the page   │
-// │ text either. So there is NO reading of this page behind this file, by     │
-// │ anyone.                                                                  │
+// │ The session that AUTHORED this file could not reach support.google.com —  │
+// │ the egress proxy answers 403 to CONNECT. It therefore shipped with        │
+// │ QUOTES and SECTION empty, refusing to write, rather than with invented    │
+// │ text. That refusal is what produced the reading below.                    │
 // │                                                                          │
-// │ CLAUDE.md's most expensive rule is that a spec change quotes the page it  │
-// │ fetched, in the same change, so the next reader can check the claim       │
-// │ without leaving the file. scripts/migrateSpecIntegrityFixes.js is what    │
-// │ happens when that rule is skipped: every cell in it was a REASONED        │
-// │ number, internally consistent, peer-reviewable, and wrong, because not    │
-// │ one was READ. Writing plausible Google help-page sentences into this      │
-// │ header would be that failure exactly, with a fresh coat on.               │
+// │ The text now in QUOTES was SUPPLIED BY THE OPERATOR from their own        │
+// │ `--discover` run against the live page, and is NOT a fetch performed by   │
+// │ the author of this file. That is weaker provenance than                   │
+// │ scripts/migrateFixMetaImageAnchor.js's, where both pages were read        │
+// │ through a probe in the same session, and it is the same provenance        │
+// │ scripts/migrateFixXAnchor.js carries for the same reason.                │
 // │                                                                          │
-// │ An anchor is not a spec value, but it is a claim about what is on a page, │
-// │ and it fails the same way: silently, in the reassuring direction.         │
+// │ WHAT CLOSES THE GAP: readPage() FETCHES THE PAGE AND ASSERTS EVERY QUOTE  │
+// │ BEFORE ANYTHING IS WRITTEN, and the write path calls the same function.   │
+// │ If a sentence is not on the page, or the section markers are not          │
+// │ adjacent and in order, this refuses and writes nothing. The quote is a    │
+// │ claim this file CHECKS, never a claim it MAKES.                          │
 // │                                                                          │
-// │ So the header carries no quote rather than an invented one, and           │
-// │ requireHeaderEvidence() below turns that absence into a refusal instead   │
-// │ of a default.                                                            │
+// │ Why that distinction is the whole game: CLAUDE.md's most expensive rule   │
+// │ is that a spec change quotes the page it fetched, in the same change.     │
+// │ scripts/migrateSpecIntegrityFixes.js is what happens when it is skipped — │
+// │ every cell in it was a REASONED number, internally consistent,            │
+// │ peer-reviewable, and wrong, because not one was READ. An anchor is not a  │
+// │ spec value, but it is a claim about what is on a page, and it fails the   │
+// │ same way: silently, in the reassuring direction.                         │
 // └──────────────────────────────────────────────────────────────────────────┘
 //
-// TO FILL IT IN — this is the whole workflow, and step 1 is a real step:
+// THE TEXT-ASSET BLOCK, verbatim as supplied, normalized offsets 2615–2851:
 //
-//   1.  node scripts/migrateFixGoogleDisplayAnchor.js --discover
+//   "Type Maximum length Quantity Required Headlines 30 characters 1-5
+//    headlines ✓ Long headline 90 characters 1 headline ✓ Descriptions 90
+//    characters 1-5 descriptions ✓ Business name 25 characters 1 name ✓ Call
+//    to action Automated 1 call to action ✓ Image asset specifications"
+//
+// This is the table that holds ALL FOUR of this row's stored limits — Business
+// name 25, Descriptions 90, Long headline 90, Headlines 30 — which is what makes
+// it the section this row's fields come from rather than merely a section of the
+// page.
+//
+// A NOTE ON THE ✓ (U+2713), because it is load-bearing for SECTION.to and is
+// the one fragility in this choice. normalize() strips tags and collapses
+// whitespace; it does NOT decode HTML entities. So the glyph is in the hashed
+// text only because Google serves it as a literal character rather than as
+// `&#10003;`. If they ever switch to the entity form, SECTION.to stops matching,
+// the span fails to locate, and this REFUSES — which is the correct direction to
+// fail, and is why it is recorded rather than worked around. Candidate 1 carries
+// no ✓ and is unaffected.
+//
+// HOW THE HEADER WAS FILLED — steps 1 and 2 are DONE; 3 onward remain.
+// The workflow is kept in full because it is also the repair procedure if the
+// page is ever restructured and this file has to be re-derived.
+//
+//   1.  node scripts/migrateFixGoogleDisplayAnchor.js --discover        [DONE]
 //       Fetches the page through the DETECTOR'S OWN fetchText + hashableText,
 //       twice, and dumps: the full hashed text in offset-labelled chunks, every
 //       occurrence of the old anchor, where each stored limit appears, and every
@@ -85,7 +113,7 @@
 //       offset and percentage into the document. Writes nothing and needs no
 //       section, because at that point there is no section to have.
 //
-//   2.  READ THE DUMP. Identify the responsive-display block — the one
+//   2.  READ THE DUMP. Identify the responsive-display block — the one         [DONE]
 //       publishing Business Name 25, Description 90, Long Headline 90, Short
 //       Headline 30. Paste the sentences that bound it into QUOTES, set
 //       SECTION.from/.to to substrings of those sentences, and put the phrases
@@ -129,11 +157,35 @@
 // This file refuses a candidate containing ANY DIGIT AT ALL, which strictly
 // subsumes that, and the extra width is doing real work on this page:
 //
-//   • answer/17090561 is an ads-specs page, so it carries pixel dimensions,
-//     aspect ratios, file-size caps and image counts. A run like "1200" or
-//     "1.91" is not a stored limit today, so a stored-limit test passes it —
-//     and Google revising a recommended image width would then report `failed`,
-//     a broken-page alarm for an event that is not a broken page.
+//   • MEASURED, and this is the strongest evidence for the rule because it is
+//     an OBSERVATION rather than an argument. The `--discover` run reports the
+//     value 30 occurring EIGHT TIMES on this page — and one of those eight is
+//     inside the article id 73067 in the footer ("730 67" → the substring "30"
+//     falls across it). That hit is page furniture. It is not a spec, it is not
+//     in any table, and it would move if Google renumbered an article.
+//
+//     Two things follow, and both are load-bearing:
+//
+//       (a) the `holds` test is a SUBSTRING test (`c.text.includes(v)`), the
+//           same shape as `count()`, so it cannot tell "the limit 30" from "the
+//           digits 3 and 0 inside an unrelated number". Any digit-bearing
+//           candidate inherits that ambiguity.
+//       (b) 73067 is FIVE digits, so PER_REQUEST_TOKEN (12+) does not remove it
+//           — CLAUDE.md names this exact run as the stable five-digit sequence
+//           the zwieback strip must not eat. It is in the hashed text and will
+//           stay there.
+//
+//     So on this page a numeric anchor is not merely risky in principle; there
+//     is a concrete, currently-present digit run that a stored-limit test reads
+//     as one of our own limits. Digit-free removes the question.
+//
+//   • Secondarily, and this was the original argument: answer/17090561 is an
+//     ads-specs page carrying pixel dimensions, aspect ratios and file-size
+//     caps. "1200" is not a stored limit today, so a stored-limit test passes
+//     it — and Google revising a recommended image width would then report
+//     `failed`, a broken-page alarm for an event that is not a broken page.
+//     True, but weaker than the 73067 observation, because it is a prediction
+//     about a future edit rather than a fact about the page as it stands.
 //   • help.google.com pages carry "Last updated" style furniture and article
 //     ids. A date in an anchor guarantees a false failure on a schedule.
 //   • normalize() deletes every run of 12+ digits (the zwieback strip), so a
@@ -232,20 +284,28 @@ const URL = 'https://support.google.com/google-ads/answer/17090561';
 const DISPLAY = 'Google – responsive display';
 const OLD_ANCHOR = 'Responsive display ads';
 
-// ─── UNFILLED. See the boxed note in the header. ────────────────────────────
+// ─── FILLED FROM AN OPERATOR'S --discover RUN. See the boxed note above. ────
 //
 // Every sentence this file quotes, asserted against the fetched page before
-// anything is written. Fill from --discover output, verbatim, including
-// punctuation and spacing as normalize() leaves it.
-const QUOTES = [];
+// anything is written. VERBATIM from the normalized text, offsets 2615–2851 —
+// not paraphrased, not re-spaced, and carrying the ✓ (U+2713) exactly as the
+// page serves it. readPage() will refuse if any character of this drifts.
+const QUOTES = [
+  'Type Maximum length Quantity Required Headlines 30 characters 1-5 headlines ✓ Long headline 90 characters 1 headline ✓ Descriptions 90 characters 1-5 descriptions ✓ Business name 25 characters 1 name ✓ Call to action Automated 1 call to action ✓ Image asset specifications',
+];
 
 // THE SECTION, declared. Both markers MUST be substrings of QUOTES above —
 // asserted by requireHeaderEvidence(), not trusted.
 //
-//   { name: 'Responsive display ads — the text-asset table this row stores',
-//     from: '<substring of a QUOTE that opens the block>',
-//     to:   '<substring of a QUOTE that closes it>' }
-const SECTION = null;
+// `from` is the text-asset table's column header; `to` is the last cell of its
+// final row running into the heading of the NEXT table. So the span is the whole
+// text-asset table and nothing else — it opens where the table opens and closes
+// at the boundary out of it.
+const SECTION = {
+  name: 'Responsive display ads — the text-asset table this row stores',
+  from: 'Type Maximum length Quantity Required',
+  to: 'call to action ✓ Image asset specifications',
+};
 
 // CANDIDATES IN PREFERENCE ORDER, filled from --discover.
 //
@@ -254,6 +314,28 @@ const SECTION = null;
 // It is NOT eligible: `refusedByDesign` bars it from ever being chosen even if
 // the page changed such that it became unique and in-section.
 const CANDIDATES = [
+  {
+    text: 'Type Maximum length Quantity Required',
+    why: 'PREFERRED. The column header of the TEXT-ASSET table — the table holding all four of '
+      + 'this row\'s stored limits (Business name 25, Descriptions 90, Long headline 90, '
+      + 'Headlines 30). 1x at offset 2615 (51.7%), digit-free.\n'
+      + '      WHY IT DISCRIMINATES, which is the property that matters and is not obvious from '
+      + 'the string: the page\'s other two tables use DIFFERENT headers — "Ratio Recommended size '
+      + 'Quantity Required" for image assets and "Ratio Recommended length Quantity Required" for '
+      + 'video. So this phrase is specific to the TEXT block, not merely unique on the page. A '
+      + 'restructure that drops the text-asset table takes this with it, which is exactly what a '
+      + 'watch row for these four fields should assert.',
+  },
+  {
+    text: 'call to action ✓ Image asset specifications',
+    why: 'FALLBACK ONLY. 1x at offset 2851 (56.4%), digit-free, and it marks the boundary OUT of '
+      + 'the text table into the image table.\n'
+      + '      WEAKER THAN CANDIDATE 1, and the reason is stated rather than left implicit: it '
+      + 'would SURVIVE the four spec rows being removed, so long as the Call to action row and '
+      + 'the Image heading remained. It asserts that the seam between two tables rendered, not '
+      + 'that the rows this row stores did. Ranked second on that basis, not on cleanliness — '
+      + 'both are equally digit-free and equally unique.',
+  },
   {
     text: OLD_ANCHOR,
     refusedByDesign: true,
@@ -317,7 +399,14 @@ function rejectionReason(c, span, chosen) {
         + 'that the watched section did'
       : 'OUT OF SECTION';
   }
-  if (c.digits) {
+  // `c.digits.length`, NOT `c.digits` — an empty array is TRUTHY, so the bare
+  // object test fired on every in-section candidate and reported a digit-free
+  // string as "CONTAINS DIGITS ()" with an empty list. Caught by driving the
+  // real candidates through this function: the digit-free fallback was rejected
+  // for carrying numbers it does not have, while the column beside it correctly
+  // read "digit-free". A wrong reason that looks like a result — the reader
+  // would have gone looking for a number that was never there.
+  if (c.digits.length) {
     return `in-section and unique, but CONTAINS DIGITS (${c.digits.join(', ')})`
       + `${c.holds.length ? ` including stored limit(s) ${c.holds.join(', ')}` : ''}`
       + ' — a number in an anchor turns a spec revision into a broken-page report';

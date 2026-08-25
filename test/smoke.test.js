@@ -21835,3 +21835,111 @@ test('migrateFixGoogleDisplayAnchor: the header evidence gate is satisfied by th
     assert.ok(!mig.hasDigit(c.text), `candidate is digit-free: ${JSON.stringify(c.text)}`);
   }
 });
+
+// ─── scripts/migrateFixLinkedInSingleImageAnchor.js ─────────────────────────
+
+test('migrateFixLinkedInSingleImageAnchor: a digit-free loser is not accused of carrying digits', () => {
+  // SAME SHAPE AS THE GOOGLE DISPLAY TEST, and duplicated rather than shared on
+  // purpose: the two migrations have separate copies of rejectionReason, so one
+  // test over one of them proves nothing about the other. If a third anchor
+  // migration lands, that is the moment to extract the selector into a shared
+  // module and collapse these — not before.
+  //
+  // The bug being pinned: gating the digit branch on `c.digits` (an array, truthy
+  // even when empty) reports every in-section candidate that loses on RANKING as
+  // "CONTAINS DIGITS ()" with an empty list.
+  const mig = require('../scripts/migrateFixLinkedInSingleImageAnchor.js');
+
+  const LIMITS = ['70', '150'];
+  const SECTION = {
+    name: 'the text-recommendations block',
+    from: 'Text Recommendations',
+    to: 'ends the block',
+  };
+  const page = 'A long page about LinkedIn advertising. Text Recommendations alpha beta gamma '
+    + 'delta epsilon Headline: 70 characters and more ends the block. Later, in a section this '
+    + 'row stores nothing from: a wholly different topic.';
+
+  const winner = { text: 'Text Recommendations alpha beta', why: 'w' };
+  const loser = { text: 'gamma delta epsilon', why: 'l' };
+  const dirty = { text: 'Headline: 70 characters', why: 'd' };
+  const outside = { text: 'a wholly different topic', why: 'o' };
+
+  const r = mig.chooseAnchor(page, [winner, loser, dirty, outside], LIMITS, SECTION);
+  const seen = (t) => r.seen.find((c) => c.text === t);
+
+  // The premise, asserted so the real assertion keeps meaning what it says.
+  assert.strictEqual(seen(loser.text).inSection, true, 'the loser is in-section');
+  assert.strictEqual(seen(loser.text).unique, true, 'the loser is unique');
+  assert.deepStrictEqual(seen(loser.text).digits, [], 'the loser contains no digits');
+  assert.deepStrictEqual(seen(loser.text).holds, [], 'and holds no stored limit');
+  assert.strictEqual(r.chosen.text, winner.text, 'the first eligible candidate wins');
+
+  // THE ASSERTION THIS TEST EXISTS FOR. Reverting `c.digits.length` to
+  // `c.digits` makes this line fail.
+  assert.match(seen(loser.text).reason, /ranked above it/,
+    'a digit-free in-section loser is told it was outranked');
+  assert.ok(!/digit/i.test(seen(loser.text).reason),
+    'and its reason does NOT mention digits it does not have');
+
+  // THE POSITIVE CONTROL. Without it, deleting the digit branch outright would
+  // satisfy the assertion above and pass.
+  assert.match(seen(dirty.text).reason, /CONTAINS DIGITS \(70\)/,
+    'a candidate that DOES carry a digit still says so, and names it');
+  assert.match(seen(dirty.text).reason, /stored limit\(s\) 70/,
+    'and names it as one of ours when it is');
+
+  // The digit branch must not swallow the section rule on its way past.
+  assert.match(seen(outside.text).reason, /OUT OF SECTION/,
+    'an out-of-section candidate is refused on that ground, not on digits');
+});
+
+test('migrateFixLinkedInSingleImageAnchor: 255 is refused even though the row does not store it', () => {
+  // THE CASE THE DIGIT-FREE RULE EXISTS FOR ON THIS PAGE. LinkedIn's
+  // text-recommendations block carries "Ad name (optional): 255 characters".
+  // 255 is not one of this row's limits, so a stored-limit test — X's rule —
+  // PASSES a candidate holding it, and a LinkedIn revision to the ad-name cap
+  // would then report `failed` for an event none of these three fields care
+  // about. Digit-free excludes it without enumerating whose numbers are whose.
+  const mig = require('../scripts/migrateFixLinkedInSingleImageAnchor.js');
+  const SECTION = { name: 's', from: 'Text Recommendations', to: 'ends the block' };
+  const page = 'Text Recommendations Ad name (optional): 255 characters ends the block';
+  const cand = { text: 'Ad name (optional): 255 characters', why: 'd' };
+
+  const r = mig.chooseAnchor(page, [cand], ['70', '150'], SECTION);
+  const c = r.seen[0];
+  assert.strictEqual(c.inSection, true, 'it really is inside the watched block');
+  assert.strictEqual(c.unique, true, 'and unique');
+  assert.deepStrictEqual(c.holds, [], 'and holds NO stored limit — X\'s rule would take it');
+  assert.strictEqual(r.chosen, null, 'and it is refused anyway, on the digit rule');
+  assert.match(c.reason, /CONTAINS DIGITS \(255\)/, 'naming the number that disqualified it');
+  assert.ok(!/stored limit/.test(c.reason),
+    'and NOT claiming it is one of ours, because it is not');
+});
+
+test('migrateFixLinkedInSingleImageAnchor: ships refusing, and --window parses', () => {
+  const mig = require('../scripts/migrateFixLinkedInSingleImageAnchor.js');
+
+  // It must ship unfilled and refusing — the operator supplies the page text.
+  const gate = mig.requireHeaderEvidence();
+  assert.strictEqual(gate.ok, false, 'the file refuses until QUOTES is filled');
+  assert.match(gate.why, /QUOTES is empty/);
+  assert.match(gate.why, /--discover/, 'and names the command that fills it');
+  assert.deepStrictEqual(mig.QUOTES, [], 'no inherited quote is passed off as a reading');
+  assert.strictEqual(mig.SECTION, null);
+  assert.strictEqual(mig.CANDIDATES.filter((c) => !c.refusedByDesign).length, 0,
+    'and the only candidate is the incumbent, refused by design');
+
+  // --window is parsed once, so a bad value is a refusal rather than a NaN that
+  // silently selects nothing. Driven by rewriting argv around the export.
+  const withArgv = (arg, fn) => {
+    const saved = process.argv;
+    process.argv = ['node', 'x', arg];
+    try { return fn(); } finally { process.argv = saved; }
+  };
+  assert.deepStrictEqual(withArgv('--window=100-200', mig.parseWindow), { start: 100, end: 200 });
+  assert.deepStrictEqual(withArgv('--window=200-100', mig.parseWindow), { bad: '--window=200-100' },
+    'an inverted range is rejected, not silently empty');
+  assert.deepStrictEqual(withArgv('--window=abc', mig.parseWindow), { bad: '--window=abc' });
+  assert.strictEqual(withArgv('--verify', mig.parseWindow), null, 'absent is null');
+});

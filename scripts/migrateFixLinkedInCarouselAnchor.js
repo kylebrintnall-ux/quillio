@@ -1,0 +1,1114 @@
+'use strict';
+
+// August 2026 — replace the anchor on the LinkedIn – carousel watch row with one
+// scoped to the section its fields actually come from.
+//
+// Follows scripts/migrateFixLinkedInSingleImageAnchor.js exactly: same ranking,
+// same refusal discipline, the same unnest-of-two-arrays limit resolution, the
+// same inTxn flag, --window on --discover, and DIGIT-FREE as a precondition of
+// eligibility rather than X's looser "holds no stored limit" rule. That file is
+// the closest precedent — same platform, same CMS, adjacent page — and its
+// reasoning is not repeated except where this row differs.
+//
+// ─── THE ROW ────────────────────────────────────────────────────────────────
+//   business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs
+//   anchored on "Card headline", which reads 2x
+//   six pairs in affected_fields; limits 45 (the five card headlines) and
+//   255 (intro text)
+//   ~20,838 normalized characters
+//
+// ─── THE OPEN QUESTION — THIS FILE DOES NOT PRESUME THE ANSWER ──────────────
+//
+// A 2x anchor LOOKS like the X / Meta defect: one occurrence in the watched
+// table, one elsewhere, so dropping the table leaves the other match and a
+// healthy-looking row. THAT IS NOT WHAT IT MEANT ON THE SIBLING PAGE.
+//
+// Established while fixing the single-image row: LinkedIn's CMS emits every
+// content block TWICE in the normalized text — once as ESCAPED HTML SOURCE
+// (`&lt;b>`, `&amp;nbsp;`) and once as RENDERED PLAIN TEXT. normalize() strips
+// real tags, but escaped source is literal characters and survives, so the whole
+// table appears twice over. There it fully explained the 2x and BOTH occurrences
+// were inside the watched table. The multiplicity was an artifact of the CMS.
+//
+// SAME PLATFORM, SAME CMS, ADJACENT PAGE — so the same artifact is the most
+// likely explanation here. IT IS NOT ASSUMED, and writing the header either way
+// before measuring is precisely the failure the single-image file records: it
+// shipped claiming the Meta defect, --discover falsified it, and the claim had
+// been plausible, internally consistent and wrong.
+//
+// SO THIS FILE MEASURES IT. --discover prints both offsets and says outright it
+// CANNOT judge in-section, because no section has been declared at that point.
+// --verify, once a span exists, prints a per-occurrence verdict:
+//
+//     IS THE 2x A CMS ARTIFACT, OR A REAL DEFECT?
+//        @  8322 ( 39.9%)  IN-SECTION
+//        @  8472 ( 40.6%)  IN-SECTION
+//        => ALL IN-SECTION. …
+//
+// BRANCH A — BOTH IN-SECTION (expected). The multiplicity case evaporates: drop
+// the table and both occurrences go with it, so the old anchor DOES assert that
+// the watched section rendered. It is not the Meta failure mode.
+//
+//   WHAT REMAINS IS THE SMALLER ARGUMENT, identical to the single-image row's.
+//   "Card headline" is a FIELD LABEL of a watched field — five of this row's six
+//   pairs ARE card headlines. That couples the anchor to the thing being
+//   watched, the digit-free rule's defect arriving as a LABEL rather than a
+//   NUMBER:
+//
+//     • LinkedIn renames the row "Card headline" -> "Card title", limits
+//       unchanged: the anchor reports `failed`, a broken-page alarm for a
+//       cosmetic edit.
+//     • LinkedIn drops or merges that row — which IS a spec change we want
+//       queued as `changed`: the anchor reports `failed` instead, so a real
+//       spec event arrives dressed as a broken page.
+//
+//   THAT IS A DECOUPLING, NOT A DEFECT FIX, AND THE ROW IS NOT BLIND. Say it
+//   plainly when deciding whether to run this: nothing is currently broken, and
+//   the change buys one thing — an anchor that is not itself one of the strings
+//   whose movement it exists to report.
+//
+// BRANCH B — ONE OUT OF SECTION. Then it IS a real defect, of the Meta "Primary
+// Text" shape: the row can report healthy while watching a page that no longer
+// publishes its numbers. The change becomes urgent rather than optional.
+//
+// WHOEVER RUNS THIS: --verify names the branch and tells you to rewrite this
+// section and the incumbent's `why` in CANDIDATES to match. Do that.
+//
+// ─── 255 IS A STORED LIMIT HERE, WHICH IT WAS NOT ON THE SIBLING PAGE ───────
+// Worth its own note, because the single-image file discusses 255 at length and
+// means something different by it.
+//
+//   single-image page   "Ad name (optional): 255 characters" — the AD-NAME cap,
+//                       which that row does NOT store. A stored-limit test
+//                       therefore PASSES a candidate holding it, and only the
+//                       digit-free rule refuses it. That was the concrete case
+//                       for the wider rule.
+//
+//   THIS page           255 IS one of this row's limits (intro text). So a
+//                       candidate containing it is refused TWICE OVER, by two
+//                       independent rules, for two different reasons:
+//                         - the digit rule, because it contains a digit at all;
+//                         - the stored-limit rule, because that digit is ours.
+//
+// The run prints both facts — `digits 255` in the column and `holds STORED
+// limit(s): 255` on its own line — rather than collapsing them into one refusal.
+// They are different findings and a reader should see each.
+//
+// The practical consequence is the same either way: do not anchor on it. A
+// revision to the intro-text cap is exactly the event this row exists to report,
+// and an anchor holding 255 converts that from `changed` into `failed` — the one
+// failure mode that teaches a reviewer to dismiss the queue.
+//
+// ─── THE PAGE IS BIG, SO IN-SECTION DOES THE WORK ──────────────────────────
+// ~20,838 normalized characters. As on the single-image page, digit-free unique
+// candidates will be PLENTIFUL and most unique BY ACCIDENT rather than by
+// belonging to the section holding these fields. Uniqueness is close to free at
+// this size; the in-section test is nearly the whole decision.
+//
+// Hence, implemented rather than left as advice: --discover reports the
+// candidate COUNT and warns above 60, takes --window=START-END to narrow the
+// dump and the list, prints the tightest cluster of stored-limit occurrences
+// with the exact --window command for that region, and reports offset AND
+// percentage for every candidate at both discover and verify time.
+//
+// ─── SOLE WITNESS — EXPECT AN UNAMBIGUOUS ANSWER, UNLIKE THE SIBLING ───────
+// Recomputed live every run; nothing here is trusted for it. The expected shape
+// differs from the single-image row's in a way worth flagging, because that
+// row's output is misleading and this one's should not be:
+//
+//   single-image   70 is also on X's page and 150 on facebook-feed, so the run
+//                  reports "other watched rows would also report a move on this
+//                  VALUE" — which reads as reassurance and is false: a different
+//                  platform publishing the same integer is a coincidence, not a
+//                  second instrument.
+//
+//   THIS row       45 and 255 are believed to be stored ONLY by this page's own
+//                  fields. If so the run says SOLE WITNESS outright for both,
+//                  with no caveat needed.
+//
+// A PREDICTION TO BE CHECKED, not a fact — that is what the live query is for.
+//
+// ─── WHAT IT DOES NOT TOUCH ─────────────────────────────────────────────────
+// expected_content, and nothing else. NOT current_hash, NOT affected_fields, NOT
+// content_stop_marker, NOT source_kind, NOT spec_source. The hashed content is
+// unaffected by an anchor swap, so the row must not re-baseline: a cleared hash
+// takes the next run down the baseline branch, where it writes a hash and CANNOT
+// flag, and a real spec change landing that week would be silently absorbed.
+//
+// The next detection run must report `unchanged`, NOT `baseline`.
+//
+// ─── THIS ROW'S HISTORY ─────────────────────────────────────────────────────
+// Created by scripts/migrateAddLinkedInCarouselWatch.js to close a real gap: six
+// enforced fields had been repointed to this page by migrateSpecIntegrityFixes
+// and NOTHING watched it for about a month. That migration measured the page
+// STABLE across two fetches and deliberately left content_stop_marker NULL. Its
+// anchor choice was made before the in-section rule existed — the same position
+// the single-image and Google display rows were in.
+//
+// ─── THE PAGE TEXT — UNFILLED, AND THIS FILE REFUSES TO WRITE UNTIL IT IS ───
+// ┌──────────────────────────────────────────────────────────────────────────┐
+// │ QUOTES and SECTION below are EMPTY. That is deliberate and it is the      │
+// │ single most important thing about this file.                             │
+// │                                                                          │
+// │ The session that authored it could not reach business.linkedin.com — the  │
+// │ egress proxy answers 403 to CONNECT — and no operator has supplied the    │
+// │ page text yet. So there is NO reading of this page behind this file.      │
+// │                                                                          │
+// │ It also means THE OPEN QUESTION above is genuinely open. The single-image │
+// │ finding makes one branch far more likely; it does not make it true of     │
+// │ this page, and the two pages are not the same document.                   │
+// │                                                                          │
+// │ CLAUDE.md's most expensive rule is that a spec change quotes the page it  │
+// │ fetched, in the same change. scripts/migrateSpecIntegrityFixes.js is what │
+// │ happens when it is skipped: every cell was a REASONED number, internally  │
+// │ consistent, peer-reviewable, and wrong, because not one was READ.         │
+// │                                                                          │
+// │ requireHeaderEvidence() turns that absence into a refusal, not a default. │
+// └──────────────────────────────────────────────────────────────────────────┘
+//
+// TO FILL IT IN:
+//
+//   1.  node scripts/migrateFixLinkedInCarouselAnchor.js --discover
+//       Fetches through the DETECTOR'S OWN fetchText + hashableText, twice, and
+//       dumps the hashed text in offset-labelled chunks, both offsets of the old
+//       anchor, where each stored limit appears, and every digit-free phrase
+//       occurring exactly once — each with offset and percentage.
+//
+//       On a page this size, start from where 45 and 255 appear close together.
+//       That cluster is the table; the run prints the --window command for it.
+//
+//   2.  READ THE DUMP. Identify the block publishing Card headline 45 and
+//       Introductory text 255. Paste the sentences bounding it into QUOTES, set
+//       SECTION.from/.to to substrings of those sentences, and put the phrases
+//       you are willing to anchor on into CANDIDATES with a `why` each.
+//
+//   3.  node scripts/migrateFixLinkedInCarouselAnchor.js --verify
+//       Re-fetches, asserts every quote, locates the span, prints the
+//       in-section verdict for the old anchor, and ranks the candidates.
+//
+//   4.  node scripts/migrateFixLinkedInCarouselAnchor.js             # dry run
+//   5.  node scripts/migrateFixLinkedInCarouselAnchor.js --commit
+//
+// Steps 3-5 all re-fetch and re-assert. The quote is a claim this file CHECKS,
+// never a claim it makes.
+//
+// ─── WHAT MAKES THIS REFUSE ─────────────────────────────────────────────────
+//   • QUOTES is empty, or SECTION is unset            (the unfilled-header case)
+//   • a SECTION marker is not a substring of any quote
+//   • CANDIDATES contains nothing but the recorded old anchor
+//   • the target row is not found, or more than one row matches
+//   • the page cannot be fetched — a run with no network is a refusal
+//   • the two fetches disagree — it needs a stop marker, not an anchor
+//   • any quoted sentence is absent from the page
+//   • the section markers are not locatable, or are out of order
+//   • no in-section candidate is unique
+//   • every eligible candidate contains a digit
+//   • affected_fields is empty, or its pairs resolve to no ACTIVE copy_fields
+//
+// A REFUSAL IS A RESULT. If this page cannot carry a clean in-section anchor,
+// the correct outcome is to know that — not to install a mediocre one quietly.
+//
+// Run in the Railway console as plain node — never `railway run`.
+
+const TAG = '[linkedin-carousel-anchor]';
+const COMMIT = process.argv.includes('--commit');
+const VERIFY = process.argv.includes('--verify');
+const DISCOVER = process.argv.includes('--discover');
+
+const URL = 'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs';
+const DISPLAY = 'LinkedIn – carousel';
+const OLD_ANCHOR = 'Card headline';
+
+// --window=START-END narrows --discover's dump and candidate list to a character
+// range. Exists because of the page size — see the header. Parsed once, here, so
+// an unparseable value is a null rather than a NaN that silently selects nothing.
+function parseWindow() {
+  const hit = process.argv.find((a) => a.startsWith('--window='));
+  if (!hit) return null;
+  const m = /^(\d+)-(\d+)$/.exec(hit.slice('--window='.length).trim());
+  if (!m) return { bad: hit };
+  const start = Number(m[1]);
+  const end = Number(m[2]);
+  if (!(end > start)) return { bad: hit };
+  return { start, end };
+}
+const WINDOW = parseWindow();
+
+// ─── UNFILLED. See the boxed note in the header. ────────────────────────────
+//
+// Fill from --discover output, VERBATIM — including any escaped entities
+// (`&lt;b>`, `&amp;nbsp;`), which are LITERAL CHARACTERS in the hashed text
+// rather than markup. normalize() strips real tags; escaped source survives it.
+//
+// DO NOT QUOTE A CMS ELEMENT ID (`text-d20e36d2fe` and the like). They change on
+// any republish without a spec changing, so quoting one makes this file's own
+// quote check fail on a healthy page.
+//
+// THAT EXCLUSION IS JUDGEMENT, NOT A GATE. The digit-free rule below catches
+// `text-d20e36d2fe` only by accident — that hash happens to contain digits. An
+// all-letter id would sail straight through. Nothing here mechanically excludes
+// a CMS id; the person filling this in does.
+const QUOTES = [];
+
+// THE SECTION, declared. Both markers MUST be substrings of QUOTES above —
+// asserted by requireHeaderEvidence(), not trusted.
+//
+// IF THE DOUBLE EMISSION IS PRESENT (see THE OPEN QUESTION), the span must cover
+// BOTH copies of the table, as the single-image row's does: `from` at the head of
+// the source copy, `to` at the heading of the NEXT block. Anything narrower puts
+// one copy in-section and the other out, for no reason a reader could
+// reconstruct — and would make the verdict below meaningless.
+const SECTION = null;
+
+// CANDIDATES IN PREFERENCE ORDER, filled from --discover.
+//
+// The incumbent's `why` is DELIBERATELY CONDITIONAL and must be rewritten to
+// whichever branch --verify establishes. Leaving both in place after the answer
+// is known is the stale-prose failure this repo's preamble is about.
+const CANDIDATES = [
+  {
+    text: OLD_ANCHOR,
+    refusedByDesign: true,
+    why: 'REFUSED BY DESIGN — the incumbent, 2x. WHY depends on a measurement not yet made: if '
+      + 'both occurrences are IN-SECTION (the CMS double-emission case, as on the single-image '
+      + 'page) it is refused for being a FIELD LABEL of a watched field, which couples the anchor '
+      + 'to the thing being watched. If one is OUT of section it is refused for the stronger '
+      + 'reason — it cannot say which section rendered. Run --verify and rewrite this to the '
+      + 'branch that holds.',
+  },
+];
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+// A unix-socket connection is local by construction and never speaks SSL.
+function sslFor(url) {
+  if (/host=%2F|host=\//.test(url)) return false;
+  if (/localhost|127\.0\.0\.1|sslmode=disable/.test(url)) return false;
+  return { rejectUnauthorized: false };
+}
+
+function count(hay, needle) {
+  if (!needle) return 0;
+  return String(hay).split(needle).length - 1;
+}
+
+// Every occurrence of a needle, as a character offset and as a percentage of the
+// document. On a page this size the percentage is what makes a count legible:
+// two hits at 31% and 74% are in different halves of the document and almost
+// certainly in different sections, which is the claim being made about the old
+// anchor.
+function occurrences(hay, needle) {
+  const out = [];
+  if (!needle) return out;
+  let i = String(hay).indexOf(needle);
+  while (i >= 0) {
+    out.push({ at: i, pct: hay.length ? Math.round((i / hay.length) * 1000) / 10 : 0 });
+    i = String(hay).indexOf(needle, i + needle.length);
+  }
+  return out;
+}
+
+// ANY digit, not just a stored limit. See the header for why the wider bar.
+function hasDigit(s) {
+  return /\d/.test(String(s));
+}
+
+function sectionSpan(text, section) {
+  if (!section || !section.from || !section.to) return null;
+  const start = text.indexOf(section.from);
+  if (start < 0) return null;
+  const end = text.indexOf(section.to, start);
+  if (end < 0) return null;
+  return { start, end: end + section.to.length };
+}
+
+function rejectionReason(c, span, chosen) {
+  if (c.refusedByDesign) return 'REFUSED BY DESIGN — recorded here to be shown losing, never eligible';
+  if (c.count === 0) return 'ABSENT — an anchor that never matches reports `failed` every week';
+  if (!c.unique) return `${c.count}x — not unique, so it says nothing about WHICH section rendered`;
+  if (!span) return 'NO SECTION SPAN — the markers are not on this page, so nothing is in-section';
+  if (!c.inSection) {
+    return c.clean
+      ? 'OUT OF SECTION — clean and unique, and REFUSED anyway: on a page this size uniqueness is '
+        + 'nearly free, so this proves a page rendered and not that the watched section did'
+      : 'OUT OF SECTION';
+  }
+  // `c.digits.length`, NOT `c.digits` — an empty array is TRUTHY, so the bare
+  // object test fires on every in-section candidate and reports a digit-free
+  // string as "CONTAINS DIGITS ()" with an empty list. That bug was live in
+  // scripts/migrateFixGoogleDisplayAnchor.js and is carried forward fixed here;
+  // test/smoke.test.js pins it from both sides for both files.
+  if (c.digits.length) {
+    return `in-section and unique, but CONTAINS DIGITS (${c.digits.join(', ')})`
+      + `${c.holds.length ? ` including stored limit(s) ${c.holds.join(', ')}` : ''}`
+      + ' — a number in an anchor turns a spec revision into a broken-page report';
+  }
+  if (chosen && chosen.clean && !c.clean) {
+    return 'a clean in-section candidate ranked above it';
+  }
+  return 'in-section and eligible — a candidate ranked above it';
+}
+
+// THE ANCHOR CHOICE, pure so a test drives the same code the migration does.
+// Byte-for-byte the ranking in scripts/migrateFixGoogleDisplayAnchor.js, with
+// `clean` meaning digit-free rather than "holds no stored limit".
+function chooseAnchor(text, candidates, limits, section) {
+  const span = sectionSpan(text, section);
+  const seen = candidates.map((c) => {
+    const n = count(text, c.text);
+    const at = text.indexOf(c.text);
+    const digits = String(c.text).match(/\d+/g) || [];
+    const holds = limits.filter((v) => String(c.text).includes(v));
+    const unique = n === 1;
+    const inSection = !!span && at >= 0 && at >= span.start && at + c.text.length <= span.end;
+    return {
+      ...c,
+      count: n,
+      at,
+      pct: text.length && at >= 0 ? Math.round((at / text.length) * 1000) / 10 : null,
+      digits,
+      holds,
+      unique,
+      inSection,
+      clean: unique && digits.length === 0,
+      eligible: !c.refusedByDesign && unique && inSection && digits.length === 0,
+    };
+  });
+  // Digit-free is a PRECONDITION of eligibility, so option 2 cannot be selected
+  // at all. A digit-bearing in-section candidate is still SHOWN, with its
+  // numbers named, so the cost of the rule is visible rather than implied.
+  const chosen = seen.find((c) => c.eligible) || null;
+  for (const c of seen) c.reason = c === chosen ? null : rejectionReason(c, span, chosen);
+  const tier = chosen ? '1 — clean (digit-free) and in-section' : null;
+  return { chosen, seen, span, tier };
+}
+
+// ─── the unfilled-header gate ───────────────────────────────────────────────
+// The absence of page text is turned into a refusal rather than a default.
+function requireHeaderEvidence() {
+  if (!Array.isArray(QUOTES) || QUOTES.length === 0) {
+    return {
+      ok: false,
+      why: 'QUOTES is empty — no reading of this page stands behind this file. Nobody has fetched '
+        + 'carousel-ads/specs for it: the authoring session had no egress and no operator has '
+        + 'supplied the text. The block quoted in the header comes from another file\'s reading '
+        + 'months ago and is a hypothesis about where to look, not evidence about the page today. '
+        + 'Choosing an anchor now would be choosing a string from a page nobody opened, which is '
+        + 'the failure scripts/migrateSpecIntegrityFixes.js is the record of.\n'
+        + '       Run: node scripts/migrateFixLinkedInCarouselAnchor.js --discover\n'
+        + '       then fill QUOTES, SECTION and CANDIDATES from what it prints.',
+    };
+  }
+  if (!SECTION || !SECTION.from || !SECTION.to) {
+    return {
+      ok: false,
+      why: 'SECTION is unset. Without a declared span nothing can be in-section — and on a page '
+        + 'this size that is the whole of the decision, because uniqueness alone is nearly free.',
+    };
+  }
+  // BOTH MARKERS MUST COME FROM QUOTED TEXT. This is what stops the span being
+  // built out of page text nobody read.
+  for (const key of ['from', 'to']) {
+    const marker = SECTION[key];
+    if (!QUOTES.some((q) => String(q).includes(marker))) {
+      return {
+        ok: false,
+        why: `SECTION.${key} is not a substring of any quoted sentence: ${JSON.stringify(marker)}. `
+          + 'Both markers must come from text this file quotes, or the span is inferred rather than '
+          + 'read — the guess that produced the Google in-feed-video near-miss.',
+      };
+    }
+  }
+  const usable = CANDIDATES.filter((c) => !c.refusedByDesign);
+  if (usable.length === 0) {
+    return {
+      ok: false,
+      why: 'CANDIDATES holds nothing but the recorded old anchor, which is refused by design. '
+        + 'There is no proposal to evaluate.',
+    };
+  }
+  return { ok: true };
+}
+
+// ─── discovery ──────────────────────────────────────────────────────────────
+// Mechanical candidate generation, for step 1. This does NOT choose an anchor —
+// it cannot, because it has no section to judge against. It prints what is on
+// the page so a human can declare one.
+//
+// ON THIS PAGE IT WILL FIND A LOT. That is the point and also the hazard: see
+// the header. The count is reported and the list can be windowed.
+const MIN_WORDS = 6;
+const MAX_WORDS = 16;
+const MIN_CHARS = 34;
+const MAX_CHARS = 140;
+// Above this many candidates the list stops being readable and starts inviting
+// a pick-the-nicest-sentence choice. Not a limit — a prompt to use --window.
+const CANDIDATE_FLOOD = 60;
+
+function generateCandidates(text) {
+  const words = String(text).split(' ').filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < words.length; i += 1) {
+    for (let n = MIN_WORDS; n <= MAX_WORDS && i + n <= words.length; n += 1) {
+      const phrase = words.slice(i, i + n).join(' ');
+      if (phrase.length < MIN_CHARS) continue;
+      if (phrase.length > MAX_CHARS) break;
+      if (hasDigit(phrase)) continue;
+      if (seen.has(phrase)) continue;
+      seen.add(phrase);
+      if (count(text, phrase) !== 1) continue;
+      out.push({ text: phrase, at: text.indexOf(phrase), words: n });
+    }
+  }
+  // TWO ROUNDS OF THINNING, because the raw sweep is unreadable and an
+  // unreadable dump is a dump nobody checks.
+  //
+  // 1. Shortest unique phrase per START offset. A longer window over the same
+  //    start is unique for the trivial reason that its prefix already was.
+  const byStart = new Map();
+  for (const c of out) {
+    const prev = byStart.get(c.at);
+    if (!prev || c.text.length < prev.text.length) byStart.set(c.at, c);
+  }
+  // 2. NON-OVERLAPPING. Windows starting one word apart describe the same region
+  //    and are not separate choices. Walk left to right and skip past each one
+  //    taken, so what prints is one candidate per REGION and the count means
+  //    something — which matters far more on 24,500 characters than on 5,000.
+  const ordered = [...byStart.values()].sort((a, b) => a.at - b.at || a.text.length - b.text.length);
+  const picked = [];
+  let cursor = -1;
+  for (const c of ordered) {
+    if (c.at < cursor) continue;
+    picked.push(c);
+    cursor = c.at + c.text.length;
+  }
+  return picked;
+}
+
+function chunkDump(text, size, win) {
+  const lines = [];
+  const from = win ? Math.max(0, win.start) : 0;
+  const to = win ? Math.min(text.length, win.end) : text.length;
+  for (let i = from; i < to; i += size) {
+    const pct = Math.round((i / text.length) * 1000) / 10;
+    lines.push(`   [${String(i).padStart(6)}  ${String(pct).padStart(5)}%]  ${text.slice(i, Math.min(i + size, to))}`);
+  }
+  return lines;
+}
+
+// ─── the page ───────────────────────────────────────────────────────────────
+// Fetched through the DETECTOR'S OWN fetchText and hashableText, never a
+// reimplementation, so the candidate search runs against exactly the text the
+// detector will assert against.
+async function fetchHashedText() {
+  const { fetchText, hashableText } = require('../src/services/specDetector');
+  const rawA = await fetchText(URL);
+  await new Promise((r) => setTimeout(r, 3000));
+  const rawB = await fetchText(URL);
+  // content_stop_marker is null on this row, so hashableText is normalize().
+  // Called through the helper anyway, so this measures the path the detector
+  // takes rather than a shortcut around it.
+  return {
+    a: hashableText({ content_stop_marker: null }, rawA),
+    b: hashableText({ content_stop_marker: null }, rawB),
+  };
+}
+
+function reportStability(a, b) {
+  console.log(`   hashed ${a.length} chars (expected ~20,838)`);
+  const stable = a === b;
+  console.log(`   across two fetches, 3s apart: ${stable ? 'STABLE' : 'VARIES'}`);
+  if (a.length < 5000) {
+    console.log('   WARNING: far shorter than the ~24,500 this page is expected to normalize to.');
+    console.log('   That is consistent with a JS shell or a consent wall rather than the specs page.');
+    console.log('   Confirm the page rendered before anchoring anything to it.');
+  }
+  return stable;
+}
+
+const VARIES_WHY = 'the two fetches disagree. Something outside <script> varies per request, so this '
+  + 'row needs a content_stop_marker before any anchor can be trusted — that is a different '
+  + 'migration, and swapping the anchor first would hide the problem.';
+
+async function runDiscover(limits) {
+  console.log(`\n${'='.repeat(74)}\nDISCOVER — ${DISPLAY}\n${URL}\n${'='.repeat(74)}`);
+  if (WINDOW && WINDOW.bad) {
+    console.error(`${TAG} unparseable --window: ${JSON.stringify(WINDOW.bad)} — expected --window=START-END with END > START.`);
+    return false;
+  }
+  let a;
+  let b;
+  try {
+    ({ a, b } = await fetchHashedText());
+  } catch (err) {
+    console.error(`\n${TAG} fetch failed: ${err.message}`);
+    console.error(`${TAG} A run with no network is a refusal, not a fallback. Nothing to report.`);
+    return false;
+  }
+  if (!reportStability(a, b)) {
+    console.error(`\n${TAG} ${VARIES_WHY}`);
+    return false;
+  }
+
+  const hits = occurrences(a, OLD_ANCHOR);
+  console.log(`\n   THE OLD ANCHOR ${JSON.stringify(OLD_ANCHOR)} — ${hits.length}x`);
+  console.log(`   at ${hits.map((h) => `${h.at} (${h.pct}%)`).join('  ')}`);
+  if (hits.length > 1) {
+    console.log('   --discover CANNOT SAY WHETHER THESE ARE IN-SECTION. There is no section yet —');
+    console.log('   step 2 declares it, and --verify prints the verdict once one exists.');
+    console.log('   THE LIKELY ANSWER, from the single-image page: LinkedIn\'s CMS emits every');
+    console.log('   block twice, escaped-source and rendered, which fully explained its 2x with');
+    console.log('   BOTH copies inside the watched table. Two offsets a few hundred chars apart,');
+    console.log('   around the stored-limit cluster, is that again. Far apart is not — and that');
+    console.log('   would be a real defect.');
+  } else if (hits.length <= 1) {
+    console.log('   NOTE: NOT repeating on this fetch. The premise of this change is not reproducing —');
+    console.log('   the page may have been restructured. Re-read the header before trusting it.');
+  }
+
+  // WHERE THE STORED LIMITS CLUSTER. On a 24,500-character page this is the
+  // fastest way to find the section: the block publishing all three of this
+  // row's numbers is the one they appear close together in.
+  if (limits && limits.length) {
+    console.log(`\n   STORED LIMITS ON THIS ROW: ${limits.join(', ')}`);
+    for (const n of limits) {
+      const o = occurrences(a, n);
+      console.log(`   value ${String(n).padEnd(4)} ${String(o.length).padStart(3)}x  `
+        + o.map((h) => `${h.at}(${h.pct}%)`).join(' '));
+    }
+    const all = limits.flatMap((n) => occurrences(a, n).map((h) => h.at)).sort((x, y) => x - y);
+    if (all.length > 1) {
+      // Tightest window containing at least one occurrence of every limit is
+      // overkill; the tightest pair is enough to point a human at the region.
+      let best = null;
+      for (let i = 1; i < all.length; i += 1) {
+        const gap = all[i] - all[i - 1];
+        if (!best || gap < best.gap) best = { gap, from: all[i - 1], to: all[i] };
+      }
+      if (best) {
+        const lo = Math.max(0, best.from - 400);
+        const hi = Math.min(a.length, best.to + 400);
+        console.log(`\n   TIGHTEST CLUSTER of stored limits: ${best.from}–${best.to} (gap ${best.gap}).`);
+        console.log(`   The table is likely around there. To read just that region:`);
+        console.log(`     node scripts/migrateFixLinkedInCarouselAnchor.js --discover --window=${lo}-${hi}`);
+      }
+    }
+  }
+
+  const win = WINDOW && !WINDOW.bad ? WINDOW : null;
+  console.log(`\n${'─'.repeat(74)}\nTHE HASHED TEXT, 120-char chunks with offsets`
+    + `${win ? ` — WINDOWED ${win.start}-${win.end}` : ' — FULL'}\n${'─'.repeat(74)}`);
+  for (const line of chunkDump(a, 120, win)) console.log(line);
+
+  const allCands = generateCandidates(a);
+  const cands = win ? allCands.filter((c) => c.at >= win.start && c.at < win.end) : allCands;
+  console.log(`\n${'─'.repeat(74)}\nDIGIT-FREE PHRASES OCCURRING EXACTLY ONCE — `
+    + `${cands.length}${win ? ` in window (${allCands.length} on the page)` : ' found'}`
+    + `\n${'─'.repeat(74)}`);
+
+  if (allCands.length === 0) {
+    console.log('   NONE. Every unique phrase on this page of between');
+    console.log(`   ${MIN_WORDS}-${MAX_WORDS} words / ${MIN_CHARS}-${MAX_CHARS} chars contains a digit.`);
+    console.log('');
+    console.log('   THAT IS THE FINDING, and it is a legitimate one. Do not lower the bar to');
+    console.log('   manufacture a candidate. The options are, in order:');
+    console.log('     • widen MIN/MAX_WORDS here and re-run, if the window was simply wrong;');
+    console.log('     • anchor on a digit-free phrase shorter or longer than the window;');
+    console.log('     • decide deliberately that a digit-bearing anchor is worth its cost, and');
+    console.log('       record that decision IN THIS FILE before relaxing the gate;');
+    console.log('     • leave the row on its 2x anchor and log the gap, which is honest.');
+  } else {
+    for (const c of cands) {
+      const pct = Math.round((c.at / a.length) * 1000) / 10;
+      console.log(`   [${String(c.at).padStart(6)}  ${String(pct).padStart(5)}%]  ${JSON.stringify(c.text)}`);
+    }
+  }
+
+  if (!win && allCands.length > CANDIDATE_FLOOD) {
+    console.log(`\n   ${allCands.length} CANDIDATES IS TOO MANY TO CHOOSE FROM BY READING.`);
+    console.log('   On a page this size, occurring exactly once is nearly free — most of these are');
+    console.log('   unique BY ACCIDENT and belong to sections this row stores nothing from. A long');
+    console.log('   list invites picking the nicest-sounding string, which is the defect this');
+    console.log('   migration exists to fix, arriving through the front door.');
+    console.log('   Narrow to the table first with --window=START-END (see the cluster hint above).');
+  }
+
+  console.log(`\n${'─'.repeat(74)}\nNEXT\n${'─'.repeat(74)}`);
+  console.log('   1. Find the block publishing Card headline 45 and Introductory text 255 —');
+  console.log('      the stored-limit cluster above points at it.');
+  console.log('   2. Paste the sentences bounding it into QUOTES, verbatim.');
+  console.log('   3. Set SECTION.from/.to to substrings of those quotes.');
+  console.log('   4. Copy the phrases you would anchor on into CANDIDATES, each with a `why`,');
+  console.log('      preferring ones INSIDE that block. Offsets above tell you which are.');
+  console.log('      Check the BLOCK HEADING and its count: on the single-image page "Text');
+  console.log('      Recommendations" was 1x and won. If LinkedIn repeats it per ad format here,');
+  console.log('      it is disqualified for the incumbent\'s reason. And a heading shared with');
+  console.log('      the sibling spec pages asserts which SECTION of THIS page rendered, not');
+  console.log('      which PAGE — that residual is not closable from inside the table.');
+  console.log('   5. Re-run with --verify.');
+  console.log('\n   NOTHING WAS WRITTEN. --discover is read-only.');
+  return true;
+}
+
+// Returns { ok, why, anchor, tier }. Called by --verify and by the write path,
+// so the anchor is never swapped without the page being read in the same run.
+async function readPage(limits) {
+  console.log(`\n${'='.repeat(74)}\n${DISPLAY}\n${URL}\n${'='.repeat(74)}`);
+
+  let a;
+  let b;
+  try {
+    ({ a, b } = await fetchHashedText());
+  } catch (err) {
+    return {
+      ok: false,
+      why: `fetch failed: ${err.message}. A run with no network is a refusal, not a fallback.`,
+    };
+  }
+  if (!reportStability(a, b)) return { ok: false, why: VARIES_WHY };
+
+  // THE QUOTES, asserted. The header's provenance is an operator's reading
+  // rather than a fetch by this file's author, so this check is what the header
+  // rests on.
+  console.log('\n   QUOTED SENTENCES (this file\'s header would be making an unsupported claim without these):');
+  let missing = 0;
+  for (const q of QUOTES) {
+    const n = count(a, q);
+    if (n === 0) missing += 1;
+    console.log(`   ${n > 0 ? 'PRESENT' : 'ABSENT '} ${n}x  ${JSON.stringify(q.slice(0, 62))}${q.length > 62 ? '…' : ''}`);
+  }
+  if (missing > 0) {
+    return {
+      ok: false,
+      why: `${missing} quoted sentence(s) are not on the page. The header's text was supplied from `
+        + 'an operator\'s reading rather than fetched by this file, and this is the check that was '
+        + 'supposed to catch exactly that being stale. Re-read the page before changing anything.',
+    };
+  }
+
+  // ─── THE OPEN QUESTION, OFFSETS ONLY ─────────────────────────────────────
+  // Collected here; the VERDICT is printed once the span exists, further down.
+  // An occurrence cannot be called in-section before there is a section.
+  const hits = occurrences(a, OLD_ANCHOR);
+  console.log(`\n   THE OLD ANCHOR ${JSON.stringify(OLD_ANCHOR)} — ${hits.length}x`);
+  console.log(`   ${hits.map((h) => `${h.at} (${h.pct}%)`).join('  ')}`);
+  if (hits.length <= 1) {
+    console.log('\n   NOTE: NOT repeating on this fetch. The premise this file was written');
+    console.log('   against is not reproducing — the page may have been restructured.');
+  }
+
+  console.log(`\n   STORED LIMITS ON THIS ROW: ${limits.join(', ')}`);
+  for (const n of limits) console.log(`   value ${n}: ${count(a, n)}x in the hashed text`);
+
+  const { chosen, seen, span, tier } = chooseAnchor(a, CANDIDATES, limits, SECTION);
+
+  console.log(`\n   SECTION  ${SECTION.name}`);
+  if (!span) {
+    console.log(`      NOT LOCATED — from ${JSON.stringify(String(SECTION.from).slice(0, 46))}`);
+    console.log(`                     to ${JSON.stringify(String(SECTION.to).slice(0, 46))}`);
+    return {
+      ok: false,
+      why: 'the text-recommendations section could not be located. Both markers are substrings of '
+        + 'sentences quoted in this file, so if the quote check passed and this did not, the two '
+        + 'markers are no longer adjacent or are out of order — the page has been restructured and '
+        + 'the section must be re-read before anything is anchored to it.',
+    };
+  }
+  const spanPct = Math.round((span.start / a.length) * 1000) / 10;
+  console.log(`      chars ${span.start}–${span.end} of ${a.length} (${span.end - span.start} chars,`
+    + ` ${spanPct}% into the document)`);
+  console.log(`      the span is ${Math.round(((span.end - span.start) / a.length) * 1000) / 10}% of the page — `
+    + 'everything outside it is text this row stores nothing from');
+
+  // ─── THE VERDICT THIS RUN EXISTS TO PRODUCE ──────────────────────────────
+  // Every occurrence of the old anchor, against the span. This is the whole of
+  // THE OPEN QUESTION, printed as a table so the answer cannot read as opinion.
+  const anchorHits = hits.map((h) => ({
+    ...h, inSection: h.at >= span.start && h.at + OLD_ANCHOR.length <= span.end,
+  }));
+  console.log(`\n   IS THE ${anchorHits.length}x A CMS ARTIFACT, OR A REAL DEFECT?`);
+  for (const h of anchorHits) {
+    console.log(`      @${String(h.at).padStart(6)} (${String(h.pct).padStart(5)}%)  `
+      + `${h.inSection ? 'IN-SECTION' : 'OUT OF SECTION'}`);
+  }
+  if (anchorHits.length && anchorHits.every((h) => h.inSection)) {
+    console.log('      => ALL IN-SECTION. The multiplicity is the CMS double emission (escaped');
+    console.log('         source + rendered), as on the single-image page. The old anchor DOES');
+    console.log('         assert the watched section rendered; it is NOT the Meta failure mode,');
+    console.log('         and THE ROW IS NOT BLIND. What remains is a DECOUPLING: the incumbent');
+    console.log('         is a FIELD LABEL of a watched field, so a rename or removal reports');
+    console.log('         `failed` where a spec change should report `changed`.');
+    console.log('      >> Rewrite the incumbent\'s `why` and THE OPEN QUESTION to branch A.');
+  } else {
+    console.log('      => NOT all in-section. This IS the real defect: an occurrence outside the');
+    console.log('         watched block keeps the anchor matching after that block is dropped, so');
+    console.log('         the row reports healthy while watching a page that no longer publishes');
+    console.log('         its numbers. Same shape as Meta\'s "Primary Text", and urgent.');
+    console.log('      >> Rewrite the incumbent\'s `why` and THE OPEN QUESTION to branch B.');
+  }
+
+  console.log('\n   ANCHOR CANDIDATES, in preference order:');
+  for (const c of seen) {
+    const mark = c === chosen ? '=>' : '  ';
+    const where = c.count === 0 ? '—' : c.inSection ? 'in-section' : 'OUT';
+    const at = c.at >= 0 ? `@${c.at} (${c.pct}%)` : '@—';
+    const digitCol = c.digits.length ? `digits ${c.digits.join('/')}` : 'digit-free';
+    console.log(`   ${mark} ${String(c.count)}x  ${where.padEnd(10)} ${at.padEnd(17)} ${digitCol.padEnd(16)}`
+      + ` ${JSON.stringify(c.text.slice(0, 44))}${c.text.length > 44 ? '…' : ''}`);
+    if (c.holds.length) console.log(`         holds STORED limit(s): ${c.holds.join(', ')}`);
+    if (c.reason) console.log(`         rejected: ${c.reason}`);
+  }
+
+  if (!chosen) {
+    const cleanOutside = seen.find((c) => !c.refusedByDesign && c.clean && !c.inSection);
+    if (cleanOutside) {
+      console.log(`\n   NAMING THE REFUSED CANDIDATE: ${JSON.stringify(cleanOutside.text)}`);
+      console.log(`   Digit-free, unique, and OUT OF SECTION at ${cleanOutside.pct}% of the page.`);
+      console.log('   On 24,500 characters uniqueness is nearly free, so this tells you almost');
+      console.log('   nothing — it is the defect this migration exists to fix. Refused, not taken.');
+    }
+    const digitInside = seen.find((c) => !c.refusedByDesign && c.unique && c.inSection && c.digits.length);
+    if (digitInside) {
+      console.log(`\n   NAMING THE REFUSED CANDIDATE: ${JSON.stringify(digitInside.text)}`);
+      console.log(`   In-section and unique, and it carries ${digitInside.digits.join(', ')}`);
+      console.log('   — so a LinkedIn revision to any of those numbers would arrive as `failed`, a');
+      console.log('   broken-page alarm for an event that is not a broken page. Note that this');
+      console.log('   includes 255 (Ad name), which this row does not even store.');
+    }
+    return {
+      ok: false,
+      why: 'no candidate is digit-free, unique AND in-section. Nothing is eligible. A clean '
+        + 'out-of-section string is not a substitute — least of all on a page this size, where '
+        + 'being unique says almost nothing — and neither is an in-section string carrying a '
+        + 'number. If the page genuinely cannot carry one, that is the finding: record it and '
+        + 'leave the row as it is rather than installing something weaker.',
+    };
+  }
+
+  console.log(`\n   CHOSEN — tier ${tier}`);
+  console.log(`      ${JSON.stringify(chosen.text)}`);
+  console.log(`      at char ${chosen.at} (${chosen.pct}% into the document), inside the section span`);
+  console.log(`      ${chosen.why}`);
+
+  return { ok: true, anchor: chosen.text, tier };
+}
+
+// ─── the stored limits behind this row's gate ───────────────────────────────
+//
+// UNNEST OF TWO PARALLEL ARRAYS, joined as a set — NOT a multidimensional ANY.
+// The shape that does not work, kept because it looks correct:
+//
+//   WHERE (at.name, cf.field_name) = ANY($1::text[][])
+//
+// `(at.name, cf.field_name)` is a ROW CONSTRUCTOR. `ANY` over an array iterates
+// that array's ELEMENTS, and the elements of a text[][] are TEXT SCALARS —
+// Postgres multidimensional arrays are rectangular, not nested. So the
+// comparison is record = text and Postgres answers
+// `operator does not exist: record = text`. It is not a cast away from correct;
+// ANY cannot iterate rows of a 2-D array at all.
+//
+// AND IT CARRIES `at.is_active`, matching specReview.currentValues and
+// scripts/rederiveAffectedFields.js. affected_fields is a frozen snapshot that
+// outlives asset retirement, so a pair can name an asset nothing renders any
+// more. A retired asset's limit is not "in play" for an anchor decision.
+const LIMITS_SQL = `
+  SELECT at.name AS asset, cf.field_name AS field, cf.char_min, cf.char_max, cf.spec_type
+    FROM unnest($1::text[], $2::text[]) AS want(asset, field)
+    JOIN asset_types at ON at.name = want.asset AND at.is_active
+    JOIN copy_fields cf ON cf.asset_type_id = at.id AND cf.field_name = want.field
+   GROUP BY 1, 2, 3, 4, 5
+   ORDER BY 1, 2`;
+
+// Pure but for the one query, and exported so a test drives the same SQL and the
+// same parameter construction the migration does rather than restating them.
+async function resolveStoredLimits(runner, pairs) {
+  const list = Array.isArray(pairs) ? pairs : [];
+  const res = await runner.query(LIMITS_SQL, [
+    list.map((p) => p.asset),
+    list.map((p) => p.field),
+  ]);
+  const rows = (res && res.rows) || [];
+  // char_max 0 is NO LIMIT everywhere else in this codebase, so it is not a
+  // value an anchor could hold and does not belong in the arithmetic.
+  const limits = [...new Set(rows.map((r) => String(r.char_max)).filter((v) => v && v !== '0'))]
+    .sort((x, y) => Number(x) - Number(y));
+  return { rows, limits };
+}
+
+// ─── the sole-witness arithmetic, recomputed live ───────────────────────────
+// The header states a PREDICTION about which other rows would report a move on
+// each stored limit. That argument depends on which pages are watched and what
+// their anchors are RIGHT NOW, and nothing recomputes it. So it is derived here,
+// against the live database, every run.
+async function soleWitness(client, rowId, limits) {
+  console.log(`\n${'─'.repeat(74)}\nSOLE WITNESS — who else would see a move on each stored limit\n${'─'.repeat(74)}`);
+  const verdicts = [];
+  for (const v of limits) {
+    const rows = await client.query(
+      `SELECT cf.spec_source,
+              COUNT(*)::int AS fields,
+              MAX(w.id) AS watch_id,
+              MAX(w.expected_content) AS watch_anchor
+         FROM copy_fields cf
+         LEFT JOIN spec_watch_list w ON w.source_url = cf.spec_source
+        WHERE cf.char_max = $1
+        GROUP BY cf.spec_source
+        ORDER BY 2 DESC`,
+      [Number(v)]
+    );
+    console.log(`\n   ${v} is stored by ${rows.rows.reduce((n, r) => n + r.fields, 0)} copy_fields row(s):`);
+    for (const r of rows.rows) {
+      const watched = r.watch_id ? `watch #${r.watch_id}` : 'NOT WATCHED';
+      const holds = r.watch_anchor && String(r.watch_anchor).includes(v) ? '  <- its anchor HOLDS this value' : '';
+      const self = r.watch_id === rowId ? '  (this row)' : '';
+      console.log(`      x${String(r.fields).padStart(3)}  ${watched.padEnd(14)} ${r.spec_source}${self}${holds}`);
+    }
+    const others = rows.rows.filter((r) => r.watch_id && r.watch_id !== rowId
+      && !(r.watch_anchor && String(r.watch_anchor).includes(v)));
+    verdicts.push({ value: v, others: others.length });
+    console.log(`      => ${others.length === 0
+      ? 'NO other watched row would report a move on this value. THIS ROW IS THE SOLE WITNESS.'
+      : `${others.length} other watched row(s) would also report a move on this VALUE.`}`);
+    if (others.length > 0) {
+      console.log('         READ THAT CAREFULLY, and on this row it is the usual case rather than');
+      console.log('         the exception: another PLATFORM publishing the same integer is a');
+      console.log('         coincidence, not a second instrument. 70 and 150 are round numbers that');
+      console.log('         X and Meta happen to share. If LINKEDIN moves its Headline off 70, a');
+      console.log('         row watching x.com reports nothing. For a move in LINKEDIN\'s limits,');
+      console.log('         this row is the only witness there is.');
+    }
+  }
+  return verdicts;
+}
+
+// ─── main ───────────────────────────────────────────────────────────────────
+
+async function main() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.error(`${TAG} DATABASE_URL not set — the stored limits and affected pairs are read off `
+      + `the row, so this needs a database even to --discover or --verify.`);
+    process.exit(1);
+  }
+  let Client;
+  try {
+    ({ Client } = require('pg'));
+  } catch (err) {
+    console.error(`${TAG} could not load "pg": ${err.message}`);
+    process.exit(1);
+  }
+
+  const client = new Client({ connectionString, ssl: sslFor(connectionString) });
+  await client.connect();
+  console.log(`${TAG} mode: ${DISCOVER ? 'DISCOVER (no write)'
+    : VERIFY ? 'VERIFY (no write)'
+      : COMMIT ? 'COMMIT (writes)'
+        : 'DRY RUN (rolls back — pass --commit to write)'}`);
+
+  // WHETHER A TRANSACTION IS ACTUALLY OPEN, tracked rather than assumed.
+  //
+  // Everything up to and including the page fetch runs OUTSIDE a transaction —
+  // the reads that pick the anchor, and the --discover and --verify paths in
+  // full. An unconditional ROLLBACK in the catch would print "FAILED (rolled
+  // back)" regardless, so a --verify failure would report a rollback that never
+  // happened: Postgres answers ROLLBACK-with-no-transaction with a WARNING,
+  // which `.catch(() => {})` swallows, and the message then describes a
+  // transaction that was never opened.
+  //
+  // Cosmetic in effect and not in what it TELLS YOU. "Rolled back" on a
+  // read-only path sends a reader looking for a write that does not exist, and
+  // the first thing anyone does with a failing migration is ask what it touched.
+  let inTxn = false;
+
+  try {
+    // READ-ONLY, and BEFORE any transaction. See the ordering note in the header.
+    const found = await client.query(
+      `SELECT id, display_name, source_url, expected_content, anchor_scope, content_stop_marker,
+              source_kind, affected_fields,
+              current_hash IS NOT NULL AS baselined,
+              last_checked_at, consecutive_failures, consecutive_unconfirmed
+         FROM spec_watch_list WHERE source_url = $1`,
+      [URL]
+    );
+    console.log(`\n${TAG} rows matching ${URL}: ${found.rowCount}`);
+    for (const r of found.rows) {
+      console.log(`    #${r.id}  ${r.display_name}`);
+      console.log(`        expected_content    ${JSON.stringify(r.expected_content)}`);
+      console.log(`        anchor_scope        ${r.anchor_scope}`);
+      console.log(`        content_stop_marker ${JSON.stringify(r.content_stop_marker)}`);
+      console.log(`        source_kind         ${r.source_kind}`);
+      console.log(`        last_checked_at     ${r.last_checked_at ? r.last_checked_at.toISOString() : '(never)'}`);
+      console.log(`        failures / unconf   ${r.consecutive_failures} / ${r.consecutive_unconfirmed}`);
+      console.log(`        ${r.baselined ? 'baselined' : 'not baselined'}`);
+    }
+    if (found.rowCount !== 1) {
+      throw new Error(
+        `expected exactly 1 row on that URL, found ${found.rowCount}. `
+        + (found.rowCount === 0
+          ? 'Check scripts/migrateAddSpecTables.js and scripts/migrateAddSpecAnchors.js — this row '
+            + 'should already exist and already carry the "Introductory text" anchor.'
+          : 'Two rows on one URL is a state no migration creates; resolve it before changing an anchor.')
+      );
+    }
+    const row = found.rows[0];
+
+    // THE PAIRS, READ OFF THE ROW. Never hardcoded: affected_fields is the write
+    // gate, and a list typed into this file could describe a gate that has since
+    // been re-derived. NOTE for this row specifically: scripts/rederiveAffectedFields.js
+    // has an outstanding job here — migrateSpecIntegrityFixes repointed LinkedIn
+    // Carousel's six pairs to the carousel page in July and this entry still
+    // lists them. If they appear below, that is the known staleness, not a
+    // surprise, and it does not block an anchor swap.
+    const pairs = Array.isArray(row.affected_fields) ? row.affected_fields : [];
+    console.log(`\n${TAG} affected_fields on the row — ${pairs.length} pair(s):`);
+    for (const p of pairs) console.log(`    ${p.asset} || ${p.field}`);
+    if (pairs.length === 0) {
+      throw new Error('affected_fields is empty. This row gates nothing, and an anchor swap is not the problem to solve first.');
+    }
+
+    // THE STORED LIMITS, CONFIRMED AGAINST copy_fields IN THE SAME RUN. The
+    // anchor choice depends on which values are in play, so they are read rather
+    // than believed — the header predicts 70 and 150 and this is what checks it.
+    const { rows: limRows, limits } = await resolveStoredLimits(client, pairs);
+    console.log(`\n${TAG} those pairs resolve to ${limRows.length} distinct copy_fields shape(s):`);
+    for (const r of limRows) {
+      console.log(`    ${(r.asset + ' / ' + r.field).padEnd(44)} ${r.char_min}-${r.char_max}  ${r.spec_type}`);
+    }
+    if (limRows.length === 0) {
+      throw new Error(
+        'the row\'s affected_fields resolve to no ACTIVE copy_fields rows. Either the gate is stale — '
+        + 'a re-derivation problem (scripts/rederiveAffectedFields.js), not an anchor problem — or every '
+        + 'asset behind it has been retired, in which case the row gates nothing and the anchor is the '
+        + 'least of it.'
+      );
+    }
+    console.log(`\n${TAG} stored limits in play: ${limits.join(', ')}`);
+
+    await soleWitness(client, row.id, limits);
+
+    // DISCOVERY runs before the header gate, deliberately: it is the step that
+    // EXISTS to fill the header in, so requiring a filled header first would be
+    // a deadlock.
+    if (DISCOVER) {
+      const ok = await runDiscover(limits);
+      if (!ok) process.exitCode = 1;
+      return;
+    }
+
+    // THE UNFILLED-HEADER GATE. Everything below writes or claims to have read
+    // the page, and neither is possible without evidence in the header.
+    const evidence = requireHeaderEvidence();
+    if (!evidence.ok) {
+      console.error(`\n${TAG} REFUSING TO WRITE: ${evidence.why}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const page = await readPage(limits);
+    if (!page.ok) {
+      console.error(`\n${TAG} REFUSING TO WRITE: ${page.why}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (VERIFY) {
+      console.log(`\n${TAG} VERIFY PASSED — nothing written.`);
+      console.log(`${TAG} would set expected_content:`);
+      console.log(`${TAG}     from  ${JSON.stringify(row.expected_content)}`);
+      console.log(`${TAG}     to    ${JSON.stringify(page.anchor)}`);
+      return;
+    }
+
+    if (row.expected_content === page.anchor) {
+      console.log(`\n${TAG} the row already carries this anchor — nothing to do.`);
+      return;
+    }
+
+    // THE DIFF, BEFORE ANY WRITE.
+    console.log(`\n${'─'.repeat(74)}\nANCHOR DIFF — row #${row.id} ${row.display_name}\n${'─'.repeat(74)}`);
+    console.log(`   -  ${JSON.stringify(row.expected_content)}`);
+    console.log(`   +  ${JSON.stringify(page.anchor)}`);
+    console.log(`   tier ${page.tier}`);
+
+    await client.query('BEGIN');
+    inTxn = true;
+
+    // expected_content AND NOTHING ELSE. current_hash in particular is untouched:
+    // the hashed content does not change when an anchor does, so the row must not
+    // re-baseline. Guarded on the id AND the anchor just read, so a concurrent
+    // change between the SELECT and here refuses rather than overwriting.
+    const upd = await client.query(
+      `UPDATE spec_watch_list SET expected_content = $1
+        WHERE id = $2 AND expected_content IS NOT DISTINCT FROM $3
+        RETURNING id`,
+      [page.anchor, row.id, row.expected_content]
+    );
+    if (upd.rowCount !== 1) {
+      throw new Error(`UPDATE matched ${upd.rowCount} row(s) — the anchor changed between the read and the write. Nothing written.`);
+    }
+
+    const after = await client.query(
+      `SELECT expected_content, anchor_scope, content_stop_marker, source_kind, source_url,
+              current_hash IS NOT NULL AS baselined,
+              COALESCE(jsonb_array_length(affected_fields), 0) AS pairs
+         FROM spec_watch_list WHERE id = $1`,
+      [row.id]
+    );
+    const a = after.rows[0];
+    console.log(`\n${TAG} row #${row.id} — ${row.display_name}`);
+    console.log(`    before  ${JSON.stringify(row.expected_content)}`);
+    console.log(`    after   ${JSON.stringify(a.expected_content)}`);
+    console.log(`\n${TAG} unchanged, as intended:`);
+    console.log(`    source_url           ${a.source_url}`);
+    console.log(`    anchor_scope         ${a.anchor_scope}`);
+    console.log(`    content_stop_marker  ${JSON.stringify(a.content_stop_marker)}`);
+    console.log(`    source_kind          ${a.source_kind}`);
+    console.log(`    affected_fields      ${a.pairs} pair(s)`);
+    console.log(`    ${a.baselined ? 'still baselined — the next run compares, it does not re-baseline' : 'not baselined'}`);
+
+    if (COMMIT) {
+      await client.query('COMMIT');
+      inTxn = false;
+      console.log(`\n${TAG} COMMITTED.`);
+      console.log(`${TAG} Next: node scripts/runDetection.js — expect this row to report 'unchanged',`);
+      console.log(`${TAG} NOT 'baseline'. A baseline here would mean current_hash was cleared.`);
+      console.log(`${TAG} Then: node scripts/checkSpecHealth.js — an anchor was repointed.`);
+    } else {
+      await client.query('ROLLBACK');
+      inTxn = false;
+      console.log(`\n${TAG} DRY RUN — rolled back. Pass --commit to write.`);
+    }
+  } catch (err) {
+    // ONLY ROLL BACK WHAT WAS ACTUALLY OPENED, and say which happened. A failure
+    // before BEGIN wrote nothing because there was nothing to write, and saying
+    // "rolled back" there is a claim about the database that is not true.
+    if (inTxn) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error(`\n${TAG} FAILED (rolled back): ${err.message}`);
+    } else {
+      console.error(`\n${TAG} FAILED before any transaction was opened — nothing was written, `
+        + `and nothing needed rolling back: ${err.message}`);
+    }
+    process.exitCode = 1;
+  } finally {
+    await client.end();
+  }
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`${TAG} ${err.message}`);
+    process.exit(1);
+  });
+}
+
+// UNIT TESTS ONLY. chooseAnchor, sectionSpan, generateCandidates,
+// requireHeaderEvidence and parseWindow are the properties this change rests on,
+// exported so a test drives the same code the migration does rather than
+// reimplementing the ranking beside it.
+module.exports = {
+  chooseAnchor, sectionSpan, occurrences, hasDigit, generateCandidates,
+  requireHeaderEvidence, resolveStoredLimits, LIMITS_SQL, parseWindow, chunkDump,
+  CANDIDATES, SECTION, QUOTES, OLD_ANCHOR, URL, DISPLAY, CANDIDATE_FLOOD,
+};

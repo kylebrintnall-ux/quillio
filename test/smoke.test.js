@@ -22194,3 +22194,114 @@ test('run history: the migration leaves first_baselined_at NULL and says why', (
   assert.match(flat, /IT IS A FLOOR, NOT A CENSUS/,
     'the header records that the queue-derived values are a lower bound');
 });
+
+// ─── scripts/migrateFixLinkedInCarouselAnchor.js ────────────────────────────
+
+test('migrateFixLinkedInCarouselAnchor: a digit-free loser is not accused of carrying digits', () => {
+  // Third copy of this test, and duplicated rather than shared for the reason
+  // the single-image one records: the three anchor migrations hold SEPARATE
+  // copies of rejectionReason, so a test over one proves nothing about another.
+  // THREE is the number at which that stops being worth it — the next anchor
+  // migration should extract the selector into a shared module and collapse all
+  // three, and this comment is here so that decision gets made rather than
+  // drifting into a fourth copy.
+  const mig = require('../scripts/migrateFixLinkedInCarouselAnchor.js');
+
+  const LIMITS = ['45', '255'];
+  const SECTION = { name: 'the watched block', from: 'Text Recommendations', to: 'ends the block' };
+  const page = 'Preamble. Text Recommendations alpha beta gamma delta epsilon Card headline: 45 '
+    + 'characters ends the block. Elsewhere: a wholly different topic.';
+
+  const winner = { text: 'Text Recommendations alpha beta', why: 'w' };
+  const loser = { text: 'gamma delta epsilon', why: 'l' };
+  const dirty = { text: 'Card headline: 45 characters', why: 'd' };
+  const outside = { text: 'a wholly different topic', why: 'o' };
+
+  const r = mig.chooseAnchor(page, [winner, loser, dirty, outside], LIMITS, SECTION);
+  const seen = (t) => r.seen.find((c) => c.text === t);
+
+  assert.strictEqual(seen(loser.text).inSection, true, 'the loser is in-section');
+  assert.strictEqual(seen(loser.text).unique, true, 'the loser is unique');
+  assert.deepStrictEqual(seen(loser.text).digits, [], 'the loser contains no digits');
+  assert.strictEqual(r.chosen.text, winner.text, 'the first eligible candidate wins');
+
+  // THE ASSERTION THIS TEST EXISTS FOR. Reverting c.digits.length to c.digits
+  // makes this fail.
+  assert.match(seen(loser.text).reason, /ranked above it/,
+    'a digit-free in-section loser is told it was outranked');
+  assert.ok(!/digit/i.test(seen(loser.text).reason),
+    'and its reason does NOT mention digits it does not have');
+
+  // POSITIVE CONTROL — without it, deleting the digit branch outright passes.
+  assert.match(seen(dirty.text).reason, /CONTAINS DIGITS \(45\)/,
+    'a candidate that DOES carry a digit still says so, and names it');
+  assert.match(seen(dirty.text).reason, /stored limit\(s\) 45/);
+  assert.match(seen(outside.text).reason, /OUT OF SECTION/,
+    'and the section rule is not swallowed by the digit branch');
+});
+
+test('migrateFixLinkedInCarouselAnchor: 255 is refused twice over, by two different rules', () => {
+  // THE ASYMMETRY WITH THE SIBLING PAGE. On single-image, 255 is the ad-name cap
+  // and that row does NOT store it, so `holds` is empty and only the digit rule
+  // refuses it. HERE 255 is this row's intro-text limit, so both rules fire —
+  // and the run must report both facts rather than collapsing them, because they
+  // are different findings.
+  const mig = require('../scripts/migrateFixLinkedInCarouselAnchor.js');
+  const SECTION = { name: 's', from: 'Text Recommendations', to: 'ends the block' };
+  const page = 'Text Recommendations Introductory text: 255 characters ends the block';
+  const cand = { text: 'Introductory text: 255 characters', why: 'd' };
+
+  const r = mig.chooseAnchor(page, [cand], ['45', '255'], SECTION);
+  const c = r.seen[0];
+  assert.strictEqual(c.inSection, true, 'it really is inside the watched block');
+  assert.strictEqual(c.unique, true, 'and unique');
+  assert.deepStrictEqual(c.digits, ['255'], 'the digit rule sees it');
+  assert.deepStrictEqual(c.holds, ['255'], 'and the stored-limit rule sees it too');
+  assert.strictEqual(r.chosen, null, 'so nothing is eligible');
+  assert.match(c.reason, /CONTAINS DIGITS \(255\)/, 'the reason names the digit rule');
+  assert.match(c.reason, /stored limit\(s\) 255/, 'AND names it as one of ours');
+
+  // Contrast asserted directly against the sibling, so the difference cannot be
+  // lost: same string, same rules, different verdict on `holds`.
+  const sia = require('../scripts/migrateFixLinkedInSingleImageAnchor.js');
+  const siaCand = { text: 'Ad name (optional): 255 characters', why: 'd' };
+  const siaPage = 'Text Recommendations Ad name (optional): 255 characters ends the block';
+  const sr = sia.chooseAnchor(siaPage, [siaCand], ['70', '150'], SECTION);
+  assert.deepStrictEqual(sr.seen[0].holds, [],
+    'on the single-image row 255 is NOT a stored limit — only the digit rule refuses it');
+  assert.strictEqual(sr.chosen, null, 'and it is still refused there');
+});
+
+test('migrateFixLinkedInCarouselAnchor: ships refusing, and the 2x is an OPEN QUESTION', () => {
+  const mig = require('../scripts/migrateFixLinkedInCarouselAnchor.js');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateFixLinkedInCarouselAnchor.js'), 'utf8');
+
+  const gate = mig.requireHeaderEvidence();
+  assert.strictEqual(gate.ok, false, 'the file refuses until QUOTES is filled');
+  assert.match(gate.why, /QUOTES is empty/);
+  assert.deepStrictEqual(mig.QUOTES, []);
+  assert.strictEqual(mig.SECTION, null);
+  assert.strictEqual(mig.OLD_ANCHOR, 'Card headline');
+  assert.match(mig.URL, /carousel-ads\/specs$/);
+
+  // THE POINT OF THIS FILE: it must not presume the 2x is a defect. The header
+  // carries BOTH branches and the incumbent's refusal says the reason is not yet
+  // determined. If someone later resolves it, they rewrite these — and this
+  // assertion goes red, which is the prompt to update it deliberately.
+  const flat = src.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+  assert.match(flat, /THE OPEN QUESTION/, 'the header frames the 2x as open');
+  assert.match(flat, /BRANCH A — BOTH IN-SECTION/);
+  assert.match(flat, /BRANCH B — ONE OUT OF SECTION/);
+  assert.match(flat, /IT IS NOT ASSUMED/,
+    'and says outright that the sibling finding is not carried over as fact');
+  const incumbent = mig.CANDIDATES.find((c) => c.refusedByDesign);
+  assert.match(incumbent.why, /depends on a measurement not yet made/,
+    'the incumbent\'s refusal is conditional until --verify settles it');
+
+  // --verify must actually produce the verdict, not just discuss it.
+  assert.match(src, /IS THE \$\{anchorHits\.length\}x A CMS ARTIFACT, OR A REAL DEFECT\?/);
+  assert.match(src, /h\.inSection \? 'IN-SECTION' : 'OUT OF SECTION'/);
+  // And --discover must decline to answer it.
+  assert.match(src, /--discover CANNOT SAY WHETHER THESE ARE IN-SECTION/);
+});

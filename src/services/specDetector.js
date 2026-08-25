@@ -295,6 +295,41 @@ function resetStreaks(row) {
   return `${resetFailures(row)}${resetUnconfirmed(row)}`;
 }
 
+// RUN HISTORY (scripts/migrateAddWatchRunHistory.js). Same key-presence trick as
+// the two migrations above, and independent of both: a database can have the
+// anchor columns and not these.
+//
+// WHY THESE COLUMNS EXIST, in one line, because the writes below look like
+// bookkeeping and are not: every counter this file already keeps RESETS on a
+// success path, so a row that is genuinely stable and a row that has been
+// watching the wrong page since it was created are indistinguishable — both
+// report unchanged, no error, both streaks zero. These three accumulate instead,
+// so a long silence becomes legible AS a long silence.
+function hasRunHistoryColumns(row) {
+  return !!row && Object.prototype.hasOwnProperty.call(row, 'change_count');
+}
+
+// FIRST BASELINE ONLY. COALESCE, so a row that re-baselines — which happens when
+// a repoint clears current_hash — keeps its ORIGINAL date rather than having it
+// silently moved under it. "When did this row first start watching anything" is
+// the stable fact worth keeping; a column that drifts on a repoint is the
+// confidently-wrong-date failure scripts/checkSpecHealth.js already declined to
+// build. If a repoint SHOULD reset it, that is the repoint migration's job to do
+// explicitly and to say so.
+function stampFirstBaseline(row) {
+  return hasRunHistoryColumns(row) ? ', first_baselined_at = COALESCE(first_baselined_at, NOW())' : '';
+}
+
+// A CONFIRMED CHANGE, and only that. Appended by recordChange and by nothing
+// else — not the baseline branch (there is no previous value to have moved from)
+// and not unchanged/failed/unconfirmed, none of which is a change. COALESCE on
+// the increment so a NULL from an older row cannot turn the count into NULL.
+function stampChange(row) {
+  return hasRunHistoryColumns(row)
+    ? ', last_changed_at = NOW(), change_count = COALESCE(change_count, 0) + 1'
+    : '';
+}
+
 // Record a detected change atomically: insert the flag, then advance the hash.
 // Wrapped in a transaction so we never insert a flag but fail to move the hash
 // (which would re-flag the same change on every subsequent run).
@@ -308,7 +343,7 @@ async function recordChange(pool, row, newHash) {
       [row.id, row.source_url, row.current_hash, newHash, row.is_test]
     );
     await client.query(
-      `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)} WHERE id = $2`,
+      `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)}${stampChange(row)} WHERE id = $2`,
       [newHash, row.id]
     );
     await client.query('COMMIT');
@@ -493,7 +528,7 @@ async function runDetection() {
       } else if (!row.current_hash) {
         // First ever check → record the baseline. Nothing to compare to, so no flag.
         await pool.query(
-          `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)} WHERE id = $2`,
+          `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)}${stampFirstBaseline(row)} WHERE id = $2`,
           [newHash, row.id]
         );
         status = 'baseline';
@@ -627,6 +662,11 @@ async function runDetection() {
 
 module.exports = {
   runDetection,
+  // The run-history SET fragments, exported so a test asserts WHICH branches
+  // carry them rather than reimplementing the SQL beside the assertion.
+  hasRunHistoryColumns,
+  stampFirstBaseline,
+  stampChange,
   normalize,
   hashText,
   fetchText,

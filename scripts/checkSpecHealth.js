@@ -421,10 +421,19 @@ async function checkRow(pool, row, moved) {
   // nothing about a row repointed before it ever flagged, which is exactly Meta's
   // case. Reported when available, absent when not, and never inferred.
   //
-  // The alternative is a url_changed_at column. Not worth it: a column exists to
-  // be maintained, every future repoint would have to remember to set it, and the
+  // The alternative is a url_changed_at column. STILL not worth it, and the
+  // argument is now narrower than when it was written: a column exists to be
+  // maintained, every future repoint would have to remember to set it, and the
   // failure mode of forgetting is a confident wrong date rather than an honest
-  // silence. The ambiguity is cheaper than the maintenance.
+  // silence.
+  //
+  // scripts/migrateAddWatchRunHistory.js DID add three columns beside this one,
+  // and the distinction is why they survive that argument: change_count and
+  // last_changed_at are written by the DETECTOR on a path it already takes, so
+  // nobody has to remember anything. url_changed_at would be written by whoever
+  // hand-writes the next repoint migration, which is exactly the remembering
+  // this paragraph refuses to depend on. first_baselined_at sits in between and
+  // is deliberately left NULL on every pre-existing row for the same reason.
   const mv = moved.get(String(row.id));
   const rowAge = ageDays(row.created_at);
   const ageText = rowAge === null ? 'age unknown'
@@ -432,9 +441,54 @@ async function checkRow(pool, row, moved) {
       : `row created ${rowAge}d ago`;
   const priorUrls = mv ? mv.urls.filter((u) => normUrl(u) !== normUrl(row.source_url)) : [];
   const urlNote = priorUrls.length ? `, URL CHANGED since a flag (was ${short(priorUrls[0])})` : '';
-  say('moved', mv
-    ? `${mv.n}x, last ${ageDays(mv.last)}d ago  (${ageText}${urlNote})`
-    : `never since baseline (${ageText}${urlNote})`);
+
+  // ─── STORED HISTORY BEATS INFERRED, AND THE TWO MUST NOT LOOK ALIKE ────────
+  // scripts/migrateAddWatchRunHistory.js added change_count / last_changed_at /
+  // first_baselined_at, written by the detector on the branches that actually
+  // move the hash. Where they are populated they are EXACT; the queue derivation
+  // above is a FLOOR, because it can only speak for rows that have flagged and
+  // says nothing about a row repointed before it ever flagged.
+  //
+  // So the line reports which one it is. Rendering an inferred number in the
+  // same shape as a stored one is the failure this whole file is about — a
+  // measurement that is right and narrow, read as broad. `~` and the trailing
+  // word are the whole distinction and they are not decoration.
+  //
+  // KEY PRESENCE, not truthiness: `change_count` absent means the migration has
+  // not run (getWatchList dropped the tier), which is a different state from the
+  // column being present and 0. Only the first falls back to the queue.
+  const hasHistory = Object.prototype.hasOwnProperty.call(row, 'change_count');
+  const count = hasHistory ? Number(row.change_count || 0) : null;
+  const lastMoved = hasHistory ? row.last_changed_at : null;
+
+  if (hasHistory && (count > 0 || lastMoved)) {
+    // Stored and populated — the exact answer.
+    say('moved', `${count}x, last ${ageDays(lastMoved)}d ago  [stored]  (${ageText}${urlNote})`);
+  } else if (hasHistory && mv) {
+    // The column exists, reads zero, and the queue disagrees. That means the row
+    // pre-dates the backfill or the backfill was skipped — say so rather than
+    // reporting 0, which would be a REGRESSION on what this file said before.
+    say('moved', `~${mv.n}x, last ${ageDays(mv.last)}d ago  [inferred from queue;`
+      + ` stored change_count is 0 — pre-dates the backfill]  (${ageText}${urlNote})`);
+  } else if (hasHistory) {
+    say('moved', `never since baseline  [stored: 0]  (${ageText}${urlNote})`);
+  } else if (mv) {
+    say('moved', `~${mv.n}x, last ${ageDays(mv.last)}d ago  [inferred from queue — a FLOOR;`
+      + ` run scripts/migrateAddWatchRunHistory.js]  (${ageText}${urlNote})`);
+  } else {
+    say('moved', `never since baseline  [inferred from queue — a FLOOR;`
+      + ` run scripts/migrateAddWatchRunHistory.js]  (${ageText}${urlNote})`);
+  }
+
+  // FIRST BASELINE, reported only when known. NULL is the honest state for every
+  // row that existed before the migration — created_at is not a substitute, and
+  // the migration's header says why it refused to backfill from it.
+  if (hasHistory) {
+    const fb = row.first_baselined_at;
+    say('baselined', fb
+      ? `${ageDays(fb)}d ago  [stored]`
+      : 'unknown — pre-dates the run-history migration, and created_at is not a substitute');
+  }
 
   return out;
 }

@@ -12,7 +12,7 @@ const WATCH_ORDER = 'ORDER BY is_test, display_name NULLS LAST, id';
 const WATCH_BASE = `id, source_url, display_name, affected_fields, current_hash,
             last_checked_at, last_error, is_test, created_at`;
 
-// Three independent migrations have added columns here, and a person can be in
+// Four independent migrations have added columns here, and a person can be in
 // any state between them. Tried newest-first; a 42703 falls to the next tier.
 //
 // The row a tier returns LACKS THE KEYS its tier dropped, and the detector reads
@@ -29,8 +29,13 @@ const WATCH_BASE = `id, source_url, display_name, affected_fields, current_hash,
 const ANCHOR_COLS = 'expected_content, anchor_scope, consecutive_failures';
 const UNCONFIRMED_COLS = 'consecutive_unconfirmed, last_unconfirmed_reason';
 const STOP_MARKER_COL = 'content_stop_marker';
+const RUN_HISTORY_COLS = 'first_baselined_at, last_changed_at, change_count';
 const WATCH_TIERS = [
-  { extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind, ${STOP_MARKER_COL}` },
+  { extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind, ${STOP_MARKER_COL}, ${RUN_HISTORY_COLS}` },
+  {
+    extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind, ${STOP_MARKER_COL}`,
+    missing: ['spec_watch_list.change_count', 'scripts/migrateAddWatchRunHistory.js'],
+  },
   {
     extra: `${ANCHOR_COLS}, ${UNCONFIRMED_COLS}, source_kind`,
     missing: ['spec_watch_list.content_stop_marker', 'scripts/migrateAddContentStopMarker.js'],

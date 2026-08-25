@@ -18075,18 +18075,25 @@ test('specWatch.getWatchList degrades one migration at a time', async () => {
   assert.match(full.asked[0], /source_kind/);
 
   // Everything but the newest migration: falls exactly one tier. The newest is
-  // now content_stop_marker (scripts/migrateAddContentStopMarker.js).
-  const noMarker = await watchListAgainst(['content_stop_marker']);
-  assert.strictEqual(noMarker.asked.length, 2);
-  assert.match(noMarker.asked[1], /source_kind/, 'and keeps the tier below');
+  // now change_count (scripts/migrateAddWatchRunHistory.js).
+  const noHistory = await watchListAgainst(['change_count']);
+  assert.strictEqual(noHistory.asked.length, 2);
+  assert.match(noHistory.asked[1], /content_stop_marker/, 'and keeps the tier below');
+  assert.ok(!('change_count' in noHistory.rows[0]),
+    'the fallback must NOT default the column in — an absent key means "no run history to write"');
+
+  // One further back: content_stop_marker missing takes out the two tiers that
+  // name it, so this is three queries rather than two.
+  const noMarker = await watchListAgainst(['content_stop_marker', 'change_count']);
+  assert.strictEqual(noMarker.asked.length, 3);
+  assert.match(noMarker.asked[2], /source_kind/, 'and keeps the tier below');
   assert.ok(!('content_stop_marker' in noMarker.rows[0]),
     'the fallback must NOT default the column in — an absent key means "no truncation configured"');
 
-  // Two migrations back. source_kind missing takes out the two tiers that name
-  // it, so this is three queries rather than two.
-  const noKind = await watchListAgainst(['source_kind', 'content_stop_marker']);
-  assert.strictEqual(noKind.asked.length, 3);
-  assert.match(noKind.asked[2], /consecutive_unconfirmed/, 'and keeps the tier below');
+  // source_kind missing takes out every tier that names it, which is now three.
+  const noKind = await watchListAgainst(['source_kind', 'content_stop_marker', 'change_count']);
+  assert.strictEqual(noKind.asked.length, 4);
+  assert.match(noKind.asked[3], /consecutive_unconfirmed/, 'and keeps the tier below');
   assert.ok(!('source_kind' in noKind.rows[0]),
     'the fallback must NOT default the columns in — key presence is the signal the detector reads');
 
@@ -18094,8 +18101,10 @@ test('specWatch.getWatchList degrades one migration at a time', async () => {
   const mid = await watchListAgainst([
     'source_kind', 'content_stop_marker', 'consecutive_unconfirmed', 'last_unconfirmed_reason',
   ]);
-  assert.strictEqual(mid.asked.length, 4);
-  assert.match(mid.asked[3], /expected_content/, 'and kept the anchor columns');
+  // Every tier above the anchor-only one names consecutive_unconfirmed, and
+  // there are now four of them, so this falls five queries deep.
+  assert.strictEqual(mid.asked.length, 5);
+  assert.match(mid.asked[4], /expected_content/, 'and kept the anchor columns');
   assert.ok(!('consecutive_unconfirmed' in mid.rows[0]));
 
   // No migration run: falls all the way to the base columns.
@@ -18103,8 +18112,8 @@ test('specWatch.getWatchList degrades one migration at a time', async () => {
     'source_kind', 'content_stop_marker', 'expected_content', 'anchor_scope',
     'consecutive_failures', 'consecutive_unconfirmed', 'last_unconfirmed_reason',
   ]);
-  assert.strictEqual(base.asked.length, 5);
-  assert.ok(!/expected_content|consecutive|source_kind|content_stop_marker/.test(base.asked[4]));
+  assert.strictEqual(base.asked.length, 6);
+  assert.ok(!/expected_content|consecutive|source_kind|content_stop_marker/.test(base.asked[5]));
   assert.ok(!('consecutive_failures' in base.rows[0]));
 });
 
@@ -22009,4 +22018,179 @@ test('migrateFixLinkedInSingleImageAnchor: the incumbent is refused as a LABEL, 
     'and records that this anchor does not close the sibling-page gap');
   assert.match(flat, /BOTH ARE INSIDE THE TEXT-RECOMMENDATIONS TABLE/,
     'and states, in the header\'s own words, that both occurrences are in-section');
+});
+
+// ─── run-history columns on spec_watch_list ─────────────────────────────────
+// scripts/migrateAddWatchRunHistory.js + the detector writes that populate them.
+//
+// These drive runDetection with a stubbed pool and read the SQL it issues. A
+// structural test over the source could not do it: the whole question is WHICH
+// BRANCH carries which SET fragment, and a branch is chosen at run time.
+
+// A row carrying the run-history columns. KEY PRESENCE is what the detector
+// reads, so the keys must be here even when the values are null.
+function historyRow(over) {
+  return Object.assign({
+    id: 1, display_name: 'row', source_url: 'https://example.test/spec',
+    is_test: false, affected_fields: [], expected_content: null, anchor_scope: 'normalized',
+    consecutive_failures: 0, consecutive_unconfirmed: 0, last_unconfirmed_reason: null,
+    source_kind: 'platform_enforced', content_stop_marker: null,
+    current_hash: null,
+    first_baselined_at: null, last_changed_at: null, change_count: 0,
+  }, over || {});
+}
+
+// The page every run-history test serves. Stable, so the confirm-on-refetch step
+// reproduces and the change branch reaches recordChange.
+const HISTORY_PAGE = '<html><body>a stable spec page with limits 30 and 90</body></html>';
+const historyFetch = async () => ({ ok: true, status: 200, text: async () => HISTORY_PAGE });
+
+// The one UPDATE that writes a hash, on whichever branch the run took.
+function hashUpdate(queries) {
+  return queries.filter((q) => /UPDATE spec_watch_list SET current_hash/.test(q.sql));
+}
+
+test('run history: the SET fragments are gated on column presence', () => {
+  const det = require('../src/services/specDetector.js');
+  // KEY PRESENCE, not truthiness — "column absent" and "column present and 0"
+  // are different states and only the first must suppress the write.
+  assert.strictEqual(det.hasRunHistoryColumns({ change_count: 0 }), true,
+    'present and zero still counts as present');
+  assert.strictEqual(det.hasRunHistoryColumns({ change_count: null }), true);
+  assert.strictEqual(det.hasRunHistoryColumns({}), false, 'absent is absent');
+  assert.strictEqual(det.hasRunHistoryColumns(null), false);
+
+  // Pre-migration: both fragments are empty, so the UPDATEs are byte-identical
+  // to what they were before this change.
+  assert.strictEqual(det.stampFirstBaseline({}), '');
+  assert.strictEqual(det.stampChange({}), '');
+
+  // Post-migration: first baseline COALESCEs so a re-baseline cannot move it.
+  assert.match(det.stampFirstBaseline({ change_count: 0 }),
+    /first_baselined_at = COALESCE\(first_baselined_at, NOW\(\)\)/);
+  assert.ok(!/last_changed_at|change_count =/.test(det.stampFirstBaseline({ change_count: 0 })),
+    'the baseline fragment touches ONLY first_baselined_at');
+  assert.match(det.stampChange({ change_count: 0 }), /last_changed_at = NOW\(\)/);
+  assert.match(det.stampChange({ change_count: 0 }), /change_count = COALESCE\(change_count, 0\) \+ 1/);
+  assert.ok(!/first_baselined_at/.test(det.stampChange({ change_count: 0 })),
+    'and the change fragment never touches first_baselined_at');
+});
+
+test('run history: the baseline path sets first_baselined_at, once, and nothing else', async () => {
+  const { out, queries } = await runDetectorWith({
+    rows: [historyRow({ current_hash: null })],
+    fetchImpl: historyFetch,
+  });
+  assert.strictEqual(out.results[0].status, 'baseline');
+
+  const upd = hashUpdate(queries);
+  assert.strictEqual(upd.length, 1, 'one hash-writing UPDATE');
+  assert.match(upd[0].sql, /first_baselined_at = COALESCE\(first_baselined_at, NOW\(\)\)/,
+    'the baseline path stamps first_baselined_at');
+  // AND DOES NOT TOUCH THE OTHER TWO. A baseline is not a change: there is no
+  // previous value it moved from, so counting it would make every new row read
+  // as having changed once.
+  assert.ok(!/last_changed_at/.test(upd[0].sql), 'baseline does not set last_changed_at');
+  assert.ok(!/change_count/.test(upd[0].sql), 'baseline does not increment change_count');
+  // COALESCE is what makes it once-only: a row that re-baselines (a repoint
+  // clears current_hash) keeps its original date.
+  assert.match(upd[0].sql, /COALESCE\(first_baselined_at, NOW\(\)\)/,
+    'a later baseline cannot move it');
+});
+
+test('run history: pre-migration, the baseline UPDATE is unchanged', async () => {
+  // The deploy-before-migration case. A row WITHOUT the key must produce exactly
+  // the SQL this branch produced before the change — writing less, never wrongly.
+  const row = historyRow({ current_hash: null });
+  delete row.first_baselined_at;
+  delete row.last_changed_at;
+  delete row.change_count;
+  const { out, queries } = await runDetectorWith({ rows: [row], fetchImpl: historyFetch });
+  assert.strictEqual(out.results[0].status, 'baseline');
+  const upd = hashUpdate(queries);
+  assert.strictEqual(upd.length, 1);
+  for (const col of ['first_baselined_at', 'last_changed_at', 'change_count']) {
+    assert.ok(!new RegExp(col).test(upd[0].sql), `pre-migration must not write ${col}`);
+  }
+});
+
+test('run history: a confirmed change stamps last_changed_at and increments the count', async () => {
+  // A stored hash that cannot match, so the change branch is taken; the stub
+  // serves the same page twice, so the refetch reproduces and it CONFIRMS.
+  const { out, queries } = await runDetectorWith({
+    rows: [historyRow({ current_hash: 'stale'.repeat(12) })],
+    fetchImpl: historyFetch,
+  });
+  assert.strictEqual(out.results[0].status, 'changed');
+
+  assert.ok(queries.some((q) => /INSERT INTO spec_review_queue/.test(q.sql)),
+    'the change was flagged');
+  const upd = hashUpdate(queries);
+  assert.strictEqual(upd.length, 1);
+  assert.match(upd[0].sql, /last_changed_at = NOW\(\)/);
+  assert.match(upd[0].sql, /change_count = COALESCE\(change_count, 0\) \+ 1/);
+  assert.ok(!/first_baselined_at/.test(upd[0].sql),
+    'a change is not a baseline — first_baselined_at is left alone');
+});
+
+test('run history: the unchanged path touches none of the three', async () => {
+  // THE ASSERTION MOST LIKELY TO ROT, and the reason is worth stating: it is a
+  // NEGATIVE over a branch nobody has a reason to edit, so it will go on passing
+  // whatever happens elsewhere — right up until someone appends a fragment to
+  // the wrong template literal and every stable row starts reporting movement.
+  // Mutation-checked in the commit that added it.
+  const det = require('../src/services/specDetector.js');
+  const stable = det.hashText(det.hashableText({ content_stop_marker: null }, HISTORY_PAGE));
+  const { out, queries } = await runDetectorWith({
+    rows: [historyRow({ current_hash: stable })],
+    fetchImpl: historyFetch,
+  });
+  assert.strictEqual(out.results[0].status, 'unchanged');
+
+  const upd = queries.filter((q) => /^UPDATE spec_watch_list/.test(q.sql));
+  assert.strictEqual(upd.length, 1, 'exactly one UPDATE on the unchanged path');
+  for (const col of ['first_baselined_at', 'last_changed_at', 'change_count']) {
+    assert.ok(!new RegExp(col).test(upd[0].sql),
+      `the unchanged path must not write ${col} — a stable row reporting movement is the`
+      + ' exact confusion these columns exist to remove');
+  }
+  assert.match(upd[0].sql, /last_checked_at = NOW\(\)/, 'it still does what it always did');
+  assert.ok(!queries.some((q) => /INSERT INTO spec_review_queue/.test(q.sql)),
+    'and nothing is flagged');
+});
+
+test('run history: the migration leaves first_baselined_at NULL and says why', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateAddWatchRunHistory.js'), 'utf8');
+  const mig = require('../scripts/migrateAddWatchRunHistory.js');
+
+  assert.deepStrictEqual(mig.COLUMNS.map((c) => c[0]),
+    ['first_baselined_at', 'last_changed_at', 'change_count']);
+  for (const [, ddl] of mig.COLUMNS) {
+    assert.match(ddl, /ADD COLUMN IF NOT EXISTS/, 'a re-run is a no-op');
+  }
+
+  // THE BACKFILL WRITES TWO COLUMNS, NEVER THE THIRD. Backfilling
+  // first_baselined_at from created_at would stamp a confident date describing
+  // an event that did not happen then, on exactly the repurposed rows this
+  // feature exists to help.
+  assert.match(mig.BACKFILL_SQL, /SET last_changed_at = q\.last,\s*change_count\s*= q\.n/);
+  assert.ok(!/first_baselined_at/.test(mig.BACKFILL_SQL),
+    'the backfill never writes first_baselined_at');
+  assert.ok(!/created_at/.test(mig.BACKFILL_SQL),
+    'and never reads created_at, which is the wrong source for it');
+
+  // GUARDED ON THE VALUE IT EXPECTS TO REPLACE, per the house rule: a re-run
+  // after a real detection change must not drag last_changed_at backwards.
+  assert.match(mig.BACKFILL_SQL, /w\.last_changed_at IS NULL/);
+  assert.match(mig.BACKFILL_SQL, /COALESCE\(w\.change_count, 0\) = 0/);
+
+  // The preview LEFT JOINs so rows that get nothing are still printed.
+  assert.match(mig.BACKFILL_PREVIEW_SQL, /LEFT JOIN/,
+    'the dry run shows rows that get nothing, not only rows it touches');
+
+  const flat = src.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+  assert.match(flat, /NULL means UNKNOWN, and unknown is the truth/);
+  assert.match(flat, /IT IS A FLOOR, NOT A CENSUS/,
+    'the header records that the queue-derived values are a lower bound');
 });

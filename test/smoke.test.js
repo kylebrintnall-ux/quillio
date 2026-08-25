@@ -21917,21 +21917,40 @@ test('migrateFixLinkedInSingleImageAnchor: 255 is refused even though the row do
     'and NOT claiming it is one of ours, because it is not');
 });
 
-test('migrateFixLinkedInSingleImageAnchor: ships refusing, and --window parses', () => {
+test('migrateFixLinkedInSingleImageAnchor: the header evidence gate is satisfied, and --window parses', () => {
+  // WAS "ships refusing". The file shipped with QUOTES/SECTION empty and that
+  // test asserted the refusal; the constants are filled now from an operator's
+  // --discover run, so the assertion is inverted rather than deleted — the
+  // property being guarded is still "the gate agrees with the constants", which
+  // is the thing a future edit could silently break.
   const mig = require('../scripts/migrateFixLinkedInSingleImageAnchor.js');
 
-  // It must ship unfilled and refusing — the operator supplies the page text.
-  const gate = mig.requireHeaderEvidence();
-  assert.strictEqual(gate.ok, false, 'the file refuses until QUOTES is filled');
-  assert.match(gate.why, /QUOTES is empty/);
-  assert.match(gate.why, /--discover/, 'and names the command that fills it');
-  assert.deepStrictEqual(mig.QUOTES, [], 'no inherited quote is passed off as a reading');
-  assert.strictEqual(mig.SECTION, null);
-  assert.strictEqual(mig.CANDIDATES.filter((c) => !c.refusedByDesign).length, 0,
-    'and the only candidate is the incumbent, refused by design');
+  assert.deepStrictEqual(mig.requireHeaderEvidence(), { ok: true });
+  assert.strictEqual(mig.QUOTES.length, 2, 'both copies of the table are quoted');
+  for (const marker of [mig.SECTION.from, mig.SECTION.to]) {
+    assert.ok(mig.QUOTES.some((q) => q.includes(marker)),
+      `the section marker ${JSON.stringify(marker)} comes from quoted text`);
+  }
+  for (const c of mig.CANDIDATES.filter((x) => !x.refusedByDesign)) {
+    assert.ok(!mig.hasDigit(c.text), `candidate is digit-free: ${JSON.stringify(c.text)}`);
+  }
+
+  // THE ESCAPED ENTITIES ARE LITERAL TEXT, not markup. This page emits each
+  // block twice — once as escaped HTML source, once rendered — and normalize()
+  // strips real tags while leaving escaped source alone. "Tidying" &lt;b> into
+  // <b> would quote text the page does not contain and refuse on a healthy page.
+  assert.ok(mig.QUOTES[0].includes('&lt;b>'), 'the escaped source copy is quoted as-is');
+  assert.ok(mig.QUOTES[0].includes('&amp;nbsp;'), 'including the escaped entity');
+
+  // THE CMS HASH IS EXCLUDED ON PURPOSE. `text-d20e36d2fe` follows quote 1 in
+  // the source copy and can change on any republish without a spec changing.
+  // Quoting it would make this file's own quote check fail on a healthy page.
+  for (const q of mig.QUOTES) {
+    assert.ok(!/text-[0-9a-f]{8,}/.test(q), `no CMS element id in a quote: ${q.slice(0, 40)}…`);
+  }
 
   // --window is parsed once, so a bad value is a refusal rather than a NaN that
-  // silently selects nothing. Driven by rewriting argv around the export.
+  // silently selects nothing.
   const withArgv = (arg, fn) => {
     const saved = process.argv;
     process.argv = ['node', 'x', arg];
@@ -21942,4 +21961,52 @@ test('migrateFixLinkedInSingleImageAnchor: ships refusing, and --window parses',
     'an inverted range is rejected, not silently empty');
   assert.deepStrictEqual(withArgv('--window=abc', mig.parseWindow), { bad: '--window=abc' });
   assert.strictEqual(withArgv('--verify', mig.parseWindow), null, 'absent is null');
+});
+
+test('migrateFixLinkedInSingleImageAnchor: the incumbent is refused as a LABEL, not for being 2x', () => {
+  // THE CORRECTION THIS FILE'S HEADER RECORDS. The migration first claimed the
+  // 2x "Introductory text" anchor was the Meta failure mode — one match in the
+  // watched table, one outside. The --discover run showed BOTH are inside it:
+  // the page emits every block twice, escaped-source and rendered, so the whole
+  // table appears twice over and the repeat is a CMS artifact.
+  //
+  // This pins the corrected reasoning so nobody restores the old one: the
+  // incumbent is refused for being a FIELD LABEL of a watched field, and the
+  // header must not go back to claiming multiplicity.
+  const mig = require('../scripts/migrateFixLinkedInSingleImageAnchor.js');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateFixLinkedInSingleImageAnchor.js'), 'utf8');
+
+  const incumbent = mig.CANDIDATES.find((c) => c.refusedByDesign);
+  assert.strictEqual(incumbent.text, mig.OLD_ANCHOR);
+  assert.match(incumbent.why, /NOT refused for being 2x/,
+    'the refusal names the corrected reason');
+  assert.match(incumbent.why, /FIELD LABEL/, 'which is the coupling, not the count');
+
+  // Both occurrences in-section is the measured fact, so a fixture with the
+  // table emitted twice must leave the incumbent in-section — i.e. the section
+  // span has to cover BOTH copies, which is why SECTION.to is the NEXT heading.
+  const page = 'lead in Text Recommendations &lt;b>Ad name&lt;/b> Introductory text: 150 '
+    + 'characters source copy end Ad name (optional): 255 characters Introductory text: 150 '
+    + 'characters rendered copy Technical Requirements and then other things';
+  const span = mig.sectionSpan(page, mig.SECTION);
+  const hits = mig.occurrences(page, mig.OLD_ANCHOR);
+  assert.strictEqual(hits.length, 2, 'the fixture emits the label twice, as the page does');
+  for (const h of hits) {
+    assert.ok(h.at >= span.start && h.at < span.end,
+      `occurrence at ${h.at} is inside the span ${span.start}-${span.end}`);
+  }
+
+  // FLATTEN THE COMMENT MARKERS BEFORE MATCHING. The header wraps mid-phrase,
+  // so "RENDERING\n// ARTIFACT" does not match /RENDERING\s+ARTIFACT/ — `//` is
+  // not whitespace. Same flattening the migrateAddGoogleVideoAssets header test
+  // uses, and the first version of this assertion failed for exactly that
+  // reason: a structural test that silently checks a shape the file cannot have.
+  const flat = src.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+  assert.match(flat, /RENDERING ARTIFACT/,
+    'the header records the double-emission finding');
+  assert.match(flat, /KNOWN RESIDUAL/,
+    'and records that this anchor does not close the sibling-page gap');
+  assert.match(flat, /BOTH ARE INSIDE THE TEXT-RECOMMENDATIONS TABLE/,
+    'and states, in the header\'s own words, that both occurrences are in-section');
 });

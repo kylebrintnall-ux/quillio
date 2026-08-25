@@ -10,23 +10,60 @@
 // repeated here except where this row differs — and it differs in one way that
 // changes how the output should be read.
 //
-// ─── THE PROBLEM ────────────────────────────────────────────────────────────
-// The row anchors on "Introductory text", which occurs TWICE in the normalized
-// text of the single-image-ads-specs page.
+// ─── THE PROBLEM — AND THE ORIGINAL STATEMENT OF IT WAS WRONG ───────────────
 //
-// Two is a smaller number than X's nine or Google display's five, and it is the
-// same defect. Multiplicity proves A PAGE RENDERED; it says nothing about WHICH
-// SECTION rendered. If LinkedIn restructured the page and dropped the block this
-// row's fields come from, the other occurrence would keep the anchor matching
-// and the row would report healthy forever.
+// THIS FILE FIRST SHIPPED CLAIMING the row's "Introductory text" anchor was the
+// X / Meta defect again: 2x in the normalized text, so one occurrence in the
+// watched table and one somewhere else, and dropping the table would leave the
+// other match and a healthy-looking row.
 //
-// DO NOT LET "ONLY TWICE" ARGUE FOR LEAVING IT. The count is not the property
-// that matters — 2x and 9x fail identically, because one surviving match is all
-// it takes. scripts/migrateAddSpecAnchors.js seeded this anchor and defended a
-// repeated spec label on the grounds that "what disqualifies a phrase is being
-// site chrome that survives an error page". That answers the wrong question,
-// exactly as it did for X: a spec label repeated once per section is not chrome,
-// and it still cannot tell you which section's table you are looking at.
+// THE --discover RUN FALSIFIED THAT, and the correction is left in place rather
+// than quietly rewritten, because it is the more useful thing for the next
+// reader to see.
+//
+// WHAT IS ACTUALLY HAPPENING: this page emits every content block TWICE in the
+// normalized text — once as ESCAPED HTML SOURCE (`&lt;b>`, `&amp;nbsp;`) and
+// once as RENDERED PLAIN TEXT. normalize() strips real tags, but escaped source
+// is literal characters and survives, so the whole table appears twice over.
+//
+//   "Introductory text" at 8338  — the escaped-source copy
+//   "Introductory text" at 8642  — the rendered copy
+//
+// BOTH ARE INSIDE THE TEXT-RECOMMENDATIONS TABLE. The 2x is a RENDERING
+// ARTIFACT of this CMS, not evidence the anchor was matching the wrong section.
+// Drop the table and both occurrences go with it, so the old anchor DOES assert
+// that the watched section rendered. It is not the Meta failure mode and never
+// was.
+//
+// ─── SO WHY CHANGE IT AT ALL? A SMALLER, REAL REASON ────────────────────────
+// Stated plainly because the original justification is gone and a reader is
+// entitled to ask what is left of it.
+//
+// "Introductory text" IS A FIELD LABEL, and specifically the label of one of the
+// three fields this row watches. That couples the anchor to the thing being
+// watched, which is the same defect the digit-free rule exists to prevent —
+// arriving as a LABEL instead of a NUMBER:
+//
+//   • LinkedIn renames the row "Introductory text" → "Intro text", limits
+//     unchanged: old anchor reports `failed`, a broken-page alarm for a
+//     cosmetic edit.
+//   • LinkedIn restructures the table and drops or merges that row — which IS a
+//     spec change we want in the review queue as `changed`: the old anchor
+//     reports `failed` instead, so a real spec event arrives dressed as a broken
+//     page. That is precisely the cost the header's option-2 argument describes
+//     for a numeric anchor.
+//
+// "Text Recommendations" is the table's HEADING. It is not one of the watched
+// things, so neither of those turns a spec move into a broken-page report.
+//
+// THE HONEST SIZE OF THIS CHANGE: it is a decoupling, not a defect fix. If you
+// are deciding whether it is worth running, that is the whole of the case for
+// it. The row is not currently blind, and nothing here is urgent.
+//
+// scripts/migrateAddSpecAnchors.js seeded the old anchor and defended a repeated
+// spec label on the grounds that "what disqualifies a phrase is being site
+// chrome that survives an error page". On this page that defence happens to hold
+// — unlike on X, where the same argument was wrong.
 //
 // ─── WHY THIS PAGE IS HARDER THAN THE GOOGLE ONE, AND IT IS ONE REASON ──────
 // THE PAGE IS BIG. ~24,500 normalized characters against the Google display
@@ -59,66 +96,97 @@
 //     document, at discover time and at verify time, so section placement is
 //     auditable from the output rather than taken on trust.
 //
-// ─── WHERE TO LOOK — A HYPOTHESIS, NOT A QUOTE ──────────────────────────────
-// NOT A FETCH BY THIS FILE, and it must not be pasted into QUOTES on this
-// file's say-so.
-//
-// scripts/migrateBackfillSpecVerifiedAt.js records a reading of THIS page from
-// the 2026-08-20 audit, when all three stored numbers were confirmed against it:
-//
-//   "Text Recommendations Ad name (optional): 255 characters Headline: 70
-//    characters Introductory text: 150 characters Description (LAN only): 70
-//    characters"
-//
-// If that block is still there, it is the section this row's fields come from —
-// it publishes all three of them (Headline 70, Introductory text 150,
-// Description (LAN only) 70) and nothing else on the page does.
-//
-// That makes two things worth testing with --discover rather than assuming:
-//
-//   1. The heading "Text Recommendations" is DIGIT-FREE and, if it occurs once,
-//      is the obvious candidate — the direct analogue of the Google display
-//      row's "Type Maximum length Quantity Required". Check the count. LinkedIn
-//      may well repeat that heading per ad format, which is precisely the
-//      failure mode being fixed and would disqualify it.
-//   2. "Introductory text" appears INSIDE that table. So one of the old
-//      anchor's two occurrences is probably in the right place and the other is
-//      not — which is why the anchor has never failed and has never meant
-//      anything either.
-//
-// The 255 in that block is Ad name, which this row does NOT store. Do not let
-// it into a candidate: it is a number that can move without any of this row's
-// limits moving, and an anchor holding it would report `failed` for an event
-// this row has no interest in.
-//
-// ─── THE PAGE TEXT — UNFILLED, AND THIS FILE REFUSES TO WRITE UNTIL IT IS ───
+// ─── THE PAGE TEXT, AND WHERE IT CAME FROM ──────────────────────────────────
 // ┌──────────────────────────────────────────────────────────────────────────┐
-// │ QUOTES and SECTION below are EMPTY. That is deliberate and it is the      │
-// │ single most important thing about this file.                             │
+// │ READ THIS BEFORE TRUSTING THE QUOTES BELOW.                              │
 // │                                                                          │
-// │ The session that authored it could not reach business.linkedin.com — the  │
-// │ egress proxy answers 403 to CONNECT — and no operator has supplied the    │
-// │ page text yet. So there is NO reading of this page behind this file.      │
+// │ The session that AUTHORED this file could not reach business.linkedin    │
+// │ .com — the egress proxy answers 403 to CONNECT. It therefore shipped     │
+// │ with QUOTES and SECTION empty, refusing to write, rather than with       │
+// │ inherited or invented text. That refusal is what produced the reading    │
+// │ below.                                                                   │
 // │                                                                          │
-// │ The block quoted above is a reading recorded in ANOTHER file, months ago, │
-// │ cited here as a hypothesis about where to look. It is not evidence about  │
-// │ the page as it stands today, and copying it into QUOTES without running   │
-// │ --discover would be asserting a fetch that did not happen.                │
+// │ The text now in QUOTES was SUPPLIED BY THE OPERATOR from their own       │
+// │ `--discover` run against the live page, and is NOT a fetch performed by  │
+// │ the author of this file. Same provenance, and the same weakness, as      │
+// │ scripts/migrateFixXAnchor.js and migrateFixGoogleDisplayAnchor.js.       │
 // │                                                                          │
-// │ CLAUDE.md's most expensive rule is that a spec change quotes the page it  │
-// │ fetched, in the same change, so the next reader can check the claim       │
-// │ without leaving the file. scripts/migrateSpecIntegrityFixes.js is what    │
-// │ happens when that rule is skipped: every cell in it was a REASONED        │
-// │ number, internally consistent, peer-reviewable, and wrong, because not    │
-// │ one was READ.                                                            │
+// │ WHAT CLOSES THE GAP: readPage() FETCHES THE PAGE AND ASSERTS EVERY QUOTE │
+// │ BEFORE ANYTHING IS WRITTEN, and the write path calls the same function.  │
+// │ The quote is a claim this file CHECKS, never a claim it MAKES.           │
 // │                                                                          │
-// │ An anchor is not a spec value, but it is a claim about what is on a page, │
-// │ and it fails the same way: silently, in the reassuring direction.         │
-// │                                                                          │
-// │ So the header carries no quote rather than an inherited one, and          │
-// │ requireHeaderEvidence() below turns that absence into a refusal instead   │
-// │ of a default.                                                            │
+// │ NOTE WHAT THAT ALREADY BOUGHT: the run did not merely confirm a guess,   │
+// │ it OVERTURNED this file's stated premise about the 2x anchor. A header   │
+// │ written from a plausible reading rather than a real one would have been  │
+// │ wrong, internally consistent, and unfalsifiable — which is the           │
+// │ scripts/migrateSpecIntegrityFixes.js failure exactly.                    │
 // └──────────────────────────────────────────────────────────────────────────┘
+//
+// THE TEXT-RECOMMENDATIONS BLOCK, verbatim as supplied. Both copies, because
+// the page emits the table twice (see THE PROBLEM above) and the span covers
+// both:
+//
+//   source copy, from ~8186:
+//     "Text Recommendations &lt;b>Ad name (optional):&amp;nbsp;&lt;/b>255 characters"
+//
+//   rendered copy, running to ~8790:
+//     "Ad name (optional): 255 characters Headline: 70 characters Introductory
+//      text: 150 characters Description (LAN only): 70 characters. Only required
+//      if using LinkedIn Audience Network (LAN). Technical Requirements"
+//
+// This block publishes all three of this row's stored limits — Headline 70,
+// Introductory text 150, Description (LAN only) 70 — and nothing else on the
+// page does.
+//
+// WHY THE FIRST QUOTE STOPS WHERE IT DOES. The source copy continues into an
+// element id, `text-d20e36d2fe`. That is a CMS-GENERATED HASH: it can change on
+// any republish without a single spec changing. Quoting it would make this
+// file's own quote check fail on a healthy page, and spanning it would put a
+// volatile token inside the anchor region. It is excluded deliberately, and this
+// paragraph exists so nobody "completes" the quote later by pasting the rest of
+// the line in.
+//
+// It is the same class of hazard as a digit, arriving as a hex string: a token
+// that moves for reasons unrelated to the numbers being watched. The digit-free
+// rule would not have caught it — `d20e36d2fe` contains digits, so in this case
+// it happens to, but a hash of pure letters would sail through. Judgement, not
+// the gate, is what excludes this one.
+//
+// ─── KNOWN RESIDUAL — THIS ANCHOR DOES NOT CLOSE THE SIBLING-PAGE GAP ───────
+// STATED PLAINLY BECAUSE IT WOULD BE EASY TO IMPLY OTHERWISE, and every other
+// anchor migration in this repo makes a discrimination claim.
+//
+// "Text Recommendations" is very likely the SAME HEADING LinkedIn uses on its
+// carousel and video ad-spec pages. So this anchor asserts WHICH SECTION OF
+// THIS PAGE rendered — which is what it was chosen for — and would NOT catch a
+// redirect to a sibling ad-format page. That is the Meta "Primary Text" failure
+// mode (present on /image, /video and /collection alike), and it remains open
+// here.
+//
+// NOTHING AVAILABLE CLOSES IT. There is no digit-free phrase inside this table
+// specific to Single Image Ads: the table's content is field labels and numbers,
+// and the labels are shared across LinkedIn's ad formats. Choosing a
+// discriminating string would mean either taking a digit-bearing one (refused,
+// see below) or reaching outside the table (refused — that is the defect this
+// file exists to fix).
+//
+// So the gap is RECORDED, not solved. If it is ever worth closing, the route is
+// a second assertion — an anchor pair, or a check that the URL did not redirect
+// — and that is a change to the DETECTOR, not to this row.
+//
+// ─── THE 255 CASE — WHY DIGIT-FREE AND NOT X'S RULE, CONCRETELY ─────────────
+// The table contains "Ad name (optional): 255 characters".
+//
+// 255 is NOT stored by this row. So scripts/migrateFixXAnchor.js's rule — refuse
+// a candidate holding a STORED limit — would have PASSED a candidate containing
+// it. A LinkedIn revision to the ad-name cap would then report `failed`: a
+// broken-page alarm for an event none of Headline 70, Introductory text 150 or
+// Description (LAN only) 70 care about.
+//
+// This is the concrete case for the digit-free precondition on this page, and it
+// is stronger than the Google display page's equivalent (the article id 73067,
+// which was page furniture): 255 is a real published number sitting inside the
+// watched table, one row above the limits being watched.
 //
 // TO FILL IT IN — this is the whole workflow, and step 1 is a real step:
 //
@@ -295,20 +363,34 @@ function parseWindow() {
 }
 const WINDOW = parseWindow();
 
-// ─── UNFILLED. See the boxed note in the header. ────────────────────────────
+// ─── FILLED FROM AN OPERATOR'S --discover RUN. See the boxed note above. ────
 //
-// Every sentence this file quotes, asserted against the fetched page before
-// anything is written. Fill from --discover output, verbatim, including
-// punctuation and spacing as normalize() leaves it.
-const QUOTES = [];
+// Both copies of the table, VERBATIM from the normalized text. The escaped
+// entities (`&lt;b>`, `&amp;nbsp;`) are LITERAL CHARACTERS in the hashed text,
+// not markup — normalize() strips real tags, and escaped source survives it.
+// Do not "tidy" them into `<b>` or a space: that would be text this page does
+// not contain, and readPage() would refuse on a perfectly healthy page.
+//
+// Quote 1 stops before the CMS element id `text-d20e36d2fe` that follows it in
+// the source copy. See the header for why that exclusion is deliberate.
+const QUOTES = [
+  'Text Recommendations &lt;b>Ad name (optional):&amp;nbsp;&lt;/b>255 characters',
+  'Ad name (optional): 255 characters Headline: 70 characters Introductory text: 150 characters Description (LAN only): 70 characters. Only required if using LinkedIn Audience Network (LAN). Technical Requirements',
+];
 
 // THE SECTION, declared. Both markers MUST be substrings of QUOTES above —
 // asserted by requireHeaderEvidence(), not trusted.
 //
-//   { name: 'LinkedIn single image — the text-recommendations block',
-//     from: '<substring of a QUOTE that opens the block>',
-//     to:   '<substring of a QUOTE that closes it>' }
-const SECTION = null;
+// `from` is the table's heading, at the top of the SOURCE copy; `to` is the
+// heading of the NEXT block, at the end of the RENDERED copy. So the span runs
+// ~8186-8790 and deliberately covers BOTH emissions of the table — anything
+// narrower would put one copy in-section and the other out, for no reason a
+// reader could reconstruct.
+const SECTION = {
+  name: 'LinkedIn single image — the text-recommendations block (both copies)',
+  from: 'Text Recommendations',
+  to: 'Technical Requirements',
+};
 
 // CANDIDATES IN PREFERENCE ORDER, filled from --discover.
 //
@@ -317,12 +399,36 @@ const SECTION = null;
 // if the page changed such that it became unique and in-section.
 const CANDIDATES = [
   {
+    text: 'Text Recommendations',
+    why: 'PREFERRED. The heading of the block publishing all three of this row\'s stored limits '
+      + '(Headline 70, Introductory text 150, Description (LAN only) 70). 1x, digit-free.\n'
+      + '      IT DISCRIMINATES WITHIN THIS PAGE: the other headings are "Design Recommendations", '
+      + '"Technical Requirements", "Call To Action Options" and "URL Requirements", so it belongs '
+      + 'to the text block rather than merely to the page. Drop that block and the anchor goes.\n'
+      + '      IT DOES NOT DISCRIMINATE BETWEEN AD-FORMAT PAGES — LinkedIn very likely uses the '
+      + 'same heading on the carousel and video specs pages. See KNOWN RESIDUAL in the header: '
+      + 'that gap is recorded rather than closed, because nothing digit-free inside this table is '
+      + 'specific to Single Image Ads.',
+  },
+  {
+    text: 'characters. Only required if using LinkedIn Audience Network (LAN). Technical',
+    why: 'FALLBACK ONLY. 1x at 8703, digit-free, marking the tail of the RENDERED table running '
+      + 'into the Technical Requirements heading.\n'
+      + '      WEAKER THAN CANDIDATE 1 because it sits ON THE BOUNDARY: it spans the seam between '
+      + 'this block and the next, so it asserts that the join between two sections rendered rather '
+      + 'than that the watched table did. It would also survive the three spec rows being removed '
+      + 'so long as the LAN footnote and the next heading remained.',
+  },
+  {
     text: OLD_ANCHOR,
     refusedByDesign: true,
-    why: 'REFUSED BY DESIGN — the incumbent. Occurs 2x, which proves the page rendered and not '
-      + 'which section did. Two is not meaningfully better than nine: one surviving match is all '
-      + 'it takes for the row to report healthy while watching the wrong thing. Kept in the list '
-      + 'so every run shows it losing rather than having it silently disappear.',
+    why: 'REFUSED BY DESIGN — the incumbent. NOT refused for being 2x: both occurrences are '
+      + 'inside the watched table (the page emits it twice, once escaped and once rendered), so '
+      + 'it does assert the section rendered. It is refused because it is a FIELD LABEL for one '
+      + 'of the three watched fields, which couples the anchor to the thing being watched: rename '
+      + 'or restructure that row and a spec event arrives as `failed` rather than `changed`. See '
+      + 'THE PROBLEM in the header, where this file\'s original and incorrect reason is recorded '
+      + 'alongside the real one.',
   },
 ];
 
@@ -603,8 +709,10 @@ async function runDiscover(limits) {
   console.log(`\n   THE OLD ANCHOR ${JSON.stringify(OLD_ANCHOR)} — ${hits.length}x`);
   console.log(`   at ${hits.map((h) => `${h.at} (${h.pct}%)`).join('  ')}`);
   if (hits.length > 1) {
-    console.log('   One of these is probably inside the text-recommendations table and the rest are');
-    console.log('   not — which is why this anchor has never failed and has never meant anything.');
+    console.log('   EXPECT 2x AND EXPECT BOTH TO BE IN-SECTION. This page emits every block twice —');
+    console.log('   once as escaped HTML source (&lt;b> …) and once rendered — so the whole table');
+    console.log('   appears twice. The repeat is a CMS artifact, NOT the anchor matching a second');
+    console.log('   section. Check the offsets against the section span before concluding anything.');
   } else if (hits.length <= 1) {
     console.log('   NOTE: NOT repeating on this fetch. The premise of this change is not reproducing —');
     console.log('   the page may have been restructured. Re-read the header before trusting it.');
@@ -732,9 +840,10 @@ async function readPage(limits) {
   const hits = occurrences(a, OLD_ANCHOR);
   console.log(`\n   THE OLD ANCHOR ${JSON.stringify(OLD_ANCHOR)} — ${hits.length}x`);
   console.log(`   ${hits.map((h) => `${h.at} (${h.pct}%)`).join('  ')}`);
-  console.log('   An anchor matching in more than one place proves A PAGE rendered and says nothing');
-  console.log('   about WHICH section did — so dropping the watched block would leave the other');
-  console.log('   match and a healthy-looking row. Two is not safer than nine.');
+  console.log('   Both occurrences are expected to be INSIDE the section span below: this page emits');
+  console.log('   every block twice, escaped-source and rendered, so the table appears twice over.');
+  console.log('   The incumbent is not refused for multiplicity — it is refused for being a FIELD');
+  console.log('   LABEL of a watched field. See THE PROBLEM in the header.');
   if (hits.length <= 1) {
     console.log('\n   NOTE: the old anchor is NOT repeating on this fetch. The premise of this change');
     console.log('   is not reproducing — the page may have been restructured. Re-read the header.');

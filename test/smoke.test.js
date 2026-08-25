@@ -22272,36 +22272,93 @@ test('migrateFixLinkedInCarouselAnchor: 255 is refused twice over, by two differ
   assert.strictEqual(sr.chosen, null, 'and it is still refused there');
 });
 
-test('migrateFixLinkedInCarouselAnchor: ships refusing, and the 2x is an OPEN QUESTION', () => {
+test('migrateFixLinkedInCarouselAnchor: the 2x is RESOLVED as a CMS artifact', () => {
+  // WAS "ships refusing, and the 2x is an OPEN QUESTION". Both halves are now
+  // false by design: the constants are filled from an operator's --discover run,
+  // and that run answered the question. The test is INVERTED rather than
+  // deleted, because the property worth guarding did not go away — it changed
+  // from "both branches are present" to "the answer is recorded and the refuted
+  // branch is gone".
+  //
+  // Going red when the file is resolved is the test working: it forces the
+  // update to be deliberate instead of letting stale prose survive beside a
+  // measurement, which is the failure this repo's preamble is about.
   const mig = require('../scripts/migrateFixLinkedInCarouselAnchor.js');
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'scripts', 'migrateFixLinkedInCarouselAnchor.js'), 'utf8');
-
-  const gate = mig.requireHeaderEvidence();
-  assert.strictEqual(gate.ok, false, 'the file refuses until QUOTES is filled');
-  assert.match(gate.why, /QUOTES is empty/);
-  assert.deepStrictEqual(mig.QUOTES, []);
-  assert.strictEqual(mig.SECTION, null);
-  assert.strictEqual(mig.OLD_ANCHOR, 'Card headline');
-  assert.match(mig.URL, /carousel-ads\/specs$/);
-
-  // THE POINT OF THIS FILE: it must not presume the 2x is a defect. The header
-  // carries BOTH branches and the incumbent's refusal says the reason is not yet
-  // determined. If someone later resolves it, they rewrite these — and this
-  // assertion goes red, which is the prompt to update it deliberately.
   const flat = src.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
-  assert.match(flat, /THE OPEN QUESTION/, 'the header frames the 2x as open');
-  assert.match(flat, /BRANCH A — BOTH IN-SECTION/);
-  assert.match(flat, /BRANCH B — ONE OUT OF SECTION/);
-  assert.match(flat, /IT IS NOT ASSUMED/,
-    'and says outright that the sibling finding is not carried over as fact');
-  const incumbent = mig.CANDIDATES.find((c) => c.refusedByDesign);
-  assert.match(incumbent.why, /depends on a measurement not yet made/,
-    'the incumbent\'s refusal is conditional until --verify settles it');
 
-  // --verify must actually produce the verdict, not just discuss it.
-  assert.match(src, /IS THE \$\{anchorHits\.length\}x A CMS ARTIFACT, OR A REAL DEFECT\?/);
-  assert.match(src, /h\.inSection \? 'IN-SECTION' : 'OUT OF SECTION'/);
-  // And --discover must decline to answer it.
-  assert.match(src, /--discover CANNOT SAY WHETHER THESE ARE IN-SECTION/);
+  assert.deepStrictEqual(mig.requireHeaderEvidence(), { ok: true });
+  assert.strictEqual(mig.QUOTES.length, 2, 'both copies of the table are quoted');
+  for (const marker of [mig.SECTION.from, mig.SECTION.to]) {
+    assert.ok(mig.QUOTES.some((q) => q.includes(marker)),
+      `the section marker ${JSON.stringify(marker)} comes from quoted text`);
+  }
+
+  // THE ANSWER IS RECORDED, AND THE REFUTED BRANCH IS GONE.
+  assert.match(flat, /THE QUESTION IS RESOLVED/);
+  assert.match(flat, /8125 the ESCAPED-SOURCE copy IN-SECTION/,
+    'with the measured offsets, not a summary of them');
+  assert.match(flat, /THE MULTIPLICITY CASE EVAPORATES/);
+  assert.ok(!/BRANCH B/.test(flat),
+    'the refuted branch is DELETED, not left sitting beside the answer');
+
+  // AND THE HONEST SIZE OF THE CHANGE IS STATED.
+  assert.match(flat, /A DECOUPLING, NOT A DEFECT FIX/);
+  assert.match(flat, /NOTHING IS CURRENTLY BROKEN/);
+
+  const incumbent = mig.CANDIDATES.find((c) => c.refusedByDesign);
+  assert.match(incumbent.why, /NOT refused for being 2x/,
+    'the incumbent names the corrected reason');
+  assert.match(incumbent.why, /FIELD LABEL/, 'which is the coupling, not the count');
+
+  // THE TWO THINGS RECORDED AND DELIBERATELY NOT SOLVED.
+  assert.match(flat, /TRUE SOLE WITNESS/,
+    'no other watched row would report a move on 45 or 255');
+  assert.match(flat, /THE ANCHOR IS NOT A CORRECTNESS CHECK/,
+    'and the anchor never re-reads a number');
+  assert.match(flat, /KNOWN RESIDUAL/,
+    'the shared heading does not discriminate between ad-format pages');
+
+  // Escaped entities are literal text; CMS ids are excluded by judgement.
+  assert.ok(mig.QUOTES[0].includes('&lt;b>') && mig.QUOTES[0].includes('&amp;nbsp;'));
+  for (const q of mig.QUOTES) {
+    assert.ok(!/text-[0-9a-f]{8,}/.test(q), 'no CMS element id in a quote');
+  }
+  assert.match(flat, /JUDGEMENT, NOT A GATE/,
+    'and the file says the digit rule would not reliably catch an all-letter id');
+});
+
+test('migrateFixLinkedInCarouselAnchor: the boundary fallback is refused by the span', () => {
+  // A FINDING FROM THE VERIFY RUN, pinned so it is not mistaken for a bug later.
+  //
+  // Candidate 2 was supplied as a fallback, and the span as declared does not
+  // contain it: it starts at SECTION.to and runs PAST the end of it, so
+  // `at + length <= span.end` is false and it reports OUT OF SECTION.
+  //
+  // That is the section rule working exactly as written — a string spanning the
+  // seam out of the block is not inside the block — and it is why candidate 1
+  // is the only eligible one. Widening SECTION.to to swallow it would be the
+  // wrong fix: it would extend the watched span into the next section.
+  const mig = require('../scripts/migrateFixLinkedInCarouselAnchor.js');
+  const page = 'lead Text Recommendations body 45 and 255 characters Technical Requirements '
+    + '&lt;b>Number of carousel cards&lt;/b> tail';
+  const span = mig.sectionSpan(page, mig.SECTION);
+  assert.ok(span, 'the span locates');
+
+  const fallback = mig.CANDIDATES[1];
+  const at = page.indexOf(fallback.text);
+  assert.ok(at >= 0, 'the fallback IS on the page');
+  assert.ok(at < span.end, 'and it STARTS inside the span');
+  assert.ok(at + fallback.text.length > span.end,
+    'but ENDS outside it — which is what makes it ineligible');
+
+  const r = mig.chooseAnchor(page, mig.CANDIDATES, ['45', '255'], mig.SECTION);
+  const seen = r.seen.find((c) => c.text === fallback.text);
+  assert.strictEqual(seen.inSection, false);
+  assert.match(seen.reason, /OUT OF SECTION/);
+  assert.strictEqual(r.chosen.text, 'Text Recommendations',
+    'so the heading is the only eligible candidate');
+  assert.match(fallback.why, /EXTENDS PAST SECTION\.to/,
+    'and the candidate itself records that, so the refusal is not a surprise');
 });

@@ -17,62 +17,95 @@
 //   255 (intro text)
 //   ~20,838 normalized characters
 //
-// ─── THE OPEN QUESTION — THIS FILE DOES NOT PRESUME THE ANSWER ──────────────
+// ─── THE QUESTION IS RESOLVED: THE 2x IS A CMS ARTIFACT ────────────────────
 //
-// A 2x anchor LOOKS like the X / Meta defect: one occurrence in the watched
-// table, one elsewhere, so dropping the table leaves the other match and a
-// healthy-looking row. THAT IS NOT WHAT IT MEANT ON THE SIBLING PAGE.
+// This file shipped with the 2x written as an OPEN QUESTION and both branches
+// spelled out, because a 2x anchor LOOKS like the X / Meta defect and the
+// sibling page's finding was not evidence about this document. The --discover
+// run has answered it.
 //
-// Established while fixing the single-image row: LinkedIn's CMS emits every
-// content block TWICE in the normalized text — once as ESCAPED HTML SOURCE
-// (`&lt;b>`, `&amp;nbsp;`) and once as RENDERED PLAIN TEXT. normalize() strips
-// real tags, but escaped source is literal characters and survives, so the whole
-// table appears twice over. There it fully explained the 2x and BOTH occurrences
-// were inside the watched table. The multiplicity was an artifact of the CMS.
+// MEASURED, both occurrences of "Card headline":
 //
-// SAME PLATFORM, SAME CMS, ADJACENT PAGE — so the same artifact is the most
-// likely explanation here. IT IS NOT ASSUMED, and writing the header either way
-// before measuring is precisely the failure the single-image file records: it
-// shipped claiming the Meta defect, --discover falsified it, and the claim had
-// been plausible, internally consistent and wrong.
+//     8125   the ESCAPED-SOURCE copy      IN-SECTION
+//     8329   the RENDERED copy            IN-SECTION
+//            204 characters apart, both inside the text-recommendations block
 //
-// SO THIS FILE MEASURES IT. --discover prints both offsets and says outright it
-// CANNOT judge in-section, because no section has been declared at that point.
-// --verify, once a span exists, prints a per-occurrence verdict:
+// This is the same CMS double emission established on the single-image page:
+// LinkedIn emits every content block TWICE in the normalized text, once as
+// escaped HTML source (`&lt;b>`, `&amp;nbsp;`) and once as rendered plain text.
+// normalize() strips real tags, but escaped source is literal characters and
+// survives, so the whole table appears twice over.
 //
-//     IS THE 2x A CMS ARTIFACT, OR A REAL DEFECT?
-//        @  8322 ( 39.9%)  IN-SECTION
-//        @  8472 ( 40.6%)  IN-SECTION
-//        => ALL IN-SECTION. …
+// THE MULTIPLICITY CASE EVAPORATES. Drop the table and both occurrences go with
+// it, so the old anchor DOES assert that the watched section rendered. It is not
+// the Meta failure mode, and THE ROW IS NOT BLIND.
 //
-// BRANCH A — BOTH IN-SECTION (expected). The multiplicity case evaporates: drop
-// the table and both occurrences go with it, so the old anchor DOES assert that
-// the watched section rendered. It is not the Meta failure mode.
+// The refused branch — one occurrence outside the section — is DELETED rather
+// than left in place beside the answer. Keeping a disproved alternative next to
+// a measured one is the stale-prose failure this repo's preamble is about; the
+// question it was asking is recorded above, and the answer with it.
 //
-//   WHAT REMAINS IS THE SMALLER ARGUMENT, identical to the single-image row's.
-//   "Card headline" is a FIELD LABEL of a watched field — five of this row's six
-//   pairs ARE card headlines. That couples the anchor to the thing being
-//   watched, the digit-free rule's defect arriving as a LABEL rather than a
-//   NUMBER:
+// ─── WHAT REMAINS IS A DECOUPLING, NOT A DEFECT FIX ────────────────────────
+// Say it plainly when deciding whether to run this: NOTHING IS CURRENTLY BROKEN.
 //
-//     • LinkedIn renames the row "Card headline" -> "Card title", limits
-//       unchanged: the anchor reports `failed`, a broken-page alarm for a
-//       cosmetic edit.
-//     • LinkedIn drops or merges that row — which IS a spec change we want
-//       queued as `changed`: the anchor reports `failed` instead, so a real
-//       spec event arrives dressed as a broken page.
+// "Card headline" is the FIELD LABEL of five of this row's six watched pairs.
+// That couples the anchor to the thing being watched — the digit-free rule's
+// defect arriving as a LABEL rather than a NUMBER:
 //
-//   THAT IS A DECOUPLING, NOT A DEFECT FIX, AND THE ROW IS NOT BLIND. Say it
-//   plainly when deciding whether to run this: nothing is currently broken, and
-//   the change buys one thing — an anchor that is not itself one of the strings
-//   whose movement it exists to report.
+//   • LinkedIn renames the row "Card headline" -> "Card title", limits
+//     unchanged: the anchor reports `failed`, a broken-page alarm for a
+//     cosmetic edit.
+//   • LinkedIn drops or merges that row — which IS a spec change we want queued
+//     as `changed`: the anchor reports `failed` instead, so a real spec event
+//     arrives dressed as a broken page.
 //
-// BRANCH B — ONE OUT OF SECTION. Then it IS a real defect, of the Meta "Primary
-// Text" shape: the row can report healthy while watching a page that no longer
-// publishes its numbers. The change becomes urgent rather than optional.
+// "Text Recommendations" is the block's HEADING. It is not one of the watched
+// things, so neither turns a spec move into a broken-page report. That is the
+// whole of the gain: an anchor that is not itself one of the strings whose
+// movement it exists to report.
 //
-// WHOEVER RUNS THIS: --verify names the branch and tells you to rewrite this
-// section and the incumbent's `why` in CANDIDATES to match. Do that.
+// ─── AND THE DECOUPLING MATTERS MORE HERE THAN ON THE SIBLING, BECAUSE THIS
+// ─── ROW IS A TRUE SOLE WITNESS ON BOTH ITS LIMITS
+// RECORDED, NOT SOLVED. From the run:
+//
+//     45    stored by 10 copy_fields rows, ALL cited to this page
+//     255   stored by 2, both here
+//
+// NO OTHER WATCHED ROW WOULD REPORT A MOVE ON EITHER VALUE. Contrast the
+// single-image row, where 70 also appears on X's page and 150 on facebook-feed —
+// coincidences rather than second instruments, but at least the run has to
+// explain itself. Here there is nothing to explain away: this row is the only
+// instrument either limit has.
+//
+// TWO CONSEQUENCES, and the second is the uncomfortable one:
+//
+//   1. An anchor that converts a real move into `failed` is worse here than
+//      anywhere else on the watch list, because there is no second row to catch
+//      what this one turns into an alarm. That is the case for the decoupling.
+//   2. THE ANCHOR IS NOT A CORRECTNESS CHECK. It asserts the page rendered and
+//      the block is present; it never re-reads a number. If the seeded 45 or 255
+//      were wrong the day they were written, this row will report `unchanged`
+//      forever and be right to. Correctness still depends on a human opening the
+//      page — see CLAUDE.md, "'Checked', not 'verified'".
+//
+// ─── KNOWN RESIDUAL — THIS ANCHOR DOES NOT CLOSE THE SIBLING-PAGE GAP ──────
+// RECORDED, NOT SOLVED, and stated plainly because every other anchor migration
+// here makes a discrimination claim.
+//
+// "Text Recommendations" is the SAME HEADING the single-image page uses — it is
+// what won there — and very likely the same on LinkedIn's video and lead-gen
+// spec pages. So it asserts WHICH SECTION OF THIS PAGE rendered, and would NOT
+// catch a redirect to a sibling ad-format page. That is the Meta "Primary Text"
+// failure mode (present on /image, /video and /collection alike), and it stays
+// open.
+//
+// NOTHING INSIDE THIS TABLE CLOSES IT. The block is field labels and numbers;
+// the labels are shared across LinkedIn's ad formats, and the numbers are
+// refused by the digit rule. A discriminating string would have to come from
+// outside the table, which is the defect this file exists to fix.
+//
+// If it is ever worth closing, the route is a second assertion — an anchor pair,
+// or a redirect check — and that is a change to the DETECTOR, not to this row.
 //
 // ─── 255 IS A STORED LIMIT HERE, WHICH IT WAS NOT ON THE SIBLING PAGE ───────
 // Worth its own note, because the single-image file discusses 255 at length and
@@ -111,22 +144,11 @@
 // with the exact --window command for that region, and reports offset AND
 // percentage for every candidate at both discover and verify time.
 //
-// ─── SOLE WITNESS — EXPECT AN UNAMBIGUOUS ANSWER, UNLIKE THE SIBLING ───────
-// Recomputed live every run; nothing here is trusted for it. The expected shape
-// differs from the single-image row's in a way worth flagging, because that
-// row's output is misleading and this one's should not be:
-//
-//   single-image   70 is also on X's page and 150 on facebook-feed, so the run
-//                  reports "other watched rows would also report a move on this
-//                  VALUE" — which reads as reassurance and is false: a different
-//                  platform publishing the same integer is a coincidence, not a
-//                  second instrument.
-//
-//   THIS row       45 and 255 are believed to be stored ONLY by this page's own
-//                  fields. If so the run says SOLE WITNESS outright for both,
-//                  with no caveat needed.
-//
-// A PREDICTION TO BE CHECKED, not a fact — that is what the live query is for.
+// ─── SOLE WITNESS — CONFIRMED, see the section above ──────────────────────
+// Recomputed live every run regardless; nothing in this header is trusted for
+// it. The prediction this file shipped with — that 45 and 255 are stored only by
+// this page's fields — was confirmed by the run, and the consequences are
+// recorded under THE DECOUPLING above rather than repeated here.
 //
 // ─── WHAT IT DOES NOT TOUCH ─────────────────────────────────────────────────
 // expected_content, and nothing else. NOT current_hash, NOT affected_fields, NOT
@@ -147,23 +169,26 @@
 //
 // ─── THE PAGE TEXT — UNFILLED, AND THIS FILE REFUSES TO WRITE UNTIL IT IS ───
 // ┌──────────────────────────────────────────────────────────────────────────┐
-// │ QUOTES and SECTION below are EMPTY. That is deliberate and it is the      │
-// │ single most important thing about this file.                             │
+// │ READ THIS BEFORE TRUSTING THE QUOTES BELOW.                              │
 // │                                                                          │
-// │ The session that authored it could not reach business.linkedin.com — the  │
-// │ egress proxy answers 403 to CONNECT — and no operator has supplied the    │
-// │ page text yet. So there is NO reading of this page behind this file.      │
+// │ The session that AUTHORED this file could not reach business.linkedin    │
+// │ .com — the egress proxy answers 403 to CONNECT. It shipped with QUOTES   │
+// │ and SECTION empty, refusing to write, and with the 2x written as an open │
+// │ question. That refusal is what produced the reading below.               │
 // │                                                                          │
-// │ It also means THE OPEN QUESTION above is genuinely open. The single-image │
-// │ finding makes one branch far more likely; it does not make it true of     │
-// │ this page, and the two pages are not the same document.                   │
+// │ The text now in QUOTES was SUPPLIED BY THE OPERATOR from their own       │
+// │ `--discover` run against the live page, and is NOT a fetch performed by  │
+// │ the author of this file. Same provenance, and the same weakness, as      │
+// │ migrateFixXAnchor.js and the two other anchor migrations.                │
 // │                                                                          │
-// │ CLAUDE.md's most expensive rule is that a spec change quotes the page it  │
-// │ fetched, in the same change. scripts/migrateSpecIntegrityFixes.js is what │
-// │ happens when it is skipped: every cell was a REASONED number, internally  │
-// │ consistent, peer-reviewable, and wrong, because not one was READ.         │
+// │ WHAT CLOSES THE GAP: readPage() FETCHES THE PAGE AND ASSERTS EVERY QUOTE │
+// │ BEFORE ANYTHING IS WRITTEN, and the write path calls the same function.  │
+// │ The quote is a claim this file CHECKS, never a claim it MAKES.           │
 // │                                                                          │
-// │ requireHeaderEvidence() turns that absence into a refusal, not a default. │
+// │ AND THE SAME RUN SETTLED THE OPEN QUESTION rather than merely confirming │
+// │ a guess. That is the second time in this series the measurement has told │
+// │ us something the header could not have known — on the single-image page  │
+// │ it OVERTURNED the stated premise.                                        │
 // └──────────────────────────────────────────────────────────────────────────┘
 //
 // TO FILL IT IN:
@@ -234,47 +259,79 @@ function parseWindow() {
 }
 const WINDOW = parseWindow();
 
-// ─── UNFILLED. See the boxed note in the header. ────────────────────────────
+// ─── FILLED FROM AN OPERATOR'S --discover RUN. See the boxed note above. ────
 //
-// Fill from --discover output, VERBATIM — including any escaped entities
-// (`&lt;b>`, `&amp;nbsp;`), which are LITERAL CHARACTERS in the hashed text
-// rather than markup. normalize() strips real tags; escaped source survives it.
+// Both copies of the table, VERBATIM from the normalized text. The escaped
+// entities (`&lt;b>`, `&amp;nbsp;`, `&lt;br>`) are LITERAL CHARACTERS in the
+// hashed text, not markup — normalize() strips real tags, and escaped source
+// survives it. Do not "tidy" them: that would be text this page does not
+// contain, and readPage() would refuse on a perfectly healthy page.
 //
-// DO NOT QUOTE A CMS ELEMENT ID (`text-d20e36d2fe` and the like). They change on
-// any republish without a spec changing, so quoting one makes this file's own
-// quote check fail on a healthy page.
+// QUOTE 1 STOPS BEFORE `text-7023bc0bef`, the CMS element id that follows it in
+// the source copy. That is a generated hash: it can change on any republish
+// without a single spec changing, so quoting it would make this file's own quote
+// check fail on a healthy page.
 //
-// THAT EXCLUSION IS JUDGEMENT, NOT A GATE. The digit-free rule below catches
-// `text-d20e36d2fe` only by accident — that hash happens to contain digits. An
-// all-letter id would sail straight through. Nothing here mechanically excludes
-// a CMS id; the person filling this in does.
-const QUOTES = [];
+// AND THAT EXCLUSION IS JUDGEMENT, NOT A GATE — the point this file shipped
+// making, now with a second instance behind it. The digit-free rule would catch
+// `text-7023bc0bef` only by accident, because that hash happens to contain
+// digits; `text-d20e36d2fe` on the single-image page was the same accident. An
+// all-letter id would sail straight through both. Nothing here mechanically
+// excludes a CMS id — the person filling this in does.
+const QUOTES = [
+  'Text Recommendations &lt;b>Ad name&amp;nbsp;(optional):&amp;nbsp;&lt;/b>255 characters&lt;br>',
+  'Ad name (optional): 255 characters Card headline: 45 characters Introductory text: 255 characters Technical Requirements',
+];
 
 // THE SECTION, declared. Both markers MUST be substrings of QUOTES above —
 // asserted by requireHeaderEvidence(), not trusted.
 //
-// IF THE DOUBLE EMISSION IS PRESENT (see THE OPEN QUESTION), the span must cover
-// BOTH copies of the table, as the single-image row's does: `from` at the head of
-// the source copy, `to` at the heading of the NEXT block. Anything narrower puts
-// one copy in-section and the other out, for no reason a reader could
-// reconstruct — and would make the verdict below meaningless.
-const SECTION = null;
+// `from` is the block heading at the top of the SOURCE copy; `to` is the tail of
+// the RENDERED copy running into the next heading. So the span covers BOTH
+// emissions of the table — which is what makes the in-section verdict on the old
+// anchor meaningful, since its two occurrences are one per copy.
+const SECTION = {
+  name: 'LinkedIn carousel — the text-recommendations block (both copies)',
+  from: 'Text Recommendations',
+  to: 'characters Technical Requirements',
+};
 
-// CANDIDATES IN PREFERENCE ORDER, filled from --discover.
-//
-// The incumbent's `why` is DELIBERATELY CONDITIONAL and must be rewritten to
-// whichever branch --verify establishes. Leaving both in place after the answer
-// is known is the stale-prose failure this repo's preamble is about.
 const CANDIDATES = [
+  {
+    text: 'Text Recommendations',
+    why: 'PREFERRED. The heading of the block publishing both of this row\'s stored limits '
+      + '(Card headline 45, Introductory text 255). 1x at 8010, digit-free.\n'
+      + '      IT DISCRIMINATES WITHIN THIS PAGE: the other headings are "Design '
+      + 'Recommendations*", "Technical Requirements" and "URL Requirements", so it belongs to the '
+      + 'text block rather than merely to the page. Drop that block and the anchor goes.\n'
+      + '      IT DOES NOT DISCRIMINATE BETWEEN AD-FORMAT PAGES — it is the same heading that won '
+      + 'on the single-image row, and very likely the same on the video and lead-gen spec pages. '
+      + 'See KNOWN RESIDUAL in the header: that gap is recorded rather than closed, because '
+      + 'nothing inside this table is specific to Carousel Ads.',
+  },
+  {
+    text: 'characters Technical Requirements &lt;b>Number of carousel',
+    why: 'FALLBACK ONLY. 1x at 8381, digit-free, marking the tail of the rendered table running '
+      + 'into the Technical Requirements heading.\n'
+      + '      WEAKER THAN CANDIDATE 1 because it is a BOUNDARY string: it spans the seam between '
+      + 'this block and the next, so it asserts that the join between two sections rendered rather '
+      + 'than that the watched table did. It would survive the spec rows being removed so long as '
+      + 'the seam remained.\n'
+      + '      AND NOTE IT EXTENDS PAST SECTION.to, so the span as declared does not contain it '
+      + 'and the run reports it OUT OF SECTION rather than as a ranked fallback. That is the '
+      + 'section rule working, not a bug — see the note beside the run output. It is kept here so '
+      + 'the refusal is visible rather than the candidate silently disappearing.',
+  },
   {
     text: OLD_ANCHOR,
     refusedByDesign: true,
-    why: 'REFUSED BY DESIGN — the incumbent, 2x. WHY depends on a measurement not yet made: if '
-      + 'both occurrences are IN-SECTION (the CMS double-emission case, as on the single-image '
-      + 'page) it is refused for being a FIELD LABEL of a watched field, which couples the anchor '
-      + 'to the thing being watched. If one is OUT of section it is refused for the stronger '
-      + 'reason — it cannot say which section rendered. Run --verify and rewrite this to the '
-      + 'branch that holds.',
+    why: 'REFUSED BY DESIGN — the incumbent. NOT refused for being 2x: both occurrences are '
+      + 'inside the watched block (8125 escaped-source, 8329 rendered, 204 chars apart), so it '
+      + 'does assert the section rendered and the row is not blind. It is refused because it is '
+      + 'the FIELD LABEL of five of this row\'s six watched pairs, which couples the anchor to the '
+      + 'thing being watched: rename or restructure that row and a spec event arrives as `failed` '
+      + 'rather than `changed`. See THE QUESTION IS RESOLVED in the header, where the measurement '
+      + 'and this file\'s original, disproved reading are both recorded.',
   },
 ];
 
@@ -555,13 +612,11 @@ async function runDiscover(limits) {
   console.log(`\n   THE OLD ANCHOR ${JSON.stringify(OLD_ANCHOR)} — ${hits.length}x`);
   console.log(`   at ${hits.map((h) => `${h.at} (${h.pct}%)`).join('  ')}`);
   if (hits.length > 1) {
-    console.log('   --discover CANNOT SAY WHETHER THESE ARE IN-SECTION. There is no section yet —');
-    console.log('   step 2 declares it, and --verify prints the verdict once one exists.');
-    console.log('   THE LIKELY ANSWER, from the single-image page: LinkedIn\'s CMS emits every');
-    console.log('   block twice, escaped-source and rendered, which fully explained its 2x with');
-    console.log('   BOTH copies inside the watched table. Two offsets a few hundred chars apart,');
-    console.log('   around the stored-limit cluster, is that again. Far apart is not — and that');
-    console.log('   would be a real defect.');
+    console.log('   ESTABLISHED: both occurrences are IN-SECTION — 8125 escaped-source, 8329');
+    console.log('   rendered, 204 chars apart. LinkedIn\'s CMS emits every block twice, so the');
+    console.log('   whole table appears twice over. The 2x is an ARTIFACT, not a defect, and the');
+    console.log('   row is not blind. If the offsets above are far apart instead, the page has');
+    console.log('   been restructured since — re-read THE QUESTION IS RESOLVED in the header.');
   } else if (hits.length <= 1) {
     console.log('   NOTE: NOT repeating on this fetch. The premise of this change is not reproducing —');
     console.log('   the page may have been restructured. Re-read the header before trusting it.');
@@ -635,6 +690,8 @@ async function runDiscover(limits) {
   }
 
   console.log(`\n${'─'.repeat(74)}\nNEXT\n${'─'.repeat(74)}`);
+  console.log('   THE HEADER IS ALREADY FILLED from a previous --discover run. These steps are');
+  console.log('   the REPAIR PROCEDURE if the page is restructured and it has to be re-derived.');
   console.log('   1. Find the block publishing Card headline 45 and Introductory text 255 —');
   console.log('      the stored-limit cluster above points at it.');
   console.log('   2. Paste the sentences bounding it into QUOTES, verbatim.');
@@ -733,19 +790,16 @@ async function readPage(limits) {
       + `${h.inSection ? 'IN-SECTION' : 'OUT OF SECTION'}`);
   }
   if (anchorHits.length && anchorHits.every((h) => h.inSection)) {
-    console.log('      => ALL IN-SECTION. The multiplicity is the CMS double emission (escaped');
-    console.log('         source + rendered), as on the single-image page. The old anchor DOES');
-    console.log('         assert the watched section rendered; it is NOT the Meta failure mode,');
-    console.log('         and THE ROW IS NOT BLIND. What remains is a DECOUPLING: the incumbent');
-    console.log('         is a FIELD LABEL of a watched field, so a rename or removal reports');
-    console.log('         `failed` where a spec change should report `changed`.');
-    console.log('      >> Rewrite the incumbent\'s `why` and THE OPEN QUESTION to branch A.');
+    console.log('      => ALL IN-SECTION, which CONFIRMS the finding recorded in the header: the');
+    console.log('         2x is LinkedIn\'s CMS double emission (escaped source + rendered), not');
+    console.log('         the Meta failure mode. The row is not blind, and this change is a');
+    console.log('         DECOUPLING — the incumbent is the field label of five watched pairs.');
   } else {
-    console.log('      => NOT all in-section. This IS the real defect: an occurrence outside the');
-    console.log('         watched block keeps the anchor matching after that block is dropped, so');
-    console.log('         the row reports healthy while watching a page that no longer publishes');
-    console.log('         its numbers. Same shape as Meta\'s "Primary Text", and urgent.');
-    console.log('      >> Rewrite the incumbent\'s `why` and THE OPEN QUESTION to branch B.');
+    console.log('      => NOT all in-section. THIS CONTRADICTS THE HEADER, which records both');
+    console.log('         occurrences as in-section at 8125 and 8329, measured. Either the page');
+    console.log('         has been restructured or SECTION no longer spans both copies of the');
+    console.log('         table. Do not proceed on the header\'s account — re-read the page and');
+    console.log('         correct THE QUESTION IS RESOLVED before changing any anchor.');
   }
 
   console.log('\n   ANCHOR CANDIDATES, in preference order:');

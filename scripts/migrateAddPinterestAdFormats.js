@@ -36,42 +36,76 @@
 // SHOWCASE ADS, ~77%:
 //
 //   "Character length Text overlay : Limited to no more than 10 words. Font
-//    must be legible.  Features : Limited to 50 characters including spaces.
-//    For titles, anything after 50 characters will be hidden."
+//    must be legible.&nbsp; Features : Limited to 50&nbsp;characters including
+//    spaces. For titles, anything after 50 characters will be hidden."
 //
 // QUIZ ADS, ~85%:
 //
-//   "Character length Title: 100 characters max.  Text overlay : Limited to no
-//    more than 10 words. Font should be easy to read. Consider stacking brand
-//    logo, quiz title and CTA at the top of the Pin.  Questions and answers :
-//    Questions can be up to 96 characters, including spaces. Answers can be up
-//    to 48 characters, including spaces.  Results : 100 characters max in title
-//    and 800 characters max for description."
+//   "Character length Title: 100 characters max.&nbsp; Text overlay : Limited
+//    to no more than 10 words. Font should be easy to read. Consider stacking
+//    brand logo, quiz title and CTA at the top of the Pin.&nbsp; Questions and
+//    answers : Questions can be up to 96&nbsp;characters, including spaces.
+//    Answers can be up to 48&nbsp;characters, including spaces.&nbsp; Results :
+//    100 characters max in title and 800 characters max for description."
 //
-// ─── THE DOUBLE SPACES ARE REAL, AND THEY CANNOT BE MATCHED AS WRITTEN ──────
-// Read this before "fixing" the QUOTES array below to hold the strings above.
+// ─── THE &nbsp; ENTITIES ARE PART OF THE TEXT. QUOTE THEM. ─────────────────
+// Read this before "tidying" the entities out of VERBATIM below.
 //
-// The blocks as supplied carry DOUBLE SPACES between sentences — after
-// "legible.", after "max.", after "the Pin." and after "including spaces." —
-// and `normalize()` in src/services/specDetector.js ends with
-// `.replace(/\s+/g, ' ')`. So the hashed text the detector compares against has
-// every run of whitespace collapsed to ONE space, and a quote containing two
-// would report ABSENT on a perfectly healthy page.
+// `normalize()` in src/services/specDetector.js strips TAGS — `<script>`,
+// `<style>`, then `<[^>]+>` — and DECODES NOTHING. So an `&nbsp;` in the served
+// HTML survives into the hashed text as the seven literal characters `&nbsp;`,
+// and a quote that writes a plain space where the page writes an entity reports
+// ABSENT on a page that is perfectly healthy.
 //
-// That would be a FALSE REFUSAL caused by transcription, and it would look
-// exactly like the page having changed — the failure mode this project has paid
-// for twice (the Pinterest apostrophe, where a blanket assumption about the
-// page's typography made --verify refuse; and the LinkedIn 2x, where a
-// rendering artifact was read as evidence the anchor was wrong).
+// THIS ALREADY HAPPENED, and it is recorded because the correction is more
+// useful than a clean history. The first version of this file carried the two
+// blocks below with plain spaces where the page has `&nbsp;`. Two --verify runs
+// refused to write. The Idea block passed both times — it happens to carry no
+// entities at all, which is exactly why the failure looked like a property of
+// the other two blocks rather than of the transcription.
+//
+// A TRANSCRIPTION FAILURE ON OUR SIDE, NOT A PAGE CHANGE. Pinterest published
+// the same thing throughout. The blocks were copied out of a probe report with
+// the entities flattened, and `&nbsp;&#32;` — an entity followed by a space —
+// arrived as two plain spaces, which is why the section that used to stand here
+// was titled "THE DOUBLE SPACES ARE REAL" and explained the failure in terms of
+// whitespace. It was right that the cause was transcription and wrong about
+// which character. Corrected rather than deleted: the wrong diagnosis is the
+// instructive part, because it was a plausible reading of a real symptom.
+//
+// ─── WHAT THE FAILURE DEMONSTRATED, AND IT IS THE POINT OF THE CHECK ───────
+// THE QUOTE CHECK WORKED. Two blocks that did not match the page refused to
+// write — no asset seeded, no limit stored, no verification date stamped
+// against text nobody had matched — and the refusal named TRANSCRIPTION rather
+// than a page change, which is the distinction that decides whether the next
+// person edits this file or goes and re-reads Pinterest.
+//
+// That is worth stating plainly because a check whose only visible behaviour is
+// refusing looks like an obstacle until the day it catches something. Without
+// it this migration would have seeded seventeen enforced fields, each carrying
+// spec_verified_at = 2026-08-25 — a claim that a human read these numbers on
+// the cited page — while two of the three blocks that claim rests on were not
+// on the page as written. Nothing downstream would ever have said so.
+//
+// ─── asNormalized IS A NO-OP TODAY, AND THAT IS WORTH KNOWING ──────────────
+// All three corrected blocks are collapse-stable: zero runs of two or more
+// whitespace characters between them, so `asNormalized` returns each one
+// unchanged. It is kept anyway, because normalize() really does end with
+// `.replace(/\s+/g, ' ')` and a future quote pasted with a wrapped line would
+// otherwise fail for a reason nobody would find. Collapsing the NEEDLE can only
+// ever make it match text the page contains — it cannot invent a match — so the
+// guard is free.
+//
+// But it is a no-op, and nobody should read the fact that these quotes pass as
+// evidence that it does anything. What made them pass is the entities.
 //
 // So the verbatim strings are the SOURCE OF TRUTH and live in VERBATIM below,
-// byte for byte as read. Each asset's `quotes` array holds those same strings —
-// the objects, not copies — and readPage matches them through `asNormalized`,
-// which applies the same collapse normalize() does and nothing else. One copy of
-// the text, one transformation, both visible. Editing VERBATIM changes what is
-// matched; there is no second place to keep in step, and there is deliberately
-// no pre-collapsed QUOTES constant sitting beside the verbatim one to drift
-// from it.
+// byte for byte as read, entities included. Each asset's `quotes` array holds
+// those same strings — the objects, not copies — and readPage matches them
+// through `asNormalized`. One copy of the text, one transformation, both
+// visible. Editing VERBATIM changes what is matched; there is no second place
+// to keep in step, and there is deliberately no pre-collapsed constant sitting
+// beside the verbatim one to drift from it.
 //
 // ─── WHAT THE PAGE DOES NOT SAY, AND WHERE THE COUNTS COME FROM ────────────
 // copy_fields has NO REPEAT MECHANISM. A field is one row with one limit, so a
@@ -246,17 +280,21 @@ const SPEC_VERSION = '1.0';
 const SHOWCASE_FEATURE_NOTE = 'Anything past 50 characters is hidden on titles.';
 const QUIZ_RESULTS_NOTE = 'The results screen is a separate Pin from the title Pin.';
 
-// THE PAGE TEXT AS READ, byte for byte, double spaces included. The header
-// quotes these; QUOTES below derives from them. See "THE DOUBLE SPACES ARE
-// REAL" — do not collapse these by hand and do not match against them directly.
+// THE PAGE TEXT AS READ, byte for byte, &nbsp; ENTITIES INCLUDED. The header
+// quotes these; each asset's `quotes` array holds these same strings and
+// readPage matches them through asNormalized. See "THE &nbsp; ENTITIES ARE PART
+// OF THE TEXT" above — normalize() decodes nothing, so an entity written as a
+// plain space here can never match, and two --verify runs already refused for
+// exactly that.
 const VERBATIM = {
   idea: 'Character length Title: 100 characters max On page: 250 characters max',
-  showcase: 'Character length Text overlay : Limited to no more than 10 words. Font must be legible.  '
-    + 'Features : Limited to 50 characters including spaces. For titles, anything after 50 characters will be hidden.',
-  quiz: 'Character length Title: 100 characters max.  Text overlay : Limited to no more than 10 words. '
-    + 'Font should be easy to read. Consider stacking brand logo, quiz title and CTA at the top of the Pin.  '
-    + 'Questions and answers : Questions can be up to 96 characters, including spaces. Answers can be up to 48 '
-    + 'characters, including spaces.  Results : 100 characters max in title and 800 characters max for description.',
+  showcase: 'Character length Text overlay : Limited to no more than 10 words. Font must be legible.&nbsp; '
+    + 'Features : Limited to 50&nbsp;characters including spaces. For titles, anything after 50 characters will be hidden.',
+  quiz: 'Character length Title: 100 characters max.&nbsp; Text overlay : Limited to no more than 10 words. '
+    + 'Font should be easy to read. Consider stacking brand logo, quiz title and CTA at the top of the Pin.&nbsp; '
+    + 'Questions and answers : Questions can be up to 96&nbsp;characters, including spaces. Answers can be up to '
+    + '48&nbsp;characters, including spaces.&nbsp; Results : 100 characters max in title and 800 characters max '
+    + 'for description.',
 };
 
 // The ONE transformation applied to a verbatim quote before it is matched, and
@@ -417,9 +455,12 @@ async function readPage() {
     return {
       ok: false,
       why: `${missing} quoted block(s) are not on the page — this file's header would be making a claim the page `
-        + 'does not support. Before editing VERBATIM, check the whitespace: these blocks carry double spaces as '
-        + 'read, and they are matched collapsed because normalize() collapses. A quote that differs only in '
-        + 'whitespace is a transcription problem, not a page change.',
+        + 'does not support. BEFORE CONCLUDING THE PAGE CHANGED, check the transcription, because that is what it '
+        + 'was the first two times: normalize() strips tags and DECODES NOTHING, so an &nbsp; on the page reaches '
+        + 'the hashed text as the seven literal characters "&nbsp;" and a plain space written in its place will '
+        + 'never match. Whitespace is the same class — a run of two or more collapses, and these quotes are '
+        + 'matched collapsed for that reason. A block differing only in entities or spacing is ours to fix; a '
+        + 'block differing in a NUMBER or a LABEL is Pinterest\'s, and that one is a real finding.',
     };
   }
 

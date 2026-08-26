@@ -18561,6 +18561,45 @@ test('the backfill records a reading that happened, and refuses to invent one', 
   assert.ok(flat.includes('NARROWER event that entails the broader one'));
 });
 
+test('Pinterest ad formats: the quoted blocks carry &nbsp; entities, and must', () => {
+  const mig = require('../scripts/migrateAddPinterestAdFormats');
+  const { normalize } = require('../src/services/specDetector');
+
+  // A TRIPWIRE, NOT COVERAGE. It cannot tell a correct quote from an incorrect
+  // one — only the live page can, and --verify is what asks it. What it stops is
+  // somebody "tidying" the entities out of VERBATIM, which is what two failed
+  // --verify runs were reporting before the blocks were corrected.
+  //
+  // THE MECHANISM, ASSERTED RATHER THAN DESCRIBED: normalize() strips tags and
+  // decodes nothing, so an &nbsp; on the page reaches the hashed text as seven
+  // literal characters. A plain space written in its place can never match.
+  const hashed = normalize('<p>Font must be legible.&nbsp; Features : Limited to 50&nbsp;characters</p>');
+  assert.ok(hashed.includes('&nbsp;'), 'normalize does not decode entities');
+
+  assert.ok(mig.VERBATIM.showcase.includes('&nbsp;'), 'the Showcase block quotes its entities');
+  assert.ok(mig.VERBATIM.quiz.includes('&nbsp;'), 'the Quiz block quotes its entities');
+  // And the Idea block carries NONE, which is exactly why it passed both runs
+  // that the other two failed — the failure looked like a property of those
+  // blocks rather than of the transcription.
+  assert.ok(!mig.VERBATIM.idea.includes('&nbsp;'), 'the Idea block has no entity to quote');
+
+  // THE FAILURE, REPRODUCED: the same sentence with its entities flattened to
+  // plain spaces does not occur in the page text the correct one comes from.
+  const page = normalize(`<html><body>${mig.VERBATIM.showcase}</body></html>`);
+  assert.ok(page.includes(mig.asNormalized(mig.VERBATIM.showcase)), 'the corrected quote matches');
+  assert.ok(!page.includes(mig.asNormalized(mig.VERBATIM.showcase.replace(/&nbsp;/g, ' '))),
+    'the flattened quote does not — this is what the two refusals were reporting');
+
+  // asNormalized IS A NO-OP ON TODAY'S DATA and the header says so; pinned here
+  // so that claim cannot quietly stop being true. It is kept for a future quote
+  // pasted with a wrapped line, and collapsing a needle can only ever make it
+  // match text the page contains.
+  for (const [key, text] of Object.entries(mig.VERBATIM)) {
+    assert.strictEqual(mig.asNormalized(text), text, `${key} is collapse-stable`);
+  }
+  assert.strictEqual(mig.asNormalized('a  b\n c '), 'a b c', 'and it still collapses when there is something to collapse');
+});
+
 test('the sole-witness verification quotes the pages it claims were read', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateVerifySoleWitnessSpecs.js'), 'utf8');
   const flat = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');

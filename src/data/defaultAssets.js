@@ -267,6 +267,50 @@ const RAW = [
     ['Title', 0, 100],
     ['Description', 0, 800],
   ]],
+  // THE OTHER THREE PINTEREST AD FORMATS, off the SAME help centre page — Idea
+  // at ~65% of the normalized document, Showcase at ~77%, Quiz at ~85%. Three
+  // separate blocks, which is what makes them three asset types rather than
+  // Pinterest Pin read three times: the standard image, carousel and collection
+  // blocks all publish Title 100 / Description 800 in the same words and are
+  // therefore ONE asset, while these publish different fields and different
+  // numbers.
+  //
+  // Kept BYTE-IDENTICAL to scripts/migrateAddPinterestAdFormats.js ASSETS — a
+  // smoke test walks every migration-created asset and asserts the two agree
+  // field by field, and a second one added with this change asserts the UNIT
+  // too, which the general test does not compare.
+  //
+  // NUMBERED FIELDS BECAUSE copy_fields HAS NO REPEAT MECHANISM. Feature 1-3
+  // from the page's "maximum 3 per card"; Question 1-3 inferred from its three
+  // results Pins; Answer 1-4 a judgement the page does not support. The
+  // migration's header records which is which — do not read the three as
+  // equally sourced.
+  ['Pinterest Idea Ad', 'Paid Social', [
+    ['Title', 0, 100],
+    ['On-Page Text', 0, 250],
+  ]],
+  // Text Overlay is a WORD limit — "no more than 10 words" — so it is in
+  // WORD_FIELDS and renders "[10 words]". The first non-email field to use that
+  // mechanism.
+  ['Pinterest Showcase Ad', 'Paid Social', [
+    ['Text Overlay', 0, 10],
+    ['Feature 1', 0, 50],
+    ['Feature 2', 0, 50],
+    ['Feature 3', 0, 50],
+  ]],
+  ['Pinterest Quiz Ad', 'Paid Social', [
+    ['Title', 0, 100],
+    ['Text Overlay', 0, 10],
+    ['Question 1', 0, 96],
+    ['Question 2', 0, 96],
+    ['Question 3', 0, 96],
+    ['Answer 1', 0, 48],
+    ['Answer 2', 0, 48],
+    ['Answer 3', 0, 48],
+    ['Answer 4', 0, 48],
+    ['Results Title', 0, 100],
+    ['Results Description', 0, 800],
+  ]],
   // PAID SOCIAL, not Paid Search, and the split is Google's own: Demand Gen runs
   // on YouTube, Discover and Gmail against an audience that did not search for
   // anything. Performance Max above sits in Paid Search because search inventory
@@ -539,6 +583,9 @@ const DIRECTIONS = {
   'Google Responsive Search Ad':
     'They are already looking. Match the intent, name the thing, skip the setup.',
   'Pinterest Pin': 'Written for someone saving it for later. Useful over clever; the title does the finding.',
+  'Pinterest Idea Ad': 'Swiped through, not skipped past. The title has to earn the first swipe.',
+  'Pinterest Showcase Ad': 'Each card stands alone. Three short labels, not one sentence split three ways.',
+  'Pinterest Quiz Ad': 'The question does the work. Answers are choices, not copy.',
   'Google Performance Max': 'The system assembles the ad. Every asset has to stand alone and beside any other.',
   'Google Demand Gen Video Ad': 'Watched, not read. Say the one thing before the thumb moves.',
   'Demand Gen Nurture Email': 'Curiosity or tension in the subject — they are mid-sequence, not meeting you.',
@@ -804,6 +851,28 @@ const PINTEREST_TITLE_NOTE = 'Only the first 40 characters typically show in fee
 // It is quoted in scripts/migrateAddGoogleVideoAssets.js and stored nowhere.
 //
 // Byte-identical to that migration.
+
+// A TRUNCATION, in the writing-guidance channel — the same split PINTEREST_TITLE_NOTE
+// makes. char_max stays 50 because 50 is what Pinterest accepts.
+//
+// ON ALL THREE FEATURE FIELDS, not just the first. Same call as
+// LINKEDIN_CAROUSEL_CARD_NOTE: a writer working on Feature 3 must not have to
+// remember what Feature 1 said. Deliberately NOT in SHOW_ONCE_NOTES, whose
+// stated criterion is a note REDUNDANT with its field — this one is not.
+//
+// PHRASED AS A CONSEQUENCE, NOT AN INSTRUCTION, and that is measured:
+// scripts/notesAB.js on Pinterest Pin / Title scored the statement form 3/10
+// within 40 and the imperative form 0/10 with spread collapsing 64 -> 13. Do not
+// reword it toward the imperative.
+const SHOWCASE_FEATURE_NOTE = 'Anything past 50 characters is hidden on titles.';
+const SHOWCASE_FEATURE_FIELDS = new Set(['Feature 1', 'Feature 2', 'Feature 3']);
+
+// Not a truncation — a fact about WHERE the copy lands. The results screen is a
+// different Pin from the one carrying the quiz title, so a writer treating the
+// two as one surface writes a continuation that nobody reads in sequence.
+const QUIZ_RESULTS_NOTE = 'The results screen is a separate Pin from the title Pin.';
+const QUIZ_RESULTS_FIELDS = new Set(['Results Title', 'Results Description']);
+
 const PMAX_HEADLINE_NOTE = 'Include at least one headline of 15 characters or less.';
 const PMAX_LONG_HEADLINE_NOTE = 'Aim for at least 30 characters.';
 const PMAX_BUSINESS_NAME_NOTE = 'Must exactly match your domain name or legally verified business name.';
@@ -831,6 +900,14 @@ function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'Twitter/X Ad' && fieldName === 'Ad Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Organic Social — Twitter/X' && fieldName === 'Post Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Pinterest Pin' && fieldName === 'Title') return PINTEREST_TITLE_NOTE;
+  // Matched on the ASSET too: "Title" exists on Pinterest Pin, Idea and Quiz,
+  // and only Pinterest Pin's carries the feed-truncation note.
+  if (assetName === 'Pinterest Showcase Ad' && SHOWCASE_FEATURE_FIELDS.has(fieldName)) {
+    return SHOWCASE_FEATURE_NOTE;
+  }
+  if (assetName === 'Pinterest Quiz Ad' && QUIZ_RESULTS_FIELDS.has(fieldName)) {
+    return QUIZ_RESULTS_NOTE;
+  }
   // Matched on the ASSET too. "Headline 1" is also a Responsive Search field,
   // "Long Headline" a Responsive Display one and "Business Name" both — none of
   // which carries these notes.
@@ -949,6 +1026,26 @@ const ENFORCED_SPEC_FIELDS = new Set([
   // "Text Recommendations" heading that left LinkedIn's nine an open question.
   'Pinterest Pin||Title',
   'Pinterest Pin||Description',
+  // The other three formats off the same page. "characters max", "Limited to 50
+  // characters including spaces", "can be up to 96 characters" — the same entry
+  // language as "Enter up to" above, tiered the same way.
+  'Pinterest Idea Ad||Title',
+  'Pinterest Idea Ad||On-Page Text',
+  'Pinterest Showcase Ad||Text Overlay',
+  'Pinterest Showcase Ad||Feature 1',
+  'Pinterest Showcase Ad||Feature 2',
+  'Pinterest Showcase Ad||Feature 3',
+  'Pinterest Quiz Ad||Title',
+  'Pinterest Quiz Ad||Text Overlay',
+  'Pinterest Quiz Ad||Question 1',
+  'Pinterest Quiz Ad||Question 2',
+  'Pinterest Quiz Ad||Question 3',
+  'Pinterest Quiz Ad||Answer 1',
+  'Pinterest Quiz Ad||Answer 2',
+  'Pinterest Quiz Ad||Answer 3',
+  'Pinterest Quiz Ad||Answer 4',
+  'Pinterest Quiz Ad||Results Title',
+  'Pinterest Quiz Ad||Results Description',
   // "Maximum length" as a table header, "characters max" and "characters
   // maximum" in the rows. Entry language, tiered exactly as Responsive Search
   // was — see scripts/migrateAddGoogleSearchAsset.js for the argument.
@@ -1006,6 +1103,14 @@ const WORD_FIELDS = new Set([
   // recap rather than persuade.
   'Event Reminder Email||Body Copy',
   'Event Follow-Up / Recap Email||Body Copy',
+  // THE FIRST NON-EMAIL WORD FIELDS, and they are here for a different reason
+  // from the six above. Those convert because an email body has no truncation
+  // point and its research is measured in words. These two are word-counted
+  // because PINTEREST PUBLISHES THEM THAT WAY — "Limited to no more than 10
+  // words" — so the unit is the platform's, not a judgement about attention.
+  // Same column, same rendering, different provenance.
+  'Pinterest Showcase Ad||Text Overlay',
+  'Pinterest Quiz Ad||Text Overlay',
 ]);
 
 // 'words' | 'text'. The value stored in copy_fields.field_type and threaded through
@@ -1095,6 +1200,14 @@ const SPEC_SOURCE_URLS = {
   // best-practices page, so their agreement is circulation rather than
   // publication — see scripts/migrateAddPinterestSpecs.js for the full argument.
   'Pinterest Pin': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
+  // The SAME page and the same watch row. Its affected_fields is a snapshot that
+  // nothing recomputes, so seeding these three leaves 17 pairs OUTSIDE the write
+  // gate until scripts/rederiveAffectedFields.js is run against that row. That
+  // re-derive has NOT been run — see "THE GATE" in
+  // scripts/migrateAddPinterestAdFormats.js, which prints the exact command.
+  'Pinterest Idea Ad': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
+  'Pinterest Showcase Ad': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
+  'Pinterest Quiz Ad': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
   'Google Performance Max': 'https://support.google.com/google-ads/answer/17091269',
   // The SAME page carries in-feed video and YouTube Masthead, neither of which is
   // seeded. Only the Demand Gen video table's four fields cite it.

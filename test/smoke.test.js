@@ -172,14 +172,15 @@ test('copyCompleteBlocks builds Open in Drive + Regenerate', () => {
   );
 });
 
-test('config.ALLOWED_ASSETS is the 29-name v3 taxonomy, post-prune', () => {
+test('config.ALLOWED_ASSETS is the 32-name v3 taxonomy, post-prune', () => {
   const { ALLOWED_ASSETS } = require('../src/config');
   // 25 after the prune, then one per asset-creating migration: Google Responsive
-  // Search, Pinterest Pin, and Performance Max + Demand Gen Video together. This
-  // is a consistency check between two files — src/config.js and the seed — and
-  // NOT a statement about the outside world; the test below asserts they name the
-  // same assets, which is the property that matters.
-  assert.strictEqual(ALLOWED_ASSETS.length, 29);
+  // Search, Pinterest Pin, Performance Max + Demand Gen Video together, and the
+  // three remaining Pinterest ad formats together. This is a consistency check
+  // between two files — src/config.js and the seed — and NOT a statement about
+  // the outside world; the test below asserts they name the same assets, which is
+  // the property that matters.
+  assert.strictEqual(ALLOWED_ASSETS.length, 32);
   assert.ok(ALLOWED_ASSETS.includes('Battle Card'));
   assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad'));
 });
@@ -551,9 +552,9 @@ test('resolveTenant falls back to a consistent env-var shape with no DB', async 
 
 // --- Week 7: per-tenant asset library ---
 
-test('defaultAssets is the 29-type v3 library with valid shape, post-prune', () => {
+test('defaultAssets is the 32-type v3 library with valid shape, post-prune', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
-  assert.strictEqual(DEFAULT_ASSETS.length, 29, 'exactly 29 asset types');
+  assert.strictEqual(DEFAULT_ASSETS.length, 32, 'exactly 32 asset types');
 
   const groups = new Set([
     'Paid Social',
@@ -680,8 +681,14 @@ test('spec tiers: the seed equals what the migration chain produces, in both dir
   // spans both. Same entry language as Responsive Search — "Maximum length" as a
   // table header, "characters max" in the rows.
   for (const [a, f] of require('../scripts/migrateAddGoogleVideoAssets').ENFORCE) enforced.add(`${a}||${f}`);
+  // migrateAddPinterestAdFormats: three assets off the SAME page Pinterest Pin
+  // cites, so this link adds no new URL — only pairs. Its seventeen come in at
+  // 'enforced' on "characters max" / "Limited to 50 characters including spaces"
+  // / "can be up to 96 characters", the same entry language as "Enter up to".
+  for (const [a, f] of require('../scripts/migrateAddPinterestAdFormats').ENFORCE) enforced.add(`${a}||${f}`);
 
-  assert.strictEqual(enforced.size, 38, '16 earlier + 7 Google Search + 2 Pinterest + 13 Google video');
+  assert.strictEqual(enforced.size, 55,
+    '16 earlier + 7 Google Search + 2 Pinterest + 13 Google video + 17 Pinterest formats');
   assert.strictEqual(recommended.size, 11, '9 platform recommendations + 2 research citations');
 
   // FORWARD: everything the migrations produce is in the seed at that tier.
@@ -726,6 +733,9 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     ...require('../scripts/migrateAddGoogleSearchAsset').SOURCE_URLS,
     ...require('../scripts/migrateAddPinterestSpecs').SOURCE_URLS,
     ...require('../scripts/migrateAddGoogleVideoAssets').SOURCE_URLS,
+    // Three assets, ONE url — the page Pinterest Pin already cites. The first
+    // link in this chain that adds assets without adding a source.
+    ...require('../scripts/migrateAddPinterestAdFormats').SOURCE_URLS,
   };
   // Which sources name a placement, as a LITERAL rather than a call to the
   // function under test — composing the expectation with specPlacementName would
@@ -806,7 +816,11 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
       }
     }
   }
-  assert.strictEqual(enforcedSeen, 38, 'exactly 38 enforced fields carry a real spec_source');
+  // 55 since the three remaining Pinterest ad formats — seventeen more enforced
+  // fields, every one of them citing the page Pinterest Pin already cited. A
+  // consistency check between the seed and this renderer, not a claim about how
+  // many limits the platforms publish.
+  assert.strictEqual(enforcedSeen, 55, 'exactly 55 enforced fields carry a real spec_source');
   // 9, not 10: Meta Single Image Ad / Description left the tier when
   // migrateFixMetaSpecs found that Meta publishes no Description recommendation.
   assert.strictEqual(recommendedSeen, 11, '9 platform recommendations + 2 research citations');
@@ -1396,6 +1410,7 @@ test('every asset-creating migration and the seed produce IDENTICAL field rows',
     '../scripts/migrateAddGoogleSearchAsset',
     '../scripts/migrateAddPinterestSpecs',
     '../scripts/migrateAddGoogleVideoAssets',
+    '../scripts/migrateAddPinterestAdFormats',
   ];
 
   // ONE ASSET OR MANY, read the same way. The first two migrations carry a single
@@ -3027,16 +3042,18 @@ test('20 seeded CHARACTER fields already carry a floor — this is not opt-in-on
       if (Number(f.char_min) > 0) floored.push({ asset: a.name, field: f.field_name });
     }
   }
-  // 192: Google Responsive Search Ad added ten, Pinterest Pin two, and the two
-  // Google video assets thirteen. NONE of the last three publishes a floor — all
-  // carry char_min 0 — so `floored` is unmoved by any of them. The two counts
-  // move independently, which is the point of having both.
+  // 207: Google Responsive Search Ad added ten, Pinterest Pin two, the two Google
+  // video assets thirteen, and the three remaining Pinterest ad formats fifteen —
+  // seventeen fields of which TWO are word-counted and so are not character
+  // fields at all (both Text Overlays, at "no more than 10 words"). NONE of these
+  // publishes a floor — all carry char_min 0 — so `floored` is unmoved by any of
+  // them. The two counts move independently, which is the point of having both.
   //
   // Performance Max in particular publishes advice that LOOKS like a floor:
   // "try to make sure headlines are at least 30 characters long". That is in
   // spec_note, not char_min — scripts/floorAB.js measured what an invented floor
   // costs, and a band the platform does not enforce is not a band.
-  assert.strictEqual(charFields, 192, 'character fields in the seed');
+  assert.strictEqual(charFields, 207, 'character fields in the seed');
   // 20 since migrateFixMetaSpecs gave Meta Single Image Ad / Primary Text the
   // 50 half of Meta's published "50-150 characters" — the first new floor on a
   // paid-social field since floorAB measured what a floor costs in spread.
@@ -6078,6 +6095,9 @@ test('the medium routing table, pinned per seeded asset', () => {
     "Meta Carousel Ad":                      ["paid social"],
     "Twitter/X Ad":                          ["paid social"],
     "Pinterest Pin":                         ["paid social"],
+    "Pinterest Idea Ad":                     ["paid social"],
+    "Pinterest Showcase Ad":                 ["paid social"],
+    "Pinterest Quiz Ad":                     ["paid social"],
     "Google Demand Gen Video Ad":            ["paid social"],
     "Display Banner — Standard":             ["google display"],
     "Google Responsive Display Ad":          ["google display"],
@@ -8471,10 +8491,10 @@ test('parseBrief: the prompt asks for a plan and routes A/B tests to counts', as
   // were four of thirty names the parse had to choose between, and near-duplicates
   // are what a name match gets wrong, so the prune finished the job.
   const { ALLOWED_ASSETS } = require('../src/config');
-  // 29 — the four Variants left, and four assets arrived across three
+  // 32 — the four Variants left, and seven assets arrived across four
   // asset-creating migrations. The COUNT is incidental to this test; the two
   // assertions below are the subject.
-  assert.strictEqual(ALLOWED_ASSETS.length, 29);
+  assert.strictEqual(ALLOWED_ASSETS.length, 32);
   assert.ok(!ALLOWED_ASSETS.some((n) => /— Variant [A-D]$/.test(n)), 'no Variant types in the taxonomy');
   assert.ok(!prompt.includes('LinkedIn Single Image Ad — Variant A'), 'and none offered in the allowed list');
   // The RULE about them is gone too, for a stock tenant — `anyMatching` tests the
@@ -10116,6 +10136,7 @@ test('spec integrity: the seed and the migration agree on every band, both direc
     ...Object.keys(require('../scripts/migrateAddGoogleSearchAsset').SOURCE_URLS),
     ...Object.keys(require('../scripts/migrateAddPinterestSpecs').SOURCE_URLS),
     ...Object.keys(require('../scripts/migrateAddGoogleVideoAssets').SOURCE_URLS),
+    ...Object.keys(require('../scripts/migrateAddPinterestAdFormats').SOURCE_URLS),
     ...CITED_BANDS.map(([asset]) => asset),
     require('../scripts/migrateCiteColdEmailBand').ASSET,
   ]);
@@ -10338,9 +10359,17 @@ test('meta specs: the card-headline note is Meta\'s own, and the migration is dr
 // truncation point, only an attention budget, and that budget is measured in words.
 // copy_fields.field_type carries the unit; these prove it survives every hop.
 
-test('word units: the seed and the migration agree, both directions', () => {
+test('word units: the seed and the migrations agree, both directions', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { WORD_FIELDS, DIRECTIONS } = require('../scripts/migrateEmailBodyWordCounts');
+  // A SECOND SOURCE OF WORD FIELDS, and the reason it is a union rather than an
+  // extension of the list above: those six convert because an email body has no
+  // truncation point and its research is measured in words. These two are word
+  // fields because PINTEREST PUBLISHES THEM THAT WAY — "no more than 10 words".
+  // Same column, same rendering, different provenance, so they are declared by
+  // the migration that seeds them rather than added to the email one.
+  const pinterestWords = require('../scripts/migrateAddPinterestAdFormats').ASSETS
+    .flatMap((a) => a.fields.filter((f) => f[6] === 'words').map((f) => `${a.name}||${f[0]}`));
 
   const f = (asset, name) => {
     const a = DEFAULT_ASSETS.find((x) => x.name === asset);
@@ -10373,8 +10402,19 @@ test('word units: the seed and the migration agree, both directions', () => {
   for (const a of DEFAULT_ASSETS) {
     for (const fl of a.fields) if (fl.field_type === 'words') seedWords.push(`${a.name}||${fl.field_name}`);
   }
-  assert.deepStrictEqual(seedWords.sort(), WORD_FIELDS.map(([a, x]) => `${a}||${x}`).sort());
-  assert.strictEqual(seedWords.length, 6, 'six email body fields, and only those');
+  assert.deepStrictEqual(seedWords.sort(),
+    [...WORD_FIELDS.map(([a, x]) => `${a}||${x}`), ...pinterestWords].sort());
+  assert.strictEqual(seedWords.length, 8, 'six email body fields plus two Pinterest text overlays');
+  assert.deepStrictEqual(pinterestWords.sort(),
+    ['Pinterest Quiz Ad||Text Overlay', 'Pinterest Showcase Ad||Text Overlay']);
+  // The migration's seventh tuple element and the seed's field_type must agree —
+  // the GENERAL seed-agreement test compares only the first six, so without this
+  // a field could be words in one and characters in the other silently.
+  for (const key of pinterestWords) {
+    const [assetName, fieldName] = key.split('||');
+    assert.strictEqual(f(assetName, fieldName).field_type, 'words', `${key} is a word field in the seed`);
+    assert.strictEqual(f(assetName, fieldName).char_max, 10, `${key} is capped at 10 WORDS`);
+  }
 
   // The bands really do differ by email type — one band for all five was the bug
   // the subject-line pass fixed, and repeating it here would be the same mistake.
@@ -21275,7 +21315,7 @@ test('freshness dedup: a run collapses, and anything else restores it', () => {
   assert.match(src, /rows\.appendChild\(libHouseRow\(f, prevFreshSource\)\);/);
 });
 
-test('freshness dedup: replayed over the real seed, sixteen blocks not forty-nine', () => {
+test('freshness dedup: replayed over the real seed, nineteen blocks not sixty-six', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'settings.html'), 'utf8');
   const region = sliceBetween(src, 'function libFreshRepeats(f, prevSource) {', 'function libFreshnessNode(f) {');
   const { libFreshRepeats, libFreshCarry } = new Function(
@@ -21299,14 +21339,24 @@ test('freshness dedup: replayed over the real seed, sixteen blocks not forty-nin
     if (n) { blocks += n; shape[a.name] = n; }
   }
 
-  assert.strictEqual(perField, 49, 'the seeded library cites a page on 49 fields');
-  // 16: each of the four newest assets cites every field it has, contiguously, so
+  assert.strictEqual(perField, 66, 'the seeded library cites a page on 66 fields');
+  // 19: each of the seven newest assets cites every field it has, contiguously, so
   // each adds exactly ONE block however many fields it carries — Performance Max
-  // has nine and still renders one. That is the dedup rule doing its whole job:
-  // the block is per RUN of adjacent fields sharing a source, not per field.
-  assert.strictEqual(blocks, 16, 'and the adjacency rule renders 16 blocks');
+  // has nine and Pinterest Quiz has eleven, and both still render one. That is the
+  // dedup rule doing its whole job: the block is per RUN of adjacent fields
+  // sharing a source, not per field.
+  //
+  // THE THREE NEW ASSETS SHARE A URL WITH Pinterest Pin AND STILL RENDER FOUR
+  // BLOCKS BETWEEN THEM, which is correct rather than a miss: the run is broken
+  // by the ASSET HEADING between them, not only by a change of source. A reader
+  // who has scrolled past Pinterest Pin's block and into a different asset needs
+  // the provenance again.
+  assert.strictEqual(blocks, 19, 'and the adjacency rule renders 19 blocks');
   assert.strictEqual(shape['Google Responsive Search Ad'], 1);
   assert.strictEqual(shape['Pinterest Pin'], 1);
+  assert.strictEqual(shape['Pinterest Idea Ad'], 1);
+  assert.strictEqual(shape['Pinterest Showcase Ad'], 1, 'four cited fields, one block');
+  assert.strictEqual(shape['Pinterest Quiz Ad'], 1, 'eleven cited fields, one block');
   assert.strictEqual(shape['Google Performance Max'], 1, 'nine cited fields, one block');
   assert.strictEqual(shape['Google Demand Gen Video Ad'], 1);
   // The three that render TWICE are the ones whose sourced fields are split by a

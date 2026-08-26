@@ -18,6 +18,13 @@ const ALLOWED_ASSETS = [
   'Google Responsive Display Ad',
   'Google Responsive Search Ad',
   'Pinterest Pin',
+  // The other three formats off the same help centre page. Distinct field lists
+  // and distinct numbers — the standard image, carousel and collection blocks
+  // publish Title 100 / Description 800 identically and are covered by
+  // 'Pinterest Pin' above, so they get no entry of their own.
+  'Pinterest Idea Ad',
+  'Pinterest Showcase Ad',
+  'Pinterest Quiz Ad',
   'Google Performance Max',
   'Google Demand Gen Video Ad',
   'Demand Gen Nurture Email',

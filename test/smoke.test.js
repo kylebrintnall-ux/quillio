@@ -1752,7 +1752,14 @@ test('LinkedIn carousel intro / X link-cost: the migration and the seed agree', 
   // The X note reaches BOTH post-copy fields and NEITHER headline.
   assert.strictEqual(fieldOf('Twitter/X Ad', 'Ad Copy').spec_note, fix.X_LINK_COST_NOTE);
   assert.strictEqual(fieldOf('Organic Social — Twitter/X', 'Post Copy').spec_note, fix.X_LINK_COST_NOTE);
-  assert.strictEqual(fieldOf('Twitter/X Ad', 'Headline').spec_note, null,
+  // THE ASSERTION NARROWED, DELIBERATELY, and the reason it had to is worth more
+  // than the edit. It read `spec_note === null`, which is STRONGER than the claim
+  // it states: this test is about the LINK-COST note not reaching a field that
+  // carries no links, and `=== null` additionally forbade the Headline from ever
+  // carrying ANY note. scripts/migrateAddXHeadlineTruncationNote.js gives it a
+  // truncation note, which is a different fact about a different mechanism, and
+  // it turned this red. The property being guarded is unchanged.
+  assert.notStrictEqual(fieldOf('Twitter/X Ad', 'Headline').spec_note, fix.X_LINK_COST_NOTE,
     'a headline carries no links, so it must not carry the link-cost note');
 
   // TRIPWIRE — 600 must not come back as any LinkedIn character limit. It is not
@@ -1767,6 +1774,68 @@ test('LinkedIn carousel intro / X link-cost: the migration and the seed agree', 
   // guidance, not provenance, so it must NOT be removed the way a tier line is.
   const { stripReaderOnlyLines } = require('../src/destinations/googleDocs');
   assert.strictEqual(stripReaderOnlyLines(fix.X_LINK_COST_NOTE), fix.X_LINK_COST_NOTE);
+});
+
+test('the X headline truncation note: 50 is guidance, 70 stays the limit', () => {
+  const mig = require('../scripts/migrateAddXHeadlineTruncationNote');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const field = DEFAULT_ASSETS.find((a) => a.name === 'Twitter/X Ad')
+    .fields.find((f) => f.field_name === 'Headline');
+
+  // Seed and migration carry the same string. Every other note in this library
+  // is arranged the same way, and the reason is that the note is customer-visible
+  // TWICE — the italic hint under the label, and the drafting prompt's
+  // `Field guidance:` line — so a tenant migrated today and one created tomorrow
+  // reading different text is a defect nothing else would surface.
+  assert.strictEqual(field.spec_note, mig.NOTE, 'seed and migration agree byte for byte');
+
+  // 50 IS NOT A LIMIT, IN EITHER DIRECTION. As char_max it would tell a writer 51
+  // is over when X accepts 70, under a tier line asserting "Platform limit (X)".
+  // As char_min it would say the copy has to REACH 50, inverting the guidance.
+  assert.strictEqual(field.char_max, 70, '70 is the published cap and is unchanged');
+  assert.strictEqual(field.char_min, 0, 'and 50 did not become a floor');
+  assert.strictEqual(field.spec_type, 'enforced', 'the tier is untouched');
+
+  // THE NOTE NAMES 50 AND THE LIMIT NAMES 70. Tied to each other rather than
+  // restated, so the pair cannot drift into agreement by accident.
+  assert.ok(mig.NOTE.includes('50'), 'the note names the truncation threshold');
+  assert.ok(!mig.NOTE.includes('70'), 'and does not restate the limit the label already renders');
+
+  // A STATEMENT, NOT AN IMPERATIVE. notesAB measured the statement form of the
+  // comparable Pinterest note at 3/10 within 40 and the imperative at 0/10 with
+  // spread collapsing 64 to 13, so this is a measured property rather than a
+  // style preference. Checked by the shape that distinguishes them: the note does
+  // not open with a bare verb aimed at the writer.
+  assert.ok(!/^(keep|limit|front-load|write|stay|use|avoid|make)\b/i.test(mig.NOTE),
+    'the note is phrased as a consequence, not an instruction');
+
+  // BOTH GUARDS IN THE UPDATE, and they refuse for different reasons: one keeps
+  // the write additive, the other keeps the sentence true.
+  assert.match(mig.UPDATE_SQL, /AND cf\.spec_note IS NULL/, 'additive — never clobbers');
+  assert.match(mig.UPDATE_SQL, /AND cf\.char_max = want\.expected/, 'guards the truth of the sentence');
+  assert.match(mig.UPDATE_SQL, /AND at\.is_active/, 'skips retired assets');
+  assert.strictEqual(mig.PAIRS.length, 1, 'one pair');
+  assert.strictEqual(mig.PAIRS[0].expected, 70, 'and it expects the 70 the note describes');
+
+  // PAIR-SCOPED, NOT URL-SCOPED. Five other tiered fields cite this URL and none
+  // is a media headline; they are named as data so the run can prove it left them
+  // alone rather than assert it.
+  assert.strictEqual(mig.NOT_TOUCHED.length, 5);
+  assert.ok(mig.NOT_TOUCHED.some((p) => p.asset === 'Organic Social — Twitter/X' && p.field === 'Post Copy'));
+  assert.ok(!mig.NOT_TOUCHED.some((p) => p.field === 'Headline'), 'the target is not in its own control set');
+  assert.ok(!/cf\.spec_source = ANY/.test(mig.UPDATE_SQL), 'never URL-scoped');
+
+  // THE QUOTE IS ONE BLOCK'S WORDING. The page carries this guidance in more than
+  // one format block and the wordings differ ("Max 70 characters" against
+  // "70 characters"), so the file quotes the block it asserts and says which.
+  // A merged sentence would appear on the page nowhere and could not be checked.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateAddXHeadlineTruncationNote.js'), 'utf8');
+  const flat = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
+  assert.ok(flat.includes('IMAGE ADS WITH WEBSITE CARD'), 'the header names the block it quotes');
+  assert.ok(flat.includes(mig.QUOTE.replace(/\s+/g, ' ')), 'and quotes it verbatim in the prose too');
+  assert.ok(mig.QUOTE.includes('although not guaranteed') || mig.QUOTE.includes('Although not guaranteed'),
+    'the quote keeps the hedge — it is what makes 50 guidance rather than a limit');
 });
 
 test('the X link-cost note is written ONLY where the stored limit is still 280', () => {

@@ -667,6 +667,26 @@ const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150.';
 const X_LINK_COST_NOTE =
   'Every link costs 23 characters regardless of its length, so a post with one link has 257 characters of copy.';
 
+// Twitter/X Ad → Headline. A TRUNCATION, not a limit, in the writing-guidance
+// channel — the same split PINTEREST_TITLE_NOTE and X_LINK_COST_NOTE make.
+// char_max stays 70, which is what X publishes and accepts.
+//
+// 50 MUST NEVER BECOME A LIMIT, in either direction, and it is the same shape as
+// the 257 above. The page hedges it twice in one sentence: truncation depends on
+// "device and app settings", and limiting to 50 "should ensure" it does not
+// happen "across most devices" — "although not guaranteed". As char_max it would
+// tell a writer 51 is over the limit when X accepts 70, under a tier line
+// asserting "Platform limit (X)". As char_min it would say the copy has to REACH
+// 50, which inverts the guidance exactly.
+//
+// GRAMMAR MIRRORS THE MEASURED WINNER. scripts/notesAB.js scored the statement
+// form of the comparable Pinterest note 3/10 within 40 and the imperative form
+// 0/10 with spread collapsing 64 to 13. Subject is the characters, verb is what
+// the reader sees. Do not reword it to "keep it under 50".
+//
+// BYTE-IDENTICAL to NOTE in scripts/migrateAddXHeadlineTruncationNote.js.
+const X_HEADLINE_TRUNCATION_NOTE = 'Only the first 50 characters reliably show on most devices.';
+
 // Demand Gen Nurture Email → Offer Body 1 note. The cited figure and this field's
 // number are DIFFERENT NUMBERS, and without this note a writer reads "Recommended
 // by Constant Contact" beside [50-140 words] and has no way to reconcile them.
@@ -898,6 +918,10 @@ function fieldSpecNote(assetName, fieldName) {
   // headline — see X_LINK_COST_NOTE. Matched per (asset, field) rather than by
   // field name, because "Headline" exists on the same asset.
   if (assetName === 'Twitter/X Ad' && fieldName === 'Ad Copy') return X_LINK_COST_NOTE;
+  // The media-headline truncation, on the Ad's Headline only. Organic Social —
+  // Twitter/X has no Headline field, and Graphic Headline is on-image copy that
+  // this page's media-headline guidance does not describe.
+  if (assetName === 'Twitter/X Ad' && fieldName === 'Headline') return X_HEADLINE_TRUNCATION_NOTE;
   if (assetName === 'Organic Social — Twitter/X' && fieldName === 'Post Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Pinterest Pin' && fieldName === 'Title') return PINTEREST_TITLE_NOTE;
   // Matched on the ASSET too: "Title" exists on Pinterest Pin, Idea and Quiz,

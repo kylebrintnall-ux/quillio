@@ -251,6 +251,38 @@ const RAW = [
     ['Subhead', 40, 90, 'Graphic Copy'],
     ['CTA Button', 0, 20, 'Graphic Copy'],
   ]],
+  // THE POLL ADDITION, off the SAME page Twitter/X Ad cites. A SEPARATE ASSET
+  // TYPE AND NOT EXTRA FIELDS ON THE AD, because copy_fields has no
+  // optional-field mechanism: the plan a brief produces is {asset, count,
+  // labels} with no field axis, cloneSpecGroup copies the whole field list, and
+  // appendBody renders every field unconditionally. Extra fields on Twitter/X Ad
+  // would draft on every ordinary X ad, consume a Gemini call each, and report
+  // the run as incomplete once a writer deleted them.
+  //
+  // POST COPY 280 IS A DUPLICATE, and it is recorded as a workaround rather than
+  // a design. X publishes that number once — the page says "same as above" where
+  // it repeats it — so this row holds a second copy with its own spec_source,
+  // its own spec_verified_at and its own pair in the watch row's
+  // affected_fields. If X moves 280, an admin ticks each copy separately off one
+  // flag and nothing in the product compares sibling assets. If an
+  // optional-field mechanism is ever built, this asset and Conversation Button
+  // are the two to build it for. See scripts/migrateAddXPollAd.js.
+  //
+  // FOUR OPTIONS FOR A PUBLISHED 2-4, because copy_fields has no repeat
+  // mechanism and the seed has to hold the MAXIMUM — the LinkedIn Carousel
+  // Card 1-5 shape. A two-option poll leaves two blank, which the copy-done
+  // screen reads as unfinished; that is the correct trade and it is written down
+  // in the migration so nobody reads those blanks as a defect.
+  //
+  // Kept BYTE-IDENTICAL to scripts/migrateAddXPollAd.js ASSETS — a smoke test
+  // walks every migration-created asset and asserts the two agree field by field.
+  ['Twitter/X Poll Ad', 'Paid Social', [
+    ['Post Copy', 0, 280],
+    ['Poll Option 1', 0, 25],
+    ['Poll Option 2', 0, 25],
+    ['Poll Option 3', 0, 25],
+    ['Poll Option 4', 0, 25],
+  ]],
   // PAID SOCIAL, NOT ORGANIC. The help centre page scopes these fields to AD
   // formats in its own words — "Descriptions do not appear when viewing the ad
   // in the home feed" — and a page describing what happens when you view THE AD
@@ -582,6 +614,7 @@ const DIRECTIONS = {
   // separates this asset from every other paid one in the library.
   'Google Responsive Search Ad':
     'They are already looking. Match the intent, name the thing, skip the setup.',
+  'Twitter/X Poll Ad': 'Ask, do not tell. The post sets it up; each option has to be worth a tap.',
   'Pinterest Pin': 'Written for someone saving it for later. Useful over clever; the title does the finding.',
   'Pinterest Idea Ad': 'Swiped through, not skipped past. The title has to earn the first swipe.',
   'Pinterest Showcase Ad': 'Each card stands alone. Three short labels, not one sentence split three ways.',
@@ -666,6 +699,30 @@ const LINKEDIN_SIA_INTRO_NOTE = 'In-feed preview truncates near 150.';
 // budgeting for something that never happens.
 const X_LINK_COST_NOTE =
   'Every link costs 23 characters regardless of its length, so a post with one link has 257 characters of copy.';
+
+// Twitter/X Poll Ad → the four Poll Option fields. A RELATIONSHIP BETWEEN TWO
+// NUMBERS, in the writing-guidance channel, and the THIRD of that shape in this
+// library — 257 = 280 minus a link's 23, 50 = what fits two card-title lines
+// under a 70 cap, and this one: the option's 25 does NOT draw down the post's
+// 280. Every one is the kind of number somebody promotes into a limit by reading
+// the arithmetic instead of the sentence. Here the tempting move goes the other
+// way: reducing Post Copy's char_max because a poll ad "has less room". The page
+// says it does not.
+//
+// It names the OTHER field's number rather than restating this field's own 25,
+// which the label already renders as "[25]". Statement of consequence, not an
+// imperative — notesAB scored the imperative form of the comparable Pinterest
+// note 0/10 within 40, level with no note at all, with spread collapsing 64 to
+// 13. Do not reword it to "keep options short".
+//
+// ON ALL FOUR OPTION FIELDS, not just the first: the LinkedIn Carousel precedent
+// — a writer working on Option 4 must not have to remember what Option 1 said.
+// Deliberately NOT in SHOW_ONCE_NOTES, whose stated criterion is a note
+// REDUNDANT with its field; this one is not.
+//
+// BYTE-IDENTICAL to POLL_OPTION_NOTE in scripts/migrateAddXPollAd.js.
+const X_POLL_OPTION_NOTE = 'Poll options do not count against the post\'s 280 characters.';
+const X_POLL_OPTION_FIELDS = new Set(['Poll Option 1', 'Poll Option 2', 'Poll Option 3', 'Poll Option 4']);
 
 // Twitter/X Ad → Headline. A TRUNCATION, not a limit, in the writing-guidance
 // channel — the same split PINTEREST_TITLE_NOTE and X_LINK_COST_NOTE make.
@@ -937,6 +994,11 @@ function fieldSpecNote(assetName, fieldName) {
   // Twitter/X has no Headline field, and Graphic Headline is on-image copy that
   // this page's media-headline guidance does not describe.
   if (assetName === 'Twitter/X Ad' && fieldName === 'Headline') return X_HEADLINE_TRUNCATION_NOTE;
+  // Matched on the ASSET too: "Post Copy" also exists on Organic Social —
+  // Twitter/X, which carries the link-cost note instead.
+  if (assetName === 'Twitter/X Poll Ad' && X_POLL_OPTION_FIELDS.has(fieldName)) {
+    return X_POLL_OPTION_NOTE;
+  }
   if (assetName === 'Organic Social — Twitter/X' && fieldName === 'Post Copy') return X_LINK_COST_NOTE;
   if (assetName === 'Pinterest Pin' && fieldName === 'Title') return PINTEREST_TITLE_NOTE;
   // Matched on the ASSET too: "Title" exists on Pinterest Pin, Idea and Quiz,
@@ -1104,6 +1166,14 @@ const ENFORCED_SPEC_FIELDS = new Set([
   // X's 280 is a hard cap on an organic post exactly as it is on a paid one — the
   // same platform limit, and it was previously an uncited house default here.
   'Organic Social — Twitter/X||Post Copy',
+  // The poll addition, off the same page. "Poll options: 2-4 custom poll
+  // options" at 25 each, and the post copy X publishes once and repeats per
+  // format block.
+  'Twitter/X Poll Ad||Post Copy',
+  'Twitter/X Poll Ad||Poll Option 1',
+  'Twitter/X Poll Ad||Poll Option 2',
+  'Twitter/X Poll Ad||Poll Option 3',
+  'Twitter/X Poll Ad||Poll Option 4',
 ]);
 
 // --- Field UNIT -------------------------------------------------------------
@@ -1247,6 +1317,11 @@ const SPEC_SOURCE_URLS = {
   'Pinterest Idea Ad': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
   'Pinterest Showcase Ad': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
   'Pinterest Quiz Ad': 'https://help.pinterest.com/en/business/article/pinterest-product-specs',
+  // The SAME page and the same watch row Twitter/X Ad cites, so seeding this
+  // asset leaves 5 pairs outside the write gate until
+  // scripts/rederiveAffectedFields.js is run against that row. That re-derive
+  // has NOT been run — see "THE WRITE GATE" in scripts/migrateAddXPollAd.js.
+  'Twitter/X Poll Ad': 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
   'Google Performance Max': 'https://support.google.com/google-ads/answer/17091269',
   // The SAME page carries in-feed video and YouTube Masthead, neither of which is
   // seeded. Only the Demand Gen video table's four fields cite it.

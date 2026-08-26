@@ -14,6 +14,11 @@ const ALLOWED_ASSETS = [
   'Meta Single Image Ad',
   'Meta Carousel Ad',
   'Twitter/X Ad',
+  // The poll ADDITION, as its own type. The page describes Polls as an addition
+  // to a Promoted Ad rather than a format, and copy_fields has no optional-field
+  // mechanism — see scripts/migrateAddXPollAd.js for why the duplicated Post
+  // Copy is the lesser of the two available distortions.
+  'Twitter/X Poll Ad',
   'Display Banner — Standard',
   'Google Responsive Display Ad',
   'Google Responsive Search Ad',

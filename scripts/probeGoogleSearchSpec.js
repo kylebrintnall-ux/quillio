@@ -110,6 +110,10 @@ function count(hay, needle) {
   return hay.split(needle).length - 1;
 }
 
+// Value occurrences are WHOLE NUMBERS; count() stays substring for phrases.
+// See scripts/lib/wholeNumber.js.
+const { countWholeNumber } = require('./lib/wholeNumber');
+
 // Every occurrence with `pad` characters either side, so the reader sees the
 // SENTENCE rather than a tally. Capped so a common substring cannot flood the
 // console.
@@ -263,7 +267,7 @@ async function probePage() {
   console.log('   this page. Presence of 30 and 90 proves nothing either way — they are');
   console.log("   this page's own numbers and Display's, independently.");
   for (const n of DISPLAY_VALUES) {
-    console.log(`      ${n}: ${count(a.cut, n)}x`);
+    console.log(`      ${n}: ${countWholeNumber(a.cut, n)}x`);
   }
 }
 

@@ -359,6 +359,9 @@ function count(hay, needle) {
   return String(hay).split(needle).length - 1;
 }
 
+// The `holds` test below matches WHOLE NUMBERS, not digit substrings.
+const { hasWholeNumber } = require('./lib/wholeNumber');
+
 // Every occurrence of a needle, as a character offset and as a percentage of the
 // document. The percentage is what makes "five times" legible: five hits spread
 // from 3% to 88% is a heading repeated per section, which is the thing being
@@ -427,7 +430,12 @@ function chooseAnchor(text, candidates, limits, section) {
     const n = count(text, c.text);
     const at = text.indexOf(c.text);
     const digits = String(c.text).match(/\d+/g) || [];
-    const holds = limits.filter((v) => String(c.text).includes(v));
+    // WHOLE NUMBERS. Eligibility here is digit-free (below), so `holds` does not
+    // decide anything — but it IS printed as "including stored limit(s) N", and
+    // a substring test makes that line claim a candidate holds a limit it does
+    // not. A false reason in a report is how a rejected candidate gets
+    // re-proposed. See scripts/lib/wholeNumber.js.
+    const holds = limits.filter((v) => hasWholeNumber(c.text, v));
     const unique = n === 1;
     const inSection = !!span && at >= 0 && at >= span.start && at + c.text.length <= span.end;
     return {

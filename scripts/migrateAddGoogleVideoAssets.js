@@ -357,6 +357,9 @@ function count(hay, needle) {
   return hay.split(needle).length - 1;
 }
 
+// The `holds` test below matches WHOLE NUMBERS, not digit substrings.
+const { hasWholeNumber } = require('./lib/wholeNumber');
+
 // THE SECTION SPAN — [start, end) of the block that publishes the fields this
 // row watches. Located by two markers that are themselves substrings of quoted
 // sentences, so the quote check has already proved both are on the page.
@@ -403,7 +406,14 @@ function chooseAnchor(text, candidates, limits, section) {
   const seen = candidates.map((c) => {
     const n = count(text, c.text);
     const at = text.indexOf(c.text);
-    const holds = limits.filter((v) => c.text.includes(v));
+    // WHOLE NUMBERS, and here it is LOAD-BEARING rather than cosmetic: `clean`
+    // is `holds.length === 0`, so a substring test demotes a candidate from
+    // tier 1 to tier 2 — or prints "in-section, holds N" against it — for a
+    // digit it does not actually contain. An anchor refused for "holding 280"
+    // when it really holds 1280 is a SILENT OVER-REFUSAL: the run reports a
+    // reason, the reason is false, and nothing contradicts it. Same species as
+    // the Pinterest value counter. See scripts/lib/wholeNumber.js.
+    const holds = limits.filter((v) => hasWholeNumber(c.text, v));
     const unique = n === 1;
     const inSection = !!span && at >= 0 && at >= span.start && at + c.text.length <= span.end;
     return {

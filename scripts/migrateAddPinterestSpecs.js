@@ -189,6 +189,13 @@ function count(hay, needle) {
   return hay.split(needle).length - 1;
 }
 
+// WHOLE NUMBERS ONLY for the value checks below. count() is a substring test and
+// stays one — it counts quoted sentences and the anchor, where that is right.
+// This page is why the split matters: it carries "1000 x 1500 pixels", so a
+// substring count reported 100 three times too often and reported 500 three
+// times when the page has none. See scripts/lib/wholeNumber.js.
+const { countWholeNumber } = require('./lib/wholeNumber');
+
 // --- the page ---------------------------------------------------------------
 // Returns { ok, why } and prints what it measured. Called by --verify and by
 // every write path, so a value is never written without the page being read in
@@ -238,12 +245,12 @@ async function readPage() {
   // in dates and pixel sizes, so this is weak evidence on its own and is here to
   // catch the strong case: a row watching a page that carries none of them.
   for (const n of ['100', '800']) {
-    console.log(`   stored value ${n}: ${count(a, n)}x in the hashed text`);
+    console.log(`   stored value ${n}: ${countWholeNumber(a, n)}x in the hashed text`);
   }
   // AND THE ONE WE REFUSED. 500 should be absent from the help centre page; if it
   // turns up here, the two Pinterest pages disagree less than this header claims
   // and the 800 needs re-reading before it ships.
-  const five = count(a, '500');
+  const five = countWholeNumber(a, '500');
   console.log(`   REJECTED value 500: ${five}x` +
     (five > 0 ? '   <- UNEXPECTED. Re-read the page before writing 800.' : '   (as expected — 500 is the best-practices page)'));
 

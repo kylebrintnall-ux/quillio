@@ -5911,10 +5911,148 @@ test('migrateFixXAnchor: char_max 0 is NO LIMIT and never reaches the anchor ari
     },
   };
   const { limits } = await mig.resolveStoredLimits(stub, [{ asset: 'A', field: 'x' }]);
-  // A 0 in the limits list would be tested as a SUBSTRING against every anchor
-  // candidate — "280" contains "0" — so every candidate would read as holding a
-  // stored limit and the run would refuse on option 2 forever.
+  // A 0 in the limits list is not a limit at all, so it does not belong in the
+  // arithmetic that decides which anchors are clean.
+  //
+  // THE ORIGINAL REASON RECORDED HERE IS NO LONGER THE MECHANISM, and it is
+  // corrected rather than deleted because the assertion outlived it. It read: a
+  // 0 would be tested as a SUBSTRING against every candidate, and "280" contains
+  // "0", so every candidate would read as holding a stored limit and the run
+  // would refuse on option 2 forever. `holds` matches WHOLE NUMBERS now
+  // (scripts/lib/wholeNumber.js), so "280" no longer contains 0 and that
+  // particular catastrophe cannot happen. Dropping 0 is still right on its own
+  // terms — char_max 0 means NO LIMIT everywhere in this codebase.
   assert.deepStrictEqual(limits, ['280'], 'char_max 0 is dropped');
+});
+
+test('a stored value is counted as a WHOLE NUMBER, not as a digit substring', () => {
+  const { countWholeNumber, hasWholeNumber } = require('../scripts/lib/wholeNumber');
+
+  // THE REAL STRINGS, from help.pinterest.com/en/business/article/
+  // pinterest-product-specs. A live --verify run reported 100 sixteen times,
+  // 800 seven times, and 500 THREE TIMES with "<- UNEXPECTED. Re-read the page
+  // before writing 800." An independent probe of the same normalized text
+  // counted 13 / 7 / ZERO. The three phantom 500s were "1500" and three of the
+  // sixteen 100s were "1000".
+  //
+  // The 500 is the worse half: an alarm that fires on a page that is fine
+  // teaches its reader to dismiss it, which is what the six dismissed Litmus
+  // flags cost and why source_kind exists.
+  assert.strictEqual(countWholeNumber('1500 pixel size', '500'), 0,
+    '"1500 pixel size" is not an occurrence of 500 — this is the false alarm');
+  assert.strictEqual(countWholeNumber('1000 x 1500 pixels', '100'), 0,
+    '"1000 x 1500 pixels" is not an occurrence of 100 — this is the inflated count');
+  assert.strictEqual(countWholeNumber('Enter up to 800 characters.', '800'), 1,
+    'a trailing full stop is a boundary');
+
+  // The page's own reported totals, reproduced on a fragment carrying one of
+  // each: the two decoys contribute nothing and the real hit contributes one.
+  const page = 'Character counts Title Enter up to 100 characters. '
+    + 'Recommended size 1000 x 1500 pixels. Maximum 1500 pixel size. '
+    + 'Description Enter up to 800 characters.';
+  assert.strictEqual(countWholeNumber(page, '100'), 1, 'one real 100, not two');
+  assert.strictEqual(countWholeNumber(page, '800'), 1);
+  assert.strictEqual(countWholeNumber(page, '500'), 0, 'no 500 anywhere on it');
+  assert.strictEqual(countWholeNumber(page, '1500'), 2, 'and 1500 itself still counts');
+
+  // BOUNDARIES THAT MUST COUNT. Punctuation and an escaped entity both sit
+  // beside a digit without being one — the LinkedIn pages emit "&amp;nbsp;"
+  // as literal characters because normalize() strips real tags and leaves
+  // escaped source, so this is a shape that genuinely occurs.
+  assert.strictEqual(countWholeNumber('&amp;nbsp;800 characters', '800'), 1);
+  assert.strictEqual(countWholeNumber('up to 800, or fewer', '800'), 1);
+  assert.strictEqual(countWholeNumber('(800)', '800'), 1);
+  assert.strictEqual(countWholeNumber('800', '800'), 1, 'the whole string');
+
+  // THE DELIBERATE DIVERGENCE FROM \b, and it is the reason the rule is stated
+  // as digit-adjacency. "100MB" is a real file-size limit on this page, and the
+  // 100 in it IS the number one hundred — it measures megabytes rather than
+  // characters, which is a question about UNITS this counter has never claimed
+  // to answer. \b would score it 0.
+  //
+  // The direction matters: counting "1000" as 100 makes the wrong-page alarm
+  // QUIETER (the Meta ads-guide index reported unchanged for weeks against a
+  // page with no character limit on it), and refusing "100MB" makes it LOUDER
+  // on a page that is fine. So the rule errs toward counting a real number and
+  // never toward counting a digit inside a bigger one.
+  assert.strictEqual(countWholeNumber('Max file size 100MB', '100'), 1,
+    '100MB is a genuine occurrence of 100 — a letter is a boundary, a digit is not');
+  assert.strictEqual(countWholeNumber('1080x1920', '1080'), 1);
+  assert.strictEqual(countWholeNumber('1080x1920', '1920'), 1);
+  assert.strictEqual(countWholeNumber('1080x1920', '108'), 0, 'but not a prefix of one');
+
+  // Repeats are counted, not merely detected — the call sites print a count.
+  assert.strictEqual(countWholeNumber('45 45 145 450 45', '45'), 3);
+
+  // hasWholeNumber is the presence half of the same rule, used by
+  // checkSpecHealth's `numbers` line and by every anchor `holds` test.
+  assert.strictEqual(hasWholeNumber('1000 pixels', '100'), false);
+  assert.strictEqual(hasWholeNumber('100 characters', '100'), true);
+  assert.strictEqual(hasWholeNumber('', '100'), false);
+  assert.strictEqual(hasWholeNumber(null, '100'), false);
+  assert.strictEqual(hasWholeNumber('no digits here', '100'), false);
+
+  // A non-numeric needle is a CALLER BUG and throws rather than answering 0.
+  // A value check that quietly counts nothing is the same silent-pass species
+  // this whole fix is about.
+  assert.throws(() => countWholeNumber('800', 'eight hundred'), /digits-only/);
+  assert.throws(() => countWholeNumber('800', '8 00'), /digits-only/);
+  assert.throws(() => countWholeNumber('800', ''), /digits-only/);
+});
+
+test('every numeric value check in scripts/ goes through wholeNumber', () => {
+  // A TRIPWIRE, NOT COVERAGE — labelled so, per CLAUDE.md. It cannot tell a
+  // correct counter from an incorrect one; it only stops the five call sites
+  // that were fixed from reverting to `count(text, <a number>)` or
+  // `text.includes(String(n))`.
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'scripts', f), 'utf8');
+
+  // The value-presence checks: whole-number, and no substring form left.
+  for (const [file, needle] of [
+    ['migrateAddPinterestSpecs.js', /countWholeNumber\(a, n\)/],
+    ['migrateAddPinterestSpecs.js', /countWholeNumber\(a, '500'\)/],
+    ['migrateAddGoogleSearchAsset.js', /countWholeNumber\(a, n\)/],
+    ['probeGoogleSearchSpec.js', /countWholeNumber\(a\.cut, n\)/],
+  ]) {
+    assert.match(read(file), needle, `${file} counts values as whole numbers`);
+  }
+  for (const file of ['migrateAddPinterestSpecs.js', 'migrateAddGoogleSearchAsset.js',
+    'probeGoogleSearchSpec.js']) {
+    assert.ok(!/count\((?:a|a\.cut), (?:n|'\d+')\)/.test(read(file)),
+      `${file} has no substring count of a numeric value left`);
+  }
+
+  // checkSpecHealth's wrong-page alarm.
+  //
+  // AGAINST THE CODE, NOT THE FILE. The fix's own comment QUOTES the substring
+  // form it replaced, so a whole-file grep fails on the one sentence that
+  // records what was wrong. Second time this exact trap has been hit in this
+  // suite — see the sole-witness test's `code` slice for the first.
+  const health = read('checkSpecHealth.js').replace(/^\s*\/\/.*$/gm, '');
+  assert.match(health, /nums\.filter\(\(n\) => hasWholeNumber\(a, n\)\)/);
+  assert.ok(!/a\.includes\(String\(n\)\)/.test(health),
+    'the numbers line no longer substring-matches — that made the alarm quieter');
+
+  // Every anchor `holds` test, across all five files that have one. Two of them
+  // (X, Google video) gate `clean` on it, so a substring there is a silent
+  // OVER-REFUSAL: a candidate rejected for holding 280 when it holds 1280.
+  for (const file of ['migrateFixXAnchor.js', 'migrateAddGoogleVideoAssets.js',
+    'migrateFixGoogleDisplayAnchor.js', 'migrateFixLinkedInSingleImageAnchor.js',
+    'migrateFixLinkedInCarouselAnchor.js']) {
+    const src = read(file);
+    assert.match(src, /limits\.filter\(\(v\) => hasWholeNumber\(c\.text, v\)\)/,
+      `${file} holds-test matches whole numbers`);
+    assert.ok(!/limits\.filter\(\(v\) => (?:String\(c\.text\)|c\.text)\.includes\(v\)\)/.test(src),
+      `${file} has no substring holds-test left`);
+  }
+
+  // probeSpecPage was ALREADY CORRECT and is asserted so rather than changed:
+  // findIntegers takes maximal digit runs and citesAny compares them exactly.
+  // It is the counter the live evidence was checked against.
+  const probe = read('probeSpecPage.js');
+  assert.match(probe, /const re = \/\\d\+\/g;/, 'findIntegers takes maximal digit runs');
+  assert.match(probe, /\(text\.match\(\/\\d\+\/g\) \|\| \[\]\)\.some\(\(d\) => cited\.has\(d\)\)/,
+    'citesAny compares whole runs, not substrings');
 });
 
 test('migrateFixXAnchor: empty pairs produce empty parallel arrays rather than throwing', async () => {

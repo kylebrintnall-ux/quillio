@@ -179,6 +179,11 @@ function count(hay, needle) {
   return hay.split(needle).length - 1;
 }
 
+// Value checks match WHOLE NUMBERS; count() stays a substring test for quotes
+// and the anchor. See scripts/lib/wholeNumber.js — a substring count of "30" on
+// a Google specs page also counts the 30 inside "300" and "1030".
+const { countWholeNumber } = require('./lib/wholeNumber');
+
 // --- the page ---------------------------------------------------------------
 // Returns { ok, why } and prints what it measured. Called by --verify and by
 // every write path, so a value is never written without the page being read in
@@ -226,7 +231,7 @@ async function readPage() {
   // in dates and pixel sizes, so this is weak evidence on its own and is here to
   // catch the strong case: a row watching a page that carries none of them.
   for (const n of ['30', '90', '15']) {
-    console.log(`   stored value ${n}: ${count(a, n)}x in the hashed text`);
+    console.log(`   stored value ${n}: ${countWholeNumber(a, n)}x in the hashed text`);
   }
   return { ok: true };
 }

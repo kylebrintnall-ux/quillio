@@ -87,6 +87,7 @@ const {
 // creating rows whose only purpose is to say "do not look here" — and a row that
 // exists to be ignored is a row somebody later mistakes for one that matters.
 const { SPEC_SOURCE_DETAIL } = require('../src/destinations/googleDocs');
+const { hasWholeNumber } = require('./lib/wholeNumber');
 
 const TAG = '[spec-health]';
 
@@ -362,14 +363,19 @@ async function checkRow(pool, row, moved) {
       out.amber.push('no cited numbers to check — affected_fields is empty');
       say('numbers', 'none cited (empty gate)');
     } else {
-      const hits = nums.filter((n) => a.includes(String(n)));
+      // WHOLE NUMBERS. `a.includes(String(n))` counted a cited 100 as present
+      // because the page carries "1000" — and this branch's red is the
+      // wrong-page alarm, so a substring test makes the ONE check that would
+      // have caught the Meta ads-guide index quieter, in the direction that
+      // never gets noticed. See scripts/lib/wholeNumber.js.
+      const hits = nums.filter((n) => hasWholeNumber(a, n));
       if (hits.length === 0) {
         out.red.push(
           `the page contains NONE of the ${nums.length} numbers this row is cited for ` +
           `(${nums.join(', ')}) — this is the wrong page`
         );
       }
-      say('numbers', nums.map((n) => `${n}${a.includes(String(n)) ? ' ok' : ' MISSING'}`).join(' · '));
+      say('numbers', nums.map((n) => `${n}${hasWholeNumber(a, n) ? ' ok' : ' MISSING'}`).join(' · '));
     }
   }
 

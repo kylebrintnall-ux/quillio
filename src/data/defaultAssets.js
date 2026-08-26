@@ -682,10 +682,25 @@ const X_LINK_COST_NOTE =
 // GRAMMAR MIRRORS THE MEASURED WINNER. scripts/notesAB.js scored the statement
 // form of the comparable Pinterest note 3/10 within 40 and the imperative form
 // 0/10 with spread collapsing 64 to 13. Subject is the characters, verb is what
-// the reader sees. Do not reword it to "keep it under 50".
+// fits. Do not reword it to "keep the title to two lines".
+//
+// IT NAMES THE MECHANISM RATHER THAN A STATISTIC, and that followed a correction
+// to the quoted page text. The first version read "Only the first 50 characters
+// reliably show on most devices." — not false, but it described 50 as a device
+// threshold because the quote it rested on gave no other reason for it. The
+// corrected quote says "Up to two lines of text are rendered on the card title;
+// any text beyond that is truncated with an ellipsis", so 50 is roughly what
+// fits two lines: a property of the CARD, not of the phone. A writer can picture
+// two lines and check them; "most devices" can only be taken on trust. The
+// device variance is carried in "about".
+//
+// THE SUPERSEDED STRING SHIPPED IN THIS FILE AT fecc346, so a tenant installing
+// between that commit and this one holds the older wording. A follow-up
+// migration matching on the old text would close it; with no real customers it
+// is not worth one, and it is written down rather than left to be found.
 //
 // BYTE-IDENTICAL to NOTE in scripts/migrateAddXHeadlineTruncationNote.js.
-const X_HEADLINE_TRUNCATION_NOTE = 'Only the first 50 characters reliably show on most devices.';
+const X_HEADLINE_TRUNCATION_NOTE = 'Only about 50 characters fit the card title\'s two lines.';
 
 // Demand Gen Nurture Email → Offer Body 1 note. The cited figure and this field's
 // number are DIFFERENT NUMBERS, and without this note a writer reads "Recommended

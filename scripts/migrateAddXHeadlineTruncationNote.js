@@ -14,13 +14,66 @@
 // read through scripts/probeSpecPage.js against the live normalized text,
 // 2026-08-25. Verbatim, per CLAUDE.md's fetch rule.
 //
-// FROM THE **IMAGE ADS WITH WEBSITE CARD** BLOCK — this is the sentence being
-// asserted, and the one in QUOTE below:
+// Dumped from the live normalized text through the detector's own fetchText and
+// normalize. THE SENTENCE BEING ASSERTED, and the one in QUOTE below:
 //
 //   "Media headline length: Max 70 characters. Please note — depending on
-//    device and app settings this description may be truncated with an
-//    ellipsis. Although not guaranteed, limiting the description to 50
-//    characters should ensure that truncation won't occur across most devices."
+//    device and app settings this description may truncate. Up to two lines of
+//    text are rendered on the card title; any text beyond that is truncated
+//    with an ellipsis. Although not guaranteed, limiting the description to
+//    50 characters"
+//
+// THE EM DASH AFTER "Please note" IS U+2014 and is the page's own character.
+// There are NO HTML ENTITIES in this stretch — which is a fact about this
+// stretch and not about the page. Pinterest's blocks carried &nbsp; in two of
+// three, and the one that did not is exactly why that failure looked like a
+// property of the other two (scripts/migrateAddPinterestAdFormats.js).
+//
+// ─── TRUNCATED AT A CLEAN BOUNDARY, AND WHY THAT RATHER THAN COMPLETED ─────
+// The dump stops mid-word at "50 characters s". Two options: extend the dump,
+// or cut the quote at a boundary that is unambiguous on its own. THIS FILE
+// CUTS, at "limiting the description to 50 characters".
+//
+// Cutting rather than completing, because completing it here would mean
+// WRITING THE TAIL FROM MEMORY — and the remembered tail is "should ensure that
+// truncation won't occur across most devices", which is a phrase from the
+// SUPERSEDED quote this section exists to correct. Re-introducing it would be
+// the same error a second time, in the change that fixes it. The author of this
+// file cannot reach business.x.com to check, so the honest move is to assert
+// less.
+//
+// WHAT THE CUT COSTS: nothing that is load-bearing. The hedge survives —
+// "Although not guaranteed" is inside the quote — and the hedge is what makes
+// 50 guidance rather than a limit. Extending the dump later is welcome; a
+// longer quote asserts more and is strictly better evidence.
+//
+// ─── THE SUPERSEDED QUOTE, AND WHAT REFUSED IT ────────────────────────────
+// The first version of this file asserted:
+//
+//   "... this description may be truncated with an ellipsis. Although not
+//    guaranteed, limiting the description to 50 characters should ensure that
+//    truncation won't occur across most devices."
+//
+// That sentence IS NOT ON THE PAGE. It collapsed TWO of X's sentences into one
+// — "this description may truncate" and "any text beyond that is truncated with
+// an ellipsis" — producing a plausible hybrid that reads correctly and matches
+// nothing. It was reconstructed from truncated context rather than read.
+//
+// --verify refused it, and the refusal named TRANSCRIPTION rather than a page
+// change, which is the distinction that decides whether the next person edits
+// this file or goes and re-reads X.
+//
+// SECOND TIME IN ONE SESSION THE QUOTE CHECK HAS CAUGHT A WRONG SENTENCE, and
+// that is the part worth carrying rather than the individual error. Pinterest's
+// &nbsp; was the first (two blocks, two refusals); this is the second. Both
+// times the sentence was wrong in a way that LOOKED RIGHT to its author, both
+// times nothing else in the system would ever have said so, and both times the
+// refusal pointed at the right side.
+//
+// The two failure modes are different and neither is exotic: the first was a
+// CHARACTER-level flattening of what the page emits, this one a SENTENCE-level
+// recombination of what the page says. A check that only caught one of them
+// would have passed this quote.
 //
 // ─── IT OCCURS MORE THAN ONCE, AND THE WORDINGS DIFFER ─────────────────────
 // The same guidance appears in the **Video Ads with Website Card** block, and
@@ -48,10 +101,15 @@
 // the same way.
 //
 // 70 is the published cap and is correct as stored. 50 is a TRUNCATION
-// THRESHOLD, and the page hedges it twice in one sentence: truncation depends on
-// "device and app settings", and limiting to 50 "should ensure" it does not
-// happen "across most devices" — "although not guaranteed". X is describing a
-// rendering behaviour it will not promise.
+// THRESHOLD, and the page hedges it: truncation depends on "device and app
+// settings", and the 50 arrives under "Although not guaranteed". X is describing
+// a rendering behaviour it will not promise.
+//
+// THE MECHANISM IS A TWO-LINE RENDER, which the corrected quote makes explicit
+// and the superseded one did not: "Up to two lines of text are rendered on the
+// card title; any text beyond that is truncated with an ellipsis." So 50 is
+// roughly what fits two lines, not a device threshold in its own right — which
+// is why it is approximate, and why it cannot be a limit.
 //
 // So 50 must not become char_max: it would tell a writer that 51 characters is
 // over the limit when X accepts 70, and the tier line beside it would assert
@@ -136,17 +194,49 @@ const VERIFY = process.argv.includes('--verify');
 
 const URL = 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications';
 
-// The sentence being asserted, from the IMAGE ADS WITH WEBSITE CARD block.
-// Byte-identical to the header quote above. See "IT OCCURS MORE THAN ONCE" for
-// why this is one block's wording rather than a merged one.
-const QUOTE = 'Media headline length: Max 70 characters. Please note — depending on device and app settings '
-  + 'this description may be truncated with an ellipsis. Although not guaranteed, limiting the description '
-  + 'to 50 characters should ensure that truncation won\'t occur across most devices.';
+// The sentence being asserted. Byte-identical to the header quote above, and
+// CUT rather than completed — see "TRUNCATED AT A CLEAN BOUNDARY".
+//
+// ATTRIBUTED TO THE IMAGE ADS WITH WEBSITE CARD BLOCK ON ONE PIECE OF EVIDENCE,
+// stated so nobody treats it as measured: the operator reported that the two
+// blocks differ in exactly this way — one writes "Max 70 characters", the other
+// "70 characters" — and this dump carries "Max". The dump itself did not record
+// which block it came from. If --verify ever reports 2x for this string, that
+// attribution is wrong and the two blocks agree after all.
+const QUOTE = 'Media headline length: Max 70 characters. Please note \u2014 depending on device and app '
+  + 'settings this description may truncate. Up to two lines of text are rendered on the card title; any '
+  + 'text beyond that is truncated with an ellipsis. Although not guaranteed, limiting the description to '
+  + '50 characters';
 
 // THE NOTE. Statement of consequence, grammar mirroring the arm notesAB measured
 // as better — see the header. BYTE-IDENTICAL to X_HEADLINE_TRUNCATION_NOTE in
 // src/data/defaultAssets.js; a smoke test compares the two.
-const NOTE = 'Only the first 50 characters reliably show on most devices.';
+//
+// IT CHANGED WITH THE QUOTE, and that is the point rather than an afterthought.
+// The superseded wording was "Only the first 50 characters reliably show on most
+// devices." — which is not false, and which described 50 as a DEVICE THRESHOLD
+// because the superseded quote gave no other reason for it. The corrected quote
+// supplies the mechanism: "Up to two lines of text are rendered on the card
+// title; any text beyond that is truncated with an ellipsis." 50 is roughly what
+// fits two lines. It is a property of the CARD, not of the phone.
+//
+// So the note carries the REASON rather than the statistic. "Two lines" is a
+// thing a writer can picture and check as they write; "most devices" is a number
+// they can only take on trust, and it quietly implies the threshold is about
+// hardware. The device variance is still carried, in "about".
+//
+// The measured constraint is unchanged: still a statement, still "Only …" with
+// the characters as subject, and three characters shorter. Do not reword it to
+// "keep the title to two lines" — notesAB scored the imperative form of the
+// comparable Pinterest note 0/10 within 40, level with no note at all, with
+// spread collapsing 64 to 13.
+//
+// THE SUPERSEDED STRING SHIPPED. It was deployed to the seed at fecc346, so a
+// tenant installing between that commit and this one carries the older wording
+// in copy_fields. Closing that would take a follow-up migration matching on the
+// old text; with no real customers on the product it is not worth one, and it is
+// recorded here rather than left for somebody to discover as a divergence.
+const NOTE = 'Only about 50 characters fit the card title\'s two lines.';
 
 // The pair, its expected stored limit, and the field the note describes.
 // PAIR-SCOPED rather than URL-scoped: five other tiered fields cite this URL
@@ -201,12 +291,14 @@ async function readPage() {
     return {
       ok: false,
       why: 'the quoted sentence is not on the page. BEFORE CONCLUDING X CHANGED IT, check the '
-        + 'transcription: normalize() strips tags and DECODES NOTHING, so an &nbsp; or an &amp; on the page '
-        + 'reaches the hashed text as literal characters and a plain space written in its place will never '
-        + 'match. Note also that this quote carries an EM DASH (U+2014) after "Please note" and a curly '
-        + 'apostrophe in "won\'t" — both are the page\'s own characters and both are easy to flatten when '
-        + 'copying. A block differing only in punctuation or entities is ours to fix; a block differing in a '
-        + 'NUMBER is X\'s, and that one is a real finding.',
+        + 'transcription — that is what it was both times this check has fired. TWO WAYS TO GET IT WRONG, '
+        + 'and they need different fixes. (1) CHARACTER level: normalize() strips tags and DECODES NOTHING, '
+        + 'so an &nbsp; or an &amp; reaches the hashed text as literal characters, and this quote carries an '
+        + 'EM DASH (U+2014) after "Please note" that is easy to flatten to a hyphen. (2) SENTENCE level: the '
+        + 'superseded version of this quote merged two of X\'s sentences into a plausible hybrid that reads '
+        + 'correctly and matches nothing — if you assembled this from more than one screenful, suspect that '
+        + 'first. A quote differing in punctuation, entities or sentence boundaries is ours to fix; one '
+        + 'differing in a NUMBER is X\'s, and that is a real finding.',
     };
   }
 

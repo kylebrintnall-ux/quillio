@@ -1801,6 +1801,15 @@ test('the X headline truncation note: 50 is guidance, 70 stays the limit', () =>
   assert.ok(mig.NOTE.includes('50'), 'the note names the truncation threshold');
   assert.ok(!mig.NOTE.includes('70'), 'and does not restate the limit the label already renders');
 
+  // IT NAMES THE MECHANISM, NOT A DEVICE STATISTIC. This replaced "Only the
+  // first 50 characters reliably show on most devices." when the corrected quote
+  // revealed WHY 50: "Up to two lines of text are rendered on the card title".
+  // 50 is roughly what fits two lines — a property of the card, not the phone —
+  // and a writer can picture two lines and check them as they write.
+  assert.ok(mig.NOTE.includes('two lines'), 'the note carries the reason for 50');
+  assert.ok(!/most devices/.test(mig.NOTE),
+    'and not the device statistic the superseded wording led with');
+
   // A STATEMENT, NOT AN IMPERATIVE. notesAB measured the statement form of the
   // comparable Pinterest note at 3/10 within 40 and the imperative at 0/10 with
   // spread collapsing 64 to 13, so this is a measured property rather than a
@@ -1836,6 +1845,30 @@ test('the X headline truncation note: 50 is guidance, 70 stays the limit', () =>
   assert.ok(flat.includes(mig.QUOTE.replace(/\s+/g, ' ')), 'and quotes it verbatim in the prose too');
   assert.ok(mig.QUOTE.includes('although not guaranteed') || mig.QUOTE.includes('Although not guaranteed'),
     'the quote keeps the hedge — it is what makes 50 guidance rather than a limit');
+
+  // THE CORRECTED QUOTE'S OWN PROPERTIES, pinned because each one is a way the
+  // superseded version was wrong.
+  //
+  // It carries the page's EM DASH (U+2014), not a hyphen. A flattened dash is a
+  // character-level transcription failure that reports ABSENT on a healthy page,
+  // which is the Pinterest &nbsp; failure in a different character.
+  assert.ok(mig.QUOTE.includes('\u2014'), 'the em dash is the page\'s own character');
+  assert.ok(!/ - /.test(mig.QUOTE), 'and has not been flattened to a hyphen');
+  assert.ok(!/&[a-z]+;/i.test(mig.QUOTE), 'no entities in this stretch');
+
+  // IT KEEPS X'S TWO SENTENCES SEPARATE. The superseded quote merged "this
+  // description may truncate" with "any text beyond that is truncated with an
+  // ellipsis" into a hybrid that reads correctly and matches nothing.
+  assert.ok(mig.QUOTE.includes('may truncate.'), 'the first sentence ends where X ends it');
+  assert.ok(mig.QUOTE.includes('Up to two lines of text are rendered on the card title'),
+    'and the two-line sentence is present rather than absorbed');
+  assert.ok(!/may be truncated with an ellipsis/.test(mig.QUOTE),
+    'the merged hybrid must not come back');
+
+  // IT IS CUT, NOT COMPLETED. The dump stopped mid-word; the quote ends at a
+  // boundary rather than inventing the tail from the superseded version.
+  assert.ok(mig.QUOTE.endsWith('50 characters'), 'cut at a clean boundary');
+  assert.ok(!/should ensure/.test(mig.QUOTE), 'the remembered tail was not written back in');
 });
 
 test('the X link-cost note is written ONLY where the stored limit is still 280', () => {

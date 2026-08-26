@@ -118,6 +118,19 @@ const NEW_ANCHOR = 'File Type: JPG or PNG Ratio: 4:5 Resolution: 1440 x 1800 pix
 // the anchor has to keep rather than assert it by eye.
 const WATCHED_LIMITS = ['150', '27'];
 
+// WHOLE NUMBERS for the gate below. It was `NEW_ANCHOR.includes(n)` — a
+// SUBSTRING test on a number, and the sixth instance of the class the other five
+// were fixed as. This anchor is the reason the class is not academic here: it
+// carries the digit runs 4, 5, 1440 and 1800, so "40" and "80" and "18" are all
+// substrings of it while none of them is a number it contains.
+//
+// NO BEHAVIOUR CHANGE FOR THIS ROW'S OWN LIMITS — 150 and 27 are substrings of
+// nothing in the anchor, so both tests agree and both allow. The change removes
+// a hazard for whoever edits WATCHED_LIMITS or NEW_ANCHOR next: a limit of 40 or
+// 80 would be refused today for a dimension, and the refusal message would name
+// a spec revision that could not happen.
+const { hasWholeNumber } = require('./lib/wholeNumber');
+
 function sslFor(url) {
   if (/host=%2F|host=\//.test(url)) return false;
   if (/localhost|127\.0\.0\.1|sslmode=disable/.test(url)) return false;
@@ -218,8 +231,14 @@ async function readPages(marker) {
   }
 
   // The property the header claims, checked rather than asserted by eye.
+  //
+  // WHOLE NUMBERS, not substrings: the anchor's "1440 x 1800" must not read as
+  // holding 40, 80 or 18. See the note on WATCHED_LIMITS. The refusal itself is
+  // unchanged — an anchor that really does contain a watched limit still stops
+  // the run, because a spec revision would then report `failed` rather than
+  // `changed`.
   for (const n of WATCHED_LIMITS) {
-    const inAnchor = NEW_ANCHOR.includes(n);
+    const inAnchor = hasWholeNumber(NEW_ANCHOR, n);
     console.log(`   watched limit ${n}: ${inAnchor ? 'IN THE ANCHOR — a spec change would report `failed`' : 'not in the anchor'}`);
     if (inAnchor) {
       return { ok: false, why: `the new anchor contains ${n}, a limit this row watches — a spec change would report \`failed\` instead of \`changed\`` };

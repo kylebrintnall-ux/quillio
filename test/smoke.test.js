@@ -1784,7 +1784,7 @@ test('LinkedIn carousel intro / X link-cost: the migration and the seed agree', 
   assert.strictEqual(stripReaderOnlyLines(fix.X_LINK_COST_NOTE), fix.X_LINK_COST_NOTE);
 });
 
-test('Twitter/X Poll Ad: it ships REFUSING, and the 25 is not part of the 280', () => {
+test('Twitter/X Poll Ad: the quotes are X\'s own, and the 25 is not part of the 280', () => {
   const mig = require('../scripts/migrateAddXPollAd');
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { mediumKeywordsForAsset } = require('../src/services/gemini');
@@ -1794,17 +1794,43 @@ test('Twitter/X Poll Ad: it ships REFUSING, and the 25 is not part of the 280', 
   // authoring session had no egress to business.x.com, and a file that shipped
   // plausible-looking quotes nobody fetched is the failure this session has
   // already had refused twice.
-  assert.deepStrictEqual(mig.QUOTES, [], 'QUOTES ships empty');
-  const refusal = mig.requireHeaderEvidence();
-  assert.strictEqual(refusal.ok, false, 'and the run refuses until it is filled');
-  assert.match(refusal.why, /QUOTES is empty/);
-  assert.match(refusal.why, /probeSpecPage/, 'the refusal names the command that fills it');
+  assert.strictEqual(mig.QUOTES.length, 2, 'two quotes, both from the Image Ads with Polls block');
+  assert.strictEqual(mig.requireHeaderEvidence().ok, true, 'the evidence check passes now they are filled');
 
-  // ONCE FILLED, EVERY STORED LIMIT MUST APPEAR IN SOME QUOTE AS A WHOLE NUMBER.
-  // Driven here rather than described: a quote from the wrong block, or a field
-  // carrying a number the quotes do not state, is still a refusal.
+  // THE APOSTROPHE IS U+2019, THE PAGE'S OWN CHARACTER, and it is asserted
+  // rather than trusted. A straight ' pasted in its place would report ABSENT on
+  // a perfectly healthy page — the Pinterest &nbsp; failure in a different
+  // character, and the third time this file's family has met it.
+  const withApostrophe = mig.QUOTES.find((q) => /you\u2019ve/.test(q));
+  assert.ok(withApostrophe, '"you\u2019ve" carries U+2019');
+  for (const q of mig.QUOTES) {
+    assert.ok(!q.includes("'"), 'no straight apostrophe in any quote');
+    assert.ok(!/&[a-z]+;/i.test(q), 'and no entities — this stretch has none');
+  }
+
+  // QUOTE 1 SCOPES THE 280 TO POLLS, which is what makes this asset's Post Copy
+  // a separate CLAIM rather than a borrowed one. See the header: the duplication
+  // is of a value, not of evidence.
+  assert.ok(mig.QUOTES.some((q) => q.includes('Polls can include up to 280 characters of post copy')),
+    'the 280 is cited to a sentence about polls');
+
+  // QUOTE 2 CARRIES THE RELATIONSHIP THE NOTE RESTS ON, in X's own words. A
+  // relationship between two numbers is exactly the claim that cannot be checked
+  // after the fact, and without this clause the note would be an inference from
+  // two limits sitting near each other — how the wrong Meta numbers were made.
+  assert.ok(mig.QUOTES.some((q) => q.includes('do not count against the 280 you can include in post copy')),
+    'the note\'s claim is quoted, not inferred');
+
+  // EVERY STORED LIMIT MUST APPEAR IN SOME QUOTE AS A WHOLE NUMBER. Driven here
+  // rather than described: a quote from the wrong block, or a field carrying a
+  // number the quotes do not state, is still a refusal.
   const orig = mig.QUOTES.slice();
   try {
+    mig.QUOTES.length = 0;
+    assert.strictEqual(mig.requireHeaderEvidence().ok, false, 'empty is still a refusal');
+    assert.match(mig.requireHeaderEvidence().why, /QUOTES is empty/);
+    assert.match(mig.requireHeaderEvidence().why, /probeSpecPage/, 'and it names the command that fills it');
+
     mig.QUOTES.push('Poll options: 2-4 custom poll options, 25 characters each.');
     assert.strictEqual(mig.requireHeaderEvidence().ok, false, '25 alone is not enough — 280 is unquoted');
     assert.match(mig.requireHeaderEvidence().why, /stored limit 280 appears in no quoted sentence/);

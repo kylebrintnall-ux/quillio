@@ -9,24 +9,24 @@
 // test/smoke.test.js compares field-for-field against src/data/defaultAssets.js,
 // no watch row created, and the rederive command printed on a successful commit.
 //
-// ─── IT SHIPS REFUSING, AND THAT IS THE POINT ──────────────────────────────
-// QUOTES IS EMPTY. requireHeaderEvidence() turns that absence into a refusal, so
-// --verify and every write path stop before touching the network or the
-// database. The authoring session had no egress to business.x.com — the proxy
-// answers 403 to CONNECT — so no reading of this page stands behind this file
-// yet.
+// ─── IT SHIPPED REFUSING, AND HAS SINCE BEEN FILLED ────────────────────────
+// QUOTES was empty at 3420134 and requireHeaderEvidence() turned that absence
+// into a refusal before the network and before DATABASE_URL was read. The
+// authoring session had no egress to business.x.com — the proxy answers 403 to
+// CONNECT — so no reading of this page stood behind the file.
 //
-// That is deliberate rather than unfinished. This session has already had TWO
+// That was deliberate rather than unfinished. This session had already had TWO
 // quotes refused for being wrong (Pinterest's &nbsp;, and X's own media-headline
 // sentence, which merged two of the page's sentences into a hybrid that reads
 // correctly and matches nothing). Both were written by someone who believed they
-// were reading the page. A file that ships with plausible-looking quotes nobody
-// fetched is the same failure with nothing to catch it.
+// were reading the page. A file shipping plausible-looking quotes nobody fetched
+// is the same failure with nothing left to catch it.
 //
-// TO FILL IT: run scripts/probeSpecPage.js against the URL below, find the poll
-// block, and paste the sentences into QUOTES byte for byte — entities included,
-// em dashes included, sentence boundaries where the page puts them. Then
-// --verify.
+// IT IS FILLED NOW, from a dump the operator took through the detector's own
+// fetchText and normalize on 2026-08-25. The refusal moved from "no evidence" to
+// "no network": requireHeaderEvidence passes, and --verify from a session
+// without egress now fails at the fetch instead — which is a different and
+// smaller gap, and one only a console with egress can close.
 //
 // ─── THE PAGE ───────────────────────────────────────────────────────────────
 // https://business.x.com/en/help/campaign-setup/creative-ad-specifications
@@ -35,14 +35,79 @@
 // "post copy:" spec label (scripts/migrateFixXAnchor.js). This migration does
 // NOT touch it — see "THE WRITE GATE".
 //
-// WHAT THE QUOTES MUST SUPPORT once filled, stated now so the check is not
-// written to fit whatever turns up:
+// ─── THE QUOTED TEXT, AND WHAT EACH QUOTE IS FOR ──────────────────────────
+// Both from the IMAGE ADS WITH POLLS block. Dumped through fetchText +
+// normalize, 2026-08-25, and reproduced verbatim in QUOTES below.
 //
-//   280   Post Copy. The page repeats this per format block and says "same as
-//         above" where it does — see "THE POST COPY DUPLICATION".
-//   25    each poll option, and the statement that it does NOT count against
-//         the 280.
-//   2-4   "Poll options: 2-4 custom poll options".
+// QUOTE 1 — the Post Copy citation:
+//
+//   "post copy: Polls can include up to 280 characters of post copy that appear
+//    above the image."
+//
+// QUOTE 2 — the option limit AND the relationship the note rests on:
+//
+//   "Poll options: 2-4 custom poll options Once you’ve written your copy and
+//    added your image, you can add two to four custom poll responses to create
+//    your poll. Poll copy: 25 characters each Each poll option can include up to
+//    a maximum of 25 characters of text (which do not count against the 280 you
+//    can include in post copy)."
+//
+// THE APOSTROPHE IN "you’ve" IS U+2019, the page's own character, and there are
+// no HTML entities in this stretch. Both facts are asserted rather than trusted:
+// the constant is written with an explicit \u2019 escape and a smoke test checks
+// it, because a straight apostrophe pasted in its place would report ABSENT on a
+// perfectly healthy page — the Pinterest &nbsp; failure in a different
+// character, and the third time this file's family has met it.
+//
+// ─── QUOTE 1 MAKES THE 280 A POLLS CLAIM, NOT A BORROWED ONE ──────────────
+// This is the part that changes how "THE POST COPY DUPLICATION" below should be
+// read, and it is better than expected.
+//
+// X states the 280 SEPARATELY FOR POLLS — "Polls can include up to 280
+// characters of post copy" — rather than only as the generic "post copy: 280
+// characters" repeated per format block with "same as above". So this asset's
+// Post Copy cites a sentence about POLLS, not a sentence about promoted ads that
+// polls happen to inherit.
+//
+// THE DUPLICATION IS THEREFORE OF A VALUE, NOT OF A CLAIM. Twitter/X Ad / Ad
+// Copy and Twitter/X Poll Ad / Post Copy hold the same number because X publishes
+// the same number twice, in two sentences, about two things. That does not remove
+// the operational cost recorded below — one flag, two pairs to tick, no sibling
+// comparison — but it does mean the second row is not a copy of the first row's
+// evidence. If X ever changed one and not the other, this library could represent
+// that; a borrowed claim could not.
+//
+// ─── QUOTE 2 IS WHAT MAKES THE NOTE CHECKABLE ─────────────────────────────
+// The note asserts a RELATIONSHIP between two numbers — the option's 25 does not
+// draw down the post's 280 — and a relationship is exactly the kind of claim
+// that is impossible to check after the fact. Quote 2 carries it in X's own
+// words: "(which do not count against the 280 you can include in post copy)".
+//
+// Without that clause the note would be an inference from two limits sitting near
+// each other on a page, which is how the wrong Meta numbers were produced.
+//
+// ─── EXPECT 1x EACH, NOT 2x, AND WHAT 2x WOULD MEAN ───────────────────────
+// This block appears TWICE on the page: once under Image Ads with Polls and once
+// under Video Ads with Polls, with "image" and "video" swapped in the wording.
+// The quotes above are the IMAGE variant, and both carry the word — quote 1 in
+// "above the image", quote 2 in "added your image" — so each should report 1x.
+//
+// IF EITHER REPORTS 2x, THE ATTRIBUTION IS WRONG: the two blocks are identical
+// and this file is claiming a specificity the page does not have. That is a
+// finding to act on, not noise to accept — the count is printed for exactly this
+// reason. (A count above 1 is still not a REFUSAL here; see "THE COUNT IS NOT
+// ASSERTED".)
+//
+// ─── A THIRD, SHORTER POLL BLOCK EXISTS AND IS DELIBERATELY NOT QUOTED ────
+// Under Standard Features the page also says, with a capital P and no "above the
+// image" clause:
+//
+//   "Post copy: Polls can include up to 280 characters of post copy."
+//
+// Recorded so nobody later reads three 280s on this page and concludes the count
+// should be higher, or "corrects" a quote to match the shorter wording. It is not
+// quoted because it says strictly less than quote 1 and asserting it would add a
+// third string to keep in step for no gain.
 //
 // requireHeaderEvidence asserts every stored limit appears in some quote as a
 // WHOLE NUMBER (scripts/lib/wholeNumber.js — "25" must not be satisfied by a
@@ -213,12 +278,23 @@ const URL = 'https://business.x.com/en/help/campaign-setup/creative-ad-specifica
 const HOUSE_SOURCE = 'quillio_default';
 const SPEC_VERSION = '1.0';
 
-// ─── THE PAGE TEXT, EMPTY UNTIL SOMEBODY READS THE PAGE ────────────────────
-// Fill from a scripts/probeSpecPage.js run against URL. Byte for byte:
-// entities are literal characters after normalize(), an em dash is U+2014, and
-// sentence boundaries go where the page puts them. See the header for the two
-// quotes this session has already had refused, and how each was wrong.
-const QUOTES = [];
+// ─── THE PAGE TEXT, AS READ ────────────────────────────────────────────────
+// Both from the IMAGE ADS WITH POLLS block, 2026-08-25, through the detector's
+// own fetchText + normalize. Byte for byte — see the header.
+//
+// THE \u2019 IS WRITTEN AS AN ESCAPE ON PURPOSE. It is U+2019 (RIGHT SINGLE
+// QUOTATION MARK) in "you’ve", the page's own character, and a straight ' pasted
+// in its place would never match. Escaped rather than typed so it is
+// unmistakable in a diff, in a terminal with a narrow font, and to anyone
+// copying this constant somewhere else. A smoke test asserts the character is
+// U+2019 and that no straight apostrophe appears in the quotes.
+const QUOTES = [
+  'post copy: Polls can include up to 280 characters of post copy that appear above the image.',
+  'Poll options: 2-4 custom poll options Once you\u2019ve written your copy and added your image, '
+    + 'you can add two to four custom poll responses to create your poll. Poll copy: 25 characters '
+    + 'each Each poll option can include up to a maximum of 25 characters of text (which do not count '
+    + 'against the 280 you can include in post copy).',
+];
 
 // THE NOTE. On the four option fields. Statement of consequence, naming the
 // OTHER field's number rather than restating this field's own 25.

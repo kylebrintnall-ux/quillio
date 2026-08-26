@@ -1769,6 +1769,63 @@ test('LinkedIn carousel intro / X link-cost: the migration and the seed agree', 
   assert.strictEqual(stripReaderOnlyLines(fix.X_LINK_COST_NOTE), fix.X_LINK_COST_NOTE);
 });
 
+test('the X link-cost note is written ONLY where the stored limit is still 280', () => {
+  const fix = require('../scripts/migrateFixLinkedInCarouselIntro');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'migrateFixLinkedInCarouselIntro.js'), 'utf8');
+
+  // WHY THIS GUARD IS NOT THE SAME KIND AS THE BAND'S 600. That one is an
+  // idempotency guard — it identifies the rows still needing the change, and
+  // getting it wrong costs a redundant write. This one guards whether the
+  // SENTENCE IS TRUE: 257 is not published anywhere, it is 280 minus 23, and the
+  // note asserts "a post with one link has 257 characters of copy". Against a row
+  // holding any other limit that is arithmetically false — and it would be
+  // written into a document as writing guidance and into the drafting prompt as
+  // `Field guidance:`, with the run reporting success both times.
+  assert.strictEqual(fix.X_EXPECTED_MAX, 280, 'the limit the note is derived from');
+
+  // THE DERIVATION, tied to the note's own text rather than restated. If either
+  // number in the note moves, this fails — which is the point: the note and the
+  // guard are one claim, not two.
+  assert.ok(fix.X_LINK_COST_NOTE.includes('23 characters'), 'the note names the per-link cost');
+  assert.ok(fix.X_LINK_COST_NOTE.includes(`${fix.X_EXPECTED_MAX - 23} characters of copy`),
+    'and the remainder in the note is exactly X_EXPECTED_MAX minus that cost');
+
+  // THE CLAUSE, IN THE X UPDATE AND NOWHERE ELSE IN IT. Scoped with the asserted
+  // -anchor helper rather than a bare indexOf: an unasserted slice bound fails
+  // OPEN in both directions (-1 grows the region to almost everything, a missing
+  // start collapses it to ''), and this file has three UPDATEs, so a whole-file
+  // grep for "char_max = " would pass on the BAND's guard while the X one had
+  // none.
+  const xUpdate = sliceBetween(
+    src,
+    "    // 3. X's link cost",
+    '      xNotes += res.rowCount;'
+  );
+  assert.match(xUpdate, /AND cf\.char_max = \$4/,
+    'the X note UPDATE guards on the stored limit — without it the note can be '
+    + 'written against a limit its arithmetic does not describe');
+  assert.match(xUpdate, /\[X_LINK_COST_NOTE, asset, field, X_EXPECTED_MAX\]/,
+    'and $4 is bound to the constant, not to a literal that could drift from it');
+  // The pre-existing guards are still there — the value guard is ADDITIVE, and a
+  // note that clobbered a tenant's own would be a worse defect than the one being
+  // fixed.
+  assert.match(xUpdate, /AND cf\.spec_note IS NULL/, 'still additive');
+  assert.match(xUpdate, /AND at\.is_active/, 'still skips retired assets');
+
+  // The BAND's guard is unchanged and is asserted here too, so the two cannot be
+  // confused for each other by a later reader tidying "duplicate" clauses.
+  const bandGuard = fix.CHAR_FIXES.find((c) => c[0] === 'LinkedIn Carousel Ad' && c[1] === 'Intro Text');
+  assert.strictEqual(bandGuard[5], 600, 'the band still guards on the 600 it replaces');
+
+  // The file says WHY, not just what. A guard whose reason lives only in a commit
+  // message is one somebody deletes as redundant.
+  const flat = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
+  assert.ok(flat.includes('257 is not a published number'), 'the file records that 257 is derived');
+  assert.ok(flat.includes('A SKIPPED PAIR IS THE CORRECT OUTCOME'),
+    'and that a skip is the right answer rather than a case to handle');
+});
+
 test('email Subject Line + Preheader seed mobile-truncation notes; reused names on non-email assets untouched', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
   const { SUBJECT_NOTE, PREHEADER_NOTE, EMAIL_ASSETS, FIELD_NOTES } = require('../scripts/migrateAddEmailSubjectPreheaderNotes');

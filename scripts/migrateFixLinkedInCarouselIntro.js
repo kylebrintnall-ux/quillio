@@ -124,6 +124,34 @@ const X_NOTE_TARGETS = [
   ['Organic Social — Twitter/X', 'Post Copy'],
 ];
 
+// THE VALUE GUARD, and it is a different KIND of guard from the band's.
+//
+// CHAR_FIXES guards on 600 for idempotency: it identifies the rows that still
+// need the change, and a row already holding 255 is simply skipped. Getting that
+// wrong costs a redundant write.
+//
+// THIS ONE GUARDS THE TRUTH OF THE SENTENCE. 257 is not a published number — it
+// is 280 minus 23, DERIVED, and true only relative to a stored limit of 280. The
+// note says "a post with one link has 257 characters of copy". Against a row
+// holding anything else that sentence is arithmetically false, and it would be
+// written into a document as writing guidance and into the drafting prompt as
+// `Field guidance:`, with the run reporting success either way.
+//
+// The case is not hypothetical in shape: X publishes 280 today, X has changed
+// that number before in its own history, and this migration is re-runnable
+// against a tenant seeded at any future point. Nothing about spec_note reads
+// char_max, so without this clause the two can disagree silently and forever —
+// exactly the class the header's 600 story is about, arriving through a note
+// instead of through a limit.
+//
+// A SKIPPED PAIR IS THE CORRECT OUTCOME, not a failure to handle. If the limit
+// has moved, the note needs rewriting by whoever reads the new page — it is not
+// this file's to guess. The run prints 0 row(s) for that pair, which is the
+// visible half of "The one decision rule that recurs": a note that did not
+// arrive is a question somebody asks, a note asserting the wrong arithmetic is
+// one nobody ever asks.
+const X_EXPECTED_MAX = 280;
+
 function sslFor(url) {
   if (/host=%2F|host=\//.test(url)) return false;
   if (/localhost|127\.0\.0\.1|sslmode=disable/.test(url)) return false;
@@ -222,7 +250,9 @@ async function main() {
     console.log(`${TAG}   note  LinkedIn SIA / Intro Text: dropped the unsourced 600 clause  (${sia.rowCount} row(s))`);
 
     // 3. X's link cost — only where there is no note today, so nothing a tenant
-    //    or a later migration wrote is clobbered.
+    //    or a later migration wrote is clobbered, AND only where the stored
+    //    limit is still the 280 the note's arithmetic depends on. See
+    //    X_EXPECTED_MAX for why the second guard is not belt-and-braces here.
     let xNotes = 0;
     for (const [asset, field] of X_NOTE_TARGETS) {
       const res = await client.query(
@@ -233,8 +263,9 @@ async function main() {
             AND at.name = $2
             AND cf.field_name = $3
             AND cf.spec_note IS NULL
+            AND cf.char_max = $4
             AND at.is_active`,
-        [X_LINK_COST_NOTE, asset, field]
+        [X_LINK_COST_NOTE, asset, field, X_EXPECTED_MAX]
       );
       xNotes += res.rowCount;
       console.log(`${TAG}   note  ${asset} / ${field}: link cost  (${res.rowCount} row(s))`);
@@ -267,4 +298,4 @@ async function main() {
 // opening a database connection — the same pattern migrateFixMetaSpecs.js uses.
 if (require.main === module) main();
 
-module.exports = { CHAR_FIXES, SIA_NOTE_NEW, SIA_NOTE_OLD, X_LINK_COST_NOTE, X_NOTE_TARGETS };
+module.exports = { CHAR_FIXES, SIA_NOTE_NEW, SIA_NOTE_OLD, X_LINK_COST_NOTE, X_NOTE_TARGETS, X_EXPECTED_MAX };

@@ -1784,6 +1784,85 @@ test('LinkedIn carousel intro / X link-cost: the migration and the seed agree', 
   assert.strictEqual(stripReaderOnlyLines(fix.X_LINK_COST_NOTE), fix.X_LINK_COST_NOTE);
 });
 
+test('anchorChoice: one implementation, and the policy divergence is DECLARED', async () => {
+  const lib = require('../scripts/lib/anchorChoice');
+  const FILES = {
+    migrateFixXAnchor: lib.POLICY.NO_STORED_LIMIT,
+    migrateFixGoogleDisplayAnchor: lib.POLICY.DIGIT_FREE,
+    migrateFixLinkedInSingleImageAnchor: lib.POLICY.DIGIT_FREE,
+    migrateFixLinkedInCarouselAnchor: lib.POLICY.DIGIT_FREE,
+  };
+
+  // WHAT THIS REPLACES, and it is the point of the extraction rather than a side
+  // effect. Four copies of chooseAnchor had four tests, and four tests would have
+  // caught a divergence between them. One copy cannot diverge from itself — so
+  // what is left to catch is a file quietly acquiring a DIFFERENT RANKING RULE,
+  // which is now a declared value rather than a reimplementation. This table is
+  // that declaration, written by hand, one line per file.
+  for (const [name, expected] of Object.entries(FILES)) {
+    const mig = require(`../scripts/${name}`);
+    assert.strictEqual(mig.ANCHOR_OPTS.policy, expected, `${name} binds ${expected}`);
+    // ...and no local reimplementation came back. A file that grew its own
+    // chooseAnchor would pass the policy assertion above while ignoring it.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', `${name}.js`), 'utf8');
+    assert.ok(!/^function chooseAnchor\(/m.test(src), `${name} has no local chooseAnchor`);
+    assert.ok(!/^function rejectionReason\(/m.test(src), `${name} has no local rejectionReason`);
+    assert.ok(!/^function sectionSpan\(/m.test(src), `${name} has no local sectionSpan`);
+    assert.ok(!/^async function resolveStoredLimits\(/m.test(src), `${name} has no local resolveStoredLimits`);
+    assert.match(src, /require\('\.\/lib\/anchorChoice'\)/, `${name} uses the shared module`);
+  }
+
+  // THE PARAMETER HAS NO DEFAULT, which is what stops a new file inheriting a
+  // rule nobody chose for it — the harmonisation the parameter exists to
+  // prevent, arriving through the back door.
+  assert.throws(() => lib.chooseAnchor('x', [], [], null), /must be POLICY\./);
+  assert.throws(() => lib.chooseAnchor('x', [], [], null, {}), /must be POLICY\./);
+  assert.throws(() => lib.chooseAnchor('x', [], [], null, { policy: 'lenient' }), /must be POLICY\./);
+
+  // THE TWO POLICIES DISAGREE, asserted on one input so "they differ" is measured
+  // rather than claimed. A digit-bearing, unique, in-section candidate holding no
+  // STORED limit is selectable under the older rule and never under digit-free.
+  const section = { from: 'START', to: 'END' };
+  const text = 'START each link used reduces character count by 23 characters END';
+  const cands = [{ text: 'each link used reduces character count by 23 characters' }];
+  const older = lib.chooseAnchor(text, cands, ['280'], section, { policy: lib.POLICY.NO_STORED_LIMIT });
+  const newer = lib.chooseAnchor(text, cands, ['280'], section, { policy: lib.POLICY.DIGIT_FREE });
+  assert.ok(older.chosen, 'the older rule selects it — it holds no STORED limit');
+  assert.strictEqual(older.tier, '1 — clean and in-section');
+  assert.strictEqual(newer.chosen, null, 'digit-free refuses it for carrying 23 at all');
+  assert.match(newer.seen[0].reason, /CONTAINS DIGITS \(23\)/);
+
+  // AND THE OLDER RULE'S OPTION 2 STILL EXISTS: a candidate that DOES hold a
+  // stored limit is selectable under it, with the cost named in the tier.
+  const t2 = 'START post copy: 280 characters END';
+  const holdsIt = [{ text: 'post copy: 280 characters' }];
+  const opt2 = lib.chooseAnchor(t2, holdsIt, ['280'], section, { policy: lib.POLICY.NO_STORED_LIMIT });
+  assert.strictEqual(opt2.tier, '2 — in-section, HOLDS 280');
+  assert.strictEqual(
+    lib.chooseAnchor(t2, holdsIt, ['280'], section, { policy: lib.POLICY.DIGIT_FREE }).chosen, null);
+
+  // holds IS WHOLE-NUMBER, in the one copy that now exists.
+  const t3 = 'START Resolution: 1280 pixels wide END';
+  assert.deepStrictEqual(
+    lib.chooseAnchor(t3, [{ text: 'Resolution: 1280 pixels wide' }], ['280'], section,
+      { policy: lib.POLICY.NO_STORED_LIMIT }).seen[0].holds,
+    [], '1280 does not hold 280');
+
+  // THE SOLE-WITNESS TEST CARRIED THE SAME DEFECT AND WAS MISSED WHEN THE OTHER
+  // FOUR WERE FIXED. An anchor reading "1440 x 1800" must not be treated as
+  // holding 18, 40 or 80 — all three are stored limits elsewhere in the library.
+  const stub = {
+    async query() {
+      return { rows: [{ spec_source: 'https://a', fields: 2, watch_id: 9,
+        watch_anchor: 'Resolution: 1440 x 1800 pixels' }] };
+    },
+  };
+  const data = await lib.soleWitnessData(stub, 1, ['80']);
+  assert.strictEqual(data[0].others, 1,
+    'watch #9 still counts as another witness — its anchor holds 1800, not 80');
+  assert.strictEqual(data[0].sole, false);
+});
+
 test('Twitter/X Poll Ad: the quotes are X\'s own, and the 25 is not part of the 280', () => {
   const mig = require('../scripts/migrateAddXPollAd');
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
@@ -6323,16 +6402,27 @@ test('every numeric value check in scripts/ goes through wholeNumber', () => {
   assert.ok(!/a\.includes\(String\(n\)\)/.test(health),
     'the numbers line no longer substring-matches — that made the alarm quieter');
 
-  // Every anchor `holds` test, across all five files that have one. Two of them
-  // (X, Google video) gate `clean` on it, so a substring there is a silent
-  // OVER-REFUSAL: a candidate rejected for holding 280 when it holds 1280.
+  // THE ANCHOR `holds` TEST IS NOW IN ONE PLACE, and this loop shrank when the
+  // four anchor migrations were extracted into scripts/lib/anchorChoice.js. What
+  // it asserted four times it asserts once — plus, per file, that no local copy
+  // came back. See the anchorChoice test below for what replaces the divergence
+  // coverage those four assertions gave.
+  const anchorLib = read('lib/anchorChoice.js');
+  assert.match(anchorLib, /limits\.filter\(\(v\) => hasWholeNumber\(c\.text, v\)\)/,
+    'the shared holds-test matches whole numbers');
+  assert.match(anchorLib, /!\(r\.watch_anchor && hasWholeNumber\(r\.watch_anchor, v\)\)/,
+    'and so does the sole-witness test, which was a FIFTH copy of the same defect');
+
+  // migrateAddGoogleVideoAssets still carries its own — it creates assets and a
+  // watch row rather than repointing one, so it was not part of the extraction.
+  assert.match(read('migrateAddGoogleVideoAssets.js'),
+    /limits\.filter\(\(v\) => hasWholeNumber\(c\.text, v\)\)/,
+    'migrateAddGoogleVideoAssets.js holds-test matches whole numbers');
+
   for (const file of ['migrateFixXAnchor.js', 'migrateAddGoogleVideoAssets.js',
     'migrateFixGoogleDisplayAnchor.js', 'migrateFixLinkedInSingleImageAnchor.js',
     'migrateFixLinkedInCarouselAnchor.js']) {
-    const src = read(file);
-    assert.match(src, /limits\.filter\(\(v\) => hasWholeNumber\(c\.text, v\)\)/,
-      `${file} holds-test matches whole numbers`);
-    assert.ok(!/limits\.filter\(\(v\) => (?:String\(c\.text\)|c\.text)\.includes\(v\)\)/.test(src),
+    assert.ok(!/limits\.filter\(\(v\) => (?:String\(c\.text\)|c\.text)\.includes\(v\)\)/.test(read(file)),
       `${file} has no substring holds-test left`);
   }
 

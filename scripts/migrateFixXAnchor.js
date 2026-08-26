@@ -210,87 +210,34 @@ const CANDIDATES = [
   },
 ];
 
+// THE ANCHOR MECHANICS ARE SHARED. scripts/lib/anchorChoice.js carries the
+// ranking, the section test, the rejection reasons, the stored-limit query and
+// the sole-witness arithmetic — the parts that were a copy in each of the four
+// anchor migrations. QUOTES, SECTION and CANDIDATES stay here, because they are
+// this page's evidence and belong beside the page they were read from.
+const {
+  POLICY, count, occurrences, sectionSpan, chooseAnchor,
+  LIMITS_SQL, resolveStoredLimits, soleWitnessData, printSoleWitness, soleWitnessHeader,
+} = require('./lib/anchorChoice');
+
+// THIS ROW KEEPS THE OLDER RANKING RULE, and it is the only file that does.
+// `clean` means "holds no value THIS ROW STORES" rather than "digit-free", so a
+// digit-bearing in-section candidate can still be selected as option 2 with its
+// cost printed. The three later anchor migrations use POLICY.DIGIT_FREE, which
+// is strictly stronger. Bound here rather than defaulted in the module — see
+// scripts/lib/anchorChoice.js, "THE ONE DIFFERENCE THAT IS KEPT", for why moving
+// this row across is its own change with its own before/after and not a side
+// effect of extracting the code.
+const ANCHOR_OPTS = { policy: POLICY.NO_STORED_LIMIT };
+
+function chooseAnchorHere(text, candidates, limits, section) {
+  return chooseAnchor(text, candidates, limits, section, ANCHOR_OPTS);
+}
+
 function sslFor(url) {
   if (/host=%2F|host=\//.test(url)) return false;
   if (/localhost|127\.0\.0\.1|sslmode=disable/.test(url)) return false;
   return { rejectUnauthorized: false };
-}
-
-function count(hay, needle) {
-  return String(hay).split(needle).length - 1;
-}
-
-// The `holds` test below matches WHOLE NUMBERS, not digit substrings.
-const { hasWholeNumber } = require('./lib/wholeNumber');
-
-// Every occurrence of a needle, as a character offset and as a percentage of the
-// document. The percentage is what makes "nine times" legible: nine hits spread
-// from 4% to 91% is a label repeated once per format section, which is the thing
-// being claimed.
-function occurrences(hay, needle) {
-  const out = [];
-  let i = String(hay).indexOf(needle);
-  while (i >= 0) {
-    out.push({ at: i, pct: hay.length ? Math.round((i / hay.length) * 1000) / 10 : 0 });
-    i = String(hay).indexOf(needle, i + needle.length);
-  }
-  return out;
-}
-
-function sectionSpan(text, section) {
-  if (!section) return null;
-  const start = text.indexOf(section.from);
-  if (start < 0) return null;
-  const end = text.indexOf(section.to, start);
-  if (end < 0) return null;
-  return { start, end: end + section.to.length };
-}
-
-function rejectionReason(c, span, chosen) {
-  if (c.count === 0) return 'ABSENT — an anchor that never matches reports `failed` every week';
-  if (!c.unique) return `${c.count}x — not unique, so it says nothing about WHICH section rendered`;
-  if (!span) return 'NO SECTION SPAN — the markers are not on this page, so nothing is in-section';
-  if (!c.inSection) {
-    return c.clean
-      ? 'OUT OF SECTION — clean and unique, and REFUSED anyway: it proves a page rendered, not '
-        + 'that the watched section did'
-      : 'OUT OF SECTION';
-  }
-  if (chosen && chosen.clean && !c.clean) {
-    return `in-section, holds ${c.holds.join(', ')} — a clean in-section candidate ranked above it`;
-  }
-  return 'in-section and eligible — a candidate ranked above it';
-}
-
-// THE ANCHOR CHOICE, pure so a test drives the same code the migration does.
-// Byte-for-byte the ranking in scripts/migrateAddGoogleVideoAssets.js: clean and
-// in-section first, in-section second, nothing else eligible ever.
-function chooseAnchor(text, candidates, limits, section) {
-  const span = sectionSpan(text, section);
-  const seen = candidates.map((c) => {
-    const n = count(text, c.text);
-    const at = text.indexOf(c.text);
-    // WHOLE NUMBERS, and here it is LOAD-BEARING rather than cosmetic: `clean`
-    // is `holds.length === 0`, so a substring test demotes a candidate from
-    // tier 1 to tier 2 — or prints "in-section, holds N" against it — for a
-    // digit it does not actually contain. An anchor refused for "holding 280"
-    // when it really holds 1280 is a SILENT OVER-REFUSAL: the run reports a
-    // reason, the reason is false, and nothing contradicts it. Same species as
-    // the Pinterest value counter. See scripts/lib/wholeNumber.js.
-    const holds = limits.filter((v) => hasWholeNumber(c.text, v));
-    const unique = n === 1;
-    const inSection = !!span && at >= 0 && at >= span.start && at + c.text.length <= span.end;
-    return {
-      ...c, count: n, at, holds, unique, inSection,
-      clean: unique && holds.length === 0,
-      eligible: unique && inSection,
-    };
-  });
-  const chosen = seen.find((c) => c.eligible && c.clean) || seen.find((c) => c.eligible) || null;
-  for (const c of seen) c.reason = c === chosen ? null : rejectionReason(c, span, chosen);
-  const tier = !chosen ? null
-    : chosen.clean ? '1 — clean and in-section' : `2 — in-section, HOLDS ${chosen.holds.join(', ')}`;
-  return { chosen, seen, span, tier };
 }
 
 // --- the page ---------------------------------------------------------------
@@ -364,7 +311,7 @@ async function readPage(limits) {
   console.log(`\n   STORED LIMITS ON THIS ROW: ${limits.join(', ')}`);
   for (const n of limits) console.log(`   value ${n}: ${count(a, n)}x in the hashed text`);
 
-  const { chosen, seen, span, tier } = chooseAnchor(a, CANDIDATES, limits, SECTION);
+  const { chosen, seen, span, tier } = chooseAnchorHere(a, CANDIDATES, limits, SECTION);
 
   console.log(`\n   SECTION  ${SECTION.name}`);
   if (!span) {
@@ -421,94 +368,15 @@ async function readPage(limits) {
   return { ok: true, anchor: chosen.text, tier };
 }
 
-// --- the stored limits behind this row's gate -------------------------------
-//
-// THE FIRST VERSION OF THIS QUERY WAS A TYPE ERROR, and the shape of the mistake
-// is worth keeping because it looks correct:
-//
-//   WHERE (at.name, cf.field_name) = ANY($1::text[][])
-//   $1 = [['Twitter/X Ad', 'Ad Copy'], ['Twitter/X Ad', 'Headline']]
-//
-// `(at.name, cf.field_name)` is a ROW CONSTRUCTOR — a record. `ANY` over an
-// array iterates that array's ELEMENTS, and the elements of a text[][] are TEXT
-// SCALARS, not one-dimensional sub-arrays: Postgres multidimensional arrays are
-// rectangular, not nested. So the comparison is record = text and Postgres
-// answers `operator does not exist: record = text`.
-//
-// There is no version of that shape that works. It is not a cast away from
-// correct — ANY cannot iterate rows of a 2-D array at all, so even with a
-// working operator it would be comparing a pair against a single string.
-//
-// UNNEST OF TWO PARALLEL ARRAYS, joined as a set. The tuple structure lives in
-// the FROM clause where Postgres can see it, and the parameters are visibly the
-// two columns rather than one argument whose dimensionality has to be reasoned
-// about. It also reads as what it is: "the pairs this row gates, joined to the
-// fields behind them".
-//
-// AND IT CARRIES `at.is_active`, matching specReview.currentValues and
-// scripts/rederiveAffectedFields.js. affected_fields is a frozen snapshot that
-// outlives asset retirement, so a pair can name an asset nothing renders any
-// more. A retired asset's limit is not "in play" for an anchor decision, and
-// including it could put a number in the sole-witness arithmetic that no
-// document has carried for months.
-const LIMITS_SQL = `
-  SELECT at.name AS asset, cf.field_name AS field, cf.char_min, cf.char_max, cf.spec_type
-    FROM unnest($1::text[], $2::text[]) AS want(asset, field)
-    JOIN asset_types at ON at.name = want.asset AND at.is_active
-    JOIN copy_fields cf ON cf.asset_type_id = at.id AND cf.field_name = want.field
-   GROUP BY 1, 2, 3, 4, 5
-   ORDER BY 1, 2`;
-
-// Pure but for the one query, and exported so a test drives the same SQL and the
-// same parameter construction the migration does rather than restating them.
-// `runner` is anything with .query(text, params) — the client here, a stub there.
-async function resolveStoredLimits(runner, pairs) {
-  const list = Array.isArray(pairs) ? pairs : [];
-  const res = await runner.query(LIMITS_SQL, [
-    list.map((p) => p.asset),
-    list.map((p) => p.field),
-  ]);
-  const rows = (res && res.rows) || [];
-  // char_max 0 is NO LIMIT everywhere else in this codebase, so it is not a
-  // value an anchor could hold and does not belong in the arithmetic.
-  const limits = [...new Set(rows.map((r) => String(r.char_max)).filter((v) => v && v !== '0'))]
-    .sort((x, y) => Number(x) - Number(y));
-  return { rows, limits };
-}
-
-// --- the sole-witness arithmetic, recomputed live ---------------------------
-// The header states which other rows would still report a move on each stored
-// limit. That argument depends on which pages are watched and what their anchors
-// are RIGHT NOW, and nothing recomputes it — the same staleness class as
-// affected_fields. So it is derived here, against the live database, every run.
+// SOLE WITNESS. The arithmetic and the per-source lines come from
+// scripts/lib/anchorChoice.js; the commentary below is THIS row's and stays
+// here, because it is an argument about this platform rather than about anchors.
 async function soleWitness(client, rowId, limits) {
-  console.log(`\n${'─'.repeat(74)}\nSOLE WITNESS — who else would see a move on each stored limit\n${'─'.repeat(74)}`);
-  for (const v of limits) {
-    const rows = await client.query(
-      `SELECT cf.spec_source,
-              COUNT(*)::int AS fields,
-              MAX(w.id) AS watch_id,
-              MAX(w.expected_content) AS watch_anchor
-         FROM copy_fields cf
-         LEFT JOIN spec_watch_list w ON w.source_url = cf.spec_source
-        WHERE cf.char_max = $1
-        GROUP BY cf.spec_source
-        ORDER BY 2 DESC`,
-      [Number(v)]
-    );
-    console.log(`\n   ${v} is stored by ${rows.rows.reduce((n, r) => n + r.fields, 0)} copy_fields row(s):`);
-    for (const r of rows.rows) {
-      const watched = r.watch_id ? `watch #${r.watch_id}` : 'NOT WATCHED';
-      const holds = r.watch_anchor && String(r.watch_anchor).includes(v) ? '  <- its anchor HOLDS this value' : '';
-      const self = r.watch_id === rowId ? '  (this row)' : '';
-      console.log(`      x${String(r.fields).padStart(3)}  ${watched.padEnd(14)} ${r.spec_source}${self}${holds}`);
-    }
-    const others = rows.rows.filter((r) => r.watch_id && r.watch_id !== rowId
-      && !(r.watch_anchor && String(r.watch_anchor).includes(v)));
-    console.log(`      => ${others.length === 0
-      ? 'NO other watched row would report a move on this value. THIS ROW IS THE SOLE WITNESS.'
-      : `${others.length} other watched row(s) would also report a move on this VALUE.`}`);
-    if (others.length > 0) {
+  soleWitnessHeader();
+  const data = await soleWitnessData(client, rowId, limits);
+  for (const entry of data) {
+    printSoleWitness(entry, rowId);
+    if (!entry.sole) {
       console.log('         Read that carefully: another platform publishing the same integer is a');
       console.log('         coincidence, not a second instrument. It only counts if it watches the');
       console.log('         page THIS row\'s fields are cited to.');
@@ -705,6 +573,7 @@ if (require.main === module) {
 // rests on, exported so a test drives the same code the migration does rather
 // than reimplementing the ranking beside it.
 module.exports = {
-  chooseAnchor, sectionSpan, occurrences, resolveStoredLimits, LIMITS_SQL,
+  ANCHOR_OPTS,
+  chooseAnchor: chooseAnchorHere, sectionSpan, occurrences, resolveStoredLimits, LIMITS_SQL,
   CANDIDATES, SECTION, QUOTES, OLD_ANCHOR, URL,
 };

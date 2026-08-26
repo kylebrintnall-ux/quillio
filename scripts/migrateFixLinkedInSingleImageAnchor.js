@@ -435,115 +435,37 @@ const CANDIDATES = [
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 // A unix-socket connection is local by construction and never speaks SSL.
+// THE ANCHOR MECHANICS ARE SHARED. scripts/lib/anchorChoice.js carries the
+// ranking, the section test, the rejection reasons, the stored-limit query and
+// the sole-witness arithmetic — the parts that were a copy in each of the four
+// anchor migrations. QUOTES, SECTION and CANDIDATES stay here, because they are
+// this page's evidence and belong beside the page they were read from.
+const {
+  POLICY, count, occurrences, sectionSpan, chooseAnchor,
+  LIMITS_SQL, resolveStoredLimits, soleWitnessData, printSoleWitness, soleWitnessHeader,
+} = require('./lib/anchorChoice');
+const { hasDigit } = require('./lib/anchorChoice');
+
+// This row's ranking policy, and the one clause of rejection prose that is about
+// THIS page rather than about anchors in general. Bound here so every call in
+// this file uses the same pair and the module needs no default — see
+// scripts/lib/anchorChoice.js, "THE ONE DIFFERENCE THAT IS KEPT".
+const ANCHOR_OPTS = { policy: POLICY.DIGIT_FREE,
+  outOfSectionClean:
+    'OUT OF SECTION — clean and unique, and REFUSED anyway: on a page this size uniqueness is '
+    + 'nearly free, so this proves a page rendered and not that the watched section did' };
+
+function chooseAnchorHere(text, candidates, limits, section) {
+  return chooseAnchor(text, candidates, limits, section, ANCHOR_OPTS);
+}
+
 function sslFor(url) {
   if (/host=%2F|host=\//.test(url)) return false;
   if (/localhost|127\.0\.0\.1|sslmode=disable/.test(url)) return false;
   return { rejectUnauthorized: false };
 }
 
-function count(hay, needle) {
-  if (!needle) return 0;
-  return String(hay).split(needle).length - 1;
-}
-
-// The `holds` test below matches WHOLE NUMBERS, not digit substrings.
-const { hasWholeNumber } = require('./lib/wholeNumber');
-
-// Every occurrence of a needle, as a character offset and as a percentage of the
-// document. On a page this size the percentage is what makes a count legible:
-// two hits at 31% and 74% are in different halves of the document and almost
-// certainly in different sections, which is the claim being made about the old
-// anchor.
-function occurrences(hay, needle) {
-  const out = [];
-  if (!needle) return out;
-  let i = String(hay).indexOf(needle);
-  while (i >= 0) {
-    out.push({ at: i, pct: hay.length ? Math.round((i / hay.length) * 1000) / 10 : 0 });
-    i = String(hay).indexOf(needle, i + needle.length);
-  }
-  return out;
-}
-
 // ANY digit, not just a stored limit. See the header for why the wider bar.
-function hasDigit(s) {
-  return /\d/.test(String(s));
-}
-
-function sectionSpan(text, section) {
-  if (!section || !section.from || !section.to) return null;
-  const start = text.indexOf(section.from);
-  if (start < 0) return null;
-  const end = text.indexOf(section.to, start);
-  if (end < 0) return null;
-  return { start, end: end + section.to.length };
-}
-
-function rejectionReason(c, span, chosen) {
-  if (c.refusedByDesign) return 'REFUSED BY DESIGN — recorded here to be shown losing, never eligible';
-  if (c.count === 0) return 'ABSENT — an anchor that never matches reports `failed` every week';
-  if (!c.unique) return `${c.count}x — not unique, so it says nothing about WHICH section rendered`;
-  if (!span) return 'NO SECTION SPAN — the markers are not on this page, so nothing is in-section';
-  if (!c.inSection) {
-    return c.clean
-      ? 'OUT OF SECTION — clean and unique, and REFUSED anyway: on a page this size uniqueness is '
-        + 'nearly free, so this proves a page rendered and not that the watched section did'
-      : 'OUT OF SECTION';
-  }
-  // `c.digits.length`, NOT `c.digits` — an empty array is TRUTHY, so the bare
-  // object test fires on every in-section candidate and reports a digit-free
-  // string as "CONTAINS DIGITS ()" with an empty list. That bug was live in
-  // scripts/migrateFixGoogleDisplayAnchor.js and is carried forward fixed here;
-  // test/smoke.test.js pins it from both sides for both files.
-  if (c.digits.length) {
-    return `in-section and unique, but CONTAINS DIGITS (${c.digits.join(', ')})`
-      + `${c.holds.length ? ` including stored limit(s) ${c.holds.join(', ')}` : ''}`
-      + ' — a number in an anchor turns a spec revision into a broken-page report';
-  }
-  if (chosen && chosen.clean && !c.clean) {
-    return 'a clean in-section candidate ranked above it';
-  }
-  return 'in-section and eligible — a candidate ranked above it';
-}
-
-// THE ANCHOR CHOICE, pure so a test drives the same code the migration does.
-// Byte-for-byte the ranking in scripts/migrateFixGoogleDisplayAnchor.js, with
-// `clean` meaning digit-free rather than "holds no stored limit".
-function chooseAnchor(text, candidates, limits, section) {
-  const span = sectionSpan(text, section);
-  const seen = candidates.map((c) => {
-    const n = count(text, c.text);
-    const at = text.indexOf(c.text);
-    const digits = String(c.text).match(/\d+/g) || [];
-    // WHOLE NUMBERS. Eligibility here is digit-free (below), so `holds` does not
-    // decide anything — but it IS printed as "including stored limit(s) N", and
-    // a substring test makes that line claim a candidate holds a limit it does
-    // not. A false reason in a report is how a rejected candidate gets
-    // re-proposed. See scripts/lib/wholeNumber.js.
-    const holds = limits.filter((v) => hasWholeNumber(c.text, v));
-    const unique = n === 1;
-    const inSection = !!span && at >= 0 && at >= span.start && at + c.text.length <= span.end;
-    return {
-      ...c,
-      count: n,
-      at,
-      pct: text.length && at >= 0 ? Math.round((at / text.length) * 1000) / 10 : null,
-      digits,
-      holds,
-      unique,
-      inSection,
-      clean: unique && digits.length === 0,
-      eligible: !c.refusedByDesign && unique && inSection && digits.length === 0,
-    };
-  });
-  // Digit-free is a PRECONDITION of eligibility, so option 2 cannot be selected
-  // at all. A digit-bearing in-section candidate is still SHOWN, with its
-  // numbers named, so the cost of the rule is visible rather than implied.
-  const chosen = seen.find((c) => c.eligible) || null;
-  for (const c of seen) c.reason = c === chosen ? null : rejectionReason(c, span, chosen);
-  const tier = chosen ? '1 — clean (digit-free) and in-section' : null;
-  return { chosen, seen, span, tier };
-}
 
 // ─── the unfilled-header gate ───────────────────────────────────────────────
 // The absence of page text is turned into a refusal rather than a default.
@@ -860,7 +782,7 @@ async function readPage(limits) {
   console.log(`\n   STORED LIMITS ON THIS ROW: ${limits.join(', ')}`);
   for (const n of limits) console.log(`   value ${n}: ${count(a, n)}x in the hashed text`);
 
-  const { chosen, seen, span, tier } = chooseAnchor(a, CANDIDATES, limits, SECTION);
+  const { chosen, seen, span, tier } = chooseAnchorHere(a, CANDIDATES, limits, SECTION);
 
   console.log(`\n   SECTION  ${SECTION.name}`);
   if (!span) {
@@ -926,83 +848,17 @@ async function readPage(limits) {
   return { ok: true, anchor: chosen.text, tier };
 }
 
-// ─── the stored limits behind this row's gate ───────────────────────────────
-//
-// UNNEST OF TWO PARALLEL ARRAYS, joined as a set — NOT a multidimensional ANY.
-// The shape that does not work, kept because it looks correct:
-//
-//   WHERE (at.name, cf.field_name) = ANY($1::text[][])
-//
-// `(at.name, cf.field_name)` is a ROW CONSTRUCTOR. `ANY` over an array iterates
-// that array's ELEMENTS, and the elements of a text[][] are TEXT SCALARS —
-// Postgres multidimensional arrays are rectangular, not nested. So the
-// comparison is record = text and Postgres answers
-// `operator does not exist: record = text`. It is not a cast away from correct;
-// ANY cannot iterate rows of a 2-D array at all.
-//
-// AND IT CARRIES `at.is_active`, matching specReview.currentValues and
-// scripts/rederiveAffectedFields.js. affected_fields is a frozen snapshot that
-// outlives asset retirement, so a pair can name an asset nothing renders any
-// more. A retired asset's limit is not "in play" for an anchor decision.
-const LIMITS_SQL = `
-  SELECT at.name AS asset, cf.field_name AS field, cf.char_min, cf.char_max, cf.spec_type
-    FROM unnest($1::text[], $2::text[]) AS want(asset, field)
-    JOIN asset_types at ON at.name = want.asset AND at.is_active
-    JOIN copy_fields cf ON cf.asset_type_id = at.id AND cf.field_name = want.field
-   GROUP BY 1, 2, 3, 4, 5
-   ORDER BY 1, 2`;
+// ─── main ───────────────────────────────────────────────────────────────────
 
-// Pure but for the one query, and exported so a test drives the same SQL and the
-// same parameter construction the migration does rather than restating them.
-async function resolveStoredLimits(runner, pairs) {
-  const list = Array.isArray(pairs) ? pairs : [];
-  const res = await runner.query(LIMITS_SQL, [
-    list.map((p) => p.asset),
-    list.map((p) => p.field),
-  ]);
-  const rows = (res && res.rows) || [];
-  // char_max 0 is NO LIMIT everywhere else in this codebase, so it is not a
-  // value an anchor could hold and does not belong in the arithmetic.
-  const limits = [...new Set(rows.map((r) => String(r.char_max)).filter((v) => v && v !== '0'))]
-    .sort((x, y) => Number(x) - Number(y));
-  return { rows, limits };
-}
-
-// ─── the sole-witness arithmetic, recomputed live ───────────────────────────
-// The header states a PREDICTION about which other rows would report a move on
-// each stored limit. That argument depends on which pages are watched and what
-// their anchors are RIGHT NOW, and nothing recomputes it. So it is derived here,
-// against the live database, every run.
+// SOLE WITNESS. The arithmetic and the per-source lines come from
+// scripts/lib/anchorChoice.js; the commentary below is THIS row's and stays
+// here, because it is an argument about this platform rather than about anchors.
 async function soleWitness(client, rowId, limits) {
-  console.log(`\n${'─'.repeat(74)}\nSOLE WITNESS — who else would see a move on each stored limit\n${'─'.repeat(74)}`);
-  const verdicts = [];
-  for (const v of limits) {
-    const rows = await client.query(
-      `SELECT cf.spec_source,
-              COUNT(*)::int AS fields,
-              MAX(w.id) AS watch_id,
-              MAX(w.expected_content) AS watch_anchor
-         FROM copy_fields cf
-         LEFT JOIN spec_watch_list w ON w.source_url = cf.spec_source
-        WHERE cf.char_max = $1
-        GROUP BY cf.spec_source
-        ORDER BY 2 DESC`,
-      [Number(v)]
-    );
-    console.log(`\n   ${v} is stored by ${rows.rows.reduce((n, r) => n + r.fields, 0)} copy_fields row(s):`);
-    for (const r of rows.rows) {
-      const watched = r.watch_id ? `watch #${r.watch_id}` : 'NOT WATCHED';
-      const holds = r.watch_anchor && String(r.watch_anchor).includes(v) ? '  <- its anchor HOLDS this value' : '';
-      const self = r.watch_id === rowId ? '  (this row)' : '';
-      console.log(`      x${String(r.fields).padStart(3)}  ${watched.padEnd(14)} ${r.spec_source}${self}${holds}`);
-    }
-    const others = rows.rows.filter((r) => r.watch_id && r.watch_id !== rowId
-      && !(r.watch_anchor && String(r.watch_anchor).includes(v)));
-    verdicts.push({ value: v, others: others.length });
-    console.log(`      => ${others.length === 0
-      ? 'NO other watched row would report a move on this value. THIS ROW IS THE SOLE WITNESS.'
-      : `${others.length} other watched row(s) would also report a move on this VALUE.`}`);
-    if (others.length > 0) {
+  soleWitnessHeader();
+  const data = await soleWitnessData(client, rowId, limits);
+  for (const entry of data) {
+    printSoleWitness(entry, rowId);
+    if (!entry.sole) {
       console.log('         READ THAT CAREFULLY, and on this row it is the usual case rather than');
       console.log('         the exception: another PLATFORM publishing the same integer is a');
       console.log('         coincidence, not a second instrument. 70 and 150 are round numbers that');
@@ -1011,10 +867,8 @@ async function soleWitness(client, rowId, limits) {
       console.log('         this row is the only witness there is.');
     }
   }
-  return verdicts;
+  return data.map((e) => ({ value: e.value, others: e.others }));
 }
-
-// ─── main ───────────────────────────────────────────────────────────────────
 
 async function main() {
   const connectionString = process.env.DATABASE_URL;
@@ -1240,7 +1094,8 @@ if (require.main === module) {
 // exported so a test drives the same code the migration does rather than
 // reimplementing the ranking beside it.
 module.exports = {
-  chooseAnchor, sectionSpan, occurrences, hasDigit, generateCandidates,
+  ANCHOR_OPTS,
+  chooseAnchor: chooseAnchorHere, sectionSpan, occurrences, hasDigit, generateCandidates,
   requireHeaderEvidence, resolveStoredLimits, LIMITS_SQL, parseWindow, chunkDump,
   CANDIDATES, SECTION, QUOTES, OLD_ANCHOR, URL, DISPLAY, CANDIDATE_FLOOD,
 };

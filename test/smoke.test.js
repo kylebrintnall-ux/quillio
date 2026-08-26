@@ -1145,6 +1145,7 @@ test('Meta image anchor: the new one discriminates, the old one does not', () =>
   const fs = require('fs');
   const path = require('path');
   const mig = require('../scripts/migrateFixMetaImageAnchor');
+  const { hasWholeNumber } = require('../scripts/lib/wholeNumber');
   const pages = JSON.parse(
     fs.readFileSync(path.join(__dirname, 'fixtures', 'metaFormatPages.json'), 'utf8')
   );
@@ -1194,9 +1195,39 @@ test('Meta image anchor: the new one discriminates, the old one does not', () =>
   // queue. Its digits are image dimensions, which Meta can restyle without
   // touching a character limit and vice versa.
   for (const n of mig.WATCHED_LIMITS) {
-    assert.ok(!mig.NEW_ANCHOR.includes(n),
+    assert.ok(!hasWholeNumber(mig.NEW_ANCHOR, n),
       `the new anchor must not contain ${n}, a limit this row watches`);
   }
+
+  // AND THE PREDICATE IS PINNED SEPARATELY, because the loop above now shares an
+  // implementation with the code under test and can no longer disagree with it.
+  //
+  // That is not a hypothetical weakness. Until this commit the loop read
+  // `!mig.NEW_ANCHOR.includes(n)` — its own copy of the substring-on-a-number
+  // defect the source carried — and it stayed green throughout, because 150 and
+  // 27 are substrings of nothing in this anchor. Two copies of a wrong rule
+  // agree with each other. So these are LITERAL expectations, hardcoded rather
+  // than computed from the anchor, and they disagree with the source when the
+  // source is wrong.
+  //
+  // 40, 80 and 18 are the rows that carry the argument, and they are not filler.
+  // Each is a SUBSTRING of the anchor's "1440 x 1800" while being a number the
+  // anchor does not contain, so the old predicate refused on all three. All
+  // three are live char_max values in the seeded library — 40 on 20 fields, 80
+  // on 7, and 18 on Meta Carousel Ad / Card Description, which is the SIBLING
+  // row to this one. Move any of them into WATCHED_LIMITS under the old
+  // predicate and the migration refuses, naming a spec revision that cannot
+  // happen.
+  for (const [n, expected] of [
+    ['150', false], ['27', false],                 // the limits this row watches
+    ['1440', true], ['1800', true],                // the resolution it really holds
+    ['4', true], ['5', true],                      // the aspect ratio, likewise
+    ['40', false], ['80', false], ['18', false],   // substrings of 1440/1800 only
+  ]) {
+    assert.strictEqual(hasWholeNumber(mig.NEW_ANCHOR, n), expected,
+      `hasWholeNumber(NEW_ANCHOR, ${n}) must be ${expected}`);
+  }
+
   assert.match(mig.NEW_ANCHOR, /4:5|1440|1800/, 'its numbers are dimension recommendations');
 
   // WHERE THE DISCRIMINATION ACTUALLY COMES FROM. "File Type:" is on both pages —

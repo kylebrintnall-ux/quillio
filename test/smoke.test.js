@@ -18383,6 +18383,61 @@ test('the backfill records a reading that happened, and refuses to invent one', 
   assert.ok(flat.includes('NARROWER event that entails the broader one'));
 });
 
+test('the sole-witness verification quotes the pages it claims were read', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'migrateVerifySoleWitnessSpecs.js'), 'utf8');
+  const flat = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
+
+  // SAME RULE AS THE BACKFILL TEST ABOVE, and it is the rule rather than a habit:
+  // a stamp on spec_verified_at renders "Verified against X's spec page on DATE."
+  // into tenant documents, so a header that cites four pages without carrying
+  // their words leaves a reader nothing to check the claim against except the
+  // claim. This asserts the quotes are PRESENT — it cannot and does not assert
+  // they are what the pages say.
+  for (const quote of [
+    'Ad name (optional): 255 characters Card headline: 45 characters Introductory text: 255 characters',
+    'Headline 30 characters Long headline 90 characters Description 90 characters Call to action 10 characters',
+    'Enter up to 800 characters. Descriptions do not appear when viewing the Pin in the home feed or search feed.',
+    'post copy: 280 characters. (Note: each link used reduces character count by 23 characters, electing 257 characters for X copy.)',
+  ]) {
+    assert.ok(flat.includes(quote), `the header quotes: ${quote.slice(0, 60)}…`);
+  }
+
+  // The two qualifications the operator attached to those quotes. Both are the
+  // kind of fact that a later reader would otherwise "simplify" away: a page
+  // publishing six formats' description limits, and a parenthetical conditional
+  // that looks like a second limit.
+  for (const claim of [
+    'FINDING 800 ELSEWHERE ON THAT PAGE DOES NOT CONFIRM THE SAME THING',
+    'STANDARD IMAGE ADS block, which governs this row\'s field',
+    'THE 257 IS NOT A SECOND LIMIT',
+    'It belongs in spec_note on the field, not in char_max',
+  ]) {
+    assert.ok(flat.includes(claim), `the header records: ${claim}`);
+  }
+
+  // PAIR-scoped, not URL-scoped, and the five unread fields named in the header
+  // so nobody has to re-derive them to check the scope claim.
+  for (const field of ['Twitter/X Ad / Headline', 'Pinterest Pin / Title',
+    'Google Demand Gen Video Ad / Long Headline']) {
+    assert.ok(flat.includes(field), `the header names the unread field: ${field}`);
+  }
+  // Against the CODE, not the file: the header deliberately QUOTES the rejected
+  // predicate while explaining why it was rejected, so a whole-file grep would
+  // fail on the one sentence that records the decision.
+  const code = src.replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/cf\.spec_source = ANY/.test(code), 'never URL-scoped — that would stamp five unread fields');
+
+  // The date of the READING, never NOW().
+  assert.match(src, /const VERIFIED_ON = '2026-08-25';/);
+  assert.ok(!/spec_verified_at = NOW\(\)/.test(src));
+  // Forward-only, so a later audit survives a re-run.
+  assert.match(src, /cf\.spec_verified_at IS NULL OR cf\.spec_verified_at < \$4::date/);
+  // The expected value rides in the JOIN, so the pair list and the guard cannot drift.
+  assert.match(src, /unnest\(\$1::text\[\], \$2::text\[\], \$3::int\[\]\) AS want\(asset, field, expected\)/);
+  assert.match(src, /cf\.char_max = want\.expected/);
+  assert.match(src, /at\.is_active/);
+});
+
 test('checkSpecHealth is READ-ONLY by construction, and measures what the detector hashes', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'checkSpecHealth.js'), 'utf8');
 

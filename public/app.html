@@ -8,13 +8,30 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet">
   <style>
+    /* ONE :root. This file used to declare two — a legacy block here and a v8
+       block ~290 lines below — and the only token they both defined was --ink,
+       so the v8 value won every use of var(--ink) in the file, including the
+       rules written above it (custom properties cascade per element and resolve
+       at use time, not in source order relative to the rule that reads them).
+       Measured before merging: zero elements on any screen computed to #111.
+       Every other token was unique to one block or the other, so neither block
+       could be deleted whole without dropping live tokens; they are merged
+       instead, each keeping the value it actually had at runtime. */
     :root {
       --accent: #4DD9D9;
-      --ink: #111;
+      --ink: #1A1A2E;        /* was --ink: #111 here and #1A1A2E below; #1A1A2E won */
       --muted: #666;
       --line: #e3e3e3;
       --bg: #fff;
       --soft: #f6f6f6;
+      /* Read by the legacy .file-tag rule as var(--card, #f6f6f6). Declared
+         explicitly at the value its own fallback was already supplying, so the
+         reference resolves instead of relying on the fallback. That rule is in
+         any case overridden by the v8 .file-tag below, which is why .file-tag
+         renders rgba(255,255,255,0.42) and not this. */
+      --card: #f6f6f6;
+      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
+      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
@@ -33,19 +50,6 @@
       justify-content: space-between;
       gap: 16px;
     }
-    nav .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; cursor: pointer; }
-    nav .links { display: flex; gap: 16px; }
-    nav .navlink {
-      font-size: 15px;
-      color: var(--muted);
-      background: none;
-      border: none;
-      padding: 0;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    nav .navlink:active { transform: none; }
-    nav .navlink:hover { color: var(--ink); }
     main {
       width: 100%;
       max-width: 680px;
@@ -69,7 +73,6 @@
     }
     textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 
-    .brief-attach { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; flex-wrap: wrap; }
     .attach-btn {
       font: inherit; font-size: 14px; padding: 6px 12px; width: auto;
       border: 1px solid var(--line); border-radius: 8px; background: #fff;
@@ -102,8 +105,6 @@
     }
     button:active { transform: translateY(1px); }
     button:disabled { opacity: 0.55; cursor: default; }
-    button.primary { background: var(--ink); }
-    button.secondary { background: var(--soft); color: var(--ink); border: 1px solid var(--line); }
     .full { width: 100%; }
 
     .error {
@@ -159,92 +160,12 @@
     }
     @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
 
-    /* Progress steps */
-    .steps { list-style: none; padding: 0; margin: 20px 0; }
-    .steps li {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 0;
-      color: var(--muted);
-      border-bottom: 1px solid var(--line);
-    }
-    .steps li .dot {
-      width: 18px; height: 18px; border-radius: 50%;
-      border: 2px solid var(--line);
-      flex: none;
-    }
-    .steps li.working { color: var(--ink); font-weight: 600; }
-    .steps li.working .dot { border-color: var(--accent); border-top-color: transparent; animation: spin 0.8s linear infinite; }
-    .steps li.done { color: var(--ink); }
-    .steps li.done .dot { background: var(--accent); border-color: var(--accent); }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .steps li.working .dot { animation: none; } }
-
-    /* Doc output */
-    .summary, .direction { white-space: pre-wrap; }
-    .asset {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px 14px;
-      margin: 10px 0;
-    }
-    .asset h3 { margin: 0 0 8px; font-size: 16px; }
-    .asset .badge { font-size: 12px; font-weight: 600; color: var(--muted); }
-    .asset.drafted .badge { color: #06302f; background: var(--accent); padding: 2px 8px; border-radius: 999px; }
-    .field { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-top: 1px dashed var(--line); font-size: 14px; }
-    .field:first-of-type { border-top: none; }
-    .field .name { color: var(--ink); }
-    .field .limit { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
-    .field .count { font-variant-numeric: tabular-nums; }
-    .field .count.over { color: #c0392b; font-weight: 600; }
-
-    .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-
-    /* Regenerate section (shown after a draft exists) */
-    .regen { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
-    .regen-input {
-      width: 100%;
-      min-height: 64px;
-      font: inherit;
-      padding: 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      resize: vertical;
-    }
-    .regen-input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
 
     /* Field copy in the project view */
     .field-copy { white-space: pre-wrap; font-size: 14px; color: var(--ink); padding: 4px 0 2px; }
-    .field-copy.empty { color: var(--muted); font-style: italic; }
     .asset-direction { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-style: italic; color: #737373; margin: 2px 0 8px; }
 
-    /* Status badges (history + project view) */
-    .status {
-      display: inline-block;
-      font-size: 12px;
-      font-weight: 600;
-      padding: 3px 10px;
-      border-radius: 999px;
-      text-transform: capitalize;
-      border: 1px solid var(--line);
-      color: var(--muted);
-      background: var(--soft);
-    }
-    .status.not_started { color: #555; background: #ededed; border-color: #dcdcdc; }
-    .status.in_progress { color: #5a4b00; background: #fff4cc; border-color: #f0e0a0; }
-    .status.finished { color: #0a5d2a; background: #d8f5e0; border-color: #b3e6c4; }
-    .status.closed { color: #888; background: #f2f2f2; border-color: #e3e3e3; }
-
-    .status-select {
-      font: inherit; font-size: 13px; padding: 5px 7px;
-      border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
-    }
-    .card-close {
-      background: none; border: none; font-size: 20px; line-height: 1;
-      color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 6px;
-    }
-    .card-close:hover { color: #8a1f1f; background: var(--soft); }
     .closed-toggle { display: flex; align-items: center; gap: 8px; margin-top: 18px; font-size: 14px; color: var(--muted); cursor: pointer; }
 
     /* Project history cards */
@@ -261,15 +182,6 @@
     }
     .project-card:hover { border-color: var(--accent); }
     .project-card.closed { opacity: 0.6; }
-    .project-card .meta { min-width: 0; cursor: pointer; }
-    .project-card .pname { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
-    .project-card .pdate { font-size: 13px; color: var(--muted); margin-top: 2px; }
-    .project-card .right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-    .project-card .open-link {
-      font-size: 14px; font-weight: 600; color: var(--ink);
-      background: var(--soft); border: 1px solid var(--line);
-      border-radius: 8px; padding: 8px 12px;
-    }
     .empty {
       margin-top: 24px;
       padding: 24px;
@@ -285,12 +197,6 @@
       flex: none; animation: spin 0.8s linear infinite;
     }
     @media (prefers-reduced-motion: reduce) { .loading .dot { animation: none; } }
-    .titlerow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-
-    @media (min-width: 600px) {
-      .actions { flex-direction: row; }
-      .actions button { width: auto; }
-    }
 
     /* =====================================================================
        v8 DESIGN SYSTEM  — global scaffolding + Screen 1 (New Brief)
@@ -302,11 +208,6 @@
       font-family: 'StarCrush';
       src: url('/fonts/Star_Crush.otf?v=__BUILD__') format('opentype');
       font-weight: normal; font-style: normal; font-display: swap;
-    }
-    :root {
-      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
-      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF;
-      --ink: #1A1A2E; /* v8 navy — overrides the legacy #111 ink token */
     }
     html, body { height: auto; min-height: 100%; overflow-x: hidden; }
     body {
@@ -896,7 +797,6 @@
       .matrix-angle { width: auto; min-width: 150px; flex: 0 0 auto; }
       .matrix-controls { flex: 1; }
     }
-    .draft-status { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-weight: 600; color: #0A5C32; background: #C6F0D8; border: 1.5px solid #2ECC71; border-radius: 100px; padding: 6px 14px; display: inline-block; margin-bottom: 16px; }
 
     /* Fixed bottom CTA bar (output) */
     .output-ctas {
@@ -930,17 +830,6 @@
       box-shadow: none; cursor: default;
     }
 
-    /* Regenerate (inline, output screen) */
-    .regen { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
-    .regen-input {
-      width: 100%; min-height: 80px; resize: vertical;
-      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px;
-      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; line-height: 1.5; color: var(--ink);
-      padding: 14px 16px; -webkit-appearance: none; outline: none;
-    }
-    .regen-input:focus { border-color: rgba(255,255,255,0.9); outline: none; }
-    .regen-input::placeholder { color: rgba(26,26,46,0.4); }
-
     /* ── GENERATING (v8) ── */
     #screen-generating.active {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -952,7 +841,6 @@
 
     /* ── COPY DONE (v8) — reuses output-header / asset-card / output-ctas ── */
     #screen-copydone { padding-bottom: 150px; }
-    .copydone-sub { font-size: 14px; line-height: 1.6; color: rgba(26,26,46,0.7); margin: 0 0 20px; }
 
     /* ── REGENERATE MODAL (bottom sheet) ── */
     .modal-overlay {
@@ -1034,8 +922,7 @@
     .status-draft { color: #7A5500; background: #FFF0B3; border-color: #C9A84C; box-shadow: 2px 2px 0 rgba(122,85,0,0.2); }
     .status-notstarted { color: rgba(26,26,46,0.5); background: rgba(255,255,255,0.5); border-color: rgba(26,26,46,0.2); box-shadow: 2px 2px 0 rgba(26,26,46,0.1); }
     .project-card-meta { display: flex; align-items: center; gap: 10px; }
-    .meta-date, .meta-assets { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; color: rgba(26,26,46,0.5); }
-    .meta-divider { width: 3px; height: 3px; border-radius: 50%; background: rgba(26,26,46,0.3); }
+    .meta-date { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; color: rgba(26,26,46,0.5); }
 
     /* Status dropdown (tappable pill) */
     .status-dropdown {

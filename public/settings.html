@@ -8,9 +8,18 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet" />
   <style>
+    /* ONE :root. This file used to declare two — a legacy block here and a v8
+       block ~215 lines below — and the only token they both defined was --ink,
+       so the v8 value won every use of var(--ink) in the file, including the
+       rules written above it (custom properties cascade per element and resolve
+       at use time, not in source order relative to the rule that reads them).
+       Measured before merging: zero elements on any panel computed to #111.
+       Every other token was unique to one block or the other, so neither block
+       could be deleted whole without dropping live tokens; they are merged
+       instead, each keeping the value it actually had at runtime. */
     :root {
       --accent: #4DD9D9;
-      --ink: #111;
+      --ink: #1A1A2E;        /* was --ink: #111 here and #1A1A2E below; #1A1A2E won */
       /* #666 measured 4.16:1 at 11px on .lib-asset — under the floor for the two
          smallest things that use it (.cf-meta, .cf-marker). #5a5a5a is 5.00:1
          there and darkens the other seventeen uses, all of which are larger and
@@ -22,6 +31,17 @@
       --soft: #f6f6f6;
       --navy: #1C1F3B;
       --cream: #F5F0E8;
+      /* --fg WAS NEVER DECLARED, and eight rules read it. An undeclared var()
+         with no fallback is invalid at computed-value time, which for `color`
+         (an inherited property) means the element inherits its parent's colour.
+         Measured, every one of those eight inherited #1A1A2E except .cf-meta b,
+         which sits inside .cf-meta and inherited var(--muted) instead — so no
+         single value of --fg preserves all eight. Declared here at the value
+         seven of them were already resolving to; .cf-meta b is pinned to
+         `inherit` at its own rule, which is exactly what it does today. */
+      --fg: var(--ink);
+      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
+      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
@@ -41,15 +61,6 @@
       justify-content: space-between;
       gap: 16px;
     }
-    nav .brand { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; cursor: pointer; }
-    nav .links { display: flex; gap: 16px; }
-    nav .navlink {
-      font-family: 'Zen Kaku Gothic New', sans-serif;
-      font-size: 15px; color: var(--muted); background: none; border: none;
-      padding: 0; font-weight: 600; cursor: pointer;
-    }
-    nav .navlink:hover { color: var(--ink); }
-    nav .navlink.active { color: var(--ink); }
 
     main { width: 100%; max-width: 860px; margin: 0 auto; padding: 24px 16px 56px; }
     .layout { display: flex; flex-direction: column; gap: 20px; }
@@ -161,8 +172,6 @@
     /* Lock-in gets its own identity: gold accent + StarCrush wordmark styling. */
     .toast.locked { border-color: rgba(201,168,76,0.6); border-left: 3px solid var(--gold); }
     .toast.locked .tk { font-family: 'StarCrush', serif; font-weight: normal; color: var(--gold); letter-spacing: 0.03em; margin-right: 7px; }
-    .hdr-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
-    @media (max-width: 860px) { .hdr-cols { grid-template-columns: 1fr; } }
     .hdr-block {
       background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px; margin: 0 0 10px;
@@ -226,10 +235,6 @@
       font-family: 'StarCrush';
       src: url('/fonts/Star_Crush.otf?v=__BUILD__') format('opentype');
       font-weight: normal; font-style: normal; font-display: swap;
-    }
-    :root {
-      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
-      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF; --ink: #1A1A2E;
     }
     html, body { height: auto; min-height: 100%; overflow-x: hidden; }
     body { font-family: 'Zen Kaku Gothic New', sans-serif; background: var(--ink); color: var(--ink); -webkit-font-smoothing: antialiased; }
@@ -668,7 +673,11 @@
     .cf-unit { flex: 0 0 84px; padding: 6px 4px; font: inherit; font-size: 12px;
       border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-family: 'Zen Kaku Gothic New', sans-serif; }
     .cf-meta { font-family: 'Zen Kaku Gothic New', sans-serif; flex: 1 1 100%; font-size: 11px; color: var(--muted); padding-left: 26px; }
-    .cf-meta b { font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--fg); font-weight: 500; }
+    /* `inherit`, not var(--fg): this <b> is inside .cf-meta, whose colour is
+       var(--muted). With --fg undeclared the rule was invalid at computed-value
+       time and the element inherited #5a5a5a; now that --fg resolves to --ink it
+       would darken to #1A1A2E, which is a visual change rather than a fix. */
+    .cf-meta b { font-family: 'Zen Kaku Gothic New', sans-serif; color: inherit; font-weight: 500; }
     .cf-guess { color: #8a6d3b; }
     .cf-actions { margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .cf-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: var(--muted); }

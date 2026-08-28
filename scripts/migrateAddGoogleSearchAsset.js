@@ -135,6 +135,18 @@ const QUOTES = [
   'responsive search ads have character limits',
   'The headline fields for responsive search ads support up to 30 characters',
   'The description fields support up to 90 characters each, and the path fields support up to 15 each',
+  // ADDED with scripts/migrateAddGoogleCjkDirection.js. This clause was in the
+  // header from the 2026-08-21 dump and in no gate, so nothing asserted it was
+  // still on the page. It is the citation for that migration's Responsive Search
+  // sentence, and a citation nothing checks is the shape this file exists to
+  // avoid. NOT re-dumped — the span is lifted from the header quote above it.
+  //
+  // UNHYPHENATED "double width language" and "counts as 2 characters" — this
+  // page's wording. Performance Max says "double-width languages" and "counts as
+  // 2 towards the limit instead of one". The two must never be merged into one
+  // span; a hybrid that reads correctly and matches nothing is how the X
+  // media-headline quote was wrong.
+  'Every character in a double width language like Korean, Japanese, or Chinese counts as 2 characters',
   'You’ll need to enter a minimum of 3 headlines, but you can enter up to 15',
   'You’ll need to enter a minimum of 2 descriptions',
 ];

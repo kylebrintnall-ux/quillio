@@ -635,6 +635,19 @@ const DIRECTIONS = {
   'Pinterest Idea Ad': 'Swiped through, not skipped past. The title has to earn the first swipe.',
   'Pinterest Showcase Ad': 'Each card stands alone. Three short labels, not one sentence split three ways.',
   'Pinterest Quiz Ad': 'The question does the work. Answers are choices, not copy.',
+  // NO DOUBLE-WIDTH SENTENCE HERE, AND THAT IS A DECISION RATHER THAN AN
+  // OVERSIGHT. Google publishes the CJK counting rule on this asset's page and
+  // on Responsive Search's, in two different wordings, both quoted in
+  // scripts/migrateAddGoogleCjkDirection.js. It is out because Quillio's
+  // writers work in US English, not because the rule is wrong.
+  //
+  // Do not re-add it on noticing that Google publishes it — that is how it got
+  // here. scripts/migrateSetGoogleCjkOff.js carries the full reasoning and the
+  // condition under which it comes back.
+  //
+  // THIS LINE HAS NEVER CARRIED THE SENTENCE. The CJK migration appended it to
+  // database rows only and never edited this file, so the seed and the target
+  // are already the same 81 characters.
   'Google Performance Max': 'The system assembles the ad. Every asset has to stand alone and beside any other.',
   'Google Demand Gen Video Ad': 'Watched, not read. Say the one thing before the thumb moves.',
   'Demand Gen Nurture Email': 'Curiosity or tension in the subject — they are mid-sequence, not meeting you.',

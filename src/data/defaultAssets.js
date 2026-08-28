@@ -607,13 +607,29 @@ const DIRECTIONS = {
   'Meta Single Image Ad': 'Lead with the insight or tension. Stop the scroll in the first line.',
   'Meta Carousel Ad': 'Each card standalone. Swipe tells a story. Last card closes.',
   'Twitter/X Ad': 'Punchy. Opinionated. One idea, no hedging.',
-  'Display Banner — Standard': 'Fewest possible words. Headline does all the work. CTA is a verb.',
+  // THE THREE ENTRIES BELOW CARRY HOUSE GUIDANCE THAT USED TO SIT IN
+  // asset_types.spec_note — a column written by the seed and by migrations,
+  // SELECTed twice, and rendered nowhere. See SPEC_NOTES below for the trace
+  // and for the false comment that stood there. The text is REWRITTEN rather
+  // than moved: the verbatim notes made this line 481 characters on Google
+  // Responsive Search Ad, which is too much above a writer's first field.
+  //
+  // BYTE-IDENTICAL to the literals in scripts/migrateSetAssetDirections.js.
+  // That file re-checks it at run time and refuses if the two disagree, so
+  // this is a checked property rather than a comment claiming one.
+  'Display Banner — Standard':
+    'Fewest possible words. Headline does all the work. CTA is a verb. One copy set serves 300×250, 728×90, 160×600, 320×50 and 300×600 — the headline has to read in the smallest.',
   'Google Responsive Display Ad':
-    'System assembles combinations. Every element must work alone and together.',
+    'System assembles combinations. Every element must work alone and together. One copy set spans every size.',
   // PULL, not push — the reader typed the query. The one direction that
   // separates this asset from every other paid one in the library.
+  // THE GOOGLE QUANTITY ANSWER, and it is the reason this asset's line is the
+  // longest of the three. craft.md's `### Google Search` section ends "write
+  // all 15 headlines to give the algorithm room" while this asset carries
+  // THREE Headline fields, and until now nothing told a writer why. It does
+  // not edit craft.md; §7 still says fifteen.
   'Google Responsive Search Ad':
-    'They are already looking. Match the intent, name the thing, skip the setup.',
+    'They are already looking. Match the intent, name the thing, skip the setup. Google takes up to 15 headlines but three is the minimum — riff for more, don’t seed empty slots.',
   'Twitter/X Poll Ad': 'Ask, do not tell. The post sets it up; each option has to be worth a tap.',
   'Pinterest Pin': 'Written for someone saving it for later. Useful over clever; the title does the finding.',
   'Pinterest Idea Ad': 'Swiped through, not skipped past. The title has to earn the first swipe.',
@@ -643,19 +659,31 @@ const DIRECTIONS = {
 
 // Asset-level spec notes — clarifying constraints surfaced on the asset (e.g.
 // one copy set spanning multiple sizes). Keyed by exact asset name; absent → null.
-const SPEC_NOTES = {
-  'Display Banner — Standard':
-    'One copy set serves all standard banner sizes (300×250, 728×90, 160×600, 320×50, 300×600). Keep the headline short enough to read in the smallest format.',
-  'Google Responsive Display Ad':
-    'Responsive — the platform assembles combinations across sizes from one copy set. Every element must read on its own and in combination.',
-  // ASSET-LEVEL NOTES RENDER IN SETTINGS, NOT IN THE DOC — rowToSpecGroup carries
-  // asset_direction and not this. That is the right surface for it: "why only
-  // three headlines?" is a question a tenant asks of the LIBRARY, and the answer
-  // is the page's own minimum. Both numbers below are quoted in
-  // scripts/migrateAddGoogleSearchAsset.js.
-  'Google Responsive Search Ad':
-    'Google assembles each ad from the headlines and descriptions supplied, so every headline must read on its own and beside any other. Three headlines and two descriptions are Google’s stated minimum; it accepts up to 15 headlines — riff for more rather than seeding empty slots.',
-};
+// ASSET-LEVEL SPEC NOTES. EMPTY, AND THE THREE THAT WERE HERE ARE NOW HOUSE
+// GUIDANCE INSIDE DIRECTIONS ABOVE.
+//
+// THE COMMENT THAT STOOD HERE WAS FALSE. It read "ASSET-LEVEL NOTES RENDER IN
+// SETTINGS, NOT IN THE DOC ... That is the right surface for it", and it had
+// been false for as long as it had been written. Traced end to end, the column
+// is dropped on BOTH paths:
+//
+//   THE DOCUMENT PATH — core/pipeline.js rowToSpecGroup builds
+//     { assetType, channel, toneNotes, asset_direction, fields } and nothing
+//     else. `a.spec_note` appears ZERO times in that file.
+//   THE SETTINGS PATH — db/assets.js getTenantLibrary SELECTs it and returns it
+//     on the asset; routes/settings.js spreads `...a`, so it reaches the browser
+//     in the JSON; public/settings.html libRenderAsset renders name, group,
+//     is_active, editable/houseEditable, asset_direction and fields — AND NOT
+//     spec_note. It arrives at the client and is dropped there.
+//
+// So it was thrown away twice while a comment asserted a render that never
+// existed. That is the stale-prose failure CLAUDE.md's own preamble is about,
+// sitting in the file that decides what the column holds.
+//
+// KEPT RATHER THAN DELETED: `SPEC_NOTES[name] || null` at the asset builder is
+// the one line that decides the column, and emptying the map is the smaller
+// change. Anything put back here renders nowhere until a surface reads it.
+const SPEC_NOTES = {};
 
 // Field-level spec notes — per-field guidance rendered as an italic line under
 // the field label (see fieldHint in destinations/googleDocs.js). Only "Hook"

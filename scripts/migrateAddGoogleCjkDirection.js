@@ -7,17 +7,25 @@
 // dry-run-by-default / --commit, inTxn, one transaction, and a QUOTES array that
 // must be found in the LIVE hashed text before anything is written.
 //
-// ─── IT SHIPS REFUSING ──────────────────────────────────────────────────────
-// QUOTES IS EMPTY. requireHeaderEvidence() turns that absence into a refusal
-// before the network and before DATABASE_URL is read. The authoring session had
-// no egress to support.google.com, so no reading of these pages stands behind
-// this file TODAY — even though both sentences were captured by earlier work and
-// are quoted below. A capture from a previous week is a claim about a page as it
-// was; the gate is about the page as it is.
+// ─── IT SHIPPED REFUSING, AND HAS SINCE BEEN FILLED ───────────────────────
+// QUOTES was empty at 846edee and requireHeaderEvidence() turned that absence
+// into a refusal before the network and before DATABASE_URL was read. The
+// authoring session had no egress to support.google.com, so no reading of these
+// pages stood behind the file — even though both sentences had been captured by
+// earlier work and were quoted in this header. A capture from a previous week is
+// a claim about a page as it WAS; the gate is about the page as it IS.
 //
-// TO FINISH IT: fill QUOTES from the header text below (no re-dump needed — see
-// "THE TEXT IS ALREADY IN THE REPO"), then run --verify from a console with
-// egress.
+// IT IS FILLED NOW, and the fill needed no dump because both spans were already
+// in the repo — see "THE TEXT IS ALREADY IN THE REPO". They were COPIED OUT OF
+// THE TWO SOURCE MODULES AT FILL TIME rather than retyped, so byte-identity with
+// migrateAddGoogleVideoAssets.js:223 and with migrateAddGoogleSearchAsset's
+// QUOTES is a property of how they got here rather than a claim about somebody's
+// typing. That matters more than usual on these two: the difference between them
+// is one hyphen.
+//
+// The refusal has moved from "no evidence" to "no network": requireHeaderEvidence
+// passes, and --verify from a session without egress now fails at the fetch —
+// which only a console with egress can close.
 //
 // ─── THIS IS NOT ONE FACT ABOUT GOOGLE. IT IS TWO PAGES SAYING IT DIFFERENTLY ─
 // The single most important constraint on this file. Two sources, two
@@ -166,18 +174,29 @@ const PMAX_URL = 'https://support.google.com/google-ads/answer/17091269';
 const RSA_URL = 'https://support.google.com/google-ads/answer/7684791';
 
 // ─── THE PAGE TEXT, AS READ ────────────────────────────────────────────────
-// EMPTY. Fill from the header above — both spans are already in the repo and
-// neither needs a re-dump:
+// FILLED. Both spans were copied out of their source modules at fill time:
 //
 //   [0] Performance Max, the whole double-width sentence, byte-identical to
 //       scripts/migrateAddGoogleVideoAssets.js:223.
 //   [1] Responsive Search, the double-width clause, byte-identical to the span
-//       added to scripts/migrateAddGoogleSearchAsset.js in this change.
+//       added to scripts/migrateAddGoogleSearchAsset.js in 846edee.
 //
 // Both are ASCII. Neither carries a curly apostrophe, an entity or a dash — the
 // RSA page does carry U+2019 apostrophes elsewhere, which is why that file's
 // other quotes have them, but not in this clause.
-const QUOTES = [];
+const QUOTES = [
+  // [0] PERFORMANCE MAX — https://support.google.com/google-ads/answer/17091269
+  //     HYPHENATED "double-width languages", and "counts as 2 towards the limit
+  //     instead of one". Copied out of migrateAddGoogleVideoAssets' own quotes
+  //     array at fill time rather than retyped, so byte-identity is a property
+  //     of how it got here.
+  "In text assets, the length limits are the same across all languages. Each character in double-width languages like Korean, Japanese, or Chinese counts as 2 towards the limit instead of one.",
+  // [1] RESPONSIVE SEARCH — https://support.google.com/google-ads/answer/7684791
+  //     UNHYPHENATED "a double width language", and "counts as 2 characters".
+  //     Same provenance: copied from the span added to
+  //     migrateAddGoogleSearchAsset's QUOTES in 846edee.
+  "Every character in a double width language like Korean, Japanese, or Chinese counts as 2 characters",
+];
 
 // WHICH QUOTE IS EVIDENCE FOR WHICH ASSET. Asset name -> index into QUOTES.
 //
@@ -185,9 +204,35 @@ const QUOTES = [];
 // field, applied per asset because that is the grain this migration writes at.
 // Every asset must be a key; an unmapped one is a refusal rather than a fall
 // back to "some quote mentions double width", which is the check that would let
-// the Performance Max sentence stand as evidence for the Responsive Search
-// append and vice versa — the merge this whole file is scoped against.
-const EVIDENCE = {};
+// one span stand as evidence for both appends — the merge this file is scoped
+// against.
+//
+// WHAT THE OFFLINE GATE ACTUALLY ASSERTS, stated exactly, because the earlier
+// wording here claimed more: requireHeaderEvidence checks that every asset names
+// a quote, that the index is in range, and that THE TWO INDICES ARE DISTINCT. It
+// does NOT check that each asset's span came from that asset's page. A CROSSED
+// MAP — Performance Max pointed at the Responsive Search sentence and vice versa
+// — uses two distinct indices and PASSES here. Measured against the real
+// function, not reasoned about.
+//
+// WHAT CATCHES A CROSS IS --verify, AND IT IS NOT SILENT. readPages fetches each
+// asset's URL SEPARATELY and counts only that asset's own span in that page's
+// hashed text. The two pages word this rule differently, so a crossed map
+// reports ABSENT on BOTH — the loudest result the check has — and the refusal
+// text already sends the reader to the transcription before Google, naming the
+// hyphenation difference as the likeliest cause. A cross is therefore a failed
+// --verify with a message that describes it, not a quiet mis-citation.
+//
+// A MARKER ASSERTION WAS CONSIDERED AND DECLINED. Requiring the Performance Max
+// span to contain "double-width" and the Responsive Search one "double width"
+// would close the cross offline, and it would key the gate to today's
+// typography: Google normalising a hyphen is not a spec change, and a gate that
+// refuses on it fails in the wrong direction — noisy about nothing, on a file
+// whose whole point is that a real spec move must stay legible.
+const EVIDENCE = {
+  'Google Performance Max': 0,
+  'Google Responsive Search Ad': 1,
+};
 
 // ─── THE SENTENCE ──────────────────────────────────────────────────────────
 // One wording, appended to both. See "ONE WORDING FOR BOTH NOTES" above for why
@@ -271,6 +316,12 @@ function requireHeaderEvidence() {
   // NO TWO ASSETS MAY SHARE A QUOTE. The whole scope of this migration is that
   // these are two sources saying the same thing in different words; one span
   // standing for both is the merge, arriving through the evidence map.
+  //
+  // DISTINCTNESS IS ALL THIS ASSERTS. A CROSSED map — each asset pointed at the
+  // other's span — is two distinct indices and passes here. That is caught by
+  // --verify, which fetches each page separately and counts only that asset's
+  // own span against it, so a cross reports ABSENT on both. See the note on
+  // EVIDENCE for why no marker assertion closes it here.
   const used = ASSETS.map((a) => EVIDENCE[a.name]);
   if (new Set(used).size !== used.length) {
     return {

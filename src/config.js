@@ -7,6 +7,11 @@
 const ALLOWED_ASSETS = [
   'LinkedIn Single Image Ad',
   'LinkedIn Carousel Ad',
+  // The inbox format, off a THIRD LinkedIn path — sponsored-messaging rather than
+  // sponsored-content. Seeded 2026-08-29; see
+  // scripts/migrateAddLinkedInConversationAd.js for the fetched page text and for
+  // which of its eleven numbers are quoted and which are inferred.
+  'LinkedIn Conversation Ad',
   // The four "— Variant A/B/C/D" copies were retired with the seed: asking for
   // four of an asset is a count now, not four asset types. Must stay in step with
   // src/data/defaultAssets.js — this list is the fallback vocabulary for a no-DB

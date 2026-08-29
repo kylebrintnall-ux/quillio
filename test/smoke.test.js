@@ -172,15 +172,16 @@ test('copyCompleteBlocks builds Open in Drive + Regenerate', () => {
   );
 });
 
-test('config.ALLOWED_ASSETS is the 33-name v3 taxonomy, post-prune', () => {
+test('config.ALLOWED_ASSETS is the 34-name v3 taxonomy, post-prune', () => {
   const { ALLOWED_ASSETS } = require('../src/config');
   // 25 after the prune, then one per asset-creating migration: Google Responsive
   // Search, Pinterest Pin, Performance Max + Demand Gen Video together, the
-  // three remaining Pinterest ad formats together, and Twitter/X Poll Ad. This
+  // three remaining Pinterest ad formats together, Twitter/X Poll Ad, and
+  // LinkedIn Conversation Ad. This
   // is a consistency check between two files — src/config.js and the seed — and
   // NOT a statement about the outside world; the test below asserts they name the
   // same assets, which is the property that matters.
-  assert.strictEqual(ALLOWED_ASSETS.length, 33);
+  assert.strictEqual(ALLOWED_ASSETS.length, 34);
   assert.ok(ALLOWED_ASSETS.includes('Battle Card'));
   assert.ok(ALLOWED_ASSETS.includes('LinkedIn Single Image Ad'));
 });
@@ -552,9 +553,9 @@ test('resolveTenant falls back to a consistent env-var shape with no DB', async 
 
 // --- Week 7: per-tenant asset library ---
 
-test('defaultAssets is the 33-type v3 library with valid shape, post-prune', () => {
+test('defaultAssets is the 34-type v3 library with valid shape, post-prune', () => {
   const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
-  assert.strictEqual(DEFAULT_ASSETS.length, 33, 'exactly 33 asset types');
+  assert.strictEqual(DEFAULT_ASSETS.length, 34, 'exactly 34 asset types');
 
   const groups = new Set([
     'Paid Social',
@@ -690,9 +691,16 @@ test('spec tiers: the seed equals what the migration chain produces, in both dir
   // cites. Its Post Copy 280 is a DUPLICATE of a number already in this set for
   // a different asset — the pairs are distinct, the value is not.
   for (const [a, f] of require('../scripts/migrateAddXPollAd').ENFORCE) enforced.add(`${a}||${f}`);
+  // migrateAddLinkedInConversationAd: one asset on a THIRD LinkedIn path —
+  // sponsored-messaging rather than sponsored-content — so this link adds a new
+  // URL as well as pairs. All eleven fields come in at 'enforced' on the page's
+  // own "characters maximum" prose. What is uncertain on that asset is the
+  // CARDINALITY of its repeating fields, not the tier; see that file's header.
+  for (const [a, f] of require('../scripts/migrateAddLinkedInConversationAd').ENFORCE) enforced.add(`${a}||${f}`);
 
-  assert.strictEqual(enforced.size, 60,
-    '16 earlier + 7 Google Search + 2 Pinterest + 13 Google video + 17 Pinterest formats + 5 X poll');
+  assert.strictEqual(enforced.size, 71,
+    '16 earlier + 7 Google Search + 2 Pinterest + 13 Google video + 17 Pinterest formats + 5 X poll '
+    + '+ 11 LinkedIn conversation');
   assert.strictEqual(recommended.size, 11, '9 platform recommendations + 2 research citations');
 
   // FORWARD: everything the migrations produce is in the seed at that tier.
@@ -743,6 +751,11 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     // One asset, and NO new source — it cites the page Twitter/X Ad already
     // cites. Second link in this chain to add an asset without adding a URL.
     ...require('../scripts/migrateAddXPollAd').SOURCE_URLS,
+    // One asset and a NEW url — business.linkedin.com/advertise/ads/
+    // sponsored-messaging/..., which no earlier link cites. The two LinkedIn
+    // assets above are both sponsored-CONTENT; this is the first sponsored-
+    // MESSAGING page in the library.
+    ...require('../scripts/migrateAddLinkedInConversationAd').SOURCE_URLS,
   };
   // Which sources name a placement, as a LITERAL rather than a call to the
   // function under test — composing the expectation with specPlacementName would
@@ -824,10 +837,12 @@ test('spec sources: every TIERED field cites its own asset\'s page and renders i
     }
   }
   // 55 since the three remaining Pinterest ad formats — seventeen more enforced
-  // fields, every one of them citing the page Pinterest Pin already cited. A
-  // consistency check between the seed and this renderer, not a claim about how
-  // many limits the platforms publish.
-  assert.strictEqual(enforcedSeen, 60, 'exactly 60 enforced fields carry a real spec_source');
+  // fields, every one of them citing the page Pinterest Pin already cited. Then
+  // 60 with Twitter/X Poll Ad's five, and 71 with LinkedIn Conversation Ad's
+  // eleven, which cite a page no earlier asset cites. A consistency check between
+  // the seed and this renderer, not a claim about how many limits the platforms
+  // publish.
+  assert.strictEqual(enforcedSeen, 71, 'exactly 71 enforced fields carry a real spec_source');
   // 9, not 10: Meta Single Image Ad / Description left the tier when
   // migrateFixMetaSpecs found that Meta publishes no Description recommendation.
   assert.strictEqual(recommendedSeen, 11, '9 platform recommendations + 2 research citations');
@@ -3436,7 +3451,10 @@ test('20 seeded CHARACTER fields already carry a floor — this is not opt-in-on
   // "try to make sure headlines are at least 30 characters long". That is in
   // spec_note, not char_min — scripts/floorAB.js measured what an invented floor
   // costs, and a band the platform does not enforce is not a band.
-  assert.strictEqual(charFields, 212, 'character fields in the seed');
+  // 223: LinkedIn Conversation Ad added eleven, all text-counted and all
+  // char_min 0 — LinkedIn publishes a maximum for each and no minimum for any —
+  // so charFields moves and `floored` does not, exactly as the Poll Ad did.
+  assert.strictEqual(charFields, 223, 'character fields in the seed');
   // 20 since migrateFixMetaSpecs gave Meta Single Image Ad / Primary Text the
   // 50 half of Meta's published "50-150 characters" — the first new floor on a
   // paid-social field since floorAB measured what a floor costs in spread.
@@ -6485,6 +6503,10 @@ test('the medium routing table, pinned per seeded asset', () => {
   const EXPECTED = {
     "LinkedIn Single Image Ad":              ["paid social"],
     "LinkedIn Carousel Ad":                  ["paid social"],
+    // WRITTEN BY HAND, like every row here. "Conversation" collides with no
+    // branch keyword — notably not `confirm` and not `form`, the substring trap
+    // that sent Performance Max to the Confirmation section for its whole life.
+    "LinkedIn Conversation Ad":              ["paid social"],
     "Meta Single Image Ad":                  ["paid social"],
     "Meta Carousel Ad":                      ["paid social"],
     "Twitter/X Ad":                          ["paid social"],
@@ -8889,7 +8911,7 @@ test('parseBrief: the prompt asks for a plan and routes A/B tests to counts', as
   // 33 — the four Variants left, and eight assets arrived across five
   // asset-creating migrations. The COUNT is incidental to this test; the two
   // assertions below are the subject.
-  assert.strictEqual(ALLOWED_ASSETS.length, 33);
+  assert.strictEqual(ALLOWED_ASSETS.length, 34);
   assert.ok(!ALLOWED_ASSETS.some((n) => /— Variant [A-D]$/.test(n)), 'no Variant types in the taxonomy');
   assert.ok(!prompt.includes('LinkedIn Single Image Ad — Variant A'), 'and none offered in the allowed list');
   // The RULE about them is gone too, for a stock tenant — `anyMatching` tests the
@@ -10533,6 +10555,7 @@ test('spec integrity: the seed and the migration agree on every band, both direc
     ...Object.keys(require('../scripts/migrateAddGoogleVideoAssets').SOURCE_URLS),
     ...Object.keys(require('../scripts/migrateAddPinterestAdFormats').SOURCE_URLS),
     ...Object.keys(require('../scripts/migrateAddXPollAd').SOURCE_URLS),
+    ...Object.keys(require('../scripts/migrateAddLinkedInConversationAd').SOURCE_URLS),
     ...CITED_BANDS.map(([asset]) => asset),
     require('../scripts/migrateCiteColdEmailBand').ASSET,
   ]);
@@ -21774,7 +21797,9 @@ test('freshness dedup: replayed over the real seed, nineteen blocks not sixty-si
     if (n) { blocks += n; shape[a.name] = n; }
   }
 
-  assert.strictEqual(perField, 71, 'the seeded library cites a page on 71 fields');
+  // 82: LinkedIn Conversation Ad's eleven fields all cite its specs page, so every
+  // one of them carries a freshness block.
+  assert.strictEqual(perField, 82, 'the seeded library cites a page on 82 fields');
   // 19: each of the seven newest assets cites every field it has, contiguously, so
   // each adds exactly ONE block however many fields it carries — Performance Max
   // has nine and Pinterest Quiz has eleven, and both still render one. That is the
@@ -21786,7 +21811,10 @@ test('freshness dedup: replayed over the real seed, nineteen blocks not sixty-si
   // by the ASSET HEADING between them, not only by a change of source. A reader
   // who has scrolled past Pinterest Pin's block and into a different asset needs
   // the provenance again.
-  assert.strictEqual(blocks, 20, 'and the adjacency rule renders 20 blocks');
+  // 21 with LinkedIn Conversation Ad: eleven fields, all citing one page, all
+  // adjacent under one asset heading — so they collapse to a SINGLE block. Eleven
+  // fields adding one block is the dedup rule working, not a miscount.
+  assert.strictEqual(blocks, 21, 'and the adjacency rule renders 21 blocks');
   // Twitter/X Poll Ad cites every field it has, contiguously, so five fields
   // render ONE block — and it shares its URL with Twitter/X Ad, which still
   // renders its own. The run is broken by the asset heading, not only by a

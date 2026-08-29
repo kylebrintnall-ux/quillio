@@ -208,6 +208,41 @@ const RAW = [
     ['Card 4 Headline', 0, 45],
     ['Card 5 Headline', 0, 45],
   ]],
+  // THE BRANCHING VOCABULARY IS QUILLIO'S, NOT LINKEDIN'S, and that is the one
+  // thing to know before trusting these numbers. LinkedIn's conversation-ads
+  // specs page names "Message Text" ONCE and "Call-to-Action" ONCE. It has no
+  // word for a follow-up message and states no cardinality for buttons. Reading
+  // that single Message Text limit as applying to every Response, and that single
+  // Call-to-Action limit as applying to every Option and every CTA, is OUR read
+  // of the page — a reasonable one, and not a sentence the page contains.
+  //
+  // The page defers to a Help Center article for full technical specifications:
+  //   https://www.linkedin.com/help/lms/answer/a426057
+  // That is where the branching vocabulary would be settled if it is settled
+  // anywhere. Nobody has read it. Until somebody does, the eight fields carrying
+  // an inferred 8,000 or 25 rest on the inference above and not on a quotation.
+  //
+  // Ad Name and Message Text are the two fields whose numbers the page states
+  // directly, in the singular, with no inference at all.
+  //
+  // CUSTOM FOOTER (20,000) AND THE DESTINATION URL (2,000) ARE SOURCED AND
+  // DELIBERATELY NOT SEEDED. Both appear in the fetched text quoted in
+  // scripts/migrateAddLinkedInConversationAd.js; this writer does not use them,
+  // and a field nobody fills reads as an undrafted document. Their absence is a
+  // choice, not an oversight, and re-adding one is a decision rather than a fix.
+  ['LinkedIn Conversation Ad', 'Paid Social', [
+    ['Ad Name', 0, 255],
+    ['Message Text', 0, 8000],
+    ['Option 1', 0, 25],
+    ['Option 2', 0, 25],
+    ['Option 3', 0, 25],
+    ['Option 1 Response', 0, 8000],
+    ['Option 2 Response', 0, 8000],
+    ['Option 3 Response', 0, 8000],
+    ['CTA 1', 0, 25],
+    ['CTA 2', 0, 25],
+    ['Final CTA', 0, 25],
+  ]],
   // RETIRED — the four "— Variant A/B/C/D" copies of LinkedIn Single Image Ad.
   // Four identical asset types existed so a brief could ask for four versions of
   // one ad. Multi-instance made that a count: "4 LinkedIn ads" is one entry with
@@ -627,6 +662,24 @@ const DIRECTIONS = {
   // the claim was last checked, and this one cannot.
   'LinkedIn Carousel Ad':
     'Each card earns the next. One idea per card, strong close. Riff for more cards rather than seeding empty slots.',
+  // NO OPTION COUNT HERE, AND IT IS THE SAME DECISION AS THE CAROUSEL LINE ABOVE
+  // — one asset over, for a stronger reason. LinkedIn's conversation-ads specs
+  // page states no cardinality for buttons AT ALL: it names "Call-to-Action"
+  // once, in the singular. So there is no published maximum to omit, and writing
+  // a number here would not be repeating a platform fact in the wrong channel —
+  // it would be inventing one.
+  //
+  // The channel argument holds regardless. asset_types has no spec_source, no
+  // spec_type, no spec_verified_at and no spec_version, so a direction line
+  // cannot cite anything and no watch flag can reach it. "Riff for more options"
+  // is the instruction; the per-field ceiling a writer is bound by is on
+  // copy_fields with a citation and a date.
+  //
+  // Do not add a button count on finding one in LinkedIn's Help Center. If a
+  // cardinality is ever sourced it belongs in the field list — as a fourth
+  // Option field — not in this sentence.
+  'LinkedIn Conversation Ad':
+    'Written for the inbox, not the feed. It should read like a message from one person to another — short, one idea, ending in a question the buttons answer. Options are the reader’s voice; CTAs are yours. Riff for more options rather than seeding empty slots.',
   'Meta Single Image Ad': 'Lead with the insight or tension. Stop the scroll in the first line.',
   'Meta Carousel Ad': 'Each card standalone. Swipe tells a story. Last card closes.',
   'Twitter/X Ad': 'Punchy. Opinionated. One idea, no hedging.',
@@ -793,6 +846,25 @@ const X_LINK_COST_NOTE =
 // BYTE-IDENTICAL to POLL_OPTION_NOTE in scripts/migrateAddXPollAd.js.
 const X_POLL_OPTION_NOTE = 'Poll options do not count against the post\'s 280 characters.';
 const X_POLL_OPTION_FIELDS = new Set(['Poll Option 1', 'Poll Option 2', 'Poll Option 3', 'Poll Option 4']);
+
+// LinkedIn Conversation Ad → Ad Name. LOAD-BEARING, NOT DECORATION, and it is
+// here because the failure it prevents has already happened: in this writer's
+// own working document the ad's opening hook was sitting under Ad Name, where no
+// reader would ever see it.
+//
+// The field is campaign organisation inside LinkedIn Campaign Manager. It is the
+// only field on this asset that is never delivered to anybody, and nothing else
+// in the document says so — "Ad Name [255]" reads like a headline slot with a
+// generous limit, and 255 characters is far more room than a name needs, which
+// makes it read like one even harder.
+//
+// STATEMENT OF FACT, NOT AN IMPERATIVE, on the X_POLL_OPTION_NOTE precedent:
+// notesAB measured the imperative form of a comparable note at 0/10 against its
+// own target, level with no note at all, with spread collapsing 64 to 13. "Do
+// not write copy here" would be the imperative form of this one. Naming who sees
+// the field lets the model draw the conclusion.
+const LINKEDIN_CONVERSATION_AD_NAME_NOTE =
+  'Internal label for Campaign Manager only — the reader never sees this field.';
 
 // Twitter/X Ad → Headline. A TRUNCATION, not a limit, in the writing-guidance
 // channel — the same split PINTEREST_TITLE_NOTE and X_LINK_COST_NOTE make.
@@ -1092,6 +1164,12 @@ function fieldSpecNote(assetName, fieldName) {
   if (assetName === 'LinkedIn Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
     return LINKEDIN_CAROUSEL_CARD_NOTE;
   }
+  // Matched on the ASSET too. "Ad Name" is a field name generic enough that a
+  // tenant could author one on any asset, and this sentence is true only of
+  // LinkedIn's conversation-ad field.
+  if (assetName === 'LinkedIn Conversation Ad' && fieldName === 'Ad Name') {
+    return LINKEDIN_CONVERSATION_AD_NAME_NOTE;
+  }
   // Same field names on a different platform — matched on the asset too, so a
   // LinkedIn card never picks up Meta's note or the reverse.
   if (assetName === 'Meta Carousel Ad' && LINKEDIN_CAROUSEL_CARD_FIELDS.has(fieldName)) {
@@ -1165,6 +1243,30 @@ const ENFORCED_SPEC_FIELDS = new Set([
   'LinkedIn Carousel Ad||Card 3 Headline',
   'LinkedIn Carousel Ad||Card 4 Headline',
   'LinkedIn Carousel Ad||Card 5 Headline',
+  // ELEVEN FIELDS, AND ONLY THREE OF THEM REST ON A QUOTED SENTENCE. The page
+  // states "Ad Name (optional): 255 characters maximum" and "Message Text: 8,000
+  // characters maximum" in the singular, and "Call-to-Action: 25 characters
+  // maximum" once. Every Response inheriting the 8,000 and every Option and CTA
+  // inheriting the 25 is Quillio's reading of those singular statements, recorded
+  // at the RAW entry above and in the migration header.
+  //
+  // They are tiered `enforced` anyway, and that is deliberate: "characters
+  // maximum" is ceiling language, the same construction as Google's "support up
+  // to" and X's "up to a maximum of". It is NOT the "Text Recommendations"
+  // heading that left LinkedIn's other nine an open question in CLAUDE.md — this
+  // page states maxima in its own prose. What is uncertain here is the
+  // CARDINALITY, not the tier.
+  'LinkedIn Conversation Ad||Ad Name',
+  'LinkedIn Conversation Ad||Message Text',
+  'LinkedIn Conversation Ad||Option 1',
+  'LinkedIn Conversation Ad||Option 2',
+  'LinkedIn Conversation Ad||Option 3',
+  'LinkedIn Conversation Ad||Option 1 Response',
+  'LinkedIn Conversation Ad||Option 2 Response',
+  'LinkedIn Conversation Ad||Option 3 Response',
+  'LinkedIn Conversation Ad||CTA 1',
+  'LinkedIn Conversation Ad||CTA 2',
+  'LinkedIn Conversation Ad||Final CTA',
   'Twitter/X Ad||Ad Copy',
   'Twitter/X Ad||Headline',
   'Google Responsive Display Ad||Short Headline',
@@ -1348,6 +1450,12 @@ const SPEC_SOURCE_URLS = {
     'https://business.linkedin.com/advertise/ads/sponsored-content/single-image-ads-specs',
   'LinkedIn Carousel Ad':
     'https://business.linkedin.com/advertise/ads/sponsored-content/carousel-ads/specs',
+  // A THIRD LinkedIn path — sponsored-messaging, not sponsored-content. The two
+  // above are feed formats; this one is the inbox, and LinkedIn publishes it
+  // under a different section of its own site. Read 2026-08-29; the fetched text
+  // is quoted in scripts/migrateAddLinkedInConversationAd.js.
+  'LinkedIn Conversation Ad':
+    'https://business.linkedin.com/advertise/ads/sponsored-messaging/conversation-ads/specs',
   'Twitter/X Ad': 'https://business.x.com/en/help/campaign-setup/creative-ad-specifications',
   // The organic X post cites the same X page as the paid asset — one platform, one
   // 280-character cap.

@@ -133,10 +133,11 @@ function mediumKeywordsForAsset(assetType) {
   //      permission — where the measured adoption of the losing rule was 0/12.
   //      The likely outcome is not a blend; it is one silently winning.
   //
-  // And Search carries "write all 15 headlines to give the algorithm room",
-  // already flagged in CLAUDE.md as a live contradiction against Responsive
-  // Search Ad's three headline fields. PMax also has three. Routing Search here
-  // would propagate a known, unmeasured defect to a second asset.
+  // Search USED TO carry "write all 15 headlines to give the algorithm room",
+  // which was a fourth reason not to route here: it contradicted Responsive
+  // Search Ad's three headline fields, and PMax also has three. That clause is
+  // gone from craft.md now, so this particular hazard is spent — the three
+  // reasons above are what hold the branch, and they are enough on their own.
   //
   // The counter-argument — PMax genuinely runs on Search inventory — is a fact
   // about where the ad APPEARS, not about how the copy is WRITTEN. The writing
@@ -233,14 +234,20 @@ function mediumKeywordsForAsset(assetType) {
   // wins if a tenant ever authors "Search Display Banner", and the display
   // section is the one that describes a banner.
   //
-  // KNOWN CONFLICT, and it is a prompt change rather than a wording one. That
-  // section ends "write all 15 headlines to give the algorithm room", and this
-  // asset has THREE headline fields. Before this branch the sentence was one of
-  // eight mediums in a fallback; now it is the only medium section a search-ad
-  // prompt carries, so its weight goes up sharply. Left as it is HERE because
-  // editing craft.md changes what every prompt produces and this file's own
-  // record says that needs its own commit and its own before/after — not a
-  // rider on a seed. Recorded in CLAUDE.md as the next thing to measure.
+  // THE CONFLICT THIS BRANCH ONCE CARRIED IS RESOLVED, and how it was resolved
+  // is the part worth keeping. The section ended "write all 15 headlines to give
+  // the algorithm room" while this asset has THREE headline fields. Before this
+  // branch existed the sentence was one of eight mediums in a fallback; adding
+  // the branch made it the ONLY medium section a search-ad prompt carries, which
+  // is what turned a dormant line into a live contradiction against the asset
+  // direction in the same prompt.
+  //
+  // It was fixed in craft.md rather than here, on a boundary that generalises:
+  // craft.md states CRAFT, and how many fields an asset has is not a craft fact
+  // — it is an asset fact, and it already arrives per asset from asset_direction
+  // and the field list. The per-field ceiling arrives too, in limitLine, which is
+  // the LAST line of the prompt; the section's "Headlines 30 chars, descriptions
+  // 90 chars" was upstream duplication of it and went at the same time.
   if (a.includes('search')) return ['google search'];
   if (a.includes('basho') || a.includes('sales') || a.includes('outbound')) return ['sales'];
   if (a.includes('email')) return ['email'];

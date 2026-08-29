@@ -339,7 +339,7 @@ Push advertising — interrupts browsing. Awareness and interest, not the hard c
 
 ### Google Search
 
-Pull advertising — the reader is actively looking. Match the search intent. Include the keyword. Be direct and functional — clever underperforms here. Headlines 30 chars, descriptions 90 chars; write all 15 headlines to give the algorithm room.
+Pull advertising — the reader is actively looking. Match the search intent. Include the keyword. Be direct and functional — clever underperforms here. The system assembles the ad from whichever headlines it picks, so each one has to read on its own and beside any other.
 
 ### Email
 

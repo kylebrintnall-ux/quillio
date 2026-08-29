@@ -1123,7 +1123,7 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 21,384 lines and 749 tests** —
+regression guards. **As of this commit it is 23,047 lines and 782 tests** —
 written as a reading taken on a date rather than as a standing figure, because
 the previous version of this sentence said 635 and was wrong by 114 tests and
 about 3,900 lines. The number had been correct once. Nothing updates it, nothing
@@ -1674,36 +1674,88 @@ Related and separate: §2.55 was reworded so it would stop arguing with the same
 permission ("a mark that makes a line turn is not a setup"). That fixed the
 setup-and-punchline collision. It did not touch §1.4.
 
-### SECOND LIVE CONTRADICTION — §7's Google Search section asks for 15 headlines
+### RESOLVED — §7's Google Search section no longer states a quantity
 
-`craft.md`'s `### Google Search` section ends "write all 15 headlines to give the
-algorithm room". `Google Responsive Search Ad` has **three** headline fields.
+`craft.md`'s `### Google Search` section used to end "write all 15 headlines to
+give the algorithm room" while `Google Responsive Search Ad` carries **three**
+headline fields, and both sentences reached one prompt. The clause is gone.
 
-**What changed is the WEIGHT, not the words.** That section has existed since
-`craft.md`'s first commit and, until August 2026, **nothing could ever select
-it** — `mediumKeywordsForAsset` had no branch that returned `google search`,
-because no asset in the library was a search ad. It reached a prompt only through
-the "unknown medium → inject them all" fallback, as one section of eight.
-Seeding the asset added the branch, so it is now the **only** medium section a
-search-ad prompt carries.
+**What made it live was WEIGHT, not words.** That section existed since
+`craft.md`'s first commit and, until August 2026, **nothing could select it** —
+`mediumKeywordsForAsset` had no branch returning `google search`, because no
+asset in the library was a search ad. It reached a prompt only through the
+"unknown medium → inject them all" fallback, as one section of eight. Seeding
+the asset added the branch and made it the **only** medium section a search-ad
+prompt carries, which is what turned a dormant line into a contradiction against
+the asset direction sitting a few lines below it in the same prompt.
 
-**Why it is not simply reworded here.** Editing `craft.md` changes what every
-prompt produces, and this file's own record is that an example's grammar gets
-reproduced and that a prompt change needs its own before/after rather than
-riding along with something else. A seed commit is the wrong place to find out.
+**THE BOUNDARY THAT DECIDED THE FIX, and it is the part that generalises.** The
+sentence was right about the platform and wrong about this document — Google
+really does accept 15 and really does reward more of them. So the question was
+never "which sentence is true", it was **which file gets to say it**:
 
-**It is also not obviously wrong.** Google really does accept 15 and really does
-reward more of them; the seed carries 3 because that is Google's stated MINIMUM
-and because fifteen empty fields is a wall in front of a writer, with Riffs
-covering the gap. So the sentence is right about the platform and wrong about
-this document, which is exactly the §1.4-versus-§2 shape: two rules each correct
-on their own terms, meeting in one prompt.
+> `craft.md` states CRAFT. How many fields an asset has is not a craft fact — it
+> is an asset fact, and it already reaches the prompt per asset, from
+> `asset_direction` and the field list.
 
-**What to measure if you pick it up:** whether the drafter treats three fields as
-a shortfall — hedged, near-identical headlines that read like three of fifteen —
-or writes three strong ones. `scripts/notesAB.js` is the harness shape, and the
-pre-registered failure is uniformity across the three headlines, so `shapes` and
-`openings` are the columns to watch rather than spread.
+`craft.md` cannot know a field count and must not assert one. The RSA
+`asset_direction` can and does: "Google takes up to 15 headlines but three is the
+minimum — riff for more, don't seed empty slots." That line is now the **only**
+statement of quantity in the prompt, which makes it load-bearing rather than
+explanatory — a note to that effect sits on it in `src/data/defaultAssets.js`.
+
+**The char numbers went with it, for the same reason.** "Headlines 30 chars,
+descriptions 90 chars" duplicated `limitLine`, which carries the real per-field
+ceiling and is the **last** line of the prompt. Upstream duplication of a value
+the prompt already states exactly — and, on the four fallback assets below, a
+duplication of numbers that are simply wrong for them.
+
+The clause was replaced rather than deleted, because the assembly point it was
+gesturing at is genuine craft and survives any field count: "The system assembles
+the ad from whichever headlines it picks, so each one has to read on its own and
+beside any other." That is true whether the document holds 3 slots or 15.
+
+**MEASURED BLAST RADIUS — 5 of 33 seeded assets, and the other four are the
+surprise.** `buildCraftContext` length, every seeded asset, before and after:
+
+| Asset | | Why it is affected |
+| --- | --- | --- |
+| `Google Responsive Search Ad` | 10,871 → 10,897 | routed — Search is its ONLY medium section |
+| `Event Landing Page` | 16,228 → 16,254 | **eight-section fallback** |
+| `Campaign Landing Page` | 16,228 → 16,254 | eight-section fallback |
+| `One-Pager` | 16,228 → 16,254 | eight-section fallback |
+| `Battle Card` | 16,228 → 16,254 | eight-section fallback |
+
+The other **28 are byte-identical**. The four fallback assets are the ones a
+reader would miss: they match no branch by a recorded decision (the
+`NO_SECTION_YET` allowlist in `test/smoke.test.js`, which is honest about it
+where the prose here previously implied every seeded asset reaches a branch), so
+they receive all eight medium sections — and were therefore being told to include
+a search keyword and write 15 headlines for a **battle card**. That is a
+pre-existing property of the fallback rather than something this change
+introduced, and it is unfixed: the other seven sections still reach them with
+their own numbers.
+
+**NOT MEASURED IN THE MODEL, and that is a real gap rather than a formality.**
+This repo has no `GEMINI_API_KEY`, so the before/after this file demands for a
+prompt change has not been run. What is verified is structural: the exact five
+assets whose prompt changed, 28 unchanged, 782/782 tests green (a reading taken
+at this commit, not a standing figure).
+
+**What to measure when a key is available:** whether the drafter treats three
+fields as a shortfall — hedged, near-identical headlines that read like three of
+fifteen — or writes three strong ones. `scripts/notesAB.js` is the harness shape,
+and the pre-registered failure is uniformity across the three headlines, so
+`shapes` and `openings` are the columns to watch rather than spread. The
+prediction now has a direction: removing the 15 should REDUCE uniformity if the
+shortfall effect was real, and do nothing if it never fired. A null result is
+informative here — it would say the clause was inert all along, which is worth
+knowing before the next argument about editing `craft.md`.
+
+**§1.4 versus §2 is still open and is NOT this.** That one is a genuine conflict
+between two rules each correct on its own terms, with no file boundary to settle
+it. This one had a boundary available, which is why it closed and that one has
+not.
 
 ### Available and unplumbed — campaign signal the drafter never sees
 
@@ -2090,7 +2142,18 @@ Two tests in `test/smoke.test.js` cover the two different questions, and both ar
 needed: *every seeded asset name matches a branch* (catches the silent
 eight-section fallback) and *the medium routing table, pinned per seeded asset*
 (catches the mis-route — a coverage check cannot, because a mis-route IS
-coverage). The second is a deliberate snapshot: adding an asset fails it until
+coverage).
+
+**The first test carries an ALLOWLIST, and this sentence used to omit it.** Four
+assets match no branch by a recorded decision — `Event Landing Page`, `Campaign
+Landing Page`, `One-Pager`, `Battle Card` — because `craft.md` has no section
+that describes them, so the eight-section fallback is the correct answer and may
+stay correct permanently. They are the `NO_SECTION_YET` set in the test, which
+argues the case in full. Read without that, "every seeded asset name matches a
+branch" says the fallback is unreachable in production, and it is not: those four
+receive all eight medium sections, numbers and keyword instructions included.
+Anyone reasoning about the blast radius of a `craft.md` medium edit needs them in
+the count — the §7 Google Search fix touched five assets, and four were these. The second is a deliberate snapshot: adding an asset fails it until
 somebody writes the array by hand. Do not derive its expected values from
 `mediumKeywordsForAsset`; that asserts the function equals itself. Keep the CTA library and the
 words-to-cut list *outside* the mediums section so they stay universal. The same slicing is applied to a tenant

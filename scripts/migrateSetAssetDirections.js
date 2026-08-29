@@ -52,10 +52,13 @@
 //
 // ─── (b) THE RSA LINE CARRIES THE craft.md QUANTITY ANSWER ───────────────
 // "Google takes up to 15 headlines but three is the minimum — riff for more,
-// don't seed empty slots" is the resolution to the contradiction CLAUDE.md
-// records: craft.md's `### Google Search` section ends "write all 15 headlines
-// to give the algorithm room", and this asset carries THREE Headline fields and
-// TWO Description fields.
+// don't seed empty slots" was written as the resolution to the contradiction
+// CLAUDE.md recorded: craft.md's `### Google Search` section ended "write all 15
+// headlines to give the algorithm room", and this asset carries THREE Headline
+// fields and TWO Description fields.
+//
+// craft.md has since dropped its quantity clause, so this line no longer answers
+// a competing sentence — it is the only statement of quantity the prompt holds.
 //
 // The answer existed in spec_note and reached nobody. This is what delivers it —
 // to the writer in the document, and to the drafting prompt, which is where the

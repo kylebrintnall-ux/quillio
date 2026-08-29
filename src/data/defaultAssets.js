@@ -624,10 +624,16 @@ const DIRECTIONS = {
   // PULL, not push — the reader typed the query. The one direction that
   // separates this asset from every other paid one in the library.
   // THE GOOGLE QUANTITY ANSWER, and it is the reason this asset's line is the
-  // longest of the three. craft.md's `### Google Search` section ends "write
-  // all 15 headlines to give the algorithm room" while this asset carries
-  // THREE Headline fields, and until now nothing told a writer why. It does
-  // not edit craft.md; §7 still says fifteen.
+  // longest of the three. It is now the ONLY answer in the prompt: craft.md's
+  // `### Google Search` section used to end "write all 15 headlines to give the
+  // algorithm room" against this asset's THREE Headline fields, and both
+  // sentences reached one prompt. §7 no longer states a quantity at all — the
+  // boundary drawn there is that craft.md states craft and an asset states its
+  // own shape, so THIS line is where a field count is allowed to be named.
+  //
+  // Which means it is now load-bearing rather than merely explanatory. If this
+  // sentence is ever cut, nothing else in the prompt tells the drafter that
+  // three is a floor rather than a ceiling.
   'Google Responsive Search Ad':
     'They are already looking. Match the intent, name the thing, skip the setup. Google takes up to 15 headlines but three is the minimum — riff for more, don’t seed empty slots.',
   'Twitter/X Poll Ad': 'Ask, do not tell. The post sets it up; each option has to be worth a tap.',

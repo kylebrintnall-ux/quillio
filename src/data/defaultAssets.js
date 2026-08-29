@@ -603,7 +603,30 @@ const RAW = [
 // Keyed by exact asset name.
 const DIRECTIONS = {
   'LinkedIn Single Image Ad': 'Direct. Benefit-led. Lead with the outcome, not the feature.',
-  'LinkedIn Carousel Ad': 'Each card earns the next. One idea per card, strong close.',
+  // NO CARD COUNT HERE, AND THAT IS A SCOPE DECISION RATHER THAN A DOUBT ABOUT
+  // THE NUMBER. LinkedIn publishes "Number of carousel cards: 2-10", quoted
+  // verbatim in scripts/migrateAddLinkedInCarouselWatch.js:31, and this asset
+  // seeds five. Both facts are settled. The question the omission answers is
+  // which channel is allowed to carry a number, not whether the number is right.
+  //
+  // A DIRECTION LINE CANNOT CITE ANYTHING. asset_types has no spec_source, no
+  // spec_type, no spec_verified_at and no spec_version, so a platform number
+  // written here would be a spec claim with no tier, no date, and no path from
+  // a watch flag back to the sentence. LiveSpecs gates and writes by (asset,
+  // field) pairs in copy_fields; nothing it does can reach this string. It
+  // would go stale in silence, and no run, test or health check would say so.
+  //
+  // THE BINDING NUMBER IS ALREADY WHERE IT CAN BE DEFENDED — Card 1-5 Headline
+  // at [0-45], spec_type 'enforced', cited to the LinkedIn carousel specs page,
+  // whose watch row is anchored on "Card headline". The writer meets the
+  // ceiling with a citation and a verification date beside it. This line adds
+  // the instruction and nothing the document already enforces.
+  //
+  // Do not add "up to 10" on noticing that LinkedIn publishes it. That it is
+  // published is not the test — the test is whether the channel can say when
+  // the claim was last checked, and this one cannot.
+  'LinkedIn Carousel Ad':
+    'Each card earns the next. One idea per card, strong close. Riff for more cards rather than seeding empty slots.',
   'Meta Single Image Ad': 'Lead with the insight or tension. Stop the scroll in the first line.',
   'Meta Carousel Ad': 'Each card standalone. Swipe tells a story. Last card closes.',
   'Twitter/X Ad': 'Punchy. Opinionated. One idea, no hedging.',

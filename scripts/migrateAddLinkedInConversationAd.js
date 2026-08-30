@@ -155,6 +155,21 @@ const FIELDS = [
   ['Final CTA', 0, 25, null, 'enforced'],
 ];
 
+// THE STORED LIMITS AND HOW THIS PAGE WRITES THEM — one pair per distinct value
+// seeded above. They are DIFFERENT STRINGS and each needs the counter that suits
+// it; the block in readPage that consumes this explains why in full.
+//
+// The stored half is checked against FIELDS in checkSeedAgreement rather than
+// trusted, so a band change cannot leave this table describing a value nothing
+// seeds. The published half is a PAGE FACT and cannot be derived from anything
+// in this repo — it was read from the hashed text and is asserted against the
+// live page on every run.
+const STORED_VS_PUBLISHED = [
+  ['255', '255'],
+  ['8000', '8,000'],
+  ['25', '25'],
+];
+
 // BYTE-IDENTICAL to DIRECTIONS['LinkedIn Conversation Ad'] in
 // src/data/defaultAssets.js, checked below rather than assumed.
 // Non-ASCII, deliberate: U+2014 EM DASH, and U+2019 in "reader’s".
@@ -243,6 +258,27 @@ function checkSeedAgreement() {
       problems.push(`${ASSET} / ${name}: seed note ${JSON.stringify(f.spec_note)}, here ${JSON.stringify(wantNote)}.`);
     }
   }
+
+  // STORED_VS_PUBLISHED must name exactly the distinct non-zero limits FIELDS
+  // seeds — no more, no fewer. Derived here rather than retyped, so changing a
+  // band forces the pair table to be revisited instead of silently describing a
+  // value the asset no longer carries, or missing one it now does.
+  const seeded = [...new Set(FIELDS.flatMap((f) => [f[1], f[2]]).filter((n) => n > 0).map(String))].sort();
+  const paired = [...new Set(STORED_VS_PUBLISHED.map(([stored]) => stored))].sort();
+  if (seeded.join(',') !== paired.join(',')) {
+    problems.push(
+      'STORED_VS_PUBLISHED does not cover the seeded limits.\n'
+      + `        seeded: ${seeded.join(', ')}\n`
+      + `        paired: ${paired.join(', ')}`
+    );
+  }
+  for (const [stored, published] of STORED_VS_PUBLISHED) {
+    if (!/^\d+$/.test(stored)) {
+      problems.push(`STORED_VS_PUBLISHED: the stored half ${JSON.stringify(stored)} is not digits-only, `
+        + 'so countWholeNumber would throw on it. The stored half is an integer; the published half is '
+        + 'where a separator belongs.');
+    }
+  }
   return problems;
 }
 
@@ -302,11 +338,73 @@ async function readPage() {
   const spaced = count(a, 'Message Text :');
   console.log(`   spaced variant "Message Text :": ${spaced}x  (expect 0 — a non-zero here means the colon moved outside the bold)`);
 
-  // The stored numbers, as a floor rather than a census — a short number turns up
-  // in dates and pixel sizes, so this is weak evidence on its own. It is here to
-  // catch the strong case: a row watching a page that carries none of them.
-  for (const n of ['255', '8,000', '25']) {
-    console.log(`   stored value ${n}: ${countWholeNumber(a, n)}x in the hashed text`);
+  // ─── A STORED INTEGER AND A PUBLISHED NUMBER ARE DIFFERENT STRINGS ──────
+  // MEASURED IN THE RAILWAY CONSOLE 2026-08-29, and the measurement is why this
+  // block asks twice rather than once.
+  //
+  // This page writes its four-digit limits with a thousands separator —
+  // "Message Text: 8,000 characters maximum" — and normalize() keeps the comma.
+  // countWholeNumber tokenises the text with /\d+/g, so "8,000" yields the runs
+  // "8" and "000": there is no 8000 run, and A BARE 8000 OCCURS NOWHERE IN THE
+  // HASHED TEXT. The separators also manufacture runs LinkedIn never published —
+  // "8", "20", "2" and "000" are all tokens now.
+  //
+  // So neither counter alone can answer the question:
+  //     countWholeNumber(text, '8000')  -> 0, SILENTLY.  the stored form
+  //     count(text, '8,000')            -> 1.            the published form
+  // The first version of this loop passed '8,000' into countWholeNumber, whose
+  // header says outright that it takes a digits-only value, and it threw. That
+  // was the helper working: it refuses rather than answering 0, because "a value
+  // check that quietly counts nothing is the failure this whole module is
+  // about". The throw is the only reason any of this surfaced.
+  //
+  // 8000 IS THE FIRST STORED LIMIT IN THE LIBRARY ABOVE 800. Every other value
+  // in the seed is three digits or fewer and no publisher writes those with a
+  // separator, which is why nine other callers of wholeNumber.js have never met
+  // one. Nothing is wrong with the helper. The caller was handing it the wrong
+  // half of a pair it did not know was a pair.
+  //
+  // NO try/catch AND NO PRE-FILTER, deliberately. Either would let this block
+  // report success while checking nothing, and would skip precisely the
+  // four-digit values most likely to be written differently from how they are
+  // stored. The throw is not suppressed here — it is UNREACHABLE, because every
+  // value reaching countWholeNumber is now a stored integer, digits-only by
+  // construction and asserted so in checkSeedAgreement.
+  //
+  // WHAT I LEFT, AND IT IS A REAL RESIDUAL: an advisory print still sits where a
+  // throw would abort a run it has no authority over. Removing that means
+  // restructuring readPage so diagnostics cannot be fatal, which is a change to
+  // the shape this file shares with four sibling migrations — not this fix's to
+  // make. If a future value reintroduces a throw here, it will again take down a
+  // run whose real gates have already passed.
+  //
+  // STILL ADVISORY, AND STILL A FLOOR RATHER THAN A CENSUS. A short number turns
+  // up in dates and pixel sizes, so a hit proves little on its own. It prints and
+  // gates nothing; the five quoted sentences and the anchor above are the gates,
+  // and both are strictly stronger than this. It is here to catch one thing: a
+  // row watching a page that carries no form of any number it is cited for.
+  //
+  // READ THE TWO COLUMNS DIFFERENTLY — the substring one OVER-COUNTS BY DESIGN.
+  // `count` is a plain substring, so 25 scores a hit inside "255" and this asset
+  // carries both: on the quoted sentences alone the published column reads 25 -> 2x
+  // where the digit-run column reads 1x. That gap is the exact defect
+  // wholeNumber.js was written to remove, kept here on purpose because the two
+  // counters sit side by side and the exact one is the check — the substring
+  // column exists ONLY to catch a number the digit-run column cannot see because
+  // a separator split it. Where they disagree, believe the digit run; where the
+  // digit run is 0 and the substring is not, read the verdict.
+  for (const [stored, published] of STORED_VS_PUBLISHED) {
+    const asStored = countWholeNumber(a, stored);        // digit-run, exact
+    const asPublished = count(a, published);             // substring, as printed
+    const verdict = asStored > 0 && asPublished > 0 ? 'both forms'
+      : asStored > 0 ? 'stored form only'
+        : asPublished > 0 ? `PUBLISHED FORM ONLY — this page writes it ${JSON.stringify(published)}`
+          : 'NEITHER FORM — this page carries no version of this number';
+    console.log(
+      `   stored ${String(stored).padStart(5)}  digit-run ${String(asStored).padStart(2)}x` +
+      `   published ${JSON.stringify(published).padEnd(8)} substring ${String(asPublished).padStart(2)}x` +
+      `   -> ${verdict}`
+    );
   }
   return { ok: true };
 }

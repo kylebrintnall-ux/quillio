@@ -249,6 +249,73 @@ const MATCH_CASES = [
       },
     ],
   },
+  {
+    id: 'conversation-ad-named',
+    brief:
+      'We are opening the Copilot beta to our enterprise list. We need a LinkedIn conversation ad '
+      + 'that asks whether they are writing briefs by hand today, and a nurture email for anyone who '
+      + 'clicks through.',
+    why: 'THE NO-HINT CLAIM, AND THIS IS THE CASE THAT TESTS IT. LinkedIn Conversation Ad has no '
+      + 'ASSET_PHRASE_HINTS entry, deliberately — the argument is that it does not need one, because '
+      + 'the name already ships in the allowed list under "INTERPRET INTENT SEMANTICALLY … treat '
+      + 'obvious variants, plurals, and casing the same way". That argument is UNMEASURED. If this '
+      + 'case lands, the no-hint decision has evidence rather than reasoning behind it. If it does '
+      + 'not, the decision is wrong and wants revisiting.',
+    probes: [
+      {
+        phrase: 'a LinkedIn conversation ad',
+        right: ['LinkedIn Conversation Ad'],
+        wrong: ['LinkedIn Single Image Ad', 'LinkedIn Carousel Ad', 'Organic Social — LinkedIn'],
+        note: 'the word "conversation" belongs to no other asset in the library. The three wrong '
+          + 'answers are the pull of the bare-platform hint: "linkedin ad" or "linkedin" is declared '
+          + 'to mean Single Image Ad, and this brief says "LinkedIn" too.',
+      },
+      {
+        phrase: 'a nurture email',
+        right: ['Demand Gen Nurture Email'],
+        wrong: ['Event Invitation Email', 'Event Reminder Email'],
+        note: 'the literal phrase in the table. Here as a control: if this one misses too, the '
+          + 'problem is the brief or the run, not the conversation-ad route.',
+      },
+    ],
+  },
+  {
+    id: 'sponsored-messaging-umbrella',
+    brief:
+      'We want to run sponsored messaging to the enterprise list this quarter, pointing at the '
+      + 'Copilot beta, plus a landing page for people who click through.',
+    why: 'THE GUARD RAIL, AND A MATCH HERE IS THE FAILURE — READ THIS BEFORE READING THE ROW.\n'
+      + '       "Sponsored Messaging" is LinkedIn\'s UMBRELLA for TWO formats: Conversation Ads, which '
+      + 'this library has, and Message Ads, which it does not. The phrase therefore names something '
+      + 'Quillio can only half build, and the only correct answer is a REFUSAL — the phrase in '
+      + 'unmatchedAssets, in front of a human who can ask which one was meant.\n'
+      + '       So `right` is deliberately EMPTY and LinkedIn Conversation Ad is listed under `wrong`. '
+      + 'That is not a mistake and it is not a claim that Conversation Ad is a bad asset. It is the '
+      + 'landing-page defect stated as a test: a generic phrase silently taking one specialisation, '
+      + 'with nothing downstream able to notice, because a WRONG match is not an UNMATCHED one and '
+      + 'unmatchedAssets only ever holds the latter. A green row here means the refusal fired. A row '
+      + 'reading "1 x LinkedIn Conversation Ad" means the defect recurred.\n'
+      + '       If Message Ads are ever added to the library this case must be rewritten, not deleted: '
+      + 'the phrase would then have two real targets and become a which-one question, which is the '
+      + 'shape the landing pages solved with an ordering and a required signal.',
+    probes: [
+      {
+        phrase: 'sponsored messaging',
+        right: [],
+        wrong: ['LinkedIn Conversation Ad', 'LinkedIn Single Image Ad', 'LinkedIn Carousel Ad',
+          'Organic Social — LinkedIn', 'Demand Gen Nurture Email'],
+        note: 'must land in unmatchedAssets. Conversation Ad is HALF of what this phrase names, which '
+          + 'is why matching it is wrong rather than close — the writer may have meant Message Ads, '
+          + 'and nothing downstream would ever say so.',
+      },
+      {
+        phrase: 'a landing page',
+        right: ['Campaign Landing Page'],
+        wrong: ['Event Landing Page'],
+        note: 'the control, and the same probe as ambiguous-landing. Nothing here is an event.',
+      },
+    ],
+  },
 ];
 
 function render(plan) {

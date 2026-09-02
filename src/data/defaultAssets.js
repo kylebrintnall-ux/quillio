@@ -681,7 +681,46 @@ const DIRECTIONS = {
   'LinkedIn Conversation Ad':
     'Written for the inbox, not the feed. It should read like a message from one person to another — short, one idea, ending in a question the buttons answer. Options are the reader’s voice; CTAs are yours. Riff for more options rather than seeding empty slots.',
   'Meta Single Image Ad': 'Lead with the insight or tension. Stop the scroll in the first line.',
-  'Meta Carousel Ad': 'Each card standalone. Swipe tells a story. Last card closes.',
+  // NO CARD COUNT HERE, AND THE REASON IS NOT THE ONE ABOVE. The LinkedIn line
+  // omits a number this repo can quote. This line omits a number this repo DOES
+  // NOT HAVE. Those are different states, and a later reader has to be able to
+  // tell them apart, because only one of them is closed.
+  //
+  // NOTHING IN THE TREE STATES A META CARD COUNT. Grepped 2026-09-02 across
+  // every .js, .md and .json: the only "2-10" belongs to LinkedIn, quoted in
+  // scripts/migrateAddLinkedInCarouselWatch.js:31 and repeated at the LinkedIn
+  // entry above. Every Meta hit is a character limit, a Figma frame size or a
+  // watch anchor. scripts/migrateFixMetaSpecs.js:64 records the OPPOSITE of a
+  // cardinality — "Meta states one entry, 'Headline: 20 characters', with no
+  // cardinality" — which is why that migration reads the headline as per-card
+  // by construction rather than by count. So "10 cards" is prose in a handoff
+  // note and nowhere else in this repository.
+  //
+  // NOT SOURCED, RATHER THAN OMITTED BY POLICY, and the distinction is the
+  // point of this paragraph. A web search returns third-party sources agreeing
+  // on 2-10, consistently. None of them is Meta and none of them is in the
+  // tree, so under the fetch rule they are not evidence: nobody here has read
+  // the number off Meta's own page. If somebody does, that is a new fact and
+  // this comment is wrong from that moment — which is what makes it worth
+  // dating.
+  //
+  // THE CHANNEL COULD NOT CARRY IT EVEN IF IT HAD BEEN SOURCED. asset_types has
+  // no spec_source, no spec_type, no spec_verified_at and no spec_version, and
+  // nothing joins a watch flag to a direction line — LiveSpecs gates and writes
+  // by (asset, field) pairs in copy_fields and cannot reach this string. The
+  // two reasons are independent: sourcing the number would not make this the
+  // place to put it, and the field list would still be where it belongs.
+  //
+  // THE TRAP, AND IT IS SPECIFIC TO THIS ASSET. Organic Instagram carousels
+  // expanded to 20 slides in 2024; AD carousels did not move. A reader who
+  // finds 20 somewhere and "corrects" this line would be wiring an ORGANIC
+  // limit onto a PAID asset — the same shape as the CJK sentence the
+  // Performance Max comment below guards against, where the rule is real and
+  // belongs to something else. Do not add a number here on finding one.
+  // Establish first whether it is the ad limit, and then it belongs in the
+  // field list, cited.
+  'Meta Carousel Ad':
+    'Each card standalone. Swipe tells a story. Last card closes. Riff for more cards rather than seeding empty slots.',
   'Twitter/X Ad': 'Punchy. Opinionated. One idea, no hedging.',
   // THE THREE ENTRIES BELOW CARRY HOUSE GUIDANCE THAT USED TO SIT IN
   // asset_types.spec_note — a column written by the seed and by migrations,

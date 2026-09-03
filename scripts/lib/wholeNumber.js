@@ -56,6 +56,104 @@
 // was — the neighbouring "N of those sit within 80 chars of the word
 // 'character'" line in probeSpecPage is the tool for that, not this.
 //
+// ─── THE SECOND MEASUREMENT: A GROUPED NUMBER IS NOT ONE RUN ────────────────
+// MEASURED IN THE RAILWAY CONSOLE 2026-08-29, on the LinkedIn Conversation Ads
+// specs page, and it is the same species as the Pinterest defect arriving from
+// the opposite side.
+//
+// That page publishes "Message Text: 8,000 characters maximum", and normalize()
+// keeps the comma — it strips tags and decodes nothing. Tokenising the hashed
+// text with /\d+/g therefore returned ZERO occurrences of 8000: the comma splits
+// the number into the runs "8" and "000", and A BARE 8000 OCCURS NOWHERE ON THE
+// PAGE. checkSpecHealth printed
+//
+//     numbers   25 ok · 255 ok · 8000 MISSING
+//
+// every run, about a page that plainly states the limit.
+//
+// THE MISSING WORD IS THE COSMETIC HALF. The half that decides this rule is that
+// the separators MANUFACTURE RUNS THE PAGE NEVER PUBLISHED. The same page carries
+// "Custom Footer: 20,000 characters maximum" and "URL characters: 2,000
+// characters maximum", so the tokens "8", "20", "2" and "000" are all in the
+// stream — and 20 is a real stored limit elsewhere in the library (Meta carousel
+// card description). A row watching a WRONG page that happens to carry any
+// "…,000" scores "20 ok" off half of a number, and checkSpecHealth's
+// `hits.length === 0` red — the wrong-page alarm — is suppressed by it.
+//
+// That is the alarm getting QUIETER on a wrong page, which is the one direction
+// the paragraph above says this rule must never err toward. It is the Meta-index
+// defect with a comma for a mechanism.
+//
+// WHY IT TOOK THIS LONG TO MEET ONE: 8000 IS THE FIRST STORED LIMIT IN THE
+// LIBRARY ABOVE 800. Every other value in the seed is three digits or fewer, and
+// no publisher writes those with a thousands separator, so twelve callers have
+// passed three-digit values against real page text and could not have hit it.
+//
+// ─── SO THE TEXT IS UN-GROUPED BEFORE TOKENISING ────────────────────────────
+// The TEXT side only. assertDigits is untouched: a value carrying a separator is
+// still a caller bug and still throws, which is the only reason any of this
+// surfaced — see scripts/migrateAddLinkedInConversationAd.js, whose first version
+// passed '8,000' in here and got the refusal rather than a silent 0.
+//
+// A NAIVE REGEX GETS THIS WRONG, and the case is on real repo data. A rule of the
+// shape /(\d)[,](\d{3})\b/ rewrites "20,30,280" to "20,30280" and the runs 30 and
+// 280 vanish — a RIGHT page reading WRONG. That exact string occurs at
+// scripts/migrateAddXSpotlightAndLive.js:340, in a --cited= argument this repo
+// prints for a human to paste.
+//
+// So the rule works on the MAXIMAL comma-joined run and strips only when the run
+// is shaped like grouping all the way through: the first group is one to three
+// digits and EVERY group after it is exactly three.
+//
+//   "8,000"        → "8000"      stripped   the case this exists for
+//   "1,234,567"    → "1234567"   stripped
+//   "20,000"       → "20000"     stripped   and the phantom "20" is gone
+//   "20,30,280"    → unchanged              30 is not three digits
+//   "18,000"       → "18000"     stripped   and 8000 still does NOT match it,
+//                                             so the substring defect this module
+//                                             was written to remove cannot return
+//                                             through the new path
+//   "1,5"          → unchanged              a decimal comma is not grouping
+//
+// "100,800" IS GENUINELY AMBIGUOUS — a grouped hundred thousand, or two limits in
+// a list written without a space — and the rule STRIPS IT. Two reasons, and the
+// second is the one that decides it:
+//
+//   1. Publishers write a list with a space ("100, 800"), which does not match the
+//      pattern at all, and write a grouped thousand without one. The no-space list
+//      is the rarer shape.
+//   2. The two errors are not symmetric, which is this file's standing rule. If
+//      "100,800" really was a list, stripping it loses the runs 100 and 800 and
+//      the check reports MISSING on a page that is fine — a false alarm on a good
+//      page, which is survivable noise. If it really was a grouped number and we
+//      left it, the phantom "100" and "800" both stay in the stream and can
+//      satisfy a cited limit on a wrong page — which is the silence this whole
+//      change is closing. The ambiguity is resolved toward the loud failure.
+//
+// THE MERGED RUN IS NOT A MANUFACTURED NUMBER. Stripping only ever produces the
+// value the page actually published; it never invents a smaller one. So the
+// rewrite is monotone in the safe direction — it removes false halves and
+// restores true wholes — with the one exception argued above.
+//
+// SCOPE IS THE COMMA, DELIBERATELY, AND THIS IS NOT AN OVERSIGHT. The other
+// grouping separators fail in exactly the same silent way and are NOT handled:
+//
+//   "8.000"     period          de, es, it, pt-BR
+//   "8 000"     thin / narrow no-break space, and U+00A0 — all collapse to a
+//               plain space in normalize()'s /\s+/ pass, so they reach here as
+//               "8 000"
+//   "8&nbsp;000"  the literal entity — normalize() decodes nothing
+//   "8'000"     apostrophe       de-CH
+//
+// NO WATCHED PAGE IS KNOWN TO USE ANY OF THEM. Every spec page on the list today
+// is English-language, and the only separator quoted verbatim in any migration
+// header is the comma on the LinkedIn Conversation Ads page. That is a statement
+// about what has been READ, not about what the pages contain — this repo has no
+// egress to those hosts, so a grouped number outside a quoted sentence would not
+// be recorded anywhere. If one of these forms ever turns up, it fails silently
+// and identically, and the fix is another clause here rather than a new rule
+// somewhere else.
+//
 // ─── NOT A REPLACEMENT FOR count() ──────────────────────────────────────────
 // The `count(hay, needle)` helper in these scripts also counts QUOTED SENTENCES
 // and ANCHOR STRINGS, where substring matching is exactly right. Only the
@@ -74,10 +172,34 @@ function assertDigits(value) {
   return s;
 }
 
+// A maximal comma-joined run of digit groups. Maximal because the global scan is
+// greedy: "20,30,280" is ONE match rather than three overlapping pairs, which is
+// what lets the shape test below see the whole list before deciding.
+const COMMA_JOINED_RUN = /\d+(?:,\d+)+/g;
+
+// Undo thousands grouping in PAGE TEXT so a grouped number tokenises as one run.
+// See "SO THE TEXT IS UN-GROUPED BEFORE TOKENISING" above for the shape test, the
+// "20,30,280" case that rules out the naive regex, how "100,800" is resolved, and
+// why the scope is the comma alone.
+function ungroupThousands(text) {
+  return String(text).replace(COMMA_JOINED_RUN, (run) => {
+    const parts = run.split(',');
+    // A grouped number's leading group is one to three digits; anything longer is
+    // not grouping, so the run is left exactly as the page wrote it.
+    if (parts[0].length > 3) return run;
+    for (let i = 1; i < parts.length; i += 1) {
+      // ONE non-triple anywhere and the whole run is a list, not a number. This
+      // is the clause that keeps "20,30,280" intact.
+      if (parts[i].length !== 3) return run;
+    }
+    return parts.join('');
+  });
+}
+
 // How many times `value` occurs in `text` as a whole number.
 function countWholeNumber(text, value) {
   const want = assertDigits(value);
-  const runs = String(text == null ? '' : text).match(/\d+/g);
+  const runs = ungroupThousands(String(text == null ? '' : text)).match(/\d+/g);
   if (!runs) return 0;
   let n = 0;
   for (const run of runs) if (run === want) n += 1;

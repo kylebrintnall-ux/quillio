@@ -6399,6 +6399,82 @@ test('a stored value is counted as a WHOLE NUMBER, not as a digit substring', ()
   assert.strictEqual(countWholeNumber('1080x1920', '1920'), 1);
   assert.strictEqual(countWholeNumber('1080x1920', '108'), 0, 'but not a prefix of one');
 
+  // ─── THOUSANDS GROUPING ───────────────────────────────────────────────────
+  // THE REAL SENTENCE, from the LinkedIn Conversation Ads specs page, quoted here
+  // as the source of the number rather than asserted bare:
+  //
+  //     "Message Text: 8,000 characters maximum"
+  //
+  // normalize() strips tags and decodes nothing, so the comma reaches the hashed
+  // text. Before this rule, /\d+/g split it into the runs "8" and "000", a bare
+  // 8000 occurred NOWHERE on the page, and checkSpecHealth printed
+  // "8000 MISSING" every run about a page that plainly states the limit.
+  assert.strictEqual(countWholeNumber('Message Text: 8,000 characters maximum', '8000'), 1,
+    'a grouped thousand is the number it is written as');
+  assert.strictEqual(hasWholeNumber('Custom Footer: 20,000 characters maximum', '20000'), true);
+  assert.strictEqual(countWholeNumber('1,234,567 things', '1234567'), 1, 'and it groups all the way up');
+
+  // THE HAZARD BEING CLOSED, AND IT IS THE REASON FOR THE CHANGE — not the
+  // missing word above, which is cosmetic.
+  //
+  // The separators MANUFACTURE runs the page never published. The same page
+  // carries "20,000" and "2,000", so "20", "2" and "000" were all in the token
+  // stream — and 20 is a real stored limit elsewhere in the library (Meta
+  // carousel card description). A row watching a WRONG page carrying any "…,000"
+  // scored "20 ok" off half of a number, which suppresses checkSpecHealth's
+  // `hits.length === 0` red. That is the wrong-page alarm going QUIET, which is
+  // the one direction scripts/lib/wholeNumber.js says the rule must never err in.
+  assert.strictEqual(countWholeNumber('Custom Footer: 20,000 characters maximum', '20'), 0,
+    'the phantom 20 inside 20,000 is gone — this is the alarm this change restores');
+  assert.strictEqual(countWholeNumber('URL characters: 2,000 characters maximum', '2'), 0);
+  assert.strictEqual(countWholeNumber('20,000 and 2,000', '000'), 0, 'and so is the phantom 000');
+
+  // THE ASSERTION THAT WOULD FAIL A NAIVE REWRITE. Labelled so, because it is the
+  // whole reason the rule tests the maximal comma-joined run instead of matching
+  // /(\d)[,](\d{3})\b/ pairwise: that regex turns "20,30,280" into "20,30280" and
+  // the runs 30 and 280 disappear — a RIGHT page reading WRONG.
+  //
+  // The string is not synthetic. It occurs at
+  // scripts/migrateAddXSpotlightAndLive.js:340, in a --cited= argument this repo
+  // prints for a human to paste, and 20/30/280 are all stored X limits.
+  assert.strictEqual(countWholeNumber('--cited=20,30,280', '20'), 1, 'a comma-joined LIST is not a grouped number');
+  assert.strictEqual(countWholeNumber('--cited=20,30,280', '30'), 1);
+  assert.strictEqual(countWholeNumber('--cited=20,30,280', '280'), 1);
+  assert.strictEqual(countWholeNumber('--cited=20,30,280', '2030280'), 0, 'and nothing merged them');
+  assert.strictEqual(countWholeNumber('1,5 metres', '1'), 1, 'nor is a decimal comma');
+  assert.strictEqual(countWholeNumber('1,5 metres', '15'), 0);
+
+  // THE SUBSTRING DEFECT MUST NOT RETURN THROUGH THE NEW PATH. Ungrouping happens
+  // before tokenising, and the comparison after it is still exact, so "18,000"
+  // becomes the single run 18000 and a cited 8000 does not match it. A
+  // separator-aware SUBSTRING search — the other way this could have been
+  // written — would have found "8,000" inside "18,000" and answered yes.
+  assert.strictEqual(countWholeNumber('Limit: 18,000 characters', '8000'), 0,
+    '18,000 is not an occurrence of 8000 — the original defect, one path over');
+  assert.strictEqual(countWholeNumber('Limit: 18,000 characters', '18000'), 1);
+
+  // "100,800" IS AMBIGUOUS AND IS RESOLVED AS A GROUPED NUMBER. Pinned so the
+  // choice is visible rather than incidental. If it really was a two-item list,
+  // this loses the runs 100 and 800 and the check reports MISSING on a page that
+  // is fine — a false alarm on a good page, which this file's standing rule calls
+  // survivable. Leaving it unstripped would keep two phantom runs that can
+  // satisfy a cited limit on a WRONG page, which is the silence being closed.
+  assert.strictEqual(countWholeNumber('100,800', '100800'), 1, 'resolved toward grouping');
+  assert.strictEqual(countWholeNumber('100,800', '800'), 0, 'and the loud failure is the accepted cost');
+  assert.strictEqual(countWholeNumber('Sizes: 100, 800 pixels', '800'), 1,
+    'a list written the normal way — with a space — never matches the pattern at all');
+
+  // OUT OF SCOPE, RECORDED AS NON-MATCHES so the next reader knows the comma-only
+  // scope was CHOSEN rather than overlooked. Every one of these fails silently and
+  // identically; no watched page is known to use one, and this repo has no egress
+  // to check. See the SCOPE note in scripts/lib/wholeNumber.js.
+  assert.strictEqual(countWholeNumber('8.000 characters', '8000'), 0, 'period separator: not handled');
+  assert.strictEqual(countWholeNumber('8 000 characters', '8000'), 0,
+    'space separator: not handled — normalize() collapses thin space and U+00A0 to this');
+  assert.strictEqual(countWholeNumber('8&nbsp;000 characters', '8000'), 0,
+    'the literal entity: not handled — normalize() decodes nothing');
+  assert.strictEqual(countWholeNumber("8'000 characters", '8000'), 0, 'apostrophe separator: not handled');
+
   // Repeats are counted, not merely detected — the call sites print a count.
   assert.strictEqual(countWholeNumber('45 45 145 450 45', '45'), 3);
 

@@ -160,9 +160,9 @@
 //   • MEASURED, and this is the strongest evidence for the rule because it is
 //     an OBSERVATION rather than an argument. The `--discover` run reports the
 //     value 30 occurring EIGHT TIMES on this page — and one of those eight is
-//     inside the article id 73067 in the footer ("730 67" → the substring "30"
-//     falls across it). That hit is page furniture. It is not a spec, it is not
-//     in any table, and it would move if Google renumbered an article.
+//     inside the Help Center build number 73067 in the footer ("730 67" → the
+//     substring "30" falls across it). That hit is page furniture. It is not a
+//     spec, it is not in any table, and it moves on every Help Center deploy.
 //
 //     Two things follow, and both are load-bearing:
 //
@@ -170,10 +170,44 @@
 //           same shape as `count()`, so it cannot tell "the limit 30" from "the
 //           digits 3 and 0 inside an unrelated number". Any digit-bearing
 //           candidate inherits that ambiguity.
-//       (b) 73067 is FIVE digits, so PER_REQUEST_TOKEN (12+) does not remove it
-//           — CLAUDE.md names this exact run as the stable five-digit sequence
-//           the zwieback strip must not eat. It is in the hashed text and will
-//           stay there.
+//       (b) 73067 is FIVE digits, so PER_REQUEST_TOKEN (12+) does not remove it.
+//           src/services/specDetector.js carries that reasoning and is where to
+//           read it: the run survives BY CONSTRUCTION — five digits is seven
+//           clear of a twelve-digit threshold — rather than because it holds
+//           still. It is in the hashed text, and its VALUE moves while it is
+//           there.
+//
+//           THIS CLAUSE USED TO READ "CLAUDE.md names this exact run as the
+//           stable five-digit sequence the zwieback strip must not eat. It is in
+//           the hashed text and will stay there." Quoted rather than deleted,
+//           because all three of its errors are worth recognising again:
+//
+//             · THE ATTRIBUTION WAS TO A FILE THAT NEVER CARRIED IT. CLAUDE.md
+//               has never contained 73067 — not in any commit, checked with
+//               `git log --all -S`. The claim lived in specDetector.js the whole
+//               time. A reader chasing it finds nothing and cannot tell whether
+//               the comment or their own grep is wrong, which is worse than the
+//               staleness underneath it.
+//             · IT IS NOT STABLE. Measured 2026-09-02: all four Google watch
+//               rows flagged in a single run and CONFIRMED on refetch, each
+//               moving by exactly six normalized characters (5,059→5,065,
+//               8,828→8,834, 8,611→8,617, 18,144→18,150), with every anchor
+//               still holding and every cited number still reading ok.
+//             · "WILL STAY THERE" is true of the RUN and false of its VALUE,
+//               which is the sense a reader takes from it.
+//
+//           And it is not an article id, which is what the bullet above called
+//           it: 73067 is byte-identical across all four Google pages, which an
+//           article id could not be, and THIS page's own answer id is 17090561.
+//           It is a Help Center build number in shared chrome, moving per DEPLOY
+//           rather than per request — which is why two fetches seconds apart
+//           agree and these rows CONFIRM instead of reporting `unconfirmed`.
+//
+//           THE CONCLUSION IS UNCHANGED, AND THE CORRECTION STRENGTHENS IT. A
+//           digit run that MOVES, sitting in the footer of every Google page on
+//           the watch list, is a worse thing to have inside an anchor than a
+//           fixed one — not a better. Digit-free was right for a weaker reason
+//           than the one that now applies.
 //
 //     So on this page a numeric anchor is not merely risky in principle; there
 //     is a concrete, currently-present digit run that a stored-limit test reads

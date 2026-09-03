@@ -184,9 +184,21 @@
 // Description (LAN only) 70 care about.
 //
 // This is the concrete case for the digit-free precondition on this page, and it
-// is stronger than the Google display page's equivalent (the article id 73067,
-// which was page furniture): 255 is a real published number sitting inside the
-// watched table, one row above the limits being watched.
+// is stronger than the Google display page's equivalent (73067, which is page
+// furniture): 255 is a real published number sitting inside the watched table,
+// one row above the limits being watched.
+//
+// 73067 WAS DESCRIBED HERE AS "THE ARTICLE ID". It is not one — it is a Help
+// Center BUILD NUMBER in shared chrome, byte-identical across all four Google
+// pages, which an article id could not be, and the display page's own answer id
+// is 17090561. Page furniture was and is the right description; the identifier
+// was wrong. src/services/specDetector.js carries the reasoning and the
+// 2026-09-02 measurement showing the value moves per Help Center deploy.
+//
+// That does not weaken the comparison above, which is about a number sitting
+// INSIDE a watched table versus one sitting in a footer. If anything it sharpens
+// the other half: the Google run moves, so an anchor holding it would be worse
+// than a fixed digit, not better.
 //
 // TO FILL IT IN — this is the whole workflow, and step 1 is a real step:
 //

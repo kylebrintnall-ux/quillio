@@ -6145,7 +6145,7 @@ test('every seeded asset name matches a mediumKeywordsForAsset branch', () => {
   // test can be green on a real decision rather than green on an empty set — if
   // it becomes the place new assets go to avoid the check, it has inverted into
   // the silence it was written to break. A new asset belongs in a branch.
-  const NO_SECTION_YET = new Set([
+  const FALLBACK_BY_DECISION = new Set([
     'Event Landing Page',
     'Campaign Landing Page',
     'One-Pager',
@@ -6155,7 +6155,7 @@ test('every seeded asset name matches a mediumKeywordsForAsset branch', () => {
   const unmatched = DEFAULT_ASSETS
     .map((a) => a.name)
     .filter((n) => mediumKeywordsForAsset(n) === null)
-    .filter((n) => !NO_SECTION_YET.has(n));
+    .filter((n) => !FALLBACK_BY_DECISION.has(n));
 
   assert.deepStrictEqual(
     unmatched,
@@ -6165,7 +6165,7 @@ test('every seeded asset name matches a mediumKeywordsForAsset branch', () => {
     'Confirmation and the rest — is being injected into their drafting prompts:\n' +
     unmatched.map((n) => `  - ${n}`).join('\n') +
     '\n\nAdd a branch in src/services/gemini.js mediumKeywordsForAsset, or — only if ' +
-    'craft.md genuinely has no section describing this asset — add it to NO_SECTION_YET ' +
+    'craft.md genuinely has no section describing this asset — add it to FALLBACK_BY_DECISION ' +
     'above with the reason.'
   );
 

@@ -1728,7 +1728,7 @@ surprise.** `buildCraftContext` length, every seeded asset, before and after:
 
 The other **28 are byte-identical**. The four fallback assets are the ones a
 reader would miss: they match no branch by a recorded decision (the
-`NO_SECTION_YET` allowlist in `test/smoke.test.js`, which is honest about it
+`FALLBACK_BY_DECISION` allowlist in `test/smoke.test.js`, which is honest about it
 where the prose here previously implied every seeded asset reaches a branch), so
 they receive all eight medium sections — and were therefore being told to include
 a search keyword and write 15 headlines for a **battle card**. That is a
@@ -2148,7 +2148,7 @@ coverage).
 assets match no branch by a recorded decision — `Event Landing Page`, `Campaign
 Landing Page`, `One-Pager`, `Battle Card` — because `craft.md` has no section
 that describes them, so the eight-section fallback is the correct answer and may
-stay correct permanently. They are the `NO_SECTION_YET` set in the test, which
+stay correct permanently. They are the `FALLBACK_BY_DECISION` set in the test, which
 argues the case in full. Read without that, "every seeded asset name matches a
 branch" says the fallback is unreachable in production, and it is not: those four
 receive all eight medium sections, numbers and keyword instructions included.

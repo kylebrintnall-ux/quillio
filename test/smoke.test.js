@@ -19439,9 +19439,22 @@ test('normalize: script bodies and whitespace churn do not change the hash', () 
 // text is 5,079-5,080 chars and exactly one region varies, a 19-20 digit run at
 // ~4966 served as a hidden text node
 // (<div data-page-data-key="zwieback_id" style="display:none">…</div>). It put
-// the entry on `unconfirmed` for five weeks. The same page carries a STABLE
-// five-digit run (73067) that has to survive, and LinkedIn / X / the test page
-// carry no run this long at all.
+// the entry on `unconfirmed` for five weeks. The same page carries a FIVE-DIGIT
+// run (73067) that has to survive the twelve-digit threshold, and LinkedIn / X /
+// the test page carry no run this long at all.
+//
+// 73067 WAS DESCRIBED HERE AND IN specDetector.js AS "STABLE". IT IS NOT.
+// Measured 2026-09-02: all four Google watch rows flagged and confirmed on
+// refetch, each moving by exactly six normalized characters (5,059→5,065,
+// 8,828→8,834, 8,611→8,617, 18,144→18,150), with every anchor and every cited
+// number unaffected. It is a Help Center build number in shared chrome and it
+// moves per DEPLOY, not per request.
+//
+// The assertion below is unchanged by that and is still exactly right, because it
+// was never testing stability: a five-digit run is seven digits clear of a
+// twelve-digit threshold, so the strip cannot reach it whatever its value is.
+// That is what is being tested. See specDetector.js for the measurement and for
+// why the threshold stays at twelve.
 
 test('normalize: a per-request digit token is stripped, spec numbers survive', () => {
   const { normalize } = require('../src/services/specDetector');
@@ -19462,17 +19475,20 @@ test('normalize: a per-request digit token is stripped, spec numbers survive', (
     for (const keep of ['30', '90', '25', '150', '280', '600']) {
       assert.ok(out.includes(keep), `${keep} survives alongside a ${tok.length}-digit token`);
     }
-    // The stable five-digit run on the same page must NOT be collateral.
-    assert.ok(out.includes('73067'), 'the stable 5-digit run survives');
+    // The five-digit run on the same page must NOT be collateral. Its VALUE is
+    // incidental — what is asserted is that five digits is under the threshold.
+    assert.ok(out.includes('73067'), 'a 5-digit run survives the 12-digit threshold');
   }
 });
 
 test('normalize: "600 characters" is untouched', () => {
   const { normalize } = require('../src/services/specDetector');
   assert.strictEqual(normalize('<p>600 characters</p>'), '600 characters');
-  // The largest number the library holds anywhere, in the phrasing a spec page
-  // uses. If this ever fails, the threshold has been lowered into the range real
-  // limits occupy.
+  // A number in the range the library occupies, in the phrasing a spec page uses.
+  // If this ever fails, the threshold has been lowered into the range real limits
+  // occupy. (600 was the library's maximum when this was written; since LinkedIn
+  // Conversation Ad it is 8000 — four digits, still far under the threshold. The
+  // assertion is unaffected and stays as it is.)
   assert.strictEqual(normalize('<p>Up to 600 characters, 150 shown.</p>'), 'Up to 600 characters, 150 shown.');
 });
 

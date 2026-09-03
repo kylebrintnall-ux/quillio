@@ -104,23 +104,79 @@ function isObservedPractice(row) {
 // Responsive Display limits (30/90/90/25) are present and stable.
 //
 // THE THRESHOLD IS SET FROM THE LIBRARY'S RANGE, NOT FROM THE TOKEN'S LENGTH.
-// That distinction is the entire safety argument. Every character limit in
+// That distinction is the entire safety argument. Almost every character limit in
 // src/data/defaultAssets.js is two or three digits, and the largest number the
-// library holds anywhere — including spec_note prose — is 600. Twelve digits is
-// nine orders of magnitude clear of that, so this rule cannot consume a number
-// this system watches for. Sizing it off the observed token instead would make
-// the safety a coincidence rather than a property.
+// library holds anywhere — including spec_note prose — is 8000, on LinkedIn
+// Conversation Ad's Message Text and its three Option Response fields. Twelve
+// digits is eight orders of magnitude clear of that, so this rule cannot consume a
+// number this system watches for. Sizing it off the observed token instead would
+// make the safety a coincidence rather than a property.
+//
+// (This paragraph said 600 until August 2026, which was true when written and
+// stopped being true when that asset landed. The FIGURE moved and the ARGUMENT
+// did not — a four-digit maximum is still eight orders clear of twelve digits.
+// Corrected rather than deleted, because a premise that quietly ages is the thing
+// this file has now been wrong about twice; see the paragraph below for the other.)
 //
 // The observed token is 19-20 digits, so there are seven digits of headroom
 // above the threshold too. If Google ever shortens it below twelve, the answer
 // is an element-scoped strip — NOT a lower threshold, which would walk toward
 // the range real spec numbers live in.
 //
-// MEASURED NOT TO OVER-REACH, against production rather than by assertion. The
-// same Google page carries a STABLE five-digit run (73067) that has to survive,
-// and does. LinkedIn (24,568 chars), X (40,562) and the test page (82) contain
-// no run this long at all, so their normalized text — and therefore their stored
-// hash — is byte-identical after this change and none of them re-baselines.
+// THE FIVE-DIGIT RUN ON THE SAME PAGE SURVIVES BY CONSTRUCTION, NOT BY LUCK — AND
+// IT IS NOT STABLE. This paragraph used to read "the same Google page carries a
+// STABLE five-digit run (73067) that has to survive, and does", and offered that
+// as the measurement showing the rule does not over-reach. Half of it was right
+// and the half doing the work was false.
+//
+// RIGHT: five digits against a twelve-digit threshold is seven digits of
+// clearance, so the digit rule cannot touch that run whatever its value is. That
+// is a structural property, not an observation, and it needs no measurement.
+//
+// FALSE: it does not hold still. MEASURED 2026-09-02 — all four Google watch rows
+// flagged in a single run and CONFIRMED on refetch, normalized length each moving
+// by exactly six characters:
+//
+//     Google – responsive display     5,059 →  5,065
+//     Google – Performance Max        8,828 →  8,834
+//     Google – Demand Gen video       8,611 →  8,617
+//     Google – responsive search     18,144 → 18,150
+//
+// Four documents of four different lengths, six characters each. Every cited
+// number still read ok and every anchor still held. A console fetch of all four
+// showed an identical tail:
+//
+//     … Search Clear search Close search Google apps Main menu true Search Help
+//     Center true true true true true true 73067 false false true true false false
+//
+// So it is a HELP CENTER BUILD NUMBER in shared chrome — not an article id, which
+// is what it was taken for: the display page's own answer id is 17090561, and
+// 73067 is byte-identical across all four. It moves PER DEPLOY rather than per
+// request, which is why two fetches seconds apart agreed and the rows CONFIRMED
+// instead of reporting `unconfirmed`. That is the opposite failure shape from the
+// zwieback token this rule exists for, and it is why no amount of refetching
+// surfaces it.
+//
+// THE CONCLUSION IS UNCHANGED AND THE THRESHOLD STAYS AT TWELVE. Per-deploy churn
+// is not what a digit-length rule prevents and never was. Reaching a five-digit
+// run means a five-digit threshold, one order of magnitude off the library's own
+// 8000 — precisely the "sizing it off the observed token" the paragraph above
+// refuses, and precisely what the element-scoped-strip note eleven lines up
+// already names as the right answer instead. That note still stands.
+//
+// AND IT IS AN OPEN QUESTION, recorded here because this is where it was found.
+// The two candidates are an element-scoped strip (code, global) and a per-row
+// content_stop_marker (data, scoped to the rows that need it, the shape
+// scripts/migrateAddContentStopMarker.js argues for). NEITHER IS DECIDED, and
+// nothing here should be read as a plan. As it stands, every Help Center deploy
+// flags all four Google rows at once — and four false flags per deploy is how a
+// review queue teaches its reader to stop reading it, which is the cost
+// source_kind exists to have avoided once already.
+//
+// STILL TRUE, AND STILL THE MEASUREMENT THAT SIZED THIS RULE: LinkedIn (24,568
+// chars), X (40,562) and the test page (82) contain no run of twelve digits at
+// all, so their normalized text — and therefore their stored hash — was
+// byte-identical after this change and none of them re-baselined.
 //
 // APPLIED AFTER THE TAG STRIP, DELIBERATELY, so it only ever sees visible text.
 // Run earlier it would reach inside attributes and script bodies, which is a

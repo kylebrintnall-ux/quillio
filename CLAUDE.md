@@ -213,12 +213,16 @@ src/
   data/
     defaultAssets.js Bundled default asset library, seeded per tenant on install.
 
-public/              Self-contained HTML pages (no frameworks, no external
-                     scripts). app.html, onboarding.html, settings.html,
-                     admin.html + fonts/, assets/ (GIFs, logos, images), and
+public/              Self-contained HTML pages (no frameworks, no third-party
+                     CDN scripts). app.html, onboarding.html, settings.html,
+                     admin.html + fonts/, assets/ (GIFs, logos, images, js/) and
                      partials/nav.html — the one copy of the app/settings nav,
                      spliced in by renderShell at a `__NAV:<section>__` token.
-                     Only fonts/ and assets/ are served statically.
+                     Only fonts/ and assets/ are served statically. app.html,
+                     settings.html and onboarding.html each load ONE external
+                     script — assets/js/bird-system.js, same-origin and
+                     first-party — the sole exception to "no external scripts";
+                     everything else stays inline.
 scripts/             One-off migrations, seeds, and query/debug utilities.
 test/smoke.test.js   The test suite (see "Running & checking").
 ```

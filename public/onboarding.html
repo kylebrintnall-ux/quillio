@@ -31,6 +31,26 @@
     }
     .sky-bg { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, #1E78BE 0%, #2FA8DC 35%, #3BBDE0 60%, #4DD9D9 100%); }
     .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+    /* Ground band for the bird system: mobile is a single centred tree, desktop
+       (>=768px, matching the app's own breakpoint below) is a mirrored pair
+       inset 16px. Both render at an integer pixel scale of the source art —
+       mobile 1x, desktop 2x — so the grass and tree pixel grids agree. */
+    .clouds-wrap::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+      height: 84px; image-rendering: pixelated;
+      background:
+        url('/assets/images/tree-right-solid.png?v=__BUILD__') bottom 0 center / 124px 84px no-repeat,
+        url('/assets/images/grass-tile-solid.png?v=__BUILD__') bottom left / 256px 44px repeat-x;
+    }
+    @media (min-width: 768px) {
+      .clouds-wrap::after {
+        height: 168px;
+        background:
+          url('/assets/images/tree-left-solid.png?v=__BUILD__')  bottom 0 left  16px / 248px 168px no-repeat,
+          url('/assets/images/tree-right-solid.png?v=__BUILD__') bottom 0 right 16px / 248px 168px no-repeat,
+          url('/assets/images/grass-tile-solid.png?v=__BUILD__') bottom left / 512px 88px repeat-x;
+      }
+    }
 
     /* Nav — dark glass, pixel-quill logo + StarCrush wordmark/links */
     nav {
@@ -801,52 +821,28 @@
       showStep(step >= 1 && step <= TOTAL_STEPS ? step : 1);
     })();
 
-    // --- Pixel clouds (v8 design system) -----------------------------------
+  </script>
+  <script>window.QUILLIO_BIRDS_MANUAL = true;</script>
+  <script src="/assets/js/bird-system.js?v=__BUILD__"></script>
+  <script>
+    // Scene reads a 'desktop' class off its frame element once, at construction,
+    // to pick tree width/height and perch points. Kept in sync with the CSS
+    // media query above (768px) — on load and across a live resize — so a
+    // perched bird's canopy math always matches what the ground band renders.
     (function () {
-      var cloudShapes = [
-        [[2,6,3,2],[3,4,5,3],[5,3,7,2],[9,2,5,2],[12,3,5,2],[14,4,4,3],[0,7,20,5],[1,6,18,2],[2,5,16,2],[0,10,20,3],[1,12,18,2],[2,13,14,1]],
-        [[3,5,4,2],[4,3,7,3],[7,2,5,2],[10,3,6,2],[1,6,18,5],[2,5,16,2],[0,8,20,4],[1,11,18,2],[2,12,15,1]],
-        [[1,5,3,2],[3,3,6,3],[7,2,7,2],[12,3,6,3],[15,4,3,2],[0,6,19,5],[1,5,17,2],[0,9,19,3],[1,11,17,1]],
-        [[2,4,4,2],[4,2,6,3],[8,1,5,2],[11,2,5,2],[1,5,14,4],[2,4,12,2],[0,7,15,3],[1,9,13,1]]
-      ];
-      var cloudConfigs = [
-        {shape:0,w:300,top:72, side:'right',offset:-20,anim:'driftL',dur:105,op:0.24},
-        {shape:1,w:220,top:190,side:'left', offset:-30,anim:'driftR',dur:135,op:0.20},
-        {shape:2,w:270,top:330,side:'right',offset:30, anim:'driftL',dur:165,op:0.18},
-        {shape:3,w:180,top:460,side:'left', offset:20, anim:'driftR',dur:98, op:0.15},
-        {shape:0,w:240,top:590,side:'right',offset:-10,anim:'driftL',dur:125,op:0.16},
-        {shape:1,w:250,top:710,side:'left', offset:-40,anim:'driftR',dur:150,op:0.14},
-        {shape:2,w:200,top:840,side:'right',offset:25, anim:'driftL',dur:115,op:0.17}
-      ];
-      var styleEl = document.createElement('style');
-      styleEl.textContent =
-        '@keyframes driftL { 0% { transform:translateX(0); } 100% { transform:translateX(-140vw); } }' +
-        '@keyframes driftR { 0% { transform:translateX(0); } 100% { transform:translateX(140vw); } }';
-      document.head.appendChild(styleEl);
-      function populateClouds(wrap) {
-        if (!wrap) return;
-        wrap.innerHTML = '';
-        cloudConfigs.forEach(function (c, i) {
-          var shape = cloudShapes[c.shape % cloudShapes.length];
-          var unit = Math.max(7, Math.floor(c.w / 22));
-          var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-          svg.setAttribute('viewBox', '0 0 ' + (22 * unit) + ' ' + (15 * unit));
-          svg.setAttribute('width', 22 * unit); svg.setAttribute('height', 15 * unit);
-          svg.style.cssText = 'position:absolute;image-rendering:pixelated;opacity:' + c.op + ';top:' + c.top + 'px;' +
-            (c.side === 'right' ? 'right:' + c.offset + 'px' : 'left:' + c.offset + 'px') +
-            ';animation:' + c.anim + ' ' + c.dur + 's linear ' + (i * -14) + 's infinite;';
-          shape.forEach(function (r) {
-            var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            rect.setAttribute('x', r[0] * unit); rect.setAttribute('y', r[1] * unit);
-            rect.setAttribute('width', r[2] * unit); rect.setAttribute('height', r[3] * unit);
-            rect.setAttribute('fill', r[1] >= 10 ? '#B8E4F8' : 'white');
-            rect.setAttribute('opacity', r[1] >= 10 ? '0.5' : '1');
-            svg.appendChild(rect);
-          });
-          wrap.appendChild(svg);
-        });
-      }
-      document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
+      var desktopMQ = window.matchMedia('(min-width: 768px)');
+      function syncDesktop(matches) { document.body.classList.toggle('desktop', matches); }
+      syncDesktop(desktopMQ.matches);
+      var birds = QuillioBirds.init({
+        frame: 'body',
+        assetBase: '/assets/gifs/',
+        skyLayer: '.clouds-wrap',
+        docIcon: '#screen-output .header-gif'
+      });
+      desktopMQ.addEventListener('change', function (e) {
+        syncDesktop(e.matches);
+        if (birds) birds.scenes.forEach(function (s) { s.desktop = e.matches; });
+      });
     })();
   </script>
 </body>

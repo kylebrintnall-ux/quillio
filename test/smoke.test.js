@@ -469,10 +469,14 @@ test('public/onboarding.html has all six steps and talks to the onboarding API',
   assert.ok(/\/oauth\/google\?redirect=onboarding/.test(html), 'Step 1 signs in with Google');
   assert.ok(/\/api\/onboarding\/voice/.test(html), 'voice step posts to the API');
   // v8 design system: StarCrush via @font-face + Zen Kaku Gothic New from Google
-  // Fonts (matches app.html / settings.html). Scripts must still all be inline.
+  // Fonts (matches app.html / settings.html).
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
   assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
-  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+  // Bird system, added on top of v8: one deliberate external script, same-origin
+  // and first-party (served from the existing /assets static mount) — not a
+  // framework or CDN. Anything else with a src= would be one re-entering.
+  const onboardingScriptSrcs = [...html.matchAll(/<script\s+[^>]*src=["']([^"']+)["']/gi)].map((m) => m[1]);
+  assert.deepStrictEqual(onboardingScriptSrcs, ['/assets/js/bird-system.js?v=__BUILD__'], 'only bird-system.js is an external script');
 });
 
 // --- Week 12: settings page ---
@@ -522,7 +526,11 @@ test('public/settings.html has the three sections, terminal styling, and setting
   assert.ok(/\/api\/settings\/voice/.test(html), 'talks to the voice API');
   assert.ok(/\/api\/auth\/signout/.test(html), 'wires sign out');
   assert.ok(/\/oauth\/google\?redirect=settings/.test(html), 'reconnect Google returns to settings');
-  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+  // Bird system, added on top of v8: one deliberate external script, same-origin
+  // and first-party (served from the existing /assets static mount) — not a
+  // framework or CDN. Anything else with a src= would be one re-entering.
+  const settingsScriptSrcs = [...html.matchAll(/<script\s+[^>]*src=["']([^"']+)["']/gi)].map((m) => m[1]);
+  assert.deepStrictEqual(settingsScriptSrcs, ['/assets/js/bird-system.js?v=__BUILD__'], 'only bird-system.js is an external script');
 });
 
 test('oauth.js handles redirect=settings for Google and Slack', () => {
@@ -3997,8 +4005,11 @@ test('public/app.html has the core screens, API wiring, and the v8 design system
   // It talks to the Week 8 API.
   assert.ok(html.includes('/api/brief'), 'app.html posts to /api/brief');
   assert.ok(html.includes('/api/draft'), 'app.html posts to /api/draft');
-  // No JS frameworks / CDNs — all client logic stays inline.
-  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+  // No JS frameworks / CDNs. Bird system, added on top of v8, is the one
+  // deliberate exception — same-origin and first-party (served from the
+  // existing /assets static mount), not a framework or CDN.
+  const appScriptSrcs = [...html.matchAll(/<script\s+[^>]*src=["']([^"']+)["']/gi)].map((m) => m[1]);
+  assert.deepStrictEqual(appScriptSrcs, ['/assets/js/bird-system.js?v=__BUILD__'], 'only bird-system.js is an external script');
   // v8 design system (replaces the old "system fonts, no images" rule): the
   // StarCrush display font is loaded via @font-face, Zen Kaku Gothic New is the
   // body font, and the pixel-art assets are referenced from the scoped

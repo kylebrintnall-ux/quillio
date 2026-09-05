@@ -150,7 +150,10 @@
     var self = this;
     var k = opt.k || FLY_K;
     var w = Math.round(CLIP.fly.w * k), h = Math.round(CLIP.fly.h * k);
-    var W = this.phone.clientWidth;
+    /* .clouds-wrap is position:fixed;inset:0 — the viewport, not the scrollable
+       body (frame:'body' makes this.phone the document, whose height grows with
+       content). Sprites live in that fixed layer, so its box is the geometry. */
+    var W = this.wrap.clientWidth;
     var ltr = opt.dir !== 'rtl';
     var el = img(CLIP.fly, w, h);
     el.style.left = '0px';
@@ -190,7 +193,7 @@
     this.after(delay, function () {
       if (!self.running) return;
       if (self.canLaunch()) {
-        var H = self.phone.clientHeight;
+        var H = self.wrap.clientHeight;   // viewport height, not the document's
         var lanes = self.desktop ? [96, H - 220] : [70, H - 190];
         self.claim();
         self.fly({
@@ -208,7 +211,7 @@
   Scene.prototype.treePoints = function () {
     /* the tree band is a baked background on .clouds-wrap::after, so the
        canopy points come from the band's own geometry, not a screenshot */
-    var W = this.phone.clientWidth, H = this.phone.clientHeight;
+    var W = this.wrap.clientWidth, H = this.wrap.clientHeight;   // viewport, via the fixed sky layer
     var tw = this.desktop ? 248 : 124, th = this.desktop ? 168 : 84;
     var inset = 16;
     /* perch on top of the canopy, just inside its silhouette, so the bird

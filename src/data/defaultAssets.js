@@ -25,7 +25,8 @@
 //     to match its source and its numbers.
 //   • Organic Social — Twitter/X Post Copy promoted to enforced with X's spec page.
 //   • Preheaders 85–120 → 85–100; subject lines split by email type (cold 40,
-//     opt-in 130) and their char_min floor dropped.
+//     opt-in 130) and their char_min floor dropped. The opt-in 130 has since been
+//     corrected to 70 — see the September 2026 entry below.
 //
 // August 2026 (scripts/migrateAddGoogleSearchAsset.js adds the same asset to
 // already-seeded tenants):
@@ -39,6 +40,15 @@
 //     (scripts/migrateAddGoogleVideoAssets.js), read off answer/17091269 and
 //     answer/17091270 and quoted there. In-feed video and YouTube Masthead are on
 //     those pages and are deliberately NOT seeded — see that file.
+//
+// September 2026 (scripts/migrateEmailSubjectCeiling.js moves already-seeded
+// tenants):
+//   • The MARKETING email class's subject ceiling 130 → 70, which reaches Subject
+//     Line 1 and 2 on Demand Gen Nurture, Event Invitation, Event Reminder and
+//     Event Follow-Up / Recap through their FROM_CLASS sentinels. char_min stays 0.
+//     Sales Basho Email is in the `cold` class and does NOT move — its 40 has a
+//     stated derivation where the 130 had none. This is a house judgement, not a
+//     reading: spec_type, spec_source and spec_verified_at are all unchanged.
 //
 // Authored compactly as [name, group, [[fieldName, charMin, charMax, groupLabel?], …]]
 // and normalized below into the seed shape (adds sort_order, is_active, field_type,
@@ -95,9 +105,33 @@ const PREHEADER_BAND = [85, 100];
 // tenants can define their own assets is a small, mechanical change.
 const EMAIL_CLASSES = {
   // Opted-in. HTML, branded. The reader asked for this. Goal: a CLICK.
+  //
+  // 70, NOT 130. The 130 was a technical maximum standing where a working range
+  // belonged: the field permitted 130 characters while its own note said the inbox
+  // cuts at 40, so ninety of them were characters a writer was allowed to write
+  // that no reader on a phone would ever see. Same shape as LinkedIn Intro Text
+  // seeded at 600 and corrected to 150.
+  //
+  // 70 leaves room for a subject that reads fully on desktop while keeping the
+  // field close enough to the truncation point that the bracket itself argues for
+  // brevity. char_min stays 0 — 40 is where mobile truncates, not a floor a writer
+  // must reach, and EMAIL_SUBJECT_NOTE already says so.
+  //
+  // NOT A FETCH. These fields are house_default on the 'quillio_default' sentinel:
+  // no platform publishes a subject-line limit and clients truncate rather than
+  // enforce. 70 is Kyle's judgement as the writer, so no spec_source is added, no
+  // spec_verified_at is stamped and spec_type does not move.
+  //
+  // WHERE 130 CAME FROM, and why only this half of the pair moved:
+  // scripts/migrateSpecIntegrityFixes.js SUBJECT_BANDS — "opt-in nurture and event
+  // mail keep earning clicks well past 130 characters" — with no citation, no date
+  // and no page, in the migration whose Meta half produced every wrong Meta number
+  // in the library. See scripts/migrateEmailSubjectCeiling.js for the full account.
+  // The `cold` class's 40 came out of the same paragraph and is NOT moved by this
+  // change, because it shows its work and this did not.
   marketing: {
     label: 'marketing',
-    subject: [0, 130],
+    subject: [0, 70],
     preheader: PREHEADER_BAND,
     ctas: 'one primary CTA',
     assets: [
@@ -109,8 +143,14 @@ const EMAIL_CLASSES = {
   },
   // Unsolicited. Plain text, 1:1 feel. The reader did not ask for this. Goal: a
   // REPLY. The shorter subject is the whole difference at the inbox: cold B2B
-  // performs best at roughly 2–4 words, where an opt-in subject keeps earning
-  // clicks well past 130 characters.
+  // performs best at roughly 2–4 words, which is where the 40 comes from.
+  //
+  // THE CONTRAST USED TO BE STATED AS "an opt-in subject keeps earning clicks well
+  // past 130 characters", and that half is gone with the 130 it named — it was the
+  // uncited claim, and September 2026 moved the marketing ceiling to 70 partly
+  // because nothing was behind it. This 40 is untouched by that change: both
+  // numbers came out of one paragraph in scripts/migrateSpecIntegrityFixes.js and
+  // only this one shows its work. The classes still differ, by 30 rather than 90.
   cold: {
     label: 'cold outreach',
     subject: [0, 40],
@@ -1056,7 +1096,7 @@ const LINKEDIN_CAROUSEL_CARD_FIELDS = new Set([
   'Card 5 Headline',
 ]);
 
-// Email mobile-truncation notes. Subject Lines cap at 40 (cold outreach) or 130
+// Email mobile-truncation notes. Subject Lines cap at 40 (cold outreach) or 70
 // (opt-in) with NO minimum, and Preheaders run 85–100, but mobile inboxes clip far
 // earlier (Litmus) — these tell the writer to front-load. Applied to Subject Line
 // 1, Subject Line 2 and Preheader on every email asset. BYTE-IDENTICAL to
@@ -1065,6 +1105,15 @@ const LINKEDIN_CAROUSEL_CARD_FIELDS = new Set([
 // The note text is deliberately UNCHANGED by the July 2026 band rework: ~40
 // characters of subject and ~35–40 of preheader is what the inbox shows, whatever
 // the band allows.
+//
+// AND UNCHANGED AGAIN by the September 2026 ceiling change (130 → 70 on the
+// marketing class), for two reasons worth keeping. The note reads BETTER at 70
+// than it did at 130: the 40 now sits inside the bracket's range rather than far
+// below it, so it reads as a target within a real span instead of a warning about
+// a ceiling twice its size. And rewording it toward the imperative is a MEASURED
+// regression — see PINTEREST_TITLE_NOTE below, where turning a statement of
+// consequence into a front-load instruction took WITHIN-40 from 3/10 to 0/10 and
+// collapsed spread from 64 to 13. This note is already the statement form. Leave it.
 const EMAIL_SUBJECT_NOTE = 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus)';
 const EMAIL_PREHEADER_NOTE = 'Mobile shows ~35–40 characters of preheader — keep the key part first. (Litmus)';
 

@@ -58,7 +58,13 @@ const COMMIT = process.argv.includes('--commit');
 // the seed moves on — that is the whole point of having both.
 const EMAIL_CLASSES = {
   marketing: {
-    subject: [0, 130],
+    // 130 → 70, September 2026. THIS FILE IS THE CONVERGENCE WRITER for the class
+    // bands — its stated job is to bring a drifted tenant back onto the constant —
+    // so it tracks the seed rather than recording what it wrote in August. Leaving
+    // 130 here would make a re-run silently revert
+    // scripts/migrateEmailSubjectCeiling.js, which is the superseded-table hazard
+    // this project already met with migrateSpecIntegrityFixes' Meta entries.
+    subject: [0, 70],
     preheader: [85, 100],
     assets: [
       'Demand Gen Nurture Email',

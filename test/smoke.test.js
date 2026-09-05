@@ -2188,8 +2188,20 @@ test('email Subject Line + Preheader seed mobile-truncation notes; reused names 
   // migration's own tables rather than from literals here, so this test cannot
   // drift from the numbers that ship. The NOTE text did not move: ~40 characters of
   // subject and ~35–40 of preheader is what the inbox shows regardless of the band.
-  const { SUBJECT_BANDS, PREHEADER_BAND } = require('../scripts/migrateSpecIntegrityFixes');
-  const subjectMaxFor = new Map(SUBJECT_BANDS);
+  // THE SUBJECT CEILING NO LONGER COMES FROM migrateSpecIntegrityFixes. That file's
+  // four MARKETING entries were removed in September 2026 when the ceiling moved
+  // 130 → 70 (scripts/migrateEmailSubjectCeiling.js) — a superseded table is a
+  // WRITE, and leaving them would have reverted the change on a re-run, exactly as
+  // its six Meta carousel entries would have. Only Sales Basho's 40 is still live
+  // there, so the ceiling is read from EMAIL_CLASSES, which is the current source,
+  // and the PREHEADER band still comes from the migration because that correction
+  // was not superseded.
+  const { PREHEADER_BAND } = require('../scripts/migrateSpecIntegrityFixes');
+  const { EMAIL_CLASSES: MIG_CLASSES } = require('../scripts/migrateEmailClassesAndCitedBands');
+  const subjectMaxFor = new Map();
+  for (const cls of Object.values(MIG_CLASSES)) {
+    for (const a of cls.assets) subjectMaxFor.set(a, cls.subject[1]);
+  }
   let count = 0;
   for (const assetName of EMAIL_ASSETS) {
     for (const [fieldName, note] of FIELD_NOTES) {
@@ -2211,7 +2223,7 @@ test('email Subject Line + Preheader seed mobile-truncation notes; reused names 
   }
   // The bands really do differ by email type — a single shared band was the bug.
   assert.strictEqual(fieldOf('Sales Basho Email', 'Subject Line 1').char_max, 40, 'cold outreach caps at 40');
-  assert.strictEqual(fieldOf('Demand Gen Nurture Email', 'Subject Line 1').char_max, 130, 'opt-in nurture caps at 130');
+  assert.strictEqual(fieldOf('Demand Gen Nurture Email', 'Subject Line 1').char_max, 70, 'opt-in nurture caps at 70');
   assert.strictEqual(count, 15, 'exactly 15 email field defs (3 × 5) carry the notes');
 
   // Reused field names on NON-email assets must stay noteless — per-pair match,
@@ -3146,7 +3158,7 @@ test('per-field guidance survives the WHOLE copy-doc draft path, not just the bu
       { text: 'Campaign Summary', style: 'HEADING_2' }, { text: 'S', italic: true },
       { text: 'Writer Direction', style: 'HEADING_2' }, { text: 'W', italic: true },
       { text: 'Demand Gen Nurture Email', style: 'HEADING_3' },
-      { text: 'Subject Line 1 [130]', bold: true },
+      { text: 'Subject Line 1 [70]', bold: true },
       // As fieldHint composes it: the seeded note, then the reader-only tier line.
       { text: 'Mobile inboxes cut around 40 characters — front-load the first 40. (Litmus) House default — set your own in Settings.', italic: true },
       { text: '' },
@@ -3293,7 +3305,7 @@ test('a venue-only brief gets the note — the case the OR suppressed, end to en
   const rows = [{
     id: 1, name: 'Event Reminder Email', group: 'Email', sort_order: 1, asset_direction: '',
     fields: [
-      { field_name: 'Subject Line 1', char_min: 0, char_max: 130, field_type: 'text', sort_order: 1, fact_kind: null },
+      { field_name: 'Subject Line 1', char_min: 0, char_max: 70, field_type: 'text', sort_order: 1, fact_kind: null },
       { field_name: 'Date / Location Line', char_min: 0, char_max: 80, field_type: 'text', sort_order: 2, fact_kind: 'datetime' },
     ],
   }];
@@ -10462,19 +10474,21 @@ test('spec integrity: the corrected numbers, and what was deliberately NOT chang
     assert.deepStrictEqual([f(e, 'Preheader').char_min, f(e, 'Preheader').char_max], [85, 100], `${e} preheader`);
     for (const sl of ['Subject Line 1', 'Subject Line 2']) {
       assert.strictEqual(f(e, sl).char_min, 0, `${e}/${sl} has no floor`);
-      assert.strictEqual(f(e, sl).char_max, e === 'Sales Basho Email' ? 40 : 130, `${e}/${sl} ceiling`);
+      assert.strictEqual(f(e, sl).char_max, e === 'Sales Basho Email' ? 40 : 70, `${e}/${sl} ceiling`);
     }
   }
 
   // The dropped floor is visible in the LABEL, which is what a writer actually
-  // reads: `[50-75]` became `[130]`. That instruction — "reach 50 characters" —
-  // was the wrong one to give, and it is now simply absent.
+  // reads: `[50-75]` became `[130]`, and September 2026 took the ceiling to
+  // `[70]`. That instruction — "reach 50 characters" — was the wrong one to give,
+  // and it is now simply absent. The FLOOR is what this paragraph is about and it
+  // has been 0 throughout; only the ceiling moved.
   const { fieldLabel } = require('../src/destinations/googleDocs');
   const label = (asset, name) => {
     const fl = f(asset, name);
     return fieldLabel({ fieldName: fl.field_name, charMin: fl.char_min, charMax: fl.char_max });
   };
-  assert.strictEqual(label('Demand Gen Nurture Email', 'Subject Line 1'), 'Subject Line 1 [130]');
+  assert.strictEqual(label('Demand Gen Nurture Email', 'Subject Line 1'), 'Subject Line 1 [70]');
   assert.strictEqual(label('Sales Basho Email', 'Subject Line 1'), 'Subject Line 1 [40]');
   assert.strictEqual(label('Demand Gen Nurture Email', 'Preheader'), 'Preheader [85-100]');
 });
@@ -10568,7 +10582,23 @@ test('spec integrity: the migration is idempotent-by-construction and dry-run by
   // scripts/migrateFixMetaSpecs.js on any re-run.
   assert.strictEqual(fix.RETIER.length, 9, 'Description left — Meta publishes no such recommendation');
   assert.strictEqual(fix.PROMOTE.length, 1);
-  assert.strictEqual(fix.CHAR_FIXES.length, 5 * 3, '15 email fields; the 6 Meta carousel entries were removed');
+  // 7 = Sales Basho's two subject lines + all five preheaders. TWO removals, for
+  // one reason: the 6 Meta carousel entries (wrong numbers, see above) and the 8
+  // marketing subject entries (superseded 130 → 70 by
+  // scripts/migrateEmailSubjectCeiling.js). Both would have reverted a later
+  // correction on a re-run. The PREHEADER entries survive on all five assets —
+  // 85–100 is still current — which is why they are pushed from their own list.
+  assert.strictEqual(fix.CHAR_FIXES.length, 2 + 5, 'Basho subject ×2 + preheader ×5; Meta and the marketing subjects were removed');
+  assert.strictEqual(fix.SUBJECT_BANDS.length, 1, 'only the cold class is still written here');
+  assert.strictEqual(fix.SUBJECT_BANDS[0][0], 'Sales Basho Email');
+  assert.strictEqual(fix.PREHEADER_ASSETS.length, 5, 'the preheader correction was not superseded');
+  // No marketing asset may regain a subject entry here without this going red.
+  for (const [asset, field] of fix.CHAR_FIXES) {
+    if (/^Subject Line/.test(field)) {
+      assert.strictEqual(asset, 'Sales Basho Email',
+        `${asset}/${field}: a marketing subject band here would revert the 70 on re-run`);
+    }
+  }
   assert.strictEqual(Object.keys(fix.SOURCE_URLS).length, 5, 'both Meta entries removed — they cited the index');
   for (const k of Object.keys(fix.SOURCE_URLS)) {
     assert.ok(!/^Meta /.test(k), `${k} must not be re-pointed by this migration any more`);
@@ -10991,8 +11021,8 @@ test('word units: the label carries the unit, and both readers get it back', () 
   // A word field and a character field, side by side.
   assert.strictEqual(fieldLabel({ fieldName: 'Offer Body 1', charMin: 50, charMax: 125, fieldType: 'words' }),
     'Offer Body 1 [50-125 words]');
-  assert.strictEqual(fieldLabel({ fieldName: 'Subject Line 1', charMin: 0, charMax: 130, fieldType: 'text' }),
-    'Subject Line 1 [130]');
+  assert.strictEqual(fieldLabel({ fieldName: 'Subject Line 1', charMin: 0, charMax: 70, fieldType: 'text' }),
+    'Subject Line 1 [70]');
   assert.strictEqual(fieldLabel({ fieldName: 'Body Copy', charMin: 0, charMax: 100, fieldType: 'words' }),
     'Body Copy [100 words]', 'a word field with no floor still says words');
   // Absent fieldType is characters — every field before this change.
@@ -11007,7 +11037,7 @@ test('word units: the label carries the unit, and both readers get it back', () 
     { text: 'Campaign Summary', style: 'HEADING_2' }, { text: 's', italic: true },
     { text: 'Writer Direction', style: 'HEADING_2' }, { text: 'd', italic: true },
     { text: 'Demand Gen Nurture Email', style: 'HEADING_3' },
-    { text: 'Subject Line 1 [130]', bold: true }, { text: 'a subject' },
+    { text: 'Subject Line 1 [70]', bold: true }, { text: 'a subject' },
     { text: 'Offer Body 1 [50-125 words]', bold: true }, { text: 'some body copy' },
   ];
   const doc = instDoc(paras);
@@ -11015,7 +11045,7 @@ test('word units: the label carries the unit, and both readers get it back', () 
   const fields = assets[0].fields;
   assert.deepStrictEqual(
     fields.map((f) => [f.fieldName, f.charMin, f.charMax, f.fieldType]),
-    [['Subject Line 1', 0, 130, 'text'], ['Offer Body 1', 50, 125, 'words']]
+    [['Subject Line 1', 0, 70, 'text'], ['Offer Body 1', 50, 125, 'words']]
   );
   // The unit survives the NAME too — "words" must not be swallowed into the field
   // name or left in it.
@@ -11026,7 +11056,7 @@ test('word units: the label carries the unit, and both readers get it back', () 
   return getDocContent('d', { docs: { documents: { get: async () => ({ data: doc }) } } }).then((content) => {
     assert.deepStrictEqual(
       content.assets[0].fields.map((f) => [f.fieldName, f.charMin, f.charMax, f.fieldType]),
-      [['Subject Line 1', 0, 130, 'text'], ['Offer Body 1', 50, 125, 'words']]
+      [['Subject Line 1', 0, 70, 'text'], ['Offer Body 1', 50, 125, 'words']]
     );
   });
 });
@@ -11325,7 +11355,7 @@ test('email classes: the constant is the SINGLE source of the inbox-facing bands
     }
   }
   // And the numbers appear ONCE each in the whole seed file.
-  for (const literal of ['[0, 130]', '[0, 40]', '[85, 100]']) {
+  for (const literal of ['[0, 70]', '[0, 40]', '[85, 100]']) {
     const n = (seedSrc.match(new RegExp(literal.replace(/[[\]]/g, '\\$&'), 'g')) || []).length;
     assert.strictEqual(n, 1, `${literal} appears once in the seed (in EMAIL_CLASSES), found ${n}`);
   }
@@ -11347,22 +11377,22 @@ test('email classes: changing ONE value in the constant moves all four marketing
 
   const before = load(src);
   // ONE edit, inside EMAIL_CLASSES only.
-  const patched = src.replace('    subject: [0, 130],', '    subject: [0, 999],');
+  const patched = src.replace('    subject: [0, 70],', '    subject: [0, 999],');
   assert.notStrictEqual(patched, src, 'the marketing subject band was found and rewritten');
-  assert.strictEqual((src.match(/subject: \[0, 130\],/g) || []).length, 1, 'and it appears exactly once');
+  assert.strictEqual((src.match(/subject: \[0, 70\],/g) || []).length, 1, 'and it appears exactly once');
   const after = load(patched);
 
   const MARKETING = ['Demand Gen Nurture Email', 'Event Invitation Email', 'Event Reminder Email',
     'Event Follow-Up / Recap Email'];
   for (const a of MARKETING) {
-    assert.strictEqual(subjectOf(before, a), 130, `${a} before`);
+    assert.strictEqual(subjectOf(before, a), 70, `${a} before`);
     assert.strictEqual(subjectOf(after, a), 999, `${a} after ONE edit`);
   }
   // Cold is a different class and must NOT move.
   assert.strictEqual(subjectOf(before, 'Sales Basho Email'), 40);
   assert.strictEqual(subjectOf(after, 'Sales Basho Email'), 40, 'cold outreach is unaffected');
   // Neither is anything outside email.
-  assert.strictEqual(subjectOf(before, 'Demand Gen Nurture Email'), 130);
+  assert.strictEqual(subjectOf(before, 'Demand Gen Nurture Email'), 70);
   const headline = (assets) =>
     assets.find((a) => a.name === 'Meta Single Image Ad').fields.find((f) => f.field_name === 'Headline').char_max;
   assert.strictEqual(headline(after), headline(before), 'no ad field moved');
@@ -20426,7 +20456,7 @@ function outageDocClients(assetNames) {
   ];
   for (const name of assetNames) {
     paras.push({ text: name, style: 'HEADING_3' });
-    paras.push({ text: 'Subject Line 1 [130]', bold: true });
+    paras.push({ text: 'Subject Line 1 [70]', bold: true });
     paras.push({ text: '' });
     paras.push({ text: 'Preheader [100]', bold: true });
     paras.push({ text: '' });

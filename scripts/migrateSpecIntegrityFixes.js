@@ -135,7 +135,9 @@ const CHAR_FIXES = [
   // every Meta number now. See the header for what went wrong.
 ];
 
-// The five email assets, and the subject-line ceiling each one gets.
+// The subject-line ceiling this migration writes. ONE asset now — see the removal
+// note below; it was five when this pass ran in July 2026, and the paragraph that
+// follows is that pass's own reasoning, kept verbatim as the record of it.
 //
 // They all shared 50–75, which is one band pretending to fit two jobs. Cold B2B
 // outreach performs best at roughly 2–4 words, so a Basho subject caps at 40;
@@ -146,20 +148,51 @@ const CHAR_FIXES = [
 // instruction to REACH 50 characters, which is actively wrong for cold outreach —
 // the shortest subject is often the best one. There is no lower bound worth
 // enforcing on a subject line; the ceiling is the only real constraint.
+//
+// ─── THE REMOVAL ────────────────────────────────────────────────────────────
+// THE FOUR MARKETING SUBJECT ENTRIES WERE REMOVED 2026-09-05. They wrote 130 on
+// Subject Line 1 and 2 for Demand Gen Nurture, Event Invitation, Event Reminder
+// and Event Follow-Up / Recap. That ceiling is now 70
+// (scripts/migrateEmailSubjectCeiling.js), and leaving them here would silently
+// revert the correction on any re-run — the identical hazard as this file's six
+// Meta carousel entries, removed for the identical reason. Removed rather than
+// corrected to 70: this file is the record of what the July pass decided, and
+// editing its numbers would falsify that record. The convergence path for a
+// drifted tenant is scripts/migrateEmailClassesAndCitedBands.js, which tracks the
+// seed by design.
+//
+// The 130 IS WHERE THE 130 CAME FROM, and the reasoning is preserved above in this
+// section's own comment: "opt-in nurture and event mail keep earning clicks well
+// past 130 characters" — no citation, no date, no page, written in the same pass
+// and by the same method as the Meta numbers this file has already had stripped.
+//
+// SALES BASHO SURVIVES. Its 40 has a stated derivation — cold B2B performs best at
+// roughly 2–4 words — where the 130 only restated itself, so it is still the
+// current value and this entry is still live.
 const SUBJECT_BANDS = [
-  ['Demand Gen Nurture Email', 130],
-  ['Event Invitation Email', 130],
-  ['Event Reminder Email', 130],
-  ['Event Follow-Up / Recap Email', 130],
   ['Sales Basho Email', 40], // cold outreach
 ];
 // Litmus recommends staying under 90 characters of preheader; 85–100 is the
 // published sweet spot. 120 overshot it.
 const PREHEADER_BAND = [85, 100];
 
+// EVERY email asset, including the four whose subject entries were removed above.
+// The preheader correction is NOT superseded — 85–100 is still the current band on
+// all five — so it stays a write, and it is listed separately precisely so removing
+// a subject band could not take a preheader with it.
+const PREHEADER_ASSETS = [
+  'Demand Gen Nurture Email',
+  'Event Invitation Email',
+  'Event Reminder Email',
+  'Event Follow-Up / Recap Email',
+  'Sales Basho Email',
+];
+
 for (const [asset, subjectMax] of SUBJECT_BANDS) {
   CHAR_FIXES.push([asset, 'Subject Line 1', 0, subjectMax]);
   CHAR_FIXES.push([asset, 'Subject Line 2', 0, subjectMax]);
+}
+for (const asset of PREHEADER_ASSETS) {
   CHAR_FIXES.push([asset, 'Preheader', PREHEADER_BAND[0], PREHEADER_BAND[1]]);
 }
 
@@ -379,6 +412,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  RETIER, PROMOTE, CHAR_FIXES, SUBJECT_BANDS, PREHEADER_BAND, SOURCE_URLS, RENAME,
+  RETIER, PROMOTE, CHAR_FIXES, SUBJECT_BANDS, PREHEADER_BAND, PREHEADER_ASSETS, SOURCE_URLS, RENAME,
   CARD_HEADLINE_NOTE, FIELD_NOTES,
 };

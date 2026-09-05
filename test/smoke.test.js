@@ -13313,7 +13313,7 @@ test('an asset name is a heading, and the toggle never moves', () => {
   // The create form's row-name rule is scoped, so it stops bolding the read-only
   // card's field names 70 lines above it.
   assert.match(html, /\.lib-frow \.lib-fname \{[^}]*flex: 1/);
-  assert.match(html, /\.lib-fname \{ color: var\(--ink\); \}/, 'the card\'s own rule is intact');
+  assert.match(html, /\.lib-fname \{ color: var\(--q-cream\); \}/, 'the card\'s own rule is intact');
 });
 
 test('the review modal reads its heading in the display face and cannot be abandoned', () => {
@@ -17790,7 +17790,10 @@ test('the project detail view: documents index, one back route, top actions', ()
   // against the panel, both under the 4.5:1 AA floor this 11px text needs;
   // 0.75 measures 5.88:1. Dimming to signal "subordinate" is what fails on
   // these surfaces — the 11px against the heading's 13px carries that instead.
-  assert.match(html, /text-transform: uppercase; color: var\(--ink\); opacity: 0\.75;/);
+  // SURFACES step 6 hue-swapped --ink to --q-cream (the panel this was
+  // measured against lost its fill in step 4, so the text is cream-on-sky
+  // now); the 0.75 alpha carries over unchanged.
+  assert.match(html, /text-transform: uppercase; color: var\(--q-cream\); opacity: 0\.75;/);
 });
 
 // The other half of the same finding, on the other new element. 0.45 ink over
@@ -17798,9 +17801,11 @@ test('the project detail view: documents index, one back route, top actions', ()
 // — 2.74:1, under the 4.5:1 floor for 11px. 0.7 measures 5.78:1. Collapsed,
 // this count is the only thing on the band saying whether the group still needs
 // work, so it is the last text here that can afford to be hard to read.
+// SURFACES step 6: that header band lost its fill in step 4, so this is now
+// cream (rgba(252,246,227,...)) at the same 0.7 alpha rather than ink.
 test('the collapsed-band count clears the contrast floor', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  assert.match(html, /\.asset-card-count \{[^}]*color: rgba\(26,26,46,0\.7\);/);
+  assert.match(html, /\.asset-card-count \{[^}]*color: rgba\(252,246,227,0\.7\);/);
 });
 
 // A closed group still has to answer "does this one need work", so the band
@@ -18299,7 +18304,8 @@ test('a disabled primary is opaque, and the picker lede is body text', () => {
   // italic aside .field-select-hint gives a tappable-fields nudge. At 12.5px,
   // half-opacity and italic it was unreadable on the sky background on a phone.
   assert.match(html, /<p class="picker-lede">This brief didn’t name any assets/);
-  assert.match(html, /\.picker-lede \{ font-size: 14px; line-height: 1\.6; color: var\(--ink\); margin: 0 0 22px; \}/);
+  // SURFACES step 6: bare-sky text, hue-swapped from --ink to --q-cream.
+  assert.match(html, /\.picker-lede \{ font-size: 14px; line-height: 1\.6; color: var\(--q-cream\); margin: 0 0 22px; \}/);
   const lede = html.slice(html.indexOf('.picker-lede {'), html.indexOf('.picker-lede {') + 120);
   assert.ok(!/italic/.test(lede), 'not italic');
   assert.ok(!/rgba\(26,26,46,0\.\d/.test(lede), 'not a faded ink');
@@ -21701,9 +21707,9 @@ test('freshness: rendered on both surfaces, and never as a badge', () => {
   assert.ok(!/#0[0-9a-f]*[89a-f][0-9a-f]*0/i.test(css) && !/green/i.test(css), 'no green');
   assert.ok(!/content: '✓/.test(css), 'no tick');
 
-  // CONTRAST, PINNED WITH THE MEASUREMENT BESIDE IT. .lib-asset is
+  // CONTRAST, PINNED WITH THE MEASUREMENT BESIDE IT. .lib-asset was
   // rgba(255,255,255,0.5) over backdrop-filter: blur(14px) on the sky gradient,
-  // so the declared alpha is not the rendered colour and neither of the first
+  // so the declared alpha was not the rendered colour and neither of the first
   // two values looked wrong in the source. Screenshotted through the shipped
   // stylesheet at 390x844/3x, darkest 1% as the glyph and 90th percentile as its
   // background, worst case at the top of the page where the sky is darkest:
@@ -21714,7 +21720,13 @@ test('freshness: rendered on both surfaces, and never as a badge', () => {
   //
   // This is a claim about the rendered page, so per CLAUDE.md's rule for a test
   // that pins a value, the numbers it came from are here rather than implied.
-  assert.match(css, /color: rgba\(26,26,46,0\.75\)/, '0.75 measured 5.21:1; 0.70 is the floor');
+  // SURFACES step 6: .lib-asset lost that fill in step 4 (background:
+  // transparent), so the read-only card's .lib-fresh is cream now, at the same
+  // 0.75 alpha the measurement chose. The measurement itself stays true for
+  // .lib-new's copy of this same block (libHouseRow's locked-row line), which
+  // still renders on the fill described above — see the `.lib-new .lib-fresh`
+  // override and the comment above .lib-fresh in settings.html.
+  assert.match(css, /color: rgba\(252,246,227,0\.75\)/, '0.75 measured 5.21:1 against the pre-step-4 fill; 0.70 is the floor');
   // Anchored to the start of a rule, because `.lib-fresh-m {` is a SUBSTRING of
   // `.lib-fresh.flagged .lib-fresh-m {` — an unanchored negative matched the
   // flagged rule and reported the bare one as present.

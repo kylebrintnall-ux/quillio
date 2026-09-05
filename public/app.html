@@ -233,7 +233,7 @@
     body {
       font-family: 'Zen Kaku Gothic New', sans-serif;
       background: var(--ink);
-      color: var(--ink);
+      color: var(--q-cream);
       -webkit-font-smoothing: antialiased;
     }
     .sky-bg {
@@ -333,35 +333,19 @@
     }
 
     /* ── BRIEF (v8) ── */
-    .brief-headline { font-family: 'StarCrush', serif; font-size: 36px; line-height: 1.1; color: var(--ink); margin: 0 0 10px; text-align: center; }
+    .brief-headline { font-family: 'StarCrush', serif; font-size: 36px; line-height: 1.1; color: var(--q-cream); margin: 0 0 10px; text-align: center; }
     /* The phrases that hold together; the space between them is the only break point. */
     .brief-headline span { white-space: nowrap; }
-    .brief-sub { font-size: 15px; font-weight: 400; line-height: 1.55; color: rgba(26,26,46,0.68); margin: 0 0 26px; text-align: center; }
-    /* 0.30, up from 0.14. THE ONLY ELEMENT THAT CARRIES THIS CLASS is the brief
-       input card below — `.glass-card` reads like a shared surface and is not one
-       (every other frosted surface is `.glass-panel`, a separate rule at 0.52), so
-       editing the rule here IS the brief-screen change. If a second consumer ever
-       appears, check it against this measurement rather than inheriting it.
-
-       WHAT IT BUYS, measured with a cloud swept across the panel in 0.1w steps and
-       the worst point of the drift taken (390 and 1130 wide):
-
-                       0.14        0.30
-         typed --ink   6.54:1  ->  7.91:1     the content that matters
-         cloud swing   1.155x  ->  1.136x     how much the surface under the text
-                                              moves as a cloud passes
-         sky falloff   0.0645  ->  0.0625     still transmits the gradient, i.e.
-                                              still glass and not an opaque box
-
-       WHAT IT CANNOT BUY, and the reason no larger number would either: the
-       placeholder is rgba(26,26,46,0.4) composited ON this panel, so lightening the
-       panel lightens the text by 0.6 of the same amount. Both terms move together
-       and the ratio is pinned — 2.06:1 at 0.14, 2.17:1 at 0.30, 2.21:1 at 0.40.
-       Against a pure white panel the placeholder still only reaches 2.51:1. So a
-       placeholder at 0.4 alpha CANNOT clear 3:1 at any fill; that is a property of
-       the alpha, not of the glass, and the alpha is deliberate — a placeholder loud
-       enough to beat a cloud reads as real content and looks wrong once someone
-       types. Do not chase the placeholder number by raising this value. */
+    .brief-sub { font-size: 15px; font-weight: 400; line-height: 1.55; color: rgba(252,246,227,0.68); margin: 0 0 26px; text-align: center; }
+    /* The comment that used to sit here measured a frosted white fill on this
+       class — 0.30 alpha, tuned against a swept cloud and a --ink placeholder
+       composited on it. SURFACES-HANDOFF.md §4 (below) removed that fill
+       entirely; there is no alpha left to tune and nothing left for that
+       measurement to describe, so it is gone rather than left to teach a
+       mechanism this rule no longer has. The placeholder is now cream at the
+       same 0.4 alpha it always carried (see .glass-textarea::placeholder) —
+       light-on-sky rather than dark-on-a-fading-white-panel, which is why the
+       old ratio table does not carry over. */
     /* SURFACES-HANDOFF.md §4 — transparent, 1px cream border, no radius, no
        shadow. NOT frosted (that's step 5's four floating surfaces only), so
        backdrop-filter comes off here too. */
@@ -386,11 +370,11 @@
       width: 100%; min-height: 176px; max-height: 416px; overflow-y: auto;
       border: none; outline: none; resize: none;
       background: transparent; font-family: 'Zen Kaku Gothic New', sans-serif;
-      font-size: 15px; font-weight: 400; line-height: 1.6; color: var(--ink);
+      font-size: 15px; font-weight: 400; line-height: 1.6; color: var(--q-cream);
       padding: 18px 18px 14px; -webkit-appearance: none;
     }
     .glass-textarea:focus { outline: none; border: none; }
-    .glass-textarea::placeholder { color: rgba(26,26,46,0.4); font-size: 14px; }
+    .glass-textarea::placeholder { color: rgba(252,246,227,0.4); font-size: 14px; }
     .card-footer {
       display: flex; align-items: center; gap: 10px;
       padding: 10px 14px 12px; border-top: 1px solid rgba(255,255,255,0.22);
@@ -416,7 +400,7 @@
     .run-btn:active { transform: scale(0.98); }
     .run-btn:disabled { opacity: 0.55; cursor: default; }
     .run-btn-text { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em; color: var(--ink); position: relative; }
-    .attach-hint { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; margin-top: 12px; font-size: 12px; color: rgba(26,26,46,0.6); text-align: center; }
+    .attach-hint { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; margin-top: 12px; font-size: 12px; color: rgba(252,246,227,0.6); text-align: center; }
 
     /* File tags — glassy pills (no emoji) */
     .file-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -493,7 +477,7 @@
        phone. .field-select-hint has since been given the same treatment for the
        same reason, so the two now read alike; this rule stays separate because
        the two lines still differ in ROLE, not in legibility. */
-    .picker-lede { font-size: 14px; line-height: 1.6; color: var(--ink); margin: 0 0 22px; }
+    .picker-lede { font-size: 14px; line-height: 1.6; color: var(--q-cream); margin: 0 0 22px; }
     /* THE ASSET PICKER. A library list, not a plan — see #screen-picker. */
     .picker-search {
       width: 100%; box-sizing: border-box; margin: 0 0 16px; padding: 14px 16px;
@@ -505,7 +489,7 @@
     .picker-group { margin-bottom: 18px; }
     .picker-group-label {
       font-family: 'StarCrush', serif; font-size: 11px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--ink); opacity: 0.6; margin-bottom: 8px;
+      text-transform: uppercase; color: var(--q-cream); opacity: 0.6; margin-bottom: 8px;
     }
     /* A row is a LABEL wrapping a real checkbox: the whole row is the hit target,
        and the checkbox stays a checkbox for assistive tech and for the keyboard. */
@@ -611,15 +595,15 @@
     /* The header is its own run: title + state gif. Padding is tighter on the
        right so the gif keeps its optical position. */
     .output-header.glass-panel { padding: 14px 16px; margin-bottom: 16px; }
-    .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--ink); letter-spacing: 0.02em; flex: 1; margin: 0; }
+    .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--q-cream); letter-spacing: 0.02em; flex: 1; margin: 0; }
     .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
     .section-label, .assets-label {
       font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--ink); opacity: 0.75;
+      text-transform: uppercase; color: var(--q-cream); opacity: 0.75;
     }
     .section-label { margin-bottom: 8px; }
     .assets-label { margin-bottom: 14px; }
-    .section-body { font-size: 14px; line-height: 1.65; color: rgba(26,26,46,0.78); margin: 0 0 24px; white-space: pre-wrap; }
+    .section-body { font-size: 14px; line-height: 1.65; color: rgba(252,246,227,0.78); margin: 0 0 24px; white-space: pre-wrap; }
     /* THE DOCUMENTS A RUN PRODUCED. One row per document, on the result screen;
        tapping one opens that document's own detail view. A brief that made one
        document renders one row — there is no slot for a second. */
@@ -630,7 +614,7 @@
       display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
       background: none; border: none; border-radius: 0; padding: 0; margin-bottom: 12px;
       cursor: pointer; -webkit-tap-highlight-color: transparent;
-      font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--ink);
+      font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--q-cream);
     }
     .doc-row:active .doc-row-body { background: rgba(201,168,76,0.10); border-color: rgba(201,168,76,0.55); }
     .doc-row .doc-row-body {
@@ -653,11 +637,15 @@
        hierarchy instead. 0.55 measured 3.38:1 against the panel at 390px/3x —
        better than the 0.42 it replaced, and still under the 4.5:1 floor for 11px
        text. Dimming to signal "subordinate" is what fails on these surfaces; 11px
-       against the heading's 13px says the same thing and stays legible. */
-    .doc-row .doc-row-kind { display: block; font-family: 'StarCrush', serif; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); opacity: 0.75; margin-bottom: 3px; }
+       against the heading's 13px says the same thing and stays legible.
+       PRE-DATES SURFACES STEP 6: this tuning was against --ink on an opaque
+       "panel" fill. .doc-row-body carries no fill any more (step 4), so the
+       eyebrow is cream on transparent now — the "size, not dimming" principle
+       above still holds, the --ink/panel numbers do not. */
+    .doc-row .doc-row-kind { display: block; font-family: 'StarCrush', serif; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--q-cream); opacity: 0.75; margin-bottom: 3px; }
     .doc-row .doc-row-name { display: block; font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.02em; overflow-wrap: anywhere; }
-    .doc-row .doc-row-note { display: block; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.5); margin-top: 4px; line-height: 1.45; }
-    .doc-row .doc-row-go { font-size: 18px; color: rgba(26,26,46,0.35); flex-shrink: 0; }
+    .doc-row .doc-row-note { display: block; font-size: 12px; font-style: italic; color: rgba(252,246,227,0.5); margin-top: 4px; line-height: 1.45; }
+    .doc-row .doc-row-go { font-size: 18px; color: rgba(252,246,227,0.35); flex-shrink: 0; }
     /* A template that was refused or failed to build. Not tappable — there is no
        document behind it — and it says which, instead of being silent. */
     .doc-row.failed { cursor: default; }
@@ -678,7 +666,7 @@
     @keyframes cardIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
     .asset-card.reveal { animation: cardIn 0.45s ease both; }
     .asset-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 5px; }
-    .asset-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--ink); letter-spacing: 0.02em; }
+    .asset-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--q-cream); letter-spacing: 0.02em; }
     /* How-many stepper on the confirm screen. margin-left:auto pushes it to the
        right of the asset name inside the existing flex .asset-card-header. */
     .confirm-count {
@@ -711,18 +699,19 @@
        .asset-card-header wraps, and an asset name long enough to wrap would
        otherwise drop the chevron onto a second line, right-aligned under it. */
     button.asset-card-header .asset-card-name { flex: 1 1 auto; min-width: 0; }
-    /* 0.7, NOT 0.45. Measured off rendered pixels at 390px/3x: 0.45 ink over the
-       header band's own fill composites to rgb(129,142,156) on rgb(212,237,246),
-       which is 2.74:1 — under the 4.5:1 AA floor this 11px text needs. The band
-       is 97% opaque so the sky behind barely moves it; the alpha was simply too
-       low. 0.7 measures 5.86:1.
-       This is the hazard CLAUDE.md documents under .glass-panel — alpha'd --ink
-       on these surfaces reads lighter than it looks in the declaration — arriving
-       through a NEW element rather than an old one. Collapsed, this count is the
-       only thing on the band that says whether the group still needs work, so it
-       is the last text here that can afford to be hard to read. */
-    .asset-card-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.7); flex: none; font-variant-numeric: tabular-nums; }
-    .asset-card-chev { display: inline-block; flex: none; font-size: 13px; color: rgba(26,26,46,0.5); transition: transform 0.15s ease; transform: rotate(90deg); }
+    /* 0.7, NOT 0.45 — the alpha carries over from a measurement that no longer
+       applies. It was taken against the header band's own 97%-opaque fill
+       (0.45 ink composited to 2.74:1, under the 4.5:1 floor; 0.7 measured
+       5.86:1). SURFACES step 4 removed that fill (.glass-panel.list
+       .asset-card-header is `background: none` now), so the band is
+       transparent sky and this is cream-on-sky like every other converted
+       field — the 0.7 alpha is kept rather than re-derived, since cream at
+       0.7 over the sky clears AA with more room than ink at 0.7 ever did
+       over the old fill. Collapsed, this count is the only thing on the band
+       that says whether the group still needs work, so it stays the last
+       text here that can afford to be hard to read. */
+    .asset-card-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; color: rgba(252,246,227,0.7); flex: none; font-variant-numeric: tabular-nums; }
+    .asset-card-chev { display: inline-block; flex: none; font-size: 13px; color: rgba(252,246,227,0.5); transition: transform 0.15s ease; transform: rotate(90deg); }
     .asset-card.collapsed .asset-card-chev { transform: none; }
     /* WHAT COLLAPSES: the group's fields and its creative-direction line. The
        band itself never does — collapsed, the bands ARE the index. */
@@ -731,9 +720,9 @@
     /* A collapsed card is a band and nothing else, so the 8px foot the flattened
        card carries would read as a gap under a rule. */
     .glass-panel.list .asset-card.collapsed { padding-bottom: 0; }
-    .asset-card-badge { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; font-weight: 600; color: rgba(26,26,46,0.5); background: rgba(26,26,46,0.06); border-radius: 100px; padding: 2px 9px; }
+    .asset-card-badge { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; font-weight: 600; color: rgba(252,246,227,0.5); background: rgba(26,26,46,0.06); border-radius: 100px; padding: 2px 9px; }
     .asset-card-badge.drafted { color: #0A5C32; background: #C6F0D8; }
-    .asset-direction { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.48); margin: 0 0 12px; line-height: 1.5; }
+    .asset-direction { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(252,246,227,0.48); margin: 0 0 12px; line-height: 1.5; }
     .asset-field { display: flex; align-items: baseline; justify-content: space-between; padding: 11px 0; border-top: 1px dotted var(--q-cream-55); gap: 12px; }
     /* SURFACES-HANDOFF.md §4 says .asset-field:first-of-type, but .asset-direction
        and .asset-field are sibling <divs> (see the el('div', …) calls that build
@@ -743,18 +732,18 @@
     .asset-card-header + .asset-field,
     .asset-direction + .asset-field { border-top: none; }
     .asset-field.has-copy { flex-direction: column; align-items: flex-start; gap: 5px; }
-    .field-name { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.02em; color: rgba(26,26,46,0.72); flex-shrink: 0; }
-    .field-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.32); background: rgba(26,26,46,0.05); border-radius: 6px; padding: 2px 8px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
-    .field-copy { font-size: 13px; line-height: 1.5; color: rgba(26,26,46,0.82); width: 100%; white-space: pre-line; }
+    .field-name { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.02em; color: rgba(252,246,227,0.72); flex-shrink: 0; }
+    .field-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 600; color: rgba(252,246,227,0.32); background: rgba(26,26,46,0.05); border-radius: 6px; padding: 2px 8px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .field-copy { font-size: 13px; line-height: 1.5; color: rgba(252,246,227,0.82); width: 100%; white-space: pre-line; }
     .field-meta { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px; }
-    .field-char { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.35); font-variant-numeric: tabular-nums; }
+    .field-char { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.35); font-variant-numeric: tabular-nums; }
     .field-char.over { color: #c0392b; font-weight: 600; }
     .field-char.placeholder { font-style: italic; }
     /* Selective regen (Phase 1): tap a field to select it for scoped generate/regen. */
     .asset-field.selectable { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 10px; padding-left: 10px; padding-right: 10px; margin: 0 -10px; transition: background 0.12s ease, box-shadow 0.12s ease; position: relative; flex-wrap: wrap; }
     .asset-field.selectable:active { background: rgba(201,168,76,0.08); }
     .asset-field.selected { background: rgba(201,168,76,0.14); box-shadow: inset 0 0 0 1.5px rgba(201,168,76,0.85); }
-    .asset-field.selected .field-name { color: var(--ink); font-weight: 600; }
+    .asset-field.selected .field-name { color: var(--q-cream); font-weight: 600; }
     .field-check { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%; background: var(--gold); color: #1A1A2E; font-size: 12px; font-weight: 700; display: none; align-items: center; justify-content: center; line-height: 1; }
     .asset-field.selected .field-check { display: flex; }
     .asset-field.selectable.has-copy { padding-top: 12px; }
@@ -762,14 +751,19 @@
        the field is selected + expanded (progressive disclosure). */
     /* THE SAME FIX .picker-lede ALREADY GOT, FOR THE SAME REASON. This sat on the
        sky gradient at 12.5px, half-opacity and italic — 1.98:1 against the top of
-       the gradient, where 4.5:1 is the AA floor for text this size. It is the one
-       muted-italic aside in this file that does NOT sit on a card: every other one
-       (.asset-direction, .field-no-riff, .doc-row-note, .field-char.placeholder)
-       is inside a rgba(255,255,255,0.52) surface and stays exactly as it is.
-       Full --ink and 14px takes it to 9.94:1 over most of the gradient and 3.64:1
-       against its darkest stop — see the note by .output-title, which is the same
-       token on the same background and carries the same limit. */
-    .field-select-hint { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; line-height: 1.6; color: var(--ink); margin: 0 0 14px; }
+       the gradient, where 4.5:1 is the AA floor for text this size.
+       STALE AS OF SURFACES STEP 6: this used to say the other four muted-italic
+       asides in this file (.asset-direction, .field-no-riff, .doc-row-note,
+       .field-char.placeholder) sat inside a rgba(255,255,255,0.52) surface and
+       stayed dark ink. Step 4 removed that surface — .asset-card and
+       .doc-row-body carry no fill any more — so all four are on transparent
+       cards over the sky now, same as this one, and are converted to cream
+       alongside it.
+       Full --ink and 14px took it to 9.94:1 over most of the gradient and
+       3.64:1 against its darkest stop — see the note by .output-title, which
+       was the same token on the same background carrying the same limit;
+       .output-title is cream now for the same reason this is. */
+    .field-select-hint { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; line-height: 1.6; color: var(--q-cream); margin: 0 0 14px; }
     .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(201,168,76,0.4); }
     /* Progressive disclosure (Step 2): the controls are hidden behind a chevron on
        a selected field, and revealed only once the writer expands it. */
@@ -782,7 +776,7 @@
     /* Why there is no Riff button on this field. Sits exactly where the button
        would have been, and only on a field that could otherwise have had one —
        see appendAssetCard: a marker with no room below it. */
-    .field-no-riff { font-family: 'Zen Kaku Gothic New', sans-serif; display: none; align-self: flex-start; margin-top: 10px; font-size: 11.5px; font-style: italic; line-height: 1.5; color: rgba(26,26,46,0.45); }
+    .field-no-riff { font-family: 'Zen Kaku Gothic New', sans-serif; display: none; align-self: flex-start; margin-top: 10px; font-size: 11.5px; font-style: italic; line-height: 1.5; color: rgba(252,246,227,0.45); }
     .asset-field.selected .field-no-riff { display: block; }
     /* Riff button — the additive action inside a field's expanded panel. Star
        Crush, gold fill, ink text — matches the app's action buttons (not a slab):
@@ -900,7 +894,7 @@
       text-align: center; min-height: calc(100vh - 150px);
     }
     .gen-gif { width: 150px; height: 150px; image-rendering: pixelated; margin-bottom: 28px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) both; }
-    .gen-message { font-family: 'StarCrush', serif; font-size: 18px; letter-spacing: 0.03em; color: var(--ink); min-height: 64px; line-height: 1.45; padding: 0 16px; max-width: 420px; text-align: center; transition: opacity 0.3s ease, transform 0.3s ease; }
+    .gen-message { font-family: 'StarCrush', serif; font-size: 18px; letter-spacing: 0.03em; color: var(--q-cream); min-height: 64px; line-height: 1.45; padding: 0 16px; max-width: 420px; text-align: center; transition: opacity 0.3s ease, transform 0.3s ease; }
     @media (prefers-reduced-motion: reduce) { .gen-message { transition: none; } }
 
     /* ── COPY DONE (v8) — reuses output-header / asset-card / output-ctas ── */
@@ -955,7 +949,7 @@
     }
 
     /* ── PROJECTS (v8) ── */
-    .projects-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--ink); letter-spacing: 0.02em; margin-bottom: 16px; }
+    .projects-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--q-cream); letter-spacing: 0.02em; margin-bottom: 16px; }
     .projects-search-wrap { margin-bottom: 14px; }
     .projects-search {
       display: flex; align-items: center; gap: 10px;
@@ -985,7 +979,7 @@
     .project-card:active { transform: scale(0.99); }
     .project-card.closed { opacity: 0.55; }
     .project-card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; gap: 12px; }
-    .project-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--ink); letter-spacing: 0.02em; line-height: 1.35; flex: 1; }
+    .project-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--q-cream); letter-spacing: 0.02em; line-height: 1.35; flex: 1; }
     .project-card-status {
       font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.04em;
       width: 96px; text-align: center; flex-shrink: 0; padding: 5px 0;
@@ -997,7 +991,7 @@
     .status-draft { color: #7A5500; background: #FFF0B3; border-color: #C9A84C; box-shadow: 2px 2px 0 rgba(122,85,0,0.2); }
     .status-notstarted { color: rgba(26,26,46,0.5); background: rgba(255,255,255,0.5); border-color: rgba(26,26,46,0.2); box-shadow: 2px 2px 0 rgba(26,26,46,0.1); }
     .project-card-meta { display: flex; align-items: center; gap: 10px; }
-    .meta-date { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; color: rgba(26,26,46,0.5); }
+    .meta-date { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; color: rgba(252,246,227,0.5); }
 
     /* Status dropdown (tappable pill). SURFACES-HANDOFF.md §5 — already a dark
        surface with light text (.status-dropdown-item below), so no text-colour
@@ -1020,17 +1014,21 @@
     .status-dot-preview { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
     /* Loading / empty / closed-toggle on the sky */
-    #screen-history .empty { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.5); color: rgba(26,26,46,0.65); }
-    #screen-history .loading { color: rgba(26,26,46,0.7); }
-    .closed-toggle { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.62); font-size: 13px; margin-top: 16px; }
+    /* SURFACES step 4 missed this card — still a translucent-white dashed box
+       (.empty's base rule, ~line 205) when every other content surface went
+       transparent-and-cream. Closed here alongside the text: fixing the text
+       without the fill would put cream on a pale card instead of on the sky. */
+    #screen-history .empty { background: transparent; border-color: var(--q-cream); color: rgba(252,246,227,0.65); }
+    #screen-history .loading { color: rgba(252,246,227,0.7); }
+    .closed-toggle { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.62); font-size: 13px; margin-top: 16px; }
 
     /* ── PROJECT DETAIL (v8 touch-up) ── */
     .back-link {
       background: none; border: none; padding: 6px 0; margin-bottom: 12px; cursor: pointer;
-      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: rgba(26,26,46,0.7);
+      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: rgba(252,246,227,0.7);
       -webkit-tap-highlight-color: transparent;
     }
-    .back-link:hover { color: var(--ink); }
+    .back-link:hover { color: var(--q-cream); }
     #screen-project .project-card-status { cursor: default; }
     /* 18px, not the 16px .output-header.glass-panel carries: that rule's tighter
        right padding is for the output screen's header GIF, which this header
@@ -1047,20 +1045,36 @@
     /* A row of one is a full-width button again, which is what a project with no
        folder (or no copy doc) should still get. Handled by flex-grow already —
        noted so the single-button case is not read as an oversight. */
-    /* Copy-review result panel (8b) — glass card with the two GIF states. */
+    /* Copy-review result panel (8b). CORRECTED FROM AN EARLIER VERSION OF THIS
+       COMMENT, which called this a "light frosted glass card SURFACES step 4
+       missed" — wrong. Its only markup instance
+       (#project-review-modal-body) carries an inline
+       `style="background:none;border:none;backdrop-filter:none;"` that has
+       always neutralised this class's own surface, and runReviewIntoModal
+       only ever reassigns `className`, never `style`, so the inline rule
+       wins every time regardless of what this class says. The real surface
+       is the surrounding `.modal-sheet` (step 5's dark tinted glass) that
+       hosts it. The background/border/radius below are therefore DEFENSIVE —
+       correct if `.review-panel` is ever reused without that inline
+       neutraliser — not a fix for a visible defect.
+       THE TEXT COLOUR CHANGE IS THE REAL FIX, and for a different reason than
+       the surface: .review-status/.review-digest/.review-note sit inside a
+       DARK modal sheet (`.modal-sheet` is cream-on-navy, see .modal-title
+       above), so dark ink here was illegible against the modal, not against
+       a light card that no longer existed. */
     .review-panel {
       margin-top: 16px; padding: 18px; text-align: center;
-      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 16px;
+      background: transparent;
+      border: 1px solid var(--q-cream); border-radius: 0;
     }
     .review-gif { width: 96px; height: 96px; image-rendering: pixelated; margin: 0 auto 10px; display: block; animation: popIn 0.45s cubic-bezier(0.34,1.56,0.64,1) both; }
-    .review-status { font-family: 'StarCrush', serif; font-size: 17px; letter-spacing: 0.02em; color: var(--ink); margin: 2px 0 8px; }
-    .review-digest { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13.5px; line-height: 1.5; color: rgba(26,26,46,0.72); }
-    .review-note { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: rgba(26,26,46,0.72); }
+    .review-status { font-family: 'StarCrush', serif; font-size: 17px; letter-spacing: 0.02em; color: var(--q-cream); margin: 2px 0 8px; }
+    .review-digest { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13.5px; line-height: 1.5; color: rgba(252,246,227,0.72); }
+    .review-note { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: rgba(252,246,227,0.72); }
     .review-panel.error { border-color: rgba(192,57,43,0.35); }
     .review-panel.error .review-digest { color: #C0392B; }
-    #screen-project .empty { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.5); color: rgba(26,26,46,0.65); }
-    #screen-project .loading { color: rgba(26,26,46,0.7); }
+    #screen-project .empty { background: transparent; border-color: var(--q-cream); color: rgba(252,246,227,0.65); }
+    #screen-project .loading { color: rgba(252,246,227,0.7); }
 
     /* ── TOAST (v8) — brief auto-dismissing confirmation ── */
     /* `bottom` is a FALLBACK here — showToast measures the visible CTA bar and

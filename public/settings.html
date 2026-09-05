@@ -219,7 +219,7 @@
 
     /* --- File-naming pattern (§3, step 7b) --- */
     .hdr-divider { height: 1px; background: rgba(255,255,255,0.4); margin: 28px 0 20px; }
-    .naming-preview-label { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.72); margin: 0 0 8px; }
+    .naming-preview-label { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(252,246,227,0.72); margin: 0 0 8px; }
     .naming-preview {
       background: #fff; border: 1.5px solid rgba(255,255,255,0.68); border-radius: 12px;
       padding: 12px 14px; margin: 0 0 16px; font-family: 'Zen Kaku Gothic New', sans-serif;
@@ -243,7 +243,7 @@
     }
     .naming-seg .naming-type { flex: none; }
     .naming-seg .naming-val { flex: 1 1 auto; min-width: 0; }
-    .naming-empty { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.6); font-size: 13px; margin: 4px 0 12px; }
+    .naming-empty { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.6); font-size: 13px; margin: 4px 0 12px; }
 
     @media (min-width: 720px) {
       .content { min-width: 0; }
@@ -259,7 +259,7 @@
       font-weight: normal; font-style: normal; font-display: swap;
     }
     html, body { height: auto; min-height: 100%; overflow-x: hidden; }
-    body { font-family: 'Zen Kaku Gothic New', sans-serif; background: var(--ink); color: var(--ink); -webkit-font-smoothing: antialiased; }
+    body { font-family: 'Zen Kaku Gothic New', sans-serif; background: var(--ink); color: var(--q-cream); -webkit-font-smoothing: antialiased; }
     /* SURFACES-HANDOFF.md §2 — nine stops, not two: the blue holds deep through
        78% of the height and only opens up in the last fifth, so the pale band
        meets the grass instead of washing out the middle of the page. */
@@ -333,7 +333,7 @@
     .content { flex: 1; }
 
     /* Title + tabs */
-    .settings-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--ink); letter-spacing: 0.02em; margin-bottom: 20px; }
+    .settings-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--q-cream); letter-spacing: 0.02em; margin-bottom: 20px; }
 
     /* Settings hub — default landing: a grid of cards routing into each section.
        SURFACES-HANDOFF.md §4, settings.html has no literal glass-panel/
@@ -352,13 +352,13 @@
     .hub-icon { width: 26px; height: 26px; display: grid; place-items: center;
       border: 1px solid var(--q-cream); }
     .hub-icon svg { width: 18px; height: 18px; fill: var(--q-cream); image-rendering: pixelated; display: block; }
-    .hub-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .hub-desc { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; line-height: 1.4; color: rgba(26,26,46,0.68); }
+    .hub-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--q-cream); }
+    .hub-desc { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; line-height: 1.4; color: rgba(252,246,227,0.68); }
 
     /* Back link at the top of a section (returns to the hub). */
     .settings-back { appearance: none; -webkit-appearance: none; cursor: pointer;
       align-self: flex-start; background: none; border: none; padding: 0 0 4px; margin-bottom: 12px;
-      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: var(--ink); }
+      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: var(--q-cream); }
     .settings-back:hover { color: var(--sky-btm); }
 
     /* Workspace connection rows: logo + name/status, action (button or badge) on the right. */
@@ -377,10 +377,15 @@
     .eyebrow { display: none; } /* v8: single Settings title + tabs */
     /* A simple per-section header so the copy below it reads with context. */
     .panel h1 {
-      font-family: 'StarCrush', serif; font-size: 19px; color: var(--ink);
+      font-family: 'StarCrush', serif; font-size: 19px; color: var(--q-cream);
       letter-spacing: 0.02em; margin: 0 0 14px; font-weight: normal;
     }
-    h2 { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.72); margin: 22px 0 10px; }
+    /* h2 is cream for every section header in the panel flow — all bare sky.
+       The one exception is .lib-new's own "New/Edit asset type" and "Set your
+       own limits" headings: that card kept its pre-rebrand translucent white
+       fill (see the note by .lib-new below), so its h2 is scoped back to
+       --ink alongside the other shared classes it did not convert. */
+    h2 { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(252,246,227,0.72); margin: 22px 0 10px; }
 
     /* Voice terminal */
     .terminal {
@@ -416,7 +421,11 @@
     #voice-view .btnrow .btn { font-family: 'Zen Kaku Gothic New', sans-serif; flex: 1; font-size: 10px; padding: 11px 8px; text-align: center; }
 
     /* Rows / cards */
-    label { font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--ink); font-weight: 500; font-size: 13px; }
+    /* Cream: this is the fallback for a bare <label> with no more specific
+       rule (#voice-q-label, "Drive folder URL"), which is bare sky. .lib-new
+       label and .tpl-namerow label already override it with their own
+       colors and are unaffected. */
+    label { font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--q-cream); font-weight: 500; font-size: 13px; }
     input[type="text"], textarea {
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
       color: var(--ink); -webkit-appearance: none; padding: 12px 14px;
@@ -435,11 +444,11 @@
       border: 1px dotted var(--q-cream); border-radius: 0; box-shadow: none;
       padding: 13px 14px; margin-bottom: 8px;
     }
-    .card .k { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 500; color: var(--ink); font-size: 14px; }
-    .card .v { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
-    .pill { font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.75); }
+    .card .k { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 500; color: var(--q-cream); font-size: 14px; }
+    .card .v { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.5); font-size: 12px; }
+    .pill { font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(252,246,227,0.75); }
     .soon { opacity: 0.55; }
-    .badge-soon { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.75); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
+    .badge-soon { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.75); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
 
     /* Asset library (read-only). Two levels — asset, then its fields — so the
        structure a clone-and-edit feature will attach to is visible as structure,
@@ -471,16 +480,37 @@
        families; the split is now carried by size, weight, colour and italic
        alone. Every rule here declares its own family; none inherits from body. */
     .lib-name { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px;
-      letter-spacing: 0.02em; color: var(--ink); }
-    .lib-group { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); }
-    .lib-dir { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.75); margin-top: 4px; }
+      letter-spacing: 0.02em; color: var(--q-cream); }
+    .lib-group { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); }
+    .lib-dir { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(252,246,227,0.75); margin-top: 4px; }
     .lib-fields { list-style: none; margin: 8px 0 0; padding: 0; }
     .lib-field { font-family: 'Zen Kaku Gothic New', sans-serif; padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .lib-field:first-child { border-top: none; }
-    .lib-fname { color: var(--ink); }
-    .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.75); font-size: 12px; }
-    .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); margin-top: 2px; }
+    /* var(--q-cream) here is read-only display text on the now-transparent
+       .lib-asset (SURFACES step 4). .lib-fname is ALSO the create/edit-form's
+       field-name input (.lib-frow input[type="text"], below) — that rule's own
+       higher specificity keeps its color at --ink regardless of this one, and
+       that input always renders inside .lib-new's own untouched fill anyway
+       (see the note by .lib-new). */
+    .lib-fname { color: var(--q-cream); }
+    /* .lib-limit ALSO renders inside .lib-new (libHouseRow's locked-row line);
+       the .lib-new-scoped override below restores --ink there. */
+    .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.75); font-size: 12px; }
+    .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); margin-top: 2px; }
     /* THE AUTHORITY CHIPS, AND WHY THEIR COLOURS ARE DARKER THAN THEY LOOK.
+       STALE FOR THE READ-ONLY CARD AS OF SURFACES STEP 6: this was measured
+       against .lib-asset's rgba(255,255,255,0.5)+blur fill, which step 4
+       removed (.lib-asset is `background: transparent` now) — the read-only
+       chip sits on bare sky, not that fill, and .enforced/.recommended/.mine
+       below are UNCHANGED hex, so those three are a known, unmeasured gap left
+       from that conversion (flagged, not fixed, here — see the settings.html
+       commit that did this text-colour pass). .house_default is cream now for
+       the read-only card for the same reason .lib-name etc. are.
+       STILL ACCURATE for .lib-new's reduced/full edit forms: libHouseRow and
+       libTierNode render these same classes a second time inside .lib-new
+       (below), which kept the identical rgba(255,255,255,0.5)+blur fill this
+       measurement describes — that is why .house_default gets a `.lib-new`
+       override back to ink rather than losing the fix outright.
        Measured with scripts/checkContrast.js against .lib-asset — rgba(255,255,255,0.5)
        over backdrop-filter: blur(14px) over the sky gradient, which is why a hex
        that reads fine in an editor lands somewhere else on screen:
@@ -505,7 +535,7 @@
     /* The two tenant-side chips. Quieter than the authority ones on purpose:
        "House default" is not a warning, it is an invitation, and "Yours" is a
        statement of fact about a number the tenant already set. */
-    .lib-tier.house_default { color: rgba(26,26,46,0.75); }
+    .lib-tier.house_default { color: rgba(252,246,227,0.75); }
     .lib-tier.mine { color: #1f4d31; }
 
     /* --- Reduced form: setting your own limits on a BUNDLED asset ---------- */
@@ -541,9 +571,15 @@
 
        0.75 is .section-label's known-safe value; 0.70 is the floor. The machine
        line takes no extra dimming at all: it is the CONTENT of this block, not a
-       footnote to the line above it. */
+       footnote to the line above it.
+       STALE FOR THE READ-ONLY CARD AS OF SURFACES STEP 6, same story as the
+       authority chips above: .lib-asset's fill this was measured against is
+       gone from the read-only card (step 4), so .lib-fresh is cream there now.
+       STILL ACCURATE inside .lib-new — libHouseRow renders this same freshness
+       block a second time on the locked-row line, on the fill this comment
+       describes, hence the `.lib-new .lib-fresh` override below. */
     .lib-fresh { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px;
-      color: rgba(26,26,46,0.75); line-height: 1.5; margin-top: 4px; }
+      color: rgba(252,246,227,0.75); line-height: 1.5; margin-top: 4px; }
     .lib-fresh-v a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
     /* The one state that gets colour, on the MACHINE line only — the human
        verification is still true when the detector is stuck, so marking that too
@@ -584,7 +620,7 @@
       font-family: 'Zen Kaku Gothic New', sans-serif;
       margin: 11px 0 0; padding: 0; border-top: none;
       font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-      color: rgba(26,26,46,0.75);
+      color: rgba(252,246,227,0.75);
     }
     .lib-grouplabel:first-child { margin-top: 2px; }
     /* Rows inside a group step in, and their divider steps in with them (margin,
@@ -628,10 +664,30 @@
     .lib-rowerr { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: #8a1f1f; margin-top: 6px; }
 
     /* Create-an-asset form. Collapsed to a single button until opened, so the
-       library stays a library. */
+       library stays a library.
+       NOT PART OF SURFACES STEP 4 — this card keeps its pre-rebrand
+       translucent-white glass (0.5 alpha, blur, 14px radius), same as
+       .hdr-upload-card / .naming-seg elsewhere on this page: it was never
+       named in step 4's hub-card/lib-asset/tpl-card/card list, so it was left
+       exactly as it was, own fill and all.
+       THE SAME CLASS RENDERS IN THREE PLACES, though, and only one of them is
+       this standalone "create a new asset" form. libOpenForm's full edit form
+       AND libOpenHouseForm's reduced house-defaults form (both opened FROM a
+       button on a read-only .lib-asset card, in place) also build `.lib-new`
+       boxes — box = el('div', 'lib-new') in both. So every field-row class
+       shared with the read-only display (.lib-fname, .lib-limit, .lib-tier,
+       .lib-fresh, h2) is ALWAYS on this same untouched fill wherever it
+       appears via .lib-new, never on bare sky — the base rules for those
+       classes went cream for their OTHER (read-only, now-transparent)
+       context, and are scoped back to ink here. .lib-hint, .lib-sep,
+       .lib-fdel, .lib-fnotelab/.lib-fnotebtn, .lib-basehint, .lib-fstaticnote,
+       .lib-notewhy and .lib-kept needed no such scoping — every place they
+       render is inside a .lib-new box, so their base rules were simply left
+       alone. */
     .lib-newbtn { margin: 14px 0 4px; }
     .lib-new { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px; margin: 12px 0; }
+    .lib-new h2, .lib-new .lib-limit, .lib-new .lib-tier.house_default, .lib-new .lib-fresh { color: var(--ink); }
     .lib-new h2 { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; margin: 0 0 4px; }
     .lib-new label { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
     .lib-new input[type="text"], .lib-new textarea { font-family: 'Zen Kaku Gothic New', sans-serif; width: 100%; font-size: 14px; }
@@ -776,27 +832,32 @@
     }
     .tpl-head { display: flex; align-items: flex-start; gap: 10px; }
     .tpl-name { flex: 1; min-width: 0; font-family: 'StarCrush', serif; font-weight: normal;
-      font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .tpl-open { font-family: 'Zen Kaku Gothic New', sans-serif; flex: none; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); text-decoration: underline; }
-    .tpl-meta { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(26,26,46,0.75); margin-top: 4px; }
+      font-size: 15px; letter-spacing: 0.02em; color: var(--q-cream); }
+    .tpl-open { font-family: 'Zen Kaku Gothic New', sans-serif; flex: none; font-size: 12px; font-weight: 600; color: rgba(252,246,227,0.7); text-decoration: underline; }
+    .tpl-meta { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(252,246,227,0.75); margin-top: 4px; }
     .tpl-marks { list-style: none; margin: 10px 0 0; padding: 0; }
     .tpl-mark { font-family: 'Zen Kaku Gothic New', sans-serif; padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .tpl-mark:first-child { border-top: none; }
-    .tpl-token { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: var(--ink); }
-    .tpl-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); margin-left: 6px; }
-    .tpl-where { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; color: rgba(26,26,46,0.75); margin-top: 2px; }
+    .tpl-token { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: var(--q-cream); }
+    .tpl-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); margin-left: 6px; }
+    .tpl-where { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; color: rgba(252,246,227,0.75); margin-top: 2px; }
     /* A malformed marker is shown, never swallowed — a tenant who typo'd a brace
        has to see it here rather than discover it when nothing fills in. */
     .tpl-warn { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: #8a1f1f; background: rgba(255,255,255,0.42);
       border-left: 2px solid #8a1f1f; border-radius: 0 9px 9px 0; padding: 7px 10px; margin-top: 10px; }
-    .tpl-empty { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: rgba(26,26,46,0.6); margin-top: 8px; }
+    .tpl-empty { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: rgba(252,246,227,0.6); margin-top: 8px; }
 
     /* Notes / banners / states on the sky */
-    .note { color: rgba(26,26,46,0.65); }
+    .note { color: rgba(252,246,227,0.65); }
     .banner { background: #C6F0D8; border: 1.5px solid #2ECC71; color: #0A5C32; border-radius: 12px; }
     .error { border-radius: 12px; }
-    .empty { background: rgba(255,255,255,0.3); border: 1.5px dashed rgba(255,255,255,0.6); color: rgba(26,26,46,0.65); border-radius: 14px; }
-    .progress { color: rgba(26,26,46,0.6); }
+    /* Another SURFACES step 4 gap, same shape as app.html's #history-empty /
+       #screen-project .empty: still a translucent-white dashed box (0.3 alpha)
+       when every named content surface on this page went transparent and
+       cream. Closed here alongside the text audit rather than left as the one
+       "empty state" card still on the old design. */
+    .empty { background: transparent; border: 1.5px dashed var(--q-cream); color: rgba(252,246,227,0.65); border-radius: 0; }
+    .progress { color: rgba(252,246,227,0.6); }
 
     /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
        screens use the horizontal space instead of a phone-width strip. Purely

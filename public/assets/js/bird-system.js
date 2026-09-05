@@ -71,6 +71,16 @@
     return { x: x, y: y };
   }
 
+  /* Geometry comes from `wrap` (the fixed sky layer), never from `phone`: with
+     frame:'body' the phone element is the document, which grows with content,
+     while sprites live in a position:fixed wrap clipped to the viewport. */
+  /* An element that is in the DOM but on a hidden screen has no offsetParent
+     and no client rects. The app keeps every screen mounted and toggles them,
+     so this is the difference between "exists" and "on screen right now". */
+  function onScreen(el) {
+    return !!(el && el.offsetParent !== null && el.getClientRects().length);
+  }
+
   function Scene(phone, opts) {
     this.phone = phone;
     this.opts = opts;
@@ -308,12 +318,16 @@
 
   /* ---------- dynamic: document complete ---------- */
 
+  /* Waits for the completion screen to actually appear rather than firing on a
+     timer after load — the icon is mounted from the start but hidden, and
+     playing the arrival over a hidden icon burns the once-only flag unseen. */
   Scene.prototype.queueDropin = function (delay) {
     var self = this;
     this.after(delay, function () {
       if (!self.running || self.dropinDone) return;
       var icon = self.phone.querySelector(self.opts.docIcon);
-      if (icon) self.dropin(icon);
+      if (onScreen(icon)) self.dropin(icon);
+      else self.queueDropin(500);
     });
   };
 

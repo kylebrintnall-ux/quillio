@@ -12848,8 +12848,10 @@ test('the off state is the toggle and the card, with no pill to shift it', () =>
   assert.match(html, /\.lib-toggle \{[^}]*flex: none/);
   assert.ok(!/\.lib-head \{[^}]*flex-wrap: wrap/.test(html), 'the head itself never wraps');
   assert.match(html, /\.lib-headtext \{ flex: 1; min-width: 0;[^}]*flex-wrap: wrap/, 'the name column wraps instead');
-  // The remaining off cues are the dimmed, dashed card — unchanged.
-  assert.match(html, /\.lib-asset\.off \{ opacity: 0\.6; border-style: dashed; \}/);
+  // The off cue is opacity alone (SURFACES-HANDOFF.md §4 dropped the base
+  // .lib-asset's own border-style, so a dashed override no longer has a solid
+  // border to dash against — a dotted row read as "off" via alpha only).
+  assert.match(html, /\.lib-asset\.off \{ opacity: 0\.5; \}/);
   assert.match(html, /function libPaintActive\(card, active\) \{\s*card\.classList\.toggle\('off', !active\);\s*\}/);
 });
 
@@ -17764,7 +17766,13 @@ test('the project detail view: documents index, one back route, top actions', ()
   assert.match(html, /el\(opts\.collapsible \? 'button' : 'div', 'asset-card-header'\)/);
   // Width is not optional on a form control: shrink-to-fit left the nine bands
   // ragged, each ending at its own text. Found in a browser, invisible here.
-  assert.match(html, /\.glass-panel\.list button\.asset-card-header \{ width: calc\(100% \+ 36px\); \}/);
+  assert.match(html, /button\.asset-card-header \{[^}]*width: 100%;/);
+  // The +36px bleed-compensation variant is GONE, not just renamed: it existed
+  // only to counteract the header band's old `margin: 0 -18px` full-bleed trick,
+  // which SURFACES-HANDOFF.md §4 removed along with .asset-card's own side
+  // padding (there is nothing left to bleed past). A stray compensation rule
+  // sitting next to a since-removed bleed would silently overshoot the card.
+  assert.ok(!/width:\s*calc\(100% \+ 36px\)/.test(html), 'the bleed-compensation width is gone with the bleed it compensated for');
 
   // 5. THE TITLE BLOCK SITS ON THE SAME SURFACE AS THE CARDS. Bare, it was 26px
   //    from the column edge against the cards' 45px — a 19px step, measured.

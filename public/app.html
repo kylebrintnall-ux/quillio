@@ -362,11 +362,13 @@
        the alpha, not of the glass, and the alpha is deliberate — a placeholder loud
        enough to beat a cloud reads as real content and looks wrong once someone
        types. Do not chase the placeholder number by raising this value. */
+    /* SURFACES-HANDOFF.md §4 — transparent, 1px cream border, no radius, no
+       shadow. NOT frosted (that's step 5's four floating surfaces only), so
+       backdrop-filter comes off here too. */
     .glass-card {
-      background: rgba(255,255,255,0.30);
-      backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
-      border: 1.5px solid rgba(255,255,255,0.38); border-radius: 18px; overflow: hidden;
-      box-shadow: 0 8px 32px rgba(26,26,46,0.1), inset 0 1px 0 rgba(255,255,255,0.45);
+      background: transparent;
+      border: 1px solid var(--q-cream); border-radius: 0; overflow: hidden;
+      box-shadow: none;
     }
     /* HEIGHTS ARE WHOLE LINE BOXES, and the arithmetic is the point.
        font-size 15 x line-height 1.6 = 24px per line; padding 18 top + 14 bottom
@@ -531,36 +533,26 @@
        ONE PANEL PER CONTIGUOUS RUN, not one per element. Boxing each label and
        each body separately turns a page that is already a card stack into a wall
        of nine boxes, with "DOCUMENTS" alone in its own panel. */
+    /* SURFACES-HANDOFF.md §4 — same treatment as .glass-card above. */
     .glass-panel {
-      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px;
+      background: transparent;
+      border: 1px solid var(--q-cream); border-radius: 0;
+      padding: 18px;
     }
     /* A run's own padding; the last child's margin is collapsed so the panel does
        not carry a hole under its final line. */
     .glass-panel.run { padding: 16px 18px; margin-bottom: 14px; }
     /* A MERGED LIST: the label, its hint and the list itself are ONE surface.
-       The rows inside therefore DROP their own glass. Left on, two 52% white
-       layers stack to about 77% and two 1.5px borders meet a few pixels apart —
-       a lighter box floating inside a box, which is what the label-panel-above-a-
-       list arrangement looked like and the reason for merging in the first place.
-       Rows become flat, full-bleed to the panel's padding, separated by a
-       hairline. The panel keeps the radius; the rows have none to clip. */
+       Pre-SURFACES-HANDOFF this section's rows dropped their own glass and were
+       separated by a hairline, because two stacked frosted-glass surfaces read as
+       a lighter box floating inside a box. SURFACES-HANDOFF.md §4 replaces that
+       with a different rule — "repeating rows read as dotted, so the outer panel
+       stays the only solid box" — so .doc-row / .asset-card now carry NO surface
+       of their own at the base rule (see below) and the per-row hairline this
+       comment used to add is gone; each row gets its own dotted box instead
+       (.doc-row-body, .asset-card-header). */
     .glass-panel.list { padding: 16px 18px 6px; margin-bottom: 14px; }
-    .glass-panel.list .doc-row,
-    .glass-panel.list .asset-card {
-      background: none; -webkit-backdrop-filter: none; backdrop-filter: none;
-      border: none; border-radius: 0; box-shadow: none;
-      margin: 0; padding-left: 0; padding-right: 0;
-    }
-    /* A hairline between document rows, and one under the hint so the heading
-       reads as a heading rather than as the list's first line. Asset cards are
-       NOT in this group — their header band below carries its own rules. */
-    .glass-panel.list .doc-row + .doc-row,
-    .glass-panel.list .field-select-hint + div > .doc-row:first-child {
-      border-top: 1px solid rgba(255,255,255,0.6);
-    }
     .glass-panel.list .field-select-hint { margin-bottom: 12px; }
-    .glass-panel.list .doc-row { padding-top: 12px; padding-bottom: 12px; }
     .glass-panel.list .asset-card { padding-top: 0; padding-bottom: 8px; }
 
     /* THE ASSET NAME IS A HEADER BAND, NOT A ROW.
@@ -585,11 +577,18 @@
        sticky descendant cannot pin against it. Making sticky work means removing
        that guard and re-testing horizontal overflow on every screen, which costs
        more than the problem it solves. */
+    /* SURFACES-HANDOFF.md §4 — the dotted box the spec sheet puts on
+       .asset-card-name actually belongs here: in this app .asset-card-name is
+       just the text span inside this header button, and the header band is what
+       plays the "name gets its own outline" role the spec sheet describes.
+       No more -18px bleed margin — .asset-card carries no side padding to
+       counteract now, so button.asset-card-header's old compensating extra-
+       width rule (the header's own width plus twice the old bleed) goes too
+       (see below). */
     .glass-panel.list .asset-card-header {
-      margin: 0 -18px 4px; padding: 10px 18px 9px;
-      background: rgba(214,236,246,0.97);
-      border-top: 1px solid rgba(255,255,255,0.95);
-      border-bottom: 1px solid rgba(255,255,255,0.85);
+      margin: 0 0 8px; padding: 13px 14px;
+      background: none;
+      border: 1px dotted var(--q-cream);
     }
     .glass-panel.list .asset-card-name { font-size: 15px; letter-spacing: 0.04em; }
     .glass-panel.list .asset-card + .asset-card { margin-top: 14px; }
@@ -624,16 +623,21 @@
     /* THE DOCUMENTS A RUN PRODUCED. One row per document, on the result screen;
        tapping one opens that document's own detail view. A brief that made one
        document renders one row — there is no slot for a second. */
+    /* SURFACES-HANDOFF.md §4 — the row itself carries no surface any more (no
+       background/border/radius); the dotted box moves to .doc-row-body, so the
+       "go" arrow sits outside it. */
     .doc-row {
       display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
-      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px;
+      background: none; border: none; border-radius: 0; padding: 0; margin-bottom: 12px;
       cursor: pointer; -webkit-tap-highlight-color: transparent;
       font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--ink);
+    }
+    .doc-row:active .doc-row-body { background: rgba(201,168,76,0.10); border-color: rgba(201,168,76,0.55); }
+    .doc-row .doc-row-body {
+      flex: 1; min-width: 0;
+      border: 1px dotted var(--q-cream); padding: 12px 14px;
       transition: border-color 0.12s ease, background 0.12s ease;
     }
-    .doc-row:active { background: rgba(201,168,76,0.10); border-color: rgba(201,168,76,0.55); }
-    .doc-row .doc-row-body { flex: 1; min-width: 0; }
     /* THE EYEBROW IS AN EYEBROW, so it uses the one this product already has.
        It was 10px Zen Kaku 700 uppercase at 42% ink — a second, sans label
        system existing nowhere else in the app, sitting three lines under
@@ -656,16 +660,20 @@
     .doc-row .doc-row-go { font-size: 18px; color: rgba(26,26,46,0.35); flex-shrink: 0; }
     /* A template that was refused or failed to build. Not tappable — there is no
        document behind it — and it says which, instead of being silent. */
-    .doc-row.failed { cursor: default; border-color: rgba(192,57,43,0.35); background: rgba(192,57,43,0.05); }
+    .doc-row.failed { cursor: default; }
+    .doc-row.failed .doc-row-body { border-color: rgba(192,57,43,0.35); background: rgba(192,57,43,0.05); }
     .doc-row.failed .doc-row-note { color: #a5382a; font-style: normal; }
     /* `.doc-switch` / `.doc-switch-btn` WERE HERE — the project view's chip pair,
        removed with the switcher itself. That control put the document you were
        already reading on screen as a thing to go to; the project view now uses
        the same .doc-row index the result screen does, so there is one document
        list in the app rather than two that look nothing alike. */
+    /* SURFACES-HANDOFF.md §4 — the card itself carries no surface any more; the
+       dotted box moves to the header band (.asset-card-header, below), which is
+       this app's real equivalent of the spec sheet's .asset-card-name (that class
+       here is just the text span inside the header button, not the band itself). */
     .asset-card {
-      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 16px; padding: 18px 18px 12px; margin-bottom: 12px;
+      background: none; border: none; border-radius: 0; padding: 0; margin-bottom: 12px;
     }
     @keyframes cardIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
     .asset-card.reveal { animation: cardIn 0.45s ease both; }
@@ -687,7 +695,7 @@
        card is collapsible or not, because a nine-asset project and a one-asset
        project are the same screen. */
     button.asset-card-header {
-      border-left: none; border-right: none; border-radius: 0;
+      border-radius: 0;
       font: inherit; color: inherit; text-align: left;
       cursor: pointer; -webkit-tap-highlight-color: transparent;
       /* WIDTH IS NOT OPTIONAL ON A BUTTON. A form control sizes shrink-to-fit
@@ -698,10 +706,6 @@
          needed saying. */
       width: 100%;
     }
-    /* Full-bleed inside the merged list, where the band is pulled out to the
-       panel's padding edges by `margin: 0 -18px` — so its width is the card's
-       plus both of those. */
-    .glass-panel.list button.asset-card-header { width: calc(100% + 36px); }
     button.asset-card-header:active { background: rgba(201,168,76,0.14); }
     /* The name takes the slack so the chevron stays on the header's own line —
        .asset-card-header wraps, and an asset name long enough to wrap would
@@ -730,7 +734,14 @@
     .asset-card-badge { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; font-weight: 600; color: rgba(26,26,46,0.5); background: rgba(26,26,46,0.06); border-radius: 100px; padding: 2px 9px; }
     .asset-card-badge.drafted { color: #0A5C32; background: #C6F0D8; }
     .asset-direction { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.48); margin: 0 0 12px; line-height: 1.5; }
-    .asset-field { display: flex; align-items: baseline; justify-content: space-between; padding: 10px 0; border-top: 1px solid rgba(26,26,46,0.06); gap: 12px; }
+    .asset-field { display: flex; align-items: baseline; justify-content: space-between; padding: 11px 0; border-top: 1px dotted var(--q-cream-55); gap: 12px; }
+    /* SURFACES-HANDOFF.md §4 says .asset-field:first-of-type, but .asset-direction
+       and .asset-field are sibling <divs> (see the el('div', …) calls that build
+       this card), so :first-of-type only strips the border when there is no
+       direction line — with one, .asset-direction IS the first div and the first
+       field never matches. Both actual "first field" cases, by adjacency instead. */
+    .asset-card-header + .asset-field,
+    .asset-direction + .asset-field { border-top: none; }
     .asset-field.has-copy { flex-direction: column; align-items: flex-start; gap: 5px; }
     .field-name { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.02em; color: rgba(26,26,46,0.72); flex-shrink: 0; }
     .field-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.32); background: rgba(26,26,46,0.05); border-radius: 6px; padding: 2px 8px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
@@ -955,9 +966,13 @@
       transition: all 0.15s; -webkit-tap-highlight-color: transparent;
     }
     .filter-chip.active { background: var(--ink); border-color: var(--ink); color: var(--white); }
+    /* SURFACES-HANDOFF.md §4. This is the WINNING definition — a legacy
+       .project-card at the top of this file (pre-v8, unreachable, same shape as
+       the :root split this file's header comment already documents) is left
+       alone since it never renders. */
     .project-card {
-      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 16px; padding: 16px 18px; margin-bottom: 10px;
+      background: transparent;
+      border: 1px solid var(--q-cream); border-radius: 0; padding: 14px 16px; margin-bottom: 12px;
       cursor: pointer; transition: transform 0.15s; -webkit-tap-highlight-color: transparent; display: block;
     }
     .project-card:active { transform: scale(0.99); }

@@ -333,20 +333,25 @@
     /* Title + tabs */
     .settings-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--ink); letter-spacing: 0.02em; margin-bottom: 20px; }
 
-    /* Settings hub — default landing: a grid of cards routing into each section. */
-    .hub { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 24px; }
+    /* Settings hub — default landing: a grid of cards routing into each section.
+       SURFACES-HANDOFF.md §4, settings.html has no literal glass-panel/
+       project-card match — these are its own equivalent, per exact spec-sheet
+       CSS. Icons: the 6 SVGs under #settings-hub had hardcoded per-rect fill
+       colours, which a single `fill` on the parent <svg> cannot override (an
+       explicit fill attribute always wins over an inherited one) — stripped so
+       they inherit --q-cream from .hub-icon svg below instead of staying inert. */
+    .hub { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+    @media (min-width: 768px) { .hub { grid-template-columns: repeat(3, 1fr); gap: 16px; } }
     .hub-card { appearance: none; -webkit-appearance: none; cursor: pointer;
-      display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;
-      padding: 22px 16px; border-radius: 16px;
-      background: rgba(255,255,255,0.35); border: 1.5px solid rgba(255,255,255,0.55);
-      box-shadow: 0 4px 16px rgba(26,26,46,0.06); transition: transform 0.12s, background 0.15s, box-shadow 0.15s; }
-    .hub-card:hover { background: rgba(255,255,255,0.55); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(26,26,46,0.12); }
-    .hub-icon { font-family: 'Zen Kaku Gothic New', sans-serif; width: 56px; height: 56px; border-radius: 12px; background: var(--cream);
-      display: flex; align-items: center; justify-content: center; }
-    .hub-icon svg { width: 40px; height: 40px; image-rendering: pixelated; display: block; }
+      display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      padding: 20px 16px; text-align: left; transition: background 0.15s; }
+    .hub-card:hover { background: rgba(252,246,227,.1); }
+    .hub-icon { width: 26px; height: 26px; display: grid; place-items: center;
+      border: 1px solid var(--q-cream); }
+    .hub-icon svg { width: 18px; height: 18px; fill: var(--q-cream); image-rendering: pixelated; display: block; }
     .hub-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
     .hub-desc { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; line-height: 1.4; color: rgba(26,26,46,0.68); }
-    @media (max-width: 420px) { .hub { grid-template-columns: 1fr; } }
 
     /* Back link at the top of a section (returns to the hub). */
     .settings-back { appearance: none; -webkit-appearance: none; cursor: pointer;
@@ -415,22 +420,39 @@
       color: var(--ink); -webkit-appearance: none; padding: 12px 14px;
     }
     input:focus, textarea:focus { outline: none; border-color: rgba(255,255,255,0.95); }
+    /* SURFACES-HANDOFF.md §4 — the given spec-sheet rule names this .acct-row,
+       but .card is the one real selector behind BOTH the Account panel's
+       Name/Email/Plan rows and the Workspace panel's connector rows (a legacy
+       pre-v8 .card at the top of this file, same unreachable shape as this
+       file's :root split, is left alone). Dotted row, same as .lib-asset/
+       .tpl-card above. .soon (not-yet-available connectors) now needs no
+       background/border override of its own — opacity alone reads as faded
+       over a transparent dotted row, where it did not over a frosted one. */
     .card {
-      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 18px; margin: 8px 0;
+      background: transparent;
+      border: 1px dotted var(--q-cream); border-radius: 0; box-shadow: none;
+      padding: 13px 14px; margin-bottom: 8px;
     }
     .card .k { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 500; color: var(--ink); font-size: 14px; }
     .card .v { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
     .pill { font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.75); }
-    .soon { opacity: 0.55; background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.3); }
+    .soon { opacity: 0.55; }
     .badge-soon { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.75); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
 
     /* Asset library (read-only). Two levels — asset, then its fields — so the
        structure a clone-and-edit feature will attach to is visible as structure,
        not as a flat list. No edit affordances anywhere in here on purpose. */
-    .lib-asset { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 12px 16px; margin: 10px 0; }
-    .lib-asset.off { opacity: 0.6; border-style: dashed; }
+    /* SURFACES-HANDOFF.md §4 — dotted row, not a solid card (repeating rows never
+       read as cards). The given spec-sheet rule also sets display:flex/gap for a
+       single-line row shape; .lib-asset is two-level (a .lib-head row, then a
+       .lib-fields list below it, both already flex/block internally), so only
+       the surface properties move here and the existing layout stays. */
+    .lib-asset {
+      background: transparent;
+      border: 1px dotted var(--q-cream); border-radius: 0; box-shadow: none;
+      padding: 13px 14px; margin-bottom: 8px;
+    }
+    .lib-asset.off { opacity: 0.5; }
     /* Two columns, and the toggle is never one of the things that wraps. The head
        used to be a single wrapping flex row holding name + group + toggle, so a
        long name ("LinkedIn Single Image Ad — Variant A", "Direct Mail — Note Card
@@ -742,8 +764,14 @@
       .cf-limit, .cf-unit { flex: 1 1 calc(50% - 4px); }
       .cf-meta { padding-left: 0; }
     }
-    .tpl-card { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 16px; margin: 14px 0; }
+    /* SURFACES-HANDOFF.md §4 — same dotted-row treatment as .lib-asset above,
+       same reason for keeping the existing layout (.tpl-head / .tpl-marks
+       already handle their own flex/list display internally). */
+    .tpl-card {
+      background: transparent;
+      border: 1px dotted var(--q-cream); border-radius: 0; box-shadow: none;
+      padding: 13px 14px; margin-bottom: 8px;
+    }
     .tpl-head { display: flex; align-items: flex-start; gap: 10px; }
     .tpl-name { flex: 1; min-width: 0; font-family: 'StarCrush', serif; font-weight: normal;
       font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
@@ -788,32 +816,32 @@ __NAV:settings__
     <!-- Settings hub (default landing). Each card routes into a section's tab. -->
     <section id="settings-hub" class="hub">
       <button class="hub-card" data-tab="voice">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="7" width="2" height="4" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="8" fill="#4DD9D9"/><rect x="8" y="3" width="2" height="12" fill="#C9A84C"/><rect x="11" y="5" width="2" height="8" fill="#4DD9D9"/><rect x="14" y="7" width="2" height="4" fill="#4DD9D9"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="7" width="2" height="4"/><rect x="5" y="5" width="2" height="8"/><rect x="8" y="3" width="2" height="12"/><rect x="11" y="5" width="2" height="8"/><rect x="14" y="7" width="2" height="4"/></svg></span>
         <span class="hub-name">Voice Guide</span>
         <span class="hub-desc">Define how your brand sounds so every draft stays on-voice.</span>
       </button>
       <button class="hub-card" data-tab="header">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="3" y="2" width="12" height="14" fill="#1C1F3B"/><rect x="4" y="3" width="10" height="3" fill="#4DD9D9"/><rect x="5" y="8" width="8" height="1" fill="#FFFFFF"/><rect x="5" y="10" width="8" height="1" fill="#FFFFFF"/><rect x="5" y="12" width="6" height="1" fill="#FFFFFF"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="3" y="2" width="12" height="14"/><rect x="4" y="3" width="10" height="3"/><rect x="5" y="8" width="8" height="1"/><rect x="5" y="10" width="8" height="1"/><rect x="5" y="12" width="6" height="1"/></svg></span>
         <span class="hub-name">Doc Header</span>
         <span class="hub-desc">Set what appears at the top of every copy doc.</span>
       </button>
       <button class="hub-card" data-tab="library">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="3" width="4" height="12" fill="#4DD9D9"/><rect x="7" y="3" width="4" height="12" fill="#C9A84C"/><rect x="12" y="3" width="4" height="12" fill="#1C1F3B"/><rect x="3" y="5" width="2" height="1" fill="#1C1F3B"/><rect x="8" y="5" width="2" height="1" fill="#1C1F3B"/><rect x="13" y="5" width="2" height="1" fill="#F5F0E8"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="3" width="4" height="12"/><rect x="7" y="3" width="4" height="12"/><rect x="12" y="3" width="4" height="12"/><rect x="3" y="5" width="2" height="1"/><rect x="8" y="5" width="2" height="1"/><rect x="13" y="5" width="2" height="1"/></svg></span>
         <span class="hub-name">Asset Library</span>
         <span class="hub-desc">See every asset type and the copy fields Quillio writes for it.</span>
       </button>
       <button class="hub-card" data-tab="templates">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="2" width="14" height="14" fill="#4DD9D9"/><rect x="3" y="3" width="12" height="3" fill="#1C1F3B"/><rect x="3" y="7" width="5" height="8" fill="#F5F0E8"/><rect x="9" y="7" width="6" height="8" fill="#F5F0E8"/><rect x="10" y="9" width="4" height="1" fill="#C9A84C"/><rect x="10" y="11" width="4" height="1" fill="#C9A84C"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="2" width="14" height="14"/><rect x="3" y="3" width="12" height="3"/><rect x="3" y="7" width="5" height="8"/><rect x="9" y="7" width="6" height="8"/><rect x="10" y="9" width="4" height="1"/><rect x="10" y="11" width="4" height="1"/></svg></span>
         <span class="hub-name">Template Documents</span>
         <span class="hub-desc">Upload your own document — a copy matrix, a form spec — and see the markers Quillio finds in it.</span>
       </button>
       <button class="hub-card" data-tab="workspace">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="7" width="4" height="4" fill="#C9A84C"/><rect x="2" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="2" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="5" y="11" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="11" width="2" height="2" fill="#1C1F3B"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="7" width="4" height="4"/><rect x="2" y="2" width="3" height="3"/><rect x="13" y="2" width="3" height="3"/><rect x="2" y="13" width="3" height="3"/><rect x="13" y="13" width="3" height="3"/><rect x="5" y="5" width="2" height="2"/><rect x="11" y="5" width="2" height="2"/><rect x="5" y="11" width="2" height="2"/><rect x="11" y="11" width="2" height="2"/></svg></span>
         <span class="hub-name">Workspace</span>
         <span class="hub-desc">Connect Slack, Google, and your writing tools.</span>
       </button>
       <button class="hub-card" data-tab="account">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="3" width="4" height="1" fill="#4DD9D9"/><rect x="6" y="4" width="6" height="4" fill="#4DD9D9"/><rect x="7" y="8" width="4" height="1" fill="#4DD9D9"/><rect x="4" y="11" width="10" height="4" fill="#1C1F3B"/><rect x="6" y="10" width="6" height="1" fill="#1C1F3B"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="3" width="4" height="1"/><rect x="6" y="4" width="6" height="4"/><rect x="7" y="8" width="4" height="1"/><rect x="4" y="11" width="10" height="4"/><rect x="6" y="10" width="6" height="1"/></svg></span>
         <span class="hub-name">Account</span>
         <span class="hub-desc">Manage your login and account details.</span>
       </button>

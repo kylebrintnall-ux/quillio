@@ -42,6 +42,26 @@
       --fg: var(--ink);
       --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
       --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF;
+
+      /* Rebrand palette (SURFACES-HANDOFF.md §0) — NEW NAMES, not new values for
+         the tokens above. --ink/--gold/--cream are dark text on light cards; the
+         rebrand's cards are transparent over a blue sky, so the same job now
+         mostly wants cream text instead. Redefining --ink etc. in place would
+         turn every existing dark-on-light rule into dark-on-dark in one commit.
+         These migrate in per rule, over later steps; the old tokens get deleted
+         only once nothing reads them any more. */
+      --q-cream: #FCF6E3;
+      --q-cream-85: rgba(252,246,227,.85);
+      --q-cream-75: rgba(252,246,227,.75);
+      --q-cream-55: rgba(252,246,227,.55);
+      --q-cream-35: rgba(252,246,227,.35);
+      --q-fill: #FDF6DC;      /* cream button fill */
+      --q-ink: #0A2233;       /* text on --q-fill only */
+      --q-gold: #F5C518;
+      --q-plum: #3D3566;
+      --q-glass: rgba(21,44,112,.55);
+      --q-display: 'StarCrush', serif;               /* already loaded below; no new @font-face */
+      --q-body: 'Zen Kaku Gothic New', sans-serif;    /* already the body font */
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
@@ -238,8 +258,24 @@
     }
     html, body { height: auto; min-height: 100%; overflow-x: hidden; }
     body { font-family: 'Zen Kaku Gothic New', sans-serif; background: var(--ink); color: var(--ink); -webkit-font-smoothing: antialiased; }
-    .sky-bg { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, #1E78BE 0%, #2FA8DC 35%, #3BBDE0 60%, #4DD9D9 100%); }
+    /* SURFACES-HANDOFF.md §2 — nine stops, not two: the blue holds deep through
+       78% of the height and only opens up in the last fifth, so the pale band
+       meets the grass instead of washing out the middle of the page. */
+    .sky-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background: linear-gradient(180deg,
+        #2E5FD6 0%,  #3068E0 30%, #3272E9 50%, #357EEF 65%, #3C8BF4 78%,
+        #539CF5 87%, #84B6F6 93%, #B3D0F9 97%, #DEEBFC 100%);
+    }
     .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+    /* Paper texture (SURFACES-HANDOFF.md §3) — above the sky, below the ground
+       band. soft-light at 28% is the whole effect; if it reads as visible grain
+       rather than almost subliminal, the blend mode got dropped, not the opacity. */
+    .clouds-wrap::before {
+      content: ''; position: absolute; inset: 0;
+      background: url('/assets/images/texture.jpg?v=__BUILD__') center / 600px auto repeat;
+      mix-blend-mode: soft-light; opacity: .28;
+    }
     /* Ground band for the bird system: mobile is a single centred tree, desktop
        (>=768px, matching the app's own breakpoint below) is a mirrored pair
        inset 16px. Both render at an integer pixel scale of the source art —

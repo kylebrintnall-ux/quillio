@@ -178,14 +178,16 @@
     .hdr-upload-card .btn { margin: 0; }
     .hdr-upload-title { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 600; font-size: 14px; color: var(--ink); }
     .hdr-hint { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.55); font-size: 12px; margin: 0; }
-    /* Branded bottom toast (ported from the app) — replaces the generic banner. */
+    /* Branded bottom toast (ported from the app) — replaces the generic banner.
+       SURFACES-HANDOFF.md §5. */
     .toast {
       position: fixed; left: 50%; bottom: 28px; z-index: 300; max-width: 380px; width: max-content;
       transform: translateX(-50%) translateY(12px);
-      background: rgba(26,26,46,0.92); color: #fff;
-      border: 1.5px solid rgba(77,217,217,0.35); border-radius: 12px; padding: 13px 20px;
+      background: rgba(21,44,112,.55); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      color: var(--q-cream);
+      border: 1px solid var(--q-cream); border-radius: 0; padding: 13px 20px;
       font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-weight: 500; letter-spacing: 0.01em;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.32); text-align: center;
+      text-align: center;
       opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

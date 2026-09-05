@@ -38,13 +38,17 @@
       line-height: 15px; text-align: center; box-shadow: 0 0 0 2px rgba(26,26,46,0.9);
     }
     .nav-bell-count.on { display: block; }
+    /* SURFACES-HANDOFF.md §5 — one of the four floating surfaces that get
+       frosted glass. Already a dark surface with light text below
+       (.notif-item etc. are rgba(255,255,255,...)), so no text-colour fix
+       needed alongside the background swap. */
     .notif-panel {
       display: none; position: absolute; top: calc(100% + 10px); right: 0; z-index: 60;
       width: 320px; max-width: calc(100vw - 24px);
-      background: rgba(26,26,46,0.97);
-      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(77,217,217,0.18); border-radius: 12px;
-      box-shadow: 0 12px 32px rgba(0,0,0,0.35); overflow: hidden;
+      background: rgba(21,44,112,.55);
+      backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+      border: 1px solid var(--q-cream); border-radius: 0; overflow: hidden;
+      color: var(--q-cream);
       font-family: 'Zen Kaku Gothic New', sans-serif; text-align: left;
     }
     .notif-panel.open { display: block; }

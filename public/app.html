@@ -907,23 +907,26 @@
     #screen-copydone { padding-bottom: 150px; }
 
     /* ── REGENERATE MODAL (bottom sheet) ── */
+    /* SURFACES-HANDOFF.md §5 — one of the four floating surfaces that DO get
+       frosted glass (content surfaces, step 4, deliberately do not). */
     .modal-overlay {
       position: fixed; inset: 0; z-index: 100;
-      background: rgba(26,26,46,0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      background: rgba(21,44,112,.28); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
       display: flex; align-items: flex-end; justify-content: center;
       opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
     }
     .modal-overlay.open { opacity: 1; pointer-events: all; }
     .modal-sheet {
       width: 100%; max-width: 520px;
-      background: linear-gradient(180deg, #2FA8DC, #4DD9D9);
-      border-radius: 24px 24px 0 0; padding: 24px 26px 48px;
+      background: rgba(21,44,112,.55);
+      backdrop-filter: blur(22px) saturate(1.1); -webkit-backdrop-filter: blur(22px) saturate(1.1);
+      border: 1px solid var(--q-cream); border-radius: 0; padding: 24px 26px 48px;
       transform: translateY(100%); transition: transform 0.35s cubic-bezier(0.34,1.2,0.64,1);
-      border-top: 1.5px solid rgba(255,255,255,0.4);
+      color: var(--q-cream);
     }
     .modal-overlay.open .modal-sheet { transform: translateY(0); }
     .modal-handle { width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.4); margin: 0 auto 20px; }
-    .modal-title { font-family: 'StarCrush', serif; font-size: 18px; color: var(--ink); letter-spacing: 0.02em; margin-bottom: 16px; }
+    .modal-title { font-family: 'StarCrush', serif; font-size: 18px; color: var(--q-cream); letter-spacing: 0.02em; margin-bottom: 16px; }
     .modal-textarea {
       width: 100%; min-height: 120px; border: none; outline: none; resize: none;
       background: rgba(255,255,255,0.25); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -940,10 +943,14 @@
     }
     .modal-btn:active { transform: scale(0.98); }
     .modal-btn:disabled { opacity: 0.6; cursor: default; }
+    /* Sits directly on .modal-sheet's own background (no light/gold fill of its
+       own, unlike .modal-textarea/.modal-btn below) — SURFACES-HANDOFF.md §5
+       changed that background from a light teal gradient to dark navy, so this
+       needed fixing alongside it or it would read as dark text on dark glass. */
     .modal-cancel {
       display: flex; align-items: center; justify-content: center; width: 100%; padding: 14px; margin-top: 10px;
       background: transparent; border: none; cursor: pointer;
-      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: rgba(26,26,46,0.5);
+      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: var(--q-cream-55);
       -webkit-tap-highlight-color: transparent;
     }
 
@@ -992,12 +999,14 @@
     .project-card-meta { display: flex; align-items: center; gap: 10px; }
     .meta-date { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; color: rgba(26,26,46,0.5); }
 
-    /* Status dropdown (tappable pill) */
+    /* Status dropdown (tappable pill). SURFACES-HANDOFF.md §5 — already a dark
+       surface with light text (.status-dropdown-item below), so no text-colour
+       fix needed alongside the background swap, unlike .modal-sheet above. */
     .status-dropdown {
       position: fixed; z-index: 200; min-width: 150px;
-      background: rgba(26,26,46,0.95); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1.5px solid rgba(77,217,217,0.2); border-radius: 10px; overflow: hidden;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.3); display: none;
+      background: rgba(21,44,112,.55); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+      border: 1px solid var(--q-cream); border-radius: 0; overflow: hidden;
+      color: var(--q-cream); display: none;
     }
     .status-dropdown.open { display: block; }
     .status-dropdown-item {
@@ -1060,13 +1069,14 @@
        first one. A toast covering the button you want to press is a defect on a
        success message and worse on an incomplete-draft warning, which is exactly
        when both need to be readable at once. */
+    /* SURFACES-HANDOFF.md §5 */
     .toast {
       position: fixed; left: 50%; bottom: 120px; z-index: 300; max-width: 360px;
       transform: translateX(-50%) translateY(12px);
-      background: rgba(26,26,46,0.92); color: #fff;
-      border: 1.5px solid rgba(77,217,217,0.35); border-radius: 12px; padding: 12px 18px;
+      background: rgba(21,44,112,.55); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      color: var(--q-cream);
+      border: 1px solid var(--q-cream); border-radius: 0; padding: 12px 18px;
       font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-weight: 500;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
       opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

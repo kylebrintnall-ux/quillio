@@ -317,13 +317,17 @@
     .nav-quill-img { width: 28px; height: 28px; image-rendering: auto; object-fit: contain; }
     .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
     .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
+    /* SURFACES-HANDOFF.md §7 — text-only: no pill, no filled active state.
+       The `/` between links is generated rather than added to the shared
+       nav.html markup, so nav.html itself needs no change. */
     .nav-link {
-      font-family: 'StarCrush', serif; font-size: 12px; color: rgba(255,255,255,0.4);
-      background: none; border: none; padding: 7px 9px; border-radius: 8px;
-      letter-spacing: 0.04em; white-space: nowrap; cursor: pointer; transition: color 0.15s, background 0.15s;
+      font-family: 'StarCrush', serif; font-size: 12px; color: rgba(252,246,227,0.55);
+      background: none; border: none; padding: 7px 9px; border-radius: 0;
+      letter-spacing: 0.04em; white-space: nowrap; cursor: pointer; transition: color 0.15s;
     }
-    .nav-link:hover { color: #fff; background: rgba(255,255,255,0.08); }
-    .nav-link.active { color: var(--sky-btm); background: rgba(77,217,217,0.12); }
+    .nav-link + .nav-link::before { content: '/'; margin-right: 9px; color: rgba(252,246,227,0.3); }
+    .nav-link:hover { color: var(--q-gold); }
+    .nav-link.active { color: var(--q-gold); background: none; }
 
     /* Content column */
     main {
@@ -421,13 +425,16 @@
     /* Shared v8 keyframes */
     @keyframes popIn { from { transform: scale(0.55); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
-    /* Shared v8 secondary CTA */
+    /* SURFACES-HANDOFF.md §7 — solid cream fill, dark navy text, zero radius.
+       No more frosted glass (background/backdrop-filter) or its own border
+       alpha: primary and secondary differ only in fill warmth and padding,
+       not in shape. */
     .cta-secondary {
-      display: flex; align-items: center; justify-content: center; padding: 15px;
-      background: rgba(255,255,255,0.28); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-      border: 1.5px solid rgba(255,255,255,0.5); border-radius: 14px;
+      display: flex; align-items: center; justify-content: center; padding: 13px;
+      background: var(--q-cream);
+      border: 1px solid var(--q-cream); border-radius: 0;
       cursor: pointer; font-family: 'StarCrush', serif; font-size: 13px;
-      letter-spacing: 0.05em; color: var(--ink); transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+      letter-spacing: 0.05em; color: var(--q-ink); transition: all 0.15s; -webkit-tap-highlight-color: transparent;
     }
     .cta-secondary:active { transform: scale(0.98); }
 
@@ -863,11 +870,15 @@
       background: linear-gradient(0deg, rgba(77,217,217,0.97) 60%, transparent);
       display: flex; flex-direction: column; gap: 10px;
     }
+    /* SURFACES-HANDOFF.md §7 — solid cream fill, dark navy text, zero radius.
+       --q-fill (not --q-cream) is the primary's own slightly warmer off-white,
+       so primary and secondary read as the same shape at two fill warmths
+       rather than two different button designs. */
     .cta-primary {
-      display: flex; align-items: center; justify-content: center; padding: 17px;
-      background: var(--gold); border: none; border-radius: 14px; cursor: pointer;
-      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--ink);
-      box-shadow: 0 4px 16px rgba(201,168,76,0.35); transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+      display: flex; align-items: center; justify-content: center; padding: 15px;
+      background: var(--q-fill); border: 1px solid var(--q-cream); border-radius: 0; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--q-ink);
+      transition: all 0.15s; -webkit-tap-highlight-color: transparent;
     }
     .cta-primary:active { transform: scale(0.98); }
     /* A DISABLED PRIMARY MUST NOT BE TRANSLUCENT. This was `opacity: 0.6`, which
@@ -885,7 +896,15 @@
          see-through. Both had to go. */
       opacity: 1;
       background: #B7C2C6; color: rgba(26,26,46,0.45);
-      box-shadow: none; cursor: default;
+      cursor: default;
+    }
+    /* SURFACES-HANDOFF.md §7 — gold on hover, all three cream-fill buttons
+       alike. :not(:disabled) so the muted disabled fill above is never
+       overridden by a hover a disabled button cannot really receive anyway. */
+    .cta-primary:hover:not(:disabled),
+    .cta-secondary:hover:not(:disabled),
+    .modal-btn:hover:not(:disabled) {
+      background: var(--q-gold); border-color: var(--q-gold); color: var(--q-ink);
     }
 
     /* ── GENERATING (v8) ── */
@@ -929,11 +948,15 @@
       padding: 14px 16px; margin-bottom: 14px; -webkit-appearance: none;
     }
     .modal-textarea::placeholder { color: rgba(26,26,46,0.4); }
+    /* SURFACES-HANDOFF.md §7 — same cream-fill/gold-hover treatment as
+       .cta-primary (not spelled out in the handoff's own snippet, but implied
+       by .modal-btn sharing that hover rule below: hovering from one gold to
+       a slightly different gold would show no feedback at all). */
     .modal-btn {
       display: flex; align-items: center; justify-content: center; width: 100%; padding: 18px;
-      background: var(--gold); border: none; border-radius: 14px; cursor: pointer;
-      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--ink);
-      box-shadow: 0 4px 16px rgba(201,168,76,0.35); -webkit-tap-highlight-color: transparent;
+      background: var(--q-fill); border: 1px solid var(--q-cream); border-radius: 0; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--q-ink);
+      -webkit-tap-highlight-color: transparent;
     }
     .modal-btn:active { transform: scale(0.98); }
     .modal-btn:disabled { opacity: 0.6; cursor: default; }

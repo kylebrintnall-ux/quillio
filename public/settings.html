@@ -342,10 +342,21 @@
     /* Settings hub — default landing: a grid of cards routing into each section.
        SURFACES-HANDOFF.md §4, settings.html has no literal glass-panel/
        project-card match — these are its own equivalent, per exact spec-sheet
-       CSS. Icons: the 6 SVGs under #settings-hub had hardcoded per-rect fill
-       colours, which a single `fill` on the parent <svg> cannot override (an
-       explicit fill attribute always wins over an inherited one) — stripped so
-       they inherit --q-cream from .hub-icon svg below instead of staying inert. */
+       CSS.
+       ICONS, SECOND VERSION. The first was 6 rect-only glyphs with hardcoded
+       per-rect fills stripped so they could inherit --q-cream from .hub-icon
+       svg below — that fixed the colour but not the shape: Doc Header and
+       Template Documents drew an outer rectangle plus inner subpaths wound
+       the SAME direction, so under the default `nonzero` fill rule the inner
+       shapes filled solid instead of punching through, and both rendered as
+       an illegible monochrome block. Replaced wholesale with the spec sheet's
+       6 path-based glyphs (14x14 viewBox, scaled up by .hub-icon svg's own
+       width/height): Voice Guide and Template Documents declare
+       `fill-rule="evenodd"` because their subpaths (the page fold, the text
+       lines) need the hole punched through; the other four are disjoint
+       shapes that fill correctly under either rule. None of the six sets its
+       own `fill`, so all six inherit --q-cream exactly as intended the first
+       time. */
     .hub { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
     @media (min-width: 768px) { .hub { grid-template-columns: repeat(3, 1fr); gap: 16px; } }
     .hub-card { appearance: none; -webkit-appearance: none; cursor: pointer;
@@ -862,32 +873,32 @@ __NAV:settings__
     <!-- Settings hub (default landing). Each card routes into a section's tab. -->
     <section id="settings-hub" class="hub">
       <button class="hub-card" data-tab="voice">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="7" width="2" height="4"/><rect x="5" y="5" width="2" height="8"/><rect x="8" y="3" width="2" height="12"/><rect x="11" y="5" width="2" height="8"/><rect x="14" y="7" width="2" height="4"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill-rule="evenodd" shape-rendering="crispEdges"><path d="M2 1h7l3 3v9H2V1zm7 1v3h3"/></svg></span>
         <span class="hub-name">Voice Guide</span>
         <span class="hub-desc">Define how your brand sounds so every draft stays on-voice.</span>
       </button>
       <button class="hub-card" data-tab="header">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="3" y="2" width="12" height="14"/><rect x="4" y="3" width="10" height="3"/><rect x="5" y="8" width="8" height="1"/><rect x="5" y="10" width="8" height="1"/><rect x="5" y="12" width="6" height="1"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M1 2h12v4H1V2zm0 6h5v5H1V8zm7 0h5v5H8V8z"/></svg></span>
         <span class="hub-name">Doc Header</span>
         <span class="hub-desc">Set what appears at the top of every copy doc.</span>
       </button>
       <button class="hub-card" data-tab="library">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="3" width="4" height="12"/><rect x="7" y="3" width="4" height="12"/><rect x="12" y="3" width="4" height="12"/><rect x="3" y="5" width="2" height="1"/><rect x="8" y="5" width="2" height="1"/><rect x="13" y="5" width="2" height="1"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M1 2h12v3H1V2zm0 4h12v3H1V6zm0 4h12v2H1v-2z"/></svg></span>
         <span class="hub-name">Asset Library</span>
         <span class="hub-desc">See every asset type and the copy fields Quillio writes for it.</span>
       </button>
       <button class="hub-card" data-tab="templates">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="2" width="14" height="14"/><rect x="3" y="3" width="12" height="3"/><rect x="3" y="7" width="5" height="8"/><rect x="9" y="7" width="6" height="8"/><rect x="10" y="9" width="4" height="1"/><rect x="10" y="11" width="4" height="1"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill-rule="evenodd" shape-rendering="crispEdges"><path d="M2 1h10v12H2V1zm2 3h6v1H4V4zm0 3h6v1H4V7zm0 3h4v1H4v-1z"/></svg></span>
         <span class="hub-name">Template Documents</span>
         <span class="hub-desc">Upload your own document — a copy matrix, a form spec — and see the markers Quillio finds in it.</span>
       </button>
       <button class="hub-card" data-tab="workspace">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="7" width="4" height="4"/><rect x="2" y="2" width="3" height="3"/><rect x="13" y="2" width="3" height="3"/><rect x="2" y="13" width="3" height="3"/><rect x="13" y="13" width="3" height="3"/><rect x="5" y="5" width="2" height="2"/><rect x="11" y="5" width="2" height="2"/><rect x="5" y="11" width="2" height="2"/><rect x="11" y="11" width="2" height="2"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M1 3h5l1 2h6v7H1V3z"/></svg></span>
         <span class="hub-name">Workspace</span>
         <span class="hub-desc">Connect Slack, Google, and your writing tools.</span>
       </button>
       <button class="hub-card" data-tab="account">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="3" width="4" height="1"/><rect x="6" y="4" width="6" height="4"/><rect x="7" y="8" width="4" height="1"/><rect x="4" y="11" width="10" height="4"/><rect x="6" y="10" width="6" height="1"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M7 2a3 3 0 110 6 3 3 0 010-6zM2 13c0-2.8 2.2-4 5-4s5 1.2 5 4H2z"/></svg></span>
         <span class="hub-name">Account</span>
         <span class="hub-desc">Manage your login and account details.</span>
       </button>

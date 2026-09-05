@@ -457,9 +457,14 @@
       border: 1.5px solid rgba(77,217,217,0.25); border-radius: 16px; padding: 16px 18px 18px;
     }
     .progress-estimate { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; color: var(--sky-btm); margin-bottom: 12px; text-align: left; }
-    .progress-track { display: flex; gap: 3px; height: 20px; padding: 3px; background: rgba(0,0,0,0.28); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 6px; }
-    .progress-seg { flex: 1 1 0; background: rgba(255,255,255,0.08); border-radius: 2px; transition: background 0.2s ease; }
-    .progress-seg.filled { background: var(--sky-btm); box-shadow: 0 0 6px rgba(77,217,217,0.55); }
+    /* SURFACES-HANDOFF.md §8 — segmented, outlined track, no glow. The old
+       box-shadow was `var(--sky-btm)`'s own glow colour; --q-fill has no
+       equivalent specified, so a filled segment is just solid fill now, and
+       .pulsing still reads fine as a plain opacity flicker on it. */
+    .progress-track { background: transparent; border: 1px solid var(--q-cream);
+                       border-radius: 0; padding: 4px; display: flex; gap: 4px; height: 36px; }
+    .progress-seg { flex: 1; background: transparent; border-radius: 0; transition: background 0.2s ease; }
+    .progress-seg.filled { background: var(--q-fill); }
     .progress-track.pulsing .progress-seg.filled { animation: segPulse 1s ease-in-out infinite; }
     @keyframes segPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
     .progress-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.92); margin-top: 14px; min-height: 20px; text-align: left; }
@@ -1779,7 +1784,8 @@ __NAV:brief__
     var progressBack = document.getElementById('progress-back');
 
     // --- Shared pixel-bar helpers ---
-    var PROGRESS_SEGS = 12;
+    // SURFACES-HANDOFF.md §8: "20 discrete segments in an outlined track."
+    var PROGRESS_SEGS = 20;
     function buildTrack(trackEl) {
       trackEl.innerHTML = '';
       for (var i = 0; i < PROGRESS_SEGS; i++) {

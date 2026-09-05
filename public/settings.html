@@ -501,46 +501,19 @@
        the .lib-new-scoped override below restores --ink there. */
     .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.75); font-size: 12px; }
     .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); margin-top: 2px; }
-    /* THE AUTHORITY CHIPS, AND WHY THEIR COLOURS ARE DARKER THAN THEY LOOK.
-       STALE FOR THE READ-ONLY CARD AS OF SURFACES STEP 6: this was measured
-       against .lib-asset's rgba(255,255,255,0.5)+blur fill, which step 4
-       removed (.lib-asset is `background: transparent` now) — the read-only
-       chip sits on bare sky, not that fill, and .enforced/.recommended/.mine
-       below are UNCHANGED hex, so those three are a known, unmeasured gap left
-       from that conversion (flagged, not fixed, here — see the settings.html
-       commit that did this text-colour pass). .house_default is cream now for
-       the read-only card for the same reason .lib-name etc. are.
-       STILL ACCURATE for .lib-new's reduced/full edit forms: libHouseRow and
-       libTierNode render these same classes a second time inside .lib-new
-       (below), which kept the identical rgba(255,255,255,0.5)+blur fill this
-       measurement describes — that is why .house_default gets a `.lib-new`
-       override back to ink rather than losing the fix outright.
-       Measured with scripts/checkContrast.js against .lib-asset — rgba(255,255,255,0.5)
-       over backdrop-filter: blur(14px) over the sky gradient, which is why a hex
-       that reads fine in an editor lands somewhere else on screen:
-
-         enforced      #8a4b00 -> 2.01:1   #6b3a00 -> 5.18:1
-         recommended   #1E6F8E -> 3.74:1   #12506a -> 5.26:1
-         mine          #2f6b46 -> 3.75:1   #1f4d31 -> 5.74:1
-         house_default  a 0.5 alpha -> 2.90:1, at 0.75 -> 5.58:1
-
-       ALPHA COULD NOT HAVE FIXED THE FIRST THREE. The probe ladder tops out at
-       3.14:1 for the old amber at alpha 0.85 — the HUE is the ceiling, not the
-       opacity, and no amount of dimming-in-reverse reaches 4.5. That is the
-       difference between this group and the muted labels around it.
-
-       AND THE CHIP SETS THE CEILING FOR .lib-sub, which wraps it. Probing
-       .lib-sub plateaued at 3.78 no matter how dark its own text went, because
-       the darkest ink in the row belonged to the chip. Nothing in the stylesheet
-       says so; the worst-instance probe is what found it. */
-    .lib-tier { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; }
-    .lib-tier.enforced { color: #6b3a00; }
-    .lib-tier.recommended { color: #12506a; }
-    /* The two tenant-side chips. Quieter than the authority ones on purpose:
-       "House default" is not a warning, it is an invitation, and "Yours" is a
-       statement of fact about a number the tenant already set. */
-    .lib-tier.house_default { color: rgba(252,246,227,0.75); }
-    .lib-tier.mine { color: #1f4d31; }
+    /* THE AUTHORITY CHIPS. Used to carry tier by HUE — a per-tier hex tuned
+       against .lib-asset's old translucent fill (see git history for that
+       measurement table). Surfaces step 4 removed that fill and left those
+       hexes an unmeasured, visibly low-contrast gap on the read-only card.
+       Rather than re-measure four hexes against the new sky, the spec sheet
+       removes the question: tier is carried by FILL PRESENCE, not hue — one
+       outlined chip, and a single filled variant for the one tier that is
+       actually a hard constraint. .recommended, .house_default and .mine get
+       no rule of their own; they fall through to the base outlined chip. */
+    .lib-tier { font-family: var(--q-body); font-size: 10px; color: var(--q-cream-75);
+                border: 1px solid var(--q-cream-55); padding: 2px 8px;
+                background: transparent; border-radius: 0; }
+    .lib-tier.enforced { color: var(--q-ink); background: var(--q-gold); border-color: var(--q-gold); }
 
     /* --- Reduced form: setting your own limits on a BUNDLED asset ---------- */
     /* A locked row is PRESENT but carries no controls — it renders its value the
@@ -587,10 +560,9 @@
     .lib-fresh-v a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
     /* The one state that gets colour, on the MACHINE line only — the human
        verification is still true when the detector is stuck, so marking that too
-       would withdraw the wrong sentence. Amber rather than a fourth accent, and
-       #6b3a00 rather than the tier chip's #8a4b00: measured the same way, the
-       chip's value is 3.57:1 here against 4.95:1 for this one. The chip gets away
-       with it at 600 weight on its own line; this is body text on a busier row. */
+       would withdraw the wrong sentence. #6b3a00 measured 4.95:1 here; this is
+       body text on a busier row, unlike the tier chip above (which no longer
+       carries its own hex at all — see the note by .lib-tier). */
     .lib-fresh.flagged .lib-fresh-m { color: #6b3a00; }
     .lib-fresh.flagged .lib-fresh-m::before { content: '⚠ '; }
     /* The field name as TEXT, where the full form has an input. Same size and
@@ -686,15 +658,19 @@
        .lib-fresh, h2) is ALWAYS on this same untouched fill wherever it
        appears via .lib-new, never on bare sky — the base rules for those
        classes went cream for their OTHER (read-only, now-transparent)
-       context, and are scoped back to ink here. .lib-hint, .lib-sep,
-       .lib-fdel, .lib-fnotelab/.lib-fnotebtn, .lib-basehint, .lib-fstaticnote,
+       context, and are scoped back to ink here. `:not(.enforced)` on the tier
+       chip because .lib-tier.enforced is filled gold with its own --q-ink
+       text (see the note by .lib-tier) — legible on either fill already, so
+       scoping it back would only cost the correct token for a coincidentally
+       near-identical one. .lib-hint, .lib-sep, .lib-fdel,
+       .lib-fnotelab/.lib-fnotebtn, .lib-basehint, .lib-fstaticnote,
        .lib-notewhy and .lib-kept needed no such scoping — every place they
        render is inside a .lib-new box, so their base rules were simply left
        alone. */
     .lib-newbtn { margin: 14px 0 4px; }
     .lib-new { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px; margin: 12px 0; }
-    .lib-new h2, .lib-new .lib-limit, .lib-new .lib-tier.house_default, .lib-new .lib-fresh { color: var(--ink); }
+    .lib-new h2, .lib-new .lib-limit, .lib-new .lib-tier:not(.enforced), .lib-new .lib-fresh { color: var(--ink); }
     .lib-new h2 { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; margin: 0 0 4px; }
     .lib-new label { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
     .lib-new input[type="text"], .lib-new textarea { font-family: 'Zen Kaku Gothic New', sans-serif; width: 100%; font-size: 14px; }

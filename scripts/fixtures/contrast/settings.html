@@ -42,11 +42,17 @@
       </li>
       <li>
         <div><span class="lib-fname">Graphic Headline</span> <span class="lib-limit">[70]</span></div>
-        <div class="lib-sub"><span class="lib-tier house_default">House default</span> · <span class="lib-tier mine">Yours</span></div>
+        <!-- .house_default / .recommended / .mine no longer carry their own
+             hex — the tier chip design was simplified to one outlined chip
+             plus a single filled variant (.enforced), tier carried by fill
+             presence rather than hue. A bare .lib-tier is that outlined chip
+             regardless of which non-enforced spec_type produced it, so one
+             instance here stands in for all three. -->
+        <div class="lib-sub"><span class="lib-tier">House default</span> · <span class="lib-tier">Yours</span></div>
         <!-- The SAME class with no styled child. A probe measures the darkest ink
-             in an element, so probing a container that holds a darker chip reports
-             the chip and not the container's own text. Both are here on purpose. -->
-        <div class="lib-sub"><span class="lib-tier recommended">Recommended</span></div>
+             in an element; with the tier chip and .lib-sub now the same colour,
+             this checks the container's OWN text renders correctly with nothing
+             else in it, not a "which is darker" case. -->
         <div class="lib-sub">Recommended by Meta. Not a hard limit.</div>
       </li>
     </ul>

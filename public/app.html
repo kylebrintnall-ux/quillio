@@ -1123,13 +1123,12 @@ __NAV:brief__
 
     <!-- SCREEN 1 — BRIEF INPUT -->
     <section id="screen-brief" class="screen active">
-      <!-- Two nowrap phrases, NOT a hard <br>. The break used to be markup, so it
-           fired at every width — two lines on a 1130px desktop with 848px of
-           container and only 342px of text. Phrases that cannot break internally
-           let the line wrap where it actually runs out of room: one line from
-           about 350px up, and the same "What are / we writing?" split below that,
-           with no breakpoint to guess at. -->
-      <h1 class="brief-headline"><span>What are</span> <span>we writing?</span></h1>
+      <!-- Two nowrap phrases, NOT a hard <br> — same technique as before the
+           copy changed, so the line wraps only where it runs out of room
+           rather than at a fixed markup break. Measured: one line from 330px
+           up; below that (320-325px) it wraps at the space between the two
+           spans, "Build a" / "document.", never mid-word. -->
+      <h1 class="brief-headline"><span>Build a</span> <span>document.</span></h1>
       <p class="brief-sub">Describe the campaign, drop a link, or paste a brief. Quillio handles the rest.</p>
       <div class="glass-card">
         <textarea id="brief" class="glass-textarea" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>

@@ -299,13 +299,14 @@
       }
     }
 
+    /* Transparent, sitting directly on the sky gradient — see the fuller note
+       on the same rule in app.html. */
     nav {
       font-family: 'Zen Kaku Gothic New', sans-serif;
-      position: relative; z-index: 10;
+      position: relative; z-index: 2;
       display: flex; align-items: center; justify-content: space-between;
-      height: 58px; padding: 0 12px 0 18px; gap: 8px;
-      background: rgba(26,26,46,0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid rgba(77,217,217,0.15);
+      height: 58px; padding: 0 20px;
+      background: transparent; border: none;
     }
     /* The quill glyph beside the wordmark is gone (spec sheet: wordmark alone).
        .nav-logo no longer needs a gap — it has one child now. */

@@ -275,14 +275,18 @@
       }
     }
 
-    /* Nav — dark glass, StarCrush wordmark/links */
+    /* Nav — transparent, StarCrush wordmark/links. Was a solid navy glass band
+       (background + blur + border-bottom); the spec sheet sits it directly on
+       the sky gradient instead, so all three go. padding drops the old
+       12px/18px asymmetry (tuned for the quill logo's own margin, gone with
+       it) for the spec's uniform 20px, and gap goes with it too — nav has
+       exactly two children (.nav-logo, .nav-links) under space-between, which
+       already maximises the room between them regardless of gap. */
     nav {
-      position: relative; z-index: 10;
+      position: relative; z-index: 2;
       display: flex; align-items: center; justify-content: space-between;
-      height: 58px; padding: 0 12px 0 18px; gap: 8px;
-      background: rgba(26,26,46,0.9);
-      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid rgba(77,217,217,0.15);
+      height: 58px; padding: 0 20px;
+      background: transparent; border: none;
     }
     /* The quill glyph beside the wordmark is gone (spec sheet: wordmark alone).
        .nav-logo no longer needs a gap — it has one child now — and the asset's

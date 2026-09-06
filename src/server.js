@@ -16,6 +16,7 @@ const {
 } = require('./workflow');
 const { claimDelivery, releaseDelivery, deliveryKey } = require('./liveMessage');
 const { emoji } = require('./emoji');
+const { buildId } = require('./utils/shellHtml');
 const oauthRoutes = require('./routes/oauth');
 const appRoutes = require('./routes/app');
 const onboardingRoutes = require('./routes/onboarding');
@@ -193,6 +194,14 @@ function extractChallenge(body) {
 
 // GET / — public landing page (no auth). Self-contained HTML; no frameworks.
 // Brand assets load from the v8 static mounts (/fonts, /assets) configured above.
+//
+// LANDING_HTML never goes through renderShell (see routes/app.js et al, which
+// do) — it is sent directly via res.send() below, so __BUILD__ substitution
+// never runs against it. Every asset URL here interpolates ${buildId()}
+// instead, evaluated once at module load, which is correct because buildId()
+// is itself fixed for the life of the process. Do NOT write ?v=__BUILD__ in
+// this constant — it would ship as that literal string, busting the cache
+// exactly once and never again while looking like it worked.
 const LANDING_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -204,85 +213,119 @@ const LANDING_HTML = `<!doctype html>
   <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet">
   <style>
     @font-face {
-      font-family: 'Star Crush';
-      src: url('/fonts/Star_Crush.otf') format('opentype');
+      font-family: 'StarCrush';
+      src: url('/fonts/Star_Crush.otf?v=${buildId()}') format('opentype');
       font-display: swap;
     }
     :root {
-      --navy: #1C1F3B;
-      --sky: #4DD9D9;
-      --cream: #F5F0E8;
+      --q-cream: #FCF6E3;
+      --q-cream-85: rgba(252,246,227,.85);
+      --q-cream-75: rgba(252,246,227,.75);
+      --q-fill: #FDF6DC;
+      --q-ink: #0A2233;
+      --q-gold: #F5C518;
+      --q-display: 'StarCrush', serif;
+      --q-body: 'Zen Kaku Gothic New', sans-serif;
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
-    body {
-      background: var(--navy);
-      color: var(--cream);
-      font-family: 'Zen Kaku Gothic New', sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      text-align: center;
+    html, body { margin: 0; padding: 0; height: auto; min-height: 100%; overflow-x: hidden; }
+    body { font-family: var(--q-body); color: var(--q-cream); -webkit-font-smoothing: antialiased; }
+    a { color: var(--q-cream); }
+    a:hover { color: var(--q-gold); }
+
+    .sky-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background: linear-gradient(180deg,
+        #2E5FD6 0%,  #3068E0 30%, #3272E9 50%, #357EEF 65%, #3C8BF4 78%,
+        #539CF5 87%, #84B6F6 93%, #B3D0F9 97%, #DEEBFC 100%);
     }
-    .hero { max-width: 480px; width: 100%; }
-    .quill { width: 96px; height: auto; margin: 0 auto 8px; display: block; }
-    .wordmark {
-      font-family: 'Star Crush', 'Georgia', serif;
-      font-size: clamp(56px, 18vw, 104px);
-      line-height: 1;
-      color: var(--cream);
-      margin: 0 0 12px;
-      letter-spacing: 0.02em;
+    .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+    .clouds-wrap::before {
+      content: ''; position: absolute; inset: 0;
+      background: url('/assets/images/texture.jpg?v=${buildId()}') center / 600px auto repeat;
+      mix-blend-mode: soft-light; opacity: .28;
     }
-    .tagline {
-      font-size: clamp(15px, 4.5vw, 18px);
-      color: var(--cream);
-      opacity: 0.85;
-      margin: 0 0 32px;
+    .clouds-wrap::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+      height: 84px; image-rendering: pixelated;
+      background:
+        url('/assets/images/tree-right-solid.png?v=${buildId()}') bottom 0 center / 124px 84px no-repeat,
+        url('/assets/images/grass-tile-solid.png?v=${buildId()}') bottom left / 256px 44px repeat-x;
     }
-    .actions {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      flex-wrap: wrap;
+
+    .lp {
+      position: relative; z-index: 2; min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 0 28px 150px;
     }
-    .btn {
-      display: inline-block;
-      font-size: 16px;
-      font-weight: 600;
-      text-decoration: none;
-      padding: 12px 24px;
-      border-radius: 10px;
-      border: 2px solid var(--sky);
-      transition: opacity 0.15s ease;
+    .lp-quill { image-rendering: pixelated; display: block; margin: 0 auto 2px; }
+    .lp-wordmark {
+      font-family: var(--q-display); font-weight: normal;
+      font-size: clamp(56px, 18vw, 104px); line-height: 1;
+      color: var(--q-cream); margin: 0 0 12px;
     }
-    .btn:hover { opacity: 0.85; }
-    .btn-primary { background: var(--sky); color: var(--navy); }
-    .btn-secondary { background: transparent; color: var(--sky); }
-    .helper {
-      font-size: 13px;
-      color: var(--cream);
-      opacity: 0.7;
-      margin: 16px 0 0;
+    .lp-tagline {
+      font-family: var(--q-body); font-size: 16px; line-height: 1.6;
+      color: var(--q-cream-85); margin: 0 0 32px; max-width: 24ch;
     }
-    @media (max-width: 380px) {
-      .actions { flex-direction: column; }
-      .btn { width: 100%; }
+    .lp-actions {
+      display: flex; flex-direction: column; justify-content: center;
+      gap: 10px; width: 100%; max-width: 290px;
+    }
+    .cta-primary, .cta-secondary {
+      display: block; text-align: center; text-decoration: none;
+      border: 1px solid var(--q-cream); border-radius: 0;
+      font-family: var(--q-display); color: var(--q-ink); cursor: pointer;
+    }
+    .cta-primary   { background: var(--q-fill);  font-size: 14px; padding: 15px; }
+    .cta-secondary { background: var(--q-cream); font-size: 12px; padding: 13px; }
+    .cta-primary:hover, .cta-secondary:hover {
+      background: var(--q-gold); border-color: var(--q-gold); color: var(--q-ink);
+    }
+    .lp-helper {
+      font-family: var(--q-body); font-size: 12px;
+      color: var(--q-cream-75); margin: 20px 0 0;
+    }
+    a:focus-visible { outline: 2px solid var(--q-gold); outline-offset: 2px; }
+
+    @media (min-width: 768px) {
+      .clouds-wrap::after {
+        height: 168px;
+        background:
+          url('/assets/images/tree-left-solid.png?v=${buildId()}')  bottom 0 left  16px / 248px 168px no-repeat,
+          url('/assets/images/tree-right-solid.png?v=${buildId()}') bottom 0 right 16px / 248px 168px no-repeat,
+          url('/assets/images/grass-tile-solid.png?v=${buildId()}') bottom left / 512px 88px repeat-x;
+      }
+      .lp { padding: 0 48px 190px; }
+      .lp-quill { width: 128px; height: 128px; margin-bottom: -6px; }
+      .lp-wordmark { margin-bottom: 6px; }
+      /* one line: the sentence is short and the room is there — wrapping it is
+         what makes the desktop column read as a stack of fragments */
+      .lp-tagline { font-size: 20px; max-width: none; margin-bottom: 26px; }
+      .lp-actions { flex-direction: row; max-width: none; gap: 14px; }
+      .cta-primary, .cta-secondary { font-size: 15px; padding: 17px 38px; }
+      .lp-helper { margin-top: 14px; }
     }
   </style>
 </head>
 <body>
-  <main class="hero">
-    <img class="quill" src="/assets/gifs/quillio_magic_v27.gif" alt="Quillio" />
-    <h1 class="wordmark">Quillio</h1>
-    <p class="tagline">Creative brief intelligence for copywriters.</p>
-    <div class="actions">
-      <a class="btn btn-primary" href="/onboarding">Create account</a>
-      <a class="btn btn-secondary" href="/oauth/google">Sign in</a>
+  <div class="sky-bg"></div>
+  <div class="clouds-wrap"></div>
+  <main class="lp">
+    <img class="lp-quill" src="/assets/gifs/quillio_magic_v27.gif?v=${buildId()}" width="96" height="96" alt="Quillio">
+    <h1 class="lp-wordmark">Quillio</h1>
+    <p class="lp-tagline">Creative brief intelligence for copywriters.</p>
+    <div class="lp-actions">
+      <a class="cta-primary" href="/onboarding">Create account</a>
+      <a class="cta-secondary" href="/oauth/google">Sign in</a>
     </div>
-    <p class="helper">New to Quillio? Set up in about 2 minutes.</p>
+    <p class="lp-helper">New to Quillio? Set up in about 2 minutes.</p>
   </main>
+  <script>window.QUILLIO_BIRDS_MANUAL = true;</script>
+  <script src="/assets/js/bird-system.js?v=${buildId()}"></script>
+  <script>
+    QuillioBirds.init({ frame: 'body', assetBase: '/assets/gifs/', skyLayer: '.clouds-wrap' });
+  </script>
 </body>
 </html>`;
 app.get('/', (req, res) => res.status(200).type('html').send(LANDING_HTML));

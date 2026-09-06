@@ -307,17 +307,9 @@
       background: rgba(26,26,46,0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid rgba(77,217,217,0.15);
     }
-    /* 6px, not 8: quillio-quill.png was trimmed to its alpha bounds, so the
-       3.3px of transparent padding that used to sit between the glyph and the
-       wordmark is gone from the asset. The quill is a diagonal whose mass sits up
-       and right, so it wants to sit tighter than a rectangular mark. See the
-       fuller note on the same rule in app.html. */
-    .nav-logo { display: flex; align-items: center; gap: 6px; flex: none; background: none; border: none; padding: 0; cursor: pointer; }
-    /* auto, not pixelated: this asset is an anti-aliased raster (6,014 colours,
-       graded alpha), not pixel art, so nearest-neighbour was discarding smoothing
-       the file actually has. Every workflow GIF IS pixel art and keeps pixelated.
-       See the fuller note on the same rule in app.html. */
-    .nav-quill-img { width: 28px; height: 28px; image-rendering: auto; object-fit: contain; }
+    /* The quill glyph beside the wordmark is gone (spec sheet: wordmark alone).
+       .nav-logo no longer needs a gap — it has one child now. */
+    .nav-logo { display: flex; align-items: center; flex: none; background: none; border: none; padding: 0; cursor: pointer; }
     .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
     .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
     /* SURFACES-HANDOFF.md §7 — text-only: no pill, no filled active state.

@@ -275,7 +275,7 @@
       }
     }
 
-    /* Nav — dark glass, pixel-quill logo + StarCrush wordmark/links */
+    /* Nav — dark glass, StarCrush wordmark/links */
     nav {
       position: relative; z-index: 10;
       display: flex; align-items: center; justify-content: space-between;
@@ -284,37 +284,13 @@
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid rgba(77,217,217,0.15);
     }
-    /* THE LOCKUP'S GAP IS 6px, NOT 8px, AND THE ASSET IS WHY.
-       quillio-quill.png used to carry its own transparent margin — 136px of a
-       1024px canvas on the left and 120px on the right, which at this 28px box
-       is 3.7px and 3.3px of dead space INSIDE the image. The header read as
-       pushed right because 18px of nav padding sat next to 3.7px of invisible
-       asset, while the gap to the wordmark already had 3.3px baked into it, and
-       no margin here could correct the ratio. The asset is now trimmed to its
-       alpha bounds (168x168, 0.83px symmetric), so these numbers finally mean
-       what they say.
-       6 rather than 8 because the quill is a DIAGONAL: its visual mass sits up
-       and to the right of its bounding box, so it wants to sit tighter to the
-       wordmark than a rectangular mark would. Same rule in onboarding.html and
-       settings.html — one lockup, three files. */
+    /* The quill glyph beside the wordmark is gone (spec sheet: wordmark alone).
+       .nav-logo no longer needs a gap — it has one child now — and the asset's
+       own margin/pixel-rendering notes that used to live here went with it. */
     .nav-logo {
-      display: flex; align-items: center; gap: 6px; flex: none;
+      display: flex; align-items: center; flex: none;
       background: none; border: none; padding: 0; cursor: pointer; text-decoration: none;
     }
-    /* AUTO, NOT PIXELATED — AND THIS IS THE ONLY IMAGE IN THE APP THAT CHANGES.
-       Audited every asset carrying image-rendering:pixelated. All six workflow
-       GIFs are genuine pixel art and KEEP it: five are authored on an integer
-       upscale grid (copy-done/doc-done 20x21 at x6, folder 20x24 at x5, review
-       22x22 at x5, scroll 20x18 at x6) and magic_v27 is authored 1:1 at 128px —
-       all six have under 25 colours across every frame and hard binary alpha.
-       Nearest-neighbour is exactly right for those and they are untouched.
-       This asset is the opposite: 6,014 colours and GRADED alpha, so it is an
-       anti-aliased raster with no pixel grid to preserve. At 2x the browser was
-       taking every third pixel of a 168px source and throwing away eight ninths
-       of it. Measured in Chromium against a correct resample of the same source:
-       auto is closer at both densities (2x 39.36 vs 44.43 RMS, 3x 43.38 vs
-       47.18) and keeps more of the smoothing the file actually has. */
-    .nav-quill-img { width: 28px; height: 28px; image-rendering: auto; object-fit: contain; }
     .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
     .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
     /* SURFACES-HANDOFF.md §7 — text-only: no pill, no filled active state.

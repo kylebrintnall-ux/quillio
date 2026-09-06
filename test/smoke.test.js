@@ -4016,11 +4016,9 @@ test('public/app.html has the core screens, API wiring, and the v8 design system
   // /assets + /fonts static routes.
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
   assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
-  // Read through renderShell, not off the raw file: the logo lives in the nav,
-  // and the nav is now the shared partial. The claim was always about the page
-  // the browser gets, and that is unchanged — see the shared-nav tests below.
-  const servedApp = require('../src/utils/shellHtml').renderShell(path.join(__dirname, '..', 'public', 'app.html'));
-  assert.ok(/\/assets\/images\/quillio-quill\.png/.test(servedApp), 'uses the pixel-quill logo');
+  // The quill glyph beside the wordmark was removed from the shared nav
+  // partial (spec sheet: wordmark alone) — see the shared-nav tests below for
+  // what the nav now serves instead.
   assert.ok(/\/assets\/gifs\//.test(html), 'uses the progress/header GIFs');
 });
 
@@ -20774,10 +20772,9 @@ const BELL_SVG =
   '<rect x="3" y="11" width="12" height="2"/><rect x="2" y="13" width="14" height="2"/>' +
   '<rect x="7" y="15" width="4" height="2"/></svg>';
 
-const NAV_BLOCK = (activeId, build) => [
+const NAV_BLOCK = (activeId) => [
   '  <nav>',
   '    <button type="button" class="nav-logo" id="nav-brand">',
-  `      <img class="nav-quill-img" src="/assets/images/quillio-quill.png?v=${build}" alt="Quillio">`,
   '      <span class="nav-wordmark">Quillio</span>',
   '    </button>',
   '    <div class="nav-links">',
@@ -20803,14 +20800,13 @@ const NAV_BLOCK = (activeId, build) => [
 ].join('\n');
 
 test('shared nav: each page serves the identical block, differing only in which link is active', () => {
-  const { renderShell, buildId } = require('../src/utils/shellHtml');
+  const { renderShell } = require('../src/utils/shellHtml');
   const shell = (f) => renderShell(path.join(__dirname, '..', 'public', f));
-  const b = buildId();
 
   const app = shell('app.html');
   const settings = shell('settings.html');
-  assert.ok(app.includes(NAV_BLOCK('nav-new', b)), 'app serves the nav with Brief active');
-  assert.ok(settings.includes(NAV_BLOCK('nav-settings', b)), 'settings serves the nav with Settings active');
+  assert.ok(app.includes(NAV_BLOCK('nav-new')), 'app serves the nav with Brief active');
+  assert.ok(settings.includes(NAV_BLOCK('nav-settings')), 'settings serves the nav with Settings active');
 
   // Exactly one active link on each page — not zero (a section name that no
   // longer matches) and not two (a slot left filled in the partial).

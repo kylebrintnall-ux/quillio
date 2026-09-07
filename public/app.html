@@ -504,13 +504,19 @@
        declarations are the ones .asset-card and .doc-row already carry, verbatim;
        this class exists so the text that used to sit on raw sky can join the same
        surface instead of getting a panel of its own invention.
-       WHY IT EXISTS: --ink on the sky gradient is 3.64:1 at the darkest stop and
-       the two alpha'd rules (.section-label at opacity .75, .section-body at
-       rgba(...,.78)) are 2.76 and 2.87 — under the 4.5:1 AA floor for text this
-       size. Darkening --ink cannot fix it: pure black on that stop is 4.49:1.
-       Lightening the gradient cannot either, short of washing it out. Composited
-       on this surface the same text is 5.04-13.03:1 with --ink and the gradient
-       both untouched.
+       WHY IT EXISTS (as measured at the time): --ink on the sky gradient is
+       3.64:1 at the darkest stop and the two alpha'd rules this panel was built
+       for (.section-label at opacity .75, .section-body at rgba(...,.78)) were
+       2.76 and 2.87 — under the 4.5:1 AA floor for text this size. Darkening
+       --ink cannot fix it: pure black on that stop is 4.49:1. Lightening the
+       gradient cannot either, short of washing it out. Composited on this
+       surface the same text was 5.04-13.03:1 with --ink and the gradient both
+       untouched.
+       FIXES-HANDOFF.md §7 has since taken .section-label and .section-body to
+       full-opacity var(--q-cream) — the two rules this contrast case was about
+       no longer carry the alpha values cited above. That only raises their
+       ratio further, so it does not undo the case for this panel; .assets-label
+       still sits at opacity .75 and still needs it.
        ONE PANEL PER CONTIGUOUS RUN, not one per element. Boxing each label and
        each body separately turns a page that is already a card stack into a wall
        of nine boxes, with "DOCUMENTS" alone in its own panel. */
@@ -594,13 +600,25 @@
     .output-header.glass-panel { background: transparent; border: none; padding: 0; margin-bottom: 16px; }
     .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--q-cream); letter-spacing: 0.02em; flex: 1; margin: 0; }
     .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
-    .section-label, .assets-label {
-      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--q-cream); opacity: 0.75;
+    /* FIXES-HANDOFF.md §7 — full cream, not the muted 0.75/rgba(...,.78) these
+       used to share with .assets-label. Split out of the combined selector so
+       .assets-label (metadata, not prose to read) keeps its own muted rule
+       untouched below. See the .glass-panel comment above: the AA-contrast
+       math it cites for "the two alpha'd rules" was for THESE two at their old
+       opacity — full cream only raises those ratios further, so the panel's
+       reason for existing is unaffected. */
+    .section-label {
+      font-family: 'StarCrush', serif; font-size: 14px; color: var(--q-cream);
+      letter-spacing: 2px; text-transform: uppercase; margin: 18px 0 8px;
     }
-    .section-label { margin-bottom: 8px; }
-    .assets-label { margin-bottom: 14px; }
-    .section-body { font-size: 14px; line-height: 1.65; color: rgba(252,246,227,0.78); margin: 0 0 24px; white-space: pre-wrap; }
+    .assets-label {
+      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--q-cream); opacity: 0.75; margin-bottom: 14px;
+    }
+    .section-body {
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; line-height: 1.7;
+      color: var(--q-cream); text-align: left; margin: 0 0 8px; white-space: pre-wrap;
+    }
     /* THE DOCUMENTS A RUN PRODUCED. One row per document, on the result screen;
        tapping one opens that document's own detail view. A brief that made one
        document renders one row — there is no slot for a second. */

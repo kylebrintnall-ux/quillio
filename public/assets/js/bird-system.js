@@ -403,11 +403,24 @@
       });
     }
 
-    addEventListener('scroll', function () {
+    function queue() {
       if (queued) return;
       queued = true;
       requestAnimationFrame(apply);
-    }, { passive: true });
+    }
+
+    addEventListener('scroll', queue, { passive: true });
+    /* A scroll event is not the only thing that changes how much page is
+       left to haze. An SPA screen swap, an async fetch populating a panel,
+       or a GIF finishing layout all change scrollHeight with no scroll event
+       at all — so a screen that arrives short (nothing loaded yet) froze at
+       strength 0 and stayed there, invisible, until the visitor scrolled by
+       hand and finally re-ran apply() against the grown page. A
+       ResizeObserver on the document catches every one of those generically,
+       without every call site having to remember to resync it by hand. */
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(queue).observe(document.documentElement);
+    }
     apply();
     return apply;
   }

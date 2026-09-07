@@ -1162,15 +1162,21 @@
        box it was aligning to — FIXES-HANDOFF.md §4 made .output-header.glass-panel
        padding: 0 everywhere, project detail included. */
     /* ABOVE the content now (see the markup), so the margin moved with it. */
-    .project-actions { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
-    /* The Drive links — small, side by side, sized to their own label rather
-       than stretched to fill the row. A crowded-header pass called the old
-       flex: 1 1 140px treatment "way too big" next to a title and an icon
-       that already carry the screen's weight; these are utility links to an
-       external doc, not primary actions. A row of one now sits at its own
-       width too, not full-width — the same reasoning applied consistently. */
-    .project-actions-secondary { display: flex; flex-wrap: wrap; gap: 10px; }
-    .project-actions-secondary .cta-secondary { flex: 0 0 auto; padding: 8px 14px; font-size: 12px; }
+    .project-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 16px; }
+    /* Every button on this screen is a small rectangle sized to its own
+       label, primaries included — a device pass called the stretched
+       full-width .cta-primary pair "way too big" next to a title and header
+       GIF that already carry the screen's weight, and it read as two
+       different button sizes beside the Drive links, which had already been
+       shrunk the same way. .project-actions-secondary contributes no box of
+       its own (display: contents), so its children flatten into this row and
+       wrap alongside the primaries as one uniform set rather than two groups
+       at two scales. */
+    .project-actions .cta-primary,
+    .project-actions .cta-secondary {
+      flex: 0 0 auto; padding: 8px 14px; font-size: 12px;
+    }
+    .project-actions-secondary { display: contents; }
     /* Copy-review result panel (8b). CORRECTED FROM AN EARLIER VERSION OF THIS
        COMMENT, which called this a "light frosted glass card SURFACES step 4
        missed" — wrong. Its only markup instance

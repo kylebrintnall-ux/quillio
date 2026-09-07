@@ -359,31 +359,36 @@
     }
     .glass-textarea:focus { outline: none; border: none; }
     .glass-textarea::placeholder { color: rgba(252,246,227,0.4); font-size: 14px; }
+    /* FIXES-HANDOFF.md §3 — attach/run match the CTAs elsewhere: transparent
+       or cream fill, cream border, zero radius, no glow. */
     .card-footer {
       display: flex; align-items: center; gap: 10px;
-      padding: 10px 14px 12px; border-top: 1px solid rgba(255,255,255,0.22);
+      padding: 10px 14px 12px; border: none;
     }
     .attach-btn {
-      width: 44px; height: 44px; flex: none;
+      width: 48px; height: 48px; flex: 0 0 48px;
       display: flex; align-items: center; justify-content: center;
-      background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.38);
-      border-radius: 10px; cursor: pointer; padding: 0;
-      font-size: 22px; font-weight: 300; color: rgba(26,26,46,0.55); line-height: 1;
+      background: transparent; border: 1px solid var(--q-cream);
+      border-radius: 0; cursor: pointer; padding: 0;
+      font-family: 'StarCrush', serif; font-size: 22px; line-height: 1; color: var(--q-cream);
       transition: all 0.15s; -webkit-tap-highlight-color: transparent;
     }
-    .attach-btn:hover { background: rgba(255,255,255,0.32); color: rgba(26,26,46,0.8); }
-    .attach-btn:active { background: rgba(255,255,255,0.32); }
+    .attach-btn:hover { background: rgba(252,246,227,.1); }
+    .attach-btn:active { background: rgba(252,246,227,.1); }
     .run-btn {
       flex: 1; display: flex; align-items: center; justify-content: center;
-      padding: 13px 16px; background: var(--gold); border: none; border-radius: 12px;
+      padding: 12px 16px; background: var(--q-fill); border: 1px solid var(--q-cream); border-radius: 0;
       cursor: pointer; position: relative; overflow: hidden; transition: all 0.18s;
-      box-shadow: 0 4px 16px rgba(201,168,76,0.38), inset 0 1px 0 rgba(255,255,255,0.22);
+      box-shadow: none;
       -webkit-tap-highlight-color: transparent;
     }
-    .run-btn::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,0.16) 0%, transparent 55%); pointer-events: none; }
+    /* The old style's glow pseudo-element — content: none removes the box
+       entirely rather than leaving it painting an invisible gradient. */
+    .run-btn::after { content: none; }
     .run-btn:active { transform: scale(0.98); }
     .run-btn:disabled { opacity: 0.55; cursor: default; }
-    .run-btn-text { font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em; color: var(--ink); position: relative; }
+    .run-btn-text { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.06em; color: var(--q-ink); position: relative; }
+    .run-btn:hover:not(:disabled) { background: var(--q-gold); border-color: var(--q-gold); }
     .attach-hint { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; margin-top: 12px; font-size: 12px; color: rgba(252,246,227,0.6); text-align: center; }
 
     /* File tags — glassy pills (no emoji) */

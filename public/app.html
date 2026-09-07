@@ -757,10 +757,27 @@
     /* Selective regen (Phase 1): tap a field to select it for scoped generate/regen. */
     .asset-field.selectable { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 10px; padding-left: 10px; padding-right: 10px; margin: 0 -10px; transition: background 0.12s ease, box-shadow 0.12s ease; position: relative; flex-wrap: wrap; }
     .asset-field.selectable:active { background: rgba(201,168,76,0.08); }
-    .asset-field.selected { background: rgba(201,168,76,0.14); box-shadow: inset 0 0 0 1.5px rgba(201,168,76,0.85); }
-    .asset-field.selected .field-name { color: var(--q-cream); font-weight: 600; }
-    .field-check { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%; background: var(--gold); color: #1A1A2E; font-size: 12px; font-weight: 700; display: none; align-items: center; justify-content: center; line-height: 1; }
-    .asset-field.selected .field-check { display: flex; }
+    /* FIXES-HANDOFF.md §8 — selection = border goes solid + a faint wash + an
+       inset bar, not a gold fill. Gold reads as a warning on a design that
+       reserves it for hover and the one emphatic badge (.asset-card-badge
+       .drafted); a filled block and a gold check both looked like one. */
+    .asset-field.selected {
+      border-top-style: solid; border-top-color: var(--q-cream);
+      background: rgba(252,246,227,.09);
+      box-shadow: inset 2px 0 0 var(--q-cream);
+      padding-left: 12px; padding-right: 12px;
+    }
+    .asset-field.selected .field-name { color: var(--q-cream); }
+    /* position/display stay structural (absolute corner badge, hidden until
+       selected) — the spec's rule below is the visual treatment only. */
+    .field-check {
+      position: absolute; top: 8px; right: 8px; display: none;
+      width: 18px; height: 18px; border-radius: 0;
+      background: var(--q-cream); color: var(--q-ink);
+      font-family: 'StarCrush', serif; font-size: 12px;
+      align-items: center; justify-content: center;
+    }
+    .asset-field.selected .field-check { display: inline-flex; }
     .asset-field.selectable.has-copy { padding-top: 12px; }
     /* Variation controls (Step 3b): the per-field variations matrix. Hidden until
        the field is selected + expanded (progressive disclosure). */

@@ -17772,10 +17772,10 @@ test('the project detail view: documents index, one back route, top actions', ()
   // sitting next to a since-removed bleed would silently overshoot the card.
   assert.ok(!/width:\s*calc\(100% \+ 36px\)/.test(html), 'the bleed-compensation width is gone with the bleed it compensated for');
 
-  // 5. THE TITLE BLOCK SITS ON THE SAME SURFACE AS THE CARDS. Bare, it was 26px
-  //    from the column edge against the cards' 45px — a 19px step, measured.
+  // 5. THE TITLE BLOCK IS BARE ON THE SKY (FIXES-HANDOFF.md §4) — no box, no
+  //    padding to align against the cards below it any more.
   assert.match(html, /<div class="output-header glass-panel">\s*\n\s*<h2 class="output-title" id="project-title">/);
-  assert.match(html, /#screen-project \.output-header\.glass-panel \{ padding: 14px 18px; \}/);
+  assert.match(html, /\.output-header\.glass-panel \{ background: transparent; border: none; padding: 0; margin-bottom: 16px; \}/);
 
   // 6. THE EYEBROW USES THE ONE LABEL SYSTEM THIS PRODUCT HAS. It was 10px Zen
   //    Kaku 700 caps — a second, sans label language, three lines under a Star

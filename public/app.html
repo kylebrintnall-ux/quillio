@@ -589,9 +589,9 @@
     .glass-panel.list .asset-card-header + .asset-field { padding-top: 16px; }
     .glass-panel.run > *:last-child { margin-bottom: 0; }
     .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
-    /* The header is its own run: title + state gif. Padding is tighter on the
-       right so the gif keeps its optical position. */
-    .output-header.glass-panel { padding: 14px 16px; margin-bottom: 16px; }
+    /* FIXES-HANDOFF.md §4 — no box. The title sits bare on the sky; the row
+       is just title + state gif, with no surface of its own to pad. */
+    .output-header.glass-panel { background: transparent; border: none; padding: 0; margin-bottom: 16px; }
     .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--q-cream); letter-spacing: 0.02em; flex: 1; margin: 0; }
     .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
     .section-label, .assets-label {
@@ -1043,12 +1043,9 @@
     }
     .back-link:hover { color: var(--q-cream); }
     #screen-project .project-card-status { cursor: default; }
-    /* 18px, not the 16px .output-header.glass-panel carries: that rule's tighter
-       right padding is for the output screen's header GIF, which this header
-       does not have. 18px is .glass-panel.list's own padding, so the title's
-       first character sits on the same vertical as "CAMPAIGN SUMMARY" and every
-       asset name below it. */
-    #screen-project .output-header.glass-panel { padding: 14px 18px; }
+    /* The padding-alignment override this used to carry is gone along with the
+       box it was aligning to — FIXES-HANDOFF.md §4 made .output-header.glass-panel
+       padding: 0 everywhere, project detail included. */
     /* ABOVE the content now (see the markup), so the margin moved with it. */
     .project-actions { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
     /* The Drive links, side by side. `flex: 1 1 140px` splits a row evenly and
@@ -1342,11 +1339,11 @@ __NAV:brief__
            viewed on one of its documents goes back to its Documents index, and
            everything else goes back to the Projects list. -->
       <button class="back-link" id="project-back">← Back to projects</button>
-      <!-- `glass-panel` DELIBERATELY, matching the output and copy-done headers.
-           Bare, the title sat on the raw sky at the content column's own edge
-           (26px) while every card below inset its text by its panel padding
-           (45px) — a 19px step measured at 390px, which reads as the heading
-           being outdented rather than as two different surfaces. -->
+      <!-- `glass-panel` DELIBERATELY, matching the output and copy-done headers —
+           kept for the shared selector, not for any box it used to draw.
+           FIXES-HANDOFF.md §4 made .output-header.glass-panel padding: 0,
+           border: none, background: transparent everywhere: the title sits
+           bare on the sky here exactly as it does on those two screens. -->
       <div class="output-header glass-panel">
         <h2 class="output-title" id="project-title">Campaign</h2>
         <span class="project-card-status" id="project-status"></span>

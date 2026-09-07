@@ -27,8 +27,9 @@
       /* Read by the legacy .file-tag rule as var(--card, #f6f6f6). Declared
          explicitly at the value its own fallback was already supplying, so the
          reference resolves instead of relying on the fallback. That rule is in
-         any case overridden by the v8 .file-tag below, which is why .file-tag
-         renders rgba(255,255,255,0.42) and not this. */
+         any case overridden by the v8 .file-tag below — transparent with a
+         cream border since the second FIXES-HANDOFF pass, neither of which
+         reads --card. */
       --card: #f6f6f6;
       --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
       --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF;
@@ -402,21 +403,21 @@
     .run-btn:hover:not(:disabled) { background: var(--q-gold); border-color: var(--q-gold); }
     .attach-hint { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; margin-top: 12px; font-size: 12px; color: rgba(252,246,227,0.6); text-align: center; }
 
-    /* File tags — glassy pills (no emoji) */
+    /* File tags — FIXES-HANDOFF.md bucket 2: transparent, cream border, square,
+       matching every other content chip on this screen. max-width stays —
+       structural, needed for .file-tag .name's own ellipsis to have something
+       to clip against. */
     .file-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .file-tag {
-      display: inline-flex; align-items: center; gap: 6px; max-width: 240px;
-      font-size: 13px; padding: 6px 10px; color: var(--ink);
-      border: 1.5px solid rgba(255,255,255,0.5); border-radius: 999px;
-      background: rgba(255,255,255,0.42);
+      display: inline-flex; align-items: center; gap: 8px; max-width: 240px;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 13px; padding: 6px 10px;
     }
-    .file-tag .ext {
-      font-family: 'StarCrush', serif; font-size: 9px; letter-spacing: 0.04em;
-      color: rgba(26,26,46,0.55); flex: none;
-    }
+    .file-tag .ext { font-family: 'StarCrush', serif; font-size: 9px; color: var(--q-cream-75); }
     .file-tag .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .file-tag .rm { border: none; background: none; width: auto; padding: 0 2px; margin: 0; font-size: 15px; line-height: 1; color: rgba(26,26,46,0.5); cursor: pointer; }
-    .file-tag .rm:hover { color: #c0392b; }
+    .file-tag .rm { background: none; border: none; color: var(--q-cream-75); font-size: 15px; padding: 0 2px; cursor: pointer; }
+    .file-tag .rm:hover { color: var(--q-cream); }
 
     /* Shared v8 keyframes */
     @keyframes popIn { from { transform: scale(0.55); opacity: 0; } to { transform: scale(1); opacity: 1; } }
@@ -442,15 +443,16 @@
     .progress-gif { width: 130px; height: 130px; image-rendering: pixelated; margin-bottom: 28px; animation: popIn 0.45s cubic-bezier(0.34,1.56,0.64,1) both; }
 
     /* ── PIXEL PROGRESS BAR (v8) — shared by brief run + draft ──
-       Chunky segmented #4DD9D9 bar on a navy panel; Zen Kaku Gothic New copy —
-       every face outside the StarCrush display bits is now that one, the Voice
-       Guide terminal included. Estimate-driven: the bar is paced
-       by an elapsed/estimate fraction (the brief/draft jobs only report
-       pending→complete), caps below full, then snaps to 100% on completion. */
+       Chunky segmented #4DD9D9 bar, bare on the sky (FIXES-HANDOFF.md bucket
+       2 dropped the navy panel — same "no box" pattern as the doc titles);
+       Zen Kaku Gothic New copy — every face outside the StarCrush display
+       bits is now that one, the Voice Guide terminal included. Estimate-
+       driven: the bar is paced by an elapsed/estimate fraction (the
+       brief/draft jobs only report pending→complete), caps below full, then
+       snaps to 100% on completion. */
     .progress-panel {
       width: 100%; max-width: 360px; margin: 0 auto;
-      background: rgba(26,26,46,0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1.5px solid rgba(77,217,217,0.25); border-radius: 16px; padding: 16px 18px 18px;
+      background: none; border: none; border-radius: 0; padding: 0;
     }
     .progress-estimate { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; color: var(--sky-btm); margin-bottom: 12px; text-align: left; }
     /* SURFACES-HANDOFF.md §8 — segmented, outlined track, no glow. The old
@@ -486,30 +488,37 @@
        same reason, so the two now read alike; this rule stays separate because
        the two lines still differ in ROLE, not in legibility. */
     .picker-lede { font-size: 14px; line-height: 1.6; color: var(--q-cream); margin: 0 0 22px; }
-    /* THE ASSET PICKER. A library list, not a plan — see #screen-picker. */
+    /* THE ASSET PICKER. A library list, not a plan — see #screen-picker.
+       FIXES-HANDOFF.md bucket 2 — transparent, cream border, square, matching
+       every other content surface on this screen. */
     .picker-search {
-      width: 100%; box-sizing: border-box; margin: 0 0 16px; padding: 14px 16px;
-      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; color: var(--ink);
-      background: rgba(255,255,255,0.52); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1.5px solid rgba(255,255,255,0.7); border-radius: 14px; outline: none; -webkit-appearance: none;
+      display: block; width: 100%; box-sizing: border-box; margin: 0 0 16px;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 15px; padding: 13px 14px; outline: none; -webkit-appearance: none;
     }
-    .picker-search::placeholder { color: rgba(26,26,46,0.4); }
+    .picker-search::placeholder { color: var(--q-cream-55); }
     .picker-group { margin-bottom: 18px; }
     .picker-group-label {
       font-family: 'StarCrush', serif; font-size: 11px; letter-spacing: 0.06em;
       text-transform: uppercase; color: var(--q-cream); opacity: 0.6; margin-bottom: 8px;
     }
     /* A row is a LABEL wrapping a real checkbox: the whole row is the hit target,
-       and the checkbox stays a checkbox for assistive tech and for the keyboard. */
+       and the checkbox stays a checkbox for assistive tech and for the keyboard.
+       Dotted, not solid — a repeating row inside a container, same distinction
+       as .doc-row-body and .lib-asset. */
     .picker-row {
       display: flex; align-items: center; gap: 12px; width: 100%;
-      padding: 13px 15px; margin-bottom: 8px; border-radius: 12px; cursor: pointer;
-      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.75);
+      background: transparent; border: 1px dotted var(--q-cream); border-radius: 0;
+      padding: 13px 14px; margin-bottom: 8px; cursor: pointer;
       -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, border-color 0.12s ease;
     }
     .picker-row:active { background: rgba(201,168,76,0.10); }
     .picker-row input { width: 20px; height: 20px; flex: none; accent-color: var(--gold); margin: 0; }
-    .picker-row-name { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14.5px; color: var(--ink); overflow-wrap: anywhere; }
+    /* var(--ink) was dark-on-light for the row's old frosted-white fill; the
+       row is transparent now, so the name has to be cream or it goes unreadable
+       against the sky — same fix as .search-input just above. */
+    .picker-row-name { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14.5px; color: var(--q-cream); overflow-wrap: anywhere; }
     .picker-row.checked { background: rgba(201,168,76,0.16); border-color: rgba(201,168,76,0.7); }
     /* THE GLASS SURFACE, EXTRACTED — not a new treatment. These four
        declarations are the ones .asset-card and .doc-row already carry, verbatim;
@@ -976,14 +985,15 @@
     .modal-overlay.open .modal-sheet { transform: translateY(0); }
     .modal-handle { width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.4); margin: 0 auto 20px; }
     .modal-title { font-family: 'StarCrush', serif; font-size: 18px; color: var(--q-cream); letter-spacing: 0.02em; margin-bottom: 16px; }
+    /* FIXES-HANDOFF.md bucket 2 — transparent, cream border, square. */
     .modal-textarea {
-      width: 100%; min-height: 120px; border: none; outline: none; resize: none;
-      background: rgba(255,255,255,0.25); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-      border: 1.5px solid rgba(255,255,255,0.45); border-radius: 14px;
-      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; line-height: 1.6; color: var(--ink);
-      padding: 14px 16px; margin-bottom: 14px; -webkit-appearance: none;
+      display: block; width: 100%; min-height: 120px; outline: none; resize: none;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 15px; line-height: 1.6; padding: 13px 14px;
+      margin-bottom: 14px; -webkit-appearance: none;
     }
-    .modal-textarea::placeholder { color: rgba(26,26,46,0.4); }
+    .modal-textarea::placeholder { color: var(--q-cream-55); }
     /* SURFACES-HANDOFF.md §7 — same cream-fill/gold-hover treatment as
        .cta-primary (not spelled out in the handoff's own snippet, but implied
        by .modal-btn sharing that hover rule below: hovering from one gold to
@@ -1010,13 +1020,20 @@
     /* ── PROJECTS (v8) ── */
     .projects-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--q-cream); letter-spacing: 0.02em; margin-bottom: 16px; }
     .projects-search-wrap { margin-bottom: 14px; }
+    /* FIXES-HANDOFF.md bucket 2 gave .projects-search the same rule as
+       .picker-search, but here it's a WRAPPER div around the real control
+       (.search-input) rather than the input itself — flex/gap/align-items
+       stay for that reason. The colour and font values land on .search-input,
+       which is where the text actually renders; .projects-search::placeholder
+       would match nothing (a div has no placeholder), so the placeholder rule
+       is on .search-input instead, same value. */
     .projects-search {
-      display: flex; align-items: center; gap: 10px;
-      background: rgba(255,255,255,0.18); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
-      border: 1.5px solid rgba(255,255,255,0.38); border-radius: 14px; padding: 12px 16px; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      padding: 13px 14px;
     }
-    .search-input { flex: 1; border: none; outline: none; background: transparent; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; color: var(--ink); -webkit-appearance: none; }
-    .search-input::placeholder { color: rgba(26,26,46,0.38); }
+    .search-input { flex: 1; border: none; outline: none; background: transparent; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; color: var(--q-cream); -webkit-appearance: none; }
+    .search-input::placeholder { color: var(--q-cream-55); }
     .filter-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
     .filter-row::-webkit-scrollbar { display: none; }
     .filter-chip {

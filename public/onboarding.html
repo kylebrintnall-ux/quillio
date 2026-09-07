@@ -3,6 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- iOS standalone mode is per-PAGE, not per-app: a page reachable from a
+       home-screen-installed shell that lacks this tag drops the visitor back
+       into a full Safari tab (URL bar, share/reload/tabs) the moment they
+       navigate to it. All three shells (and the / landing page) carry the
+       identical trio so navigating between them never breaks standalone. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <!-- default, not black-translucent: translucent extends the web content
+       UNDER the status bar, which needs viewport-fit=cover plus
+       env(safe-area-inset-top) padding on nav to keep the wordmark and links
+       clear of it — untested on real notched hardware from here, so the safe
+       choice is the style that reserves its own space and risks nothing. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Quillio" />
   <title>Quillio — Get set up</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -208,7 +221,8 @@
     .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--sky-btm); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; font-family: 'Zen Kaku Gothic New', sans-serif; }
 
     .ok { color: #0A5C32; font-weight: 700; font-size: 20px; }
-    .pill { display: inline-block; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 13px; font-weight: 600; color: rgba(26,26,46,0.6); }
+    /* Small, transparent, square — no fill, no rounded corners. */
+    .pill { display: inline-block; background: transparent; border: 1px solid rgba(26,26,46,0.3); border-radius: 0; padding: 4px 12px; font-size: 13px; font-weight: 600; color: rgba(26,26,46,0.6); }
 
     /* Asset library — glass card per group */
     .group { background: rgba(255,255,255,0.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px; padding: 6px 16px 12px; margin: 12px 0; }
@@ -238,9 +252,9 @@
     }
     .hidden { display: none !important; }
     .note { display: flex; align-items: center; gap: 10px; color: rgba(26,26,46,0.65); margin-top: 14px; font-size: 14px; }
-    .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--sky-btm); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .note .dot, .spinner { animation: none; } }
+    /* The pixel-art scroll, not a spinning ring — every circular CSS loader on
+       this page converged on the same GIF the brand already uses elsewhere. */
+    .loading-icon { width: 18px; height: 18px; image-rendering: pixelated; flex: none; }
 
     .eyebrow { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.55); margin-bottom: 6px; }
     .break { overflow-wrap: anywhere; }
@@ -248,7 +262,7 @@
 
     /* voice.md generating animation */
     #voice-generating { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 0; color: rgba(255,255,255,0.85); }
-    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.25); border-top-color: var(--sky-btm); animation: spin .8s linear infinite; }
+    .loading-icon-lg { width: 30px; height: 30px; image-rendering: pixelated; }
     .genmsg { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; }
 
     /* rendered voice.md preview — dark terminal block (matches settings) */
@@ -351,7 +365,7 @@
     <section class="step" id="step-3">
       <h1>Here's your asset library</h1>
       <p class="muted">Deactivate asset types you'll never use. You can always change this later in Settings.</p>
-      <div id="assets-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+      <div id="assets-loading" class="note"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
       <div id="assets-list"></div>
       <div class="row">
         <button class="full" id="assets-next">Next →</button>
@@ -365,7 +379,7 @@
       <h1>Set up your Voice Guide</h1>
       <p class="muted">Your answers generate a voice.md file that Quillio injects into every first draft — keeping copy on-brand from the start.</p>
 
-      <div id="voice-loading" class="note hidden"><span class="dot"></span><span>Loading…</span></div>
+      <div id="voice-loading" class="note hidden"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
 
       <div id="voice-questions" class="hidden">
         <div class="progress" id="voice-progress">Question 1 of 6</div>
@@ -378,7 +392,7 @@
       </div>
 
       <div id="voice-generating" class="hidden">
-        <div class="spinner"></div>
+        <img class="loading-icon-lg" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt="">
         <div class="genmsg" id="voice-genmsg">Reading your answers…</div>
       </div>
 
@@ -511,7 +525,7 @@
       var btn = $('folder-save');
       var url = $('folder-url').value.trim();
       btn.disabled = true;
-      msg.innerHTML = '<span class="dot"></span><span>Saving…</span>';
+      msg.innerHTML = '<img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Saving…</span>';
       show(msg);
       try {
         var res = await fetch('/api/onboarding/folder', {

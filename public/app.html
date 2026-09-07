@@ -3,6 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- iOS standalone mode is per-PAGE, not per-app: a page reachable from a
+       home-screen-installed shell that lacks this tag drops the visitor back
+       into a full Safari tab (URL bar, share/reload/tabs) the moment they
+       navigate to it. All three shells (and the / landing page) carry the
+       identical trio so navigating between them never breaks standalone. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <!-- default, not black-translucent: translucent extends the web content
+       UNDER the status bar, which needs viewport-fit=cover plus
+       env(safe-area-inset-top) padding on nav to keep the wordmark and links
+       clear of it — untested on real notched hardware from here, so the safe
+       choice is the style that reserves its own space and risks nothing. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Quillio" />
   <title>Quillio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -172,16 +185,6 @@
       align-items: center;
       gap: 10px;
     }
-    .note .dot {
-      width: 16px; height: 16px; border-radius: 50%;
-      border: 2px solid var(--accent); border-top-color: transparent;
-      flex: none;
-      animation: spin 0.8s linear infinite;
-    }
-    @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
     /* Field copy in the project view */
     .field-copy { white-space: pre-wrap; font-size: 14px; color: var(--ink); padding: 4px 0 2px; }
     .asset-direction { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-style: italic; color: #737373; margin: 2px 0 8px; }
@@ -219,12 +222,10 @@
       font-family: 'Zen Kaku Gothic New', sans-serif;
     }
     .loading { margin-top: 20px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
-    .loading .dot {
-      width: 16px; height: 16px; border-radius: 50%;
-      border: 2px solid var(--accent); border-top-color: transparent;
-      flex: none; animation: spin 0.8s linear infinite;
-    }
-    @media (prefers-reduced-motion: reduce) { .loading .dot { animation: none; } }
+    /* The pixel-art scroll, not a spinning ring — every circular CSS loader on
+       this page converged on the same GIF the brand already uses elsewhere
+       (.header-gif, .review-gif). */
+    .loading-icon { width: 18px; height: 18px; image-rendering: pixelated; flex: none; }
 
     /* =====================================================================
        v8 DESIGN SYSTEM  — global scaffolding + Screen 1 (New Brief)
@@ -800,8 +801,10 @@
     /* A collapsed card is a band and nothing else, so the 8px foot the flattened
        card carries would read as a gap under a rule. */
     .glass-panel.list .asset-card.collapsed { padding-bottom: 0; }
-    .asset-card-badge { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; font-weight: 600; color: rgba(252,246,227,0.5); background: rgba(26,26,46,0.06); border-radius: 100px; padding: 2px 9px; }
-    .asset-card-badge.drafted { color: #0A5C32; background: #C6F0D8; }
+    /* Small, transparent, square — gold for the one genuinely-emphatic badge
+       (drafted), cream-55 otherwise, matching every other status indicator. */
+    .asset-card-badge { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10px; font-weight: 600; color: var(--q-cream-55); background: transparent; border: 1px solid var(--q-cream-55); border-radius: 0; padding: 2px 9px; }
+    .asset-card-badge.drafted { color: var(--q-gold); border-color: var(--q-gold); }
     .asset-direction { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(252,246,227,0.48); margin: 0 0 12px; line-height: 1.5; }
     .asset-field { display: flex; align-items: baseline; justify-content: space-between; padding: 11px 0; border-top: 1px dotted var(--q-cream-55); gap: 12px; }
     /* SURFACES-HANDOFF.md §4 says .asset-field:first-of-type, but .asset-direction
@@ -1081,13 +1084,17 @@
     .search-input::placeholder { color: var(--q-cream-55); }
     .filter-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
     .filter-row::-webkit-scrollbar { display: none; }
+    /* Small, transparent, square — the filled pill/rounded-corner treatment
+       this used to carry, squared off like every other control on the page.
+       Active state is the same fill/text this whole rebrand already uses for
+       a pressed or selected control (--q-fill/--q-ink), not a new one. */
     .filter-chip {
       font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.04em; white-space: nowrap;
-      padding: 7px 14px; background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.35);
-      border-radius: 100px; color: rgba(26,26,46,0.65); cursor: pointer; flex-shrink: 0;
+      padding: 6px 12px; background: transparent; border: 1px solid var(--q-cream);
+      border-radius: 0; color: var(--q-cream); cursor: pointer; flex-shrink: 0;
       transition: all 0.15s; -webkit-tap-highlight-color: transparent;
     }
-    .filter-chip.active { background: var(--ink); border-color: var(--ink); color: var(--white); }
+    .filter-chip.active { background: var(--q-fill); border-color: var(--q-fill); color: var(--q-ink); }
     /* SURFACES-HANDOFF.md §4. This is the WINNING definition — a legacy
        .project-card at the top of this file (pre-v8, unreachable, same shape as
        the :root split this file's header comment already documents) is left
@@ -1101,16 +1108,20 @@
     .project-card.closed { opacity: 0.55; }
     .project-card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; gap: 12px; }
     .project-card-name { font-family: 'StarCrush', serif; font-size: 13px; color: var(--q-cream); letter-spacing: 0.02em; line-height: 1.35; flex: 1; }
+    /* Small, transparent, square — no fill, no drop shadow, no rounded corners.
+       The three states differ by border/text colour only: gold for the one
+       that's live and actionable (the same "gold is emphasis" rule as
+       .asset-field.selected and the hover states), cream for the other two. */
     .project-card-status {
       font-family: 'StarCrush', serif; font-size: 10px; letter-spacing: 0.04em;
       width: 96px; text-align: center; flex-shrink: 0; padding: 5px 0;
-      border-radius: 3px; border: 2px solid transparent; box-shadow: 2px 2px 0 rgba(0,0,0,0.12);
+      background: transparent; border-radius: 0; border: 1px solid var(--q-cream);
       cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.1s;
     }
     .project-card-status:active { transform: scale(0.95); }
-    .status-active { color: #0A5C32; background: #C6F0D8; border-color: #2ECC71; box-shadow: 2px 2px 0 rgba(10,92,50,0.2); }
-    .status-draft { color: #7A5500; background: #FFF0B3; border-color: #C9A84C; box-shadow: 2px 2px 0 rgba(122,85,0,0.2); }
-    .status-notstarted { color: rgba(26,26,46,0.5); background: rgba(255,255,255,0.5); border-color: rgba(26,26,46,0.2); box-shadow: 2px 2px 0 rgba(26,26,46,0.1); }
+    .status-active { color: var(--q-cream); border-color: var(--q-cream); }
+    .status-draft { color: var(--q-gold); border-color: var(--q-gold); }
+    .status-notstarted { color: var(--q-cream-55); border-color: var(--q-cream-55); }
     .project-card-meta { display: flex; align-items: center; gap: 10px; }
     .meta-date { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; color: rgba(252,246,227,0.5); }
 
@@ -1147,19 +1158,19 @@
       -webkit-tap-highlight-color: transparent;
     }
     .back-link:hover { color: var(--q-cream); }
-    #screen-project .project-card-status { cursor: default; }
     /* The padding-alignment override this used to carry is gone along with the
        box it was aligning to — FIXES-HANDOFF.md §4 made .output-header.glass-panel
        padding: 0 everywhere, project detail included. */
     /* ABOVE the content now (see the markup), so the margin moved with it. */
     .project-actions { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
-    /* The Drive links, side by side. `flex: 1 1 140px` splits a row evenly and
-       wraps a third button onto its own line rather than crushing all three. */
+    /* The Drive links — small, side by side, sized to their own label rather
+       than stretched to fill the row. A crowded-header pass called the old
+       flex: 1 1 140px treatment "way too big" next to a title and an icon
+       that already carry the screen's weight; these are utility links to an
+       external doc, not primary actions. A row of one now sits at its own
+       width too, not full-width — the same reasoning applied consistently. */
     .project-actions-secondary { display: flex; flex-wrap: wrap; gap: 10px; }
-    .project-actions-secondary .cta-secondary { flex: 1 1 140px; padding: 13px 10px; }
-    /* A row of one is a full-width button again, which is what a project with no
-       folder (or no copy doc) should still get. Handled by flex-grow already —
-       noted so the single-button case is not read as an oversight. */
+    .project-actions-secondary .cta-secondary { flex: 0 0 auto; padding: 8px 14px; font-size: 12px; }
     /* Copy-review result panel (8b). CORRECTED FROM AN EARLIER VERSION OF THIS
        COMMENT, which called this a "light frosted glass card SURFACES step 4
        missed" — wrong. Its only markup instance
@@ -1438,7 +1449,7 @@ __NAV:brief__
           <span class="filter-chip" data-filter="not_started">Not Started</span>
         </div>
       </div>
-      <div id="history-loading" class="loading hidden"><span class="dot"></span><span>Loading projects…</span></div>
+      <div id="history-loading" class="loading hidden"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading projects…</span></div>
       <div id="history-error" class="error hidden"></div>
       <div id="history-empty" class="empty hidden">No projects yet. Run your first brief to get started.</div>
       <div id="history-list"></div>
@@ -1458,8 +1469,7 @@ __NAV:brief__
            bare on the sky here exactly as it does on those two screens. -->
       <div class="output-header glass-panel">
         <h2 class="output-title" id="project-title">Campaign</h2>
-        <span class="project-card-status" id="project-status"></span>
-        <img class="header-gif" src="/assets/images/scroll-static.png?v=__BUILD__" width="60" height="63" alt="">
+        <img class="header-gif" src="/assets/gifs/quillio-doc-done.gif?v=__BUILD__" alt="">
       </div>
 
       <!-- THE DOCUMENTS THIS PROJECT HOLDS — an INDEX, not a switcher.
@@ -1508,7 +1518,7 @@ __NAV:brief__
         </div>
       </div>
 
-      <div id="project-loading" class="loading hidden"><span class="dot"></span><span>Loading content…</span></div>
+      <div id="project-loading" class="loading hidden"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading content…</span></div>
       <div id="project-content"></div>
       <div id="project-fallback" class="empty hidden">Content unavailable. You can still open the doc in Drive.</div>
       <div id="project-error" class="error hidden"></div>
@@ -3981,10 +3991,6 @@ __NAV:brief__
       projectBlankFields = []; // recomputed once content loads
       showScreen('project');
       document.getElementById('project-title').textContent = p.name || 'Campaign';
-      var badge = document.getElementById('project-status');
-      var pkey = statusKey(p.status);
-      badge.textContent = statusLabel(pkey);
-      badge.className = 'project-card-status ' + (PILL_CLASS[pkey] || 'status-notstarted');
       renderProjectDocs();
 
       // The template document, if this brief produced one. The column rides in

@@ -224,7 +224,18 @@
     .progress { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: rgba(26,26,46,0.6); margin-bottom: 6px; }
     .sample { background: rgba(255,255,255,0.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px; padding: 16px; font-size: 15px; line-height: 1.6; color: var(--ink); }
 
-    .error { margin-top: 14px; padding: 10px 12px; border: 1.5px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 12px; font-size: 14px; }
+    /* Cream, pixel glyph, no hue — matches the same convergence app.html's
+       and settings.html's messages already made, rather than the default
+       red-on-pink alert box this used to be. */
+    .error {
+      margin-top: 14px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px;
+    }
+    .error::before {
+      content: '!'; flex: 0 0 16px; width: 16px; height: 16px; border: 1px solid var(--q-cream);
+      font-family: 'StarCrush', serif; font-size: 11px; line-height: 16px; text-align: center;
+    }
     .hidden { display: none !important; }
     .note { display: flex; align-items: center; gap: 10px; color: rgba(26,26,46,0.65); margin-top: 14px; font-size: 14px; }
     .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--sky-btm); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }

@@ -11688,8 +11688,11 @@ test('app.html renders the unmatched notice on both the confirm and output scree
   assert.ok(html.includes('id="out-unmatched"'), 'the output screen has one too');
   assert.match(html, /renderNotice\('confirm-unmatched', interp\.unmatchedNotice\)/);
   assert.match(html, /renderNotice\('out-unmatched', data\.unmatchedNotice\)/);
-  // Amber, not red: the run SUCCEEDED, so it must not be styled as an error.
-  assert.match(html, /\.notice\s*\{[^}]*background:\s*#fdf8ec/);
+  // A distinct glyph, not a distinct hue: the run SUCCEEDED, so it must not
+  // read as an error, but the messages converged on cream-only chrome
+  // (no hue) and now carry that distinction via ::before content instead.
+  assert.match(html, /\.notice::before\s*\{\s*content:\s*'⚠'/);
+  assert.match(html, /\.error::before\s*\{\s*content:\s*'!'/);
   assert.ok(!/id="confirm-unmatched"[^>]*class="error/.test(html), 'not styled as an error');
 });
 
@@ -20472,13 +20475,17 @@ test('sliceBetween fails on a missing anchor instead of checking somewhere else'
 // notice was the LAST element on its panel. copydone-shortfall is the first one
 // with content directly beneath it: its bottom edge landed on the "Assets" label
 // at exactly 0px, measured in Chromium at 390 x 844.
+//
+// .notice was later folded into a shared .error, .notice rule (cream-only,
+// glyph-not-hue messages) — re-measured after that change at 18px, still
+// clear of the content below.
 test('the shortfall notice does not sit flush against the copy list', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.match(html, /#copydone-shortfall \{ margin-bottom: 14px; \}/);
   // Scoped to the id on purpose — the three notices that predate it sit above
   // CTAs that bring their own spacing, and must not move.
-  assert.match(html, /\.notice \{\n\s*margin-top: 14px;\n\s*padding: 10px 12px;/);
-  assert.ok(!/\.notice \{[^}]*margin-bottom/.test(html), 'the shared rule is unchanged');
+  assert.match(html, /\.error, \.notice \{\n\s*margin-top: 14px; padding: 10px 12px;/);
+  assert.ok(!/\.error, \.notice \{[^}]*margin-bottom/.test(html), 'the shared rule is unchanged');
 });
 
 // === THE 189th CANNOT BE WRITTEN =============================================

@@ -128,27 +128,26 @@
     button:disabled { opacity: 0.55; cursor: default; }
     .full { width: 100%; }
 
-    .error {
-      margin-top: 14px;
-      padding: 10px 12px;
-      border: 1px solid #e7b3b3;
-      background: #fdf0f0;
-      color: #8a1f1f;
-      border-radius: 8px;
-      font-size: 14px;
+    /* Cream only, pixel glyph, no hue — same convergence settings.html's
+       messages already made (.banner/.error there differ ONLY by glyph).
+       .error and .notice stay two classes because they mean different things
+       (a failure vs. an asset left out on an otherwise-successful run), but
+       that distinction is carried by the glyph now, not by red-vs-amber. */
+    .error, .notice {
+      margin-top: 14px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px;
     }
-    /* Advisory, NOT an error — deliberately amber rather than red. It says an
-       asset the brief named was left out, on a screen where the rest of the work
-       succeeded, so it must not read as a failed run. */
-    .notice {
-      margin-top: 14px;
-      padding: 10px 12px;
-      border: 1px solid #e3cf94;
-      background: #fdf8ec;
-      color: #6b520f;
-      border-radius: 8px;
-      font-size: 14px;
+    .error::before, .notice::before {
+      flex: 0 0 16px; width: 16px; height: 16px; border: 1px solid var(--q-cream);
+      font-family: 'StarCrush', serif; font-size: 11px; line-height: 16px; text-align: center;
     }
+    .error::before { content: '!'; }
+    /* Advisory, NOT an error. It says an asset the brief named was left out, on
+       a screen where the rest of the work succeeded, so it must not read as a
+       failed run — carried by the ⚠ glyph now (the same mark this app already
+       uses for an incomplete-but-not-failed draft), not by an amber fill. */
+    .notice::before { content: '⚠'; }
     /* .notice carries margin-top only, which was invisible for as long as every
        notice was the LAST thing on its panel — out-unmatched, picker-unmatched
        and confirm-unmatched all sit above CTAs that bring their own spacing. The
@@ -203,13 +202,21 @@
     }
     .project-card:hover { border-color: var(--accent); }
     .project-card.closed { opacity: 0.6; }
+    /* Cream, dotted, square — matches settings.html's own .empty. Converged
+       to the base rule so #screen-history/#screen-project's old scoped
+       overrides (background/border-color/color only, on the light dashed
+       fill this rule used to carry) are gone with them: everything they set
+       is now the default, so #picker-empty (which had no override of its
+       own) gets it too instead of sitting on the old grey dashed box. */
     .empty {
       margin-top: 24px;
-      padding: 24px;
+      padding: 30px 20px;
       text-align: center;
-      color: var(--muted);
-      border: 1px dashed var(--line);
-      border-radius: 8px;
+      background: transparent;
+      color: var(--q-cream-75);
+      border: 1px dotted var(--q-cream);
+      border-radius: 0;
+      font-family: 'Zen Kaku Gothic New', sans-serif;
     }
     .loading { margin-top: 20px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
     .loading .dot {
@@ -1128,11 +1135,8 @@
     .status-dot-preview { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
     /* Loading / empty / closed-toggle on the sky */
-    /* SURFACES step 4 missed this card — still a translucent-white dashed box
-       (.empty's base rule, ~line 205) when every other content surface went
-       transparent-and-cream. Closed here alongside the text: fixing the text
-       without the fill would put cream on a pale card instead of on the sky. */
-    #screen-history .empty { background: transparent; border-color: var(--q-cream); color: rgba(252,246,227,0.65); }
+    /* The .empty override this scope used to need is gone with it — the base
+       rule is cream-on-transparent everywhere now (see .empty, ~line 205). */
     #screen-history .loading { color: rgba(252,246,227,0.7); }
     .closed-toggle { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.62); font-size: 13px; margin-top: 16px; }
 
@@ -1182,9 +1186,14 @@
     .review-status { font-family: 'StarCrush', serif; font-size: 17px; letter-spacing: 0.02em; color: var(--q-cream); margin: 2px 0 8px; }
     .review-digest { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13.5px; line-height: 1.5; color: rgba(252,246,227,0.72); }
     .review-note { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: rgba(252,246,227,0.72); }
-    .review-panel.error { border-color: rgba(192,57,43,0.35); }
-    .review-panel.error .review-digest { color: #C0392B; }
-    #screen-project .empty { background: transparent; border-color: var(--q-cream); color: rgba(252,246,227,0.65); }
+    /* Cream, not red — the message text ("Review didn't finish: …") already
+       carries the failure; the border-color half was always dead anyway (the
+       inline neutraliser above wins on `body`), left correct rather than red
+       so it isn't a latent bug if that inline style is ever dropped. */
+    .review-panel.error { border-color: var(--q-cream); }
+    .review-panel.error .review-digest { color: var(--q-cream); }
+    /* The .empty override this scope used to need is gone with it — the base
+       rule is cream-on-transparent everywhere now (see .empty, ~line 205). */
     #screen-project .loading { color: rgba(252,246,227,0.7); }
 
     /* ── TOAST (v8) — brief auto-dismissing confirmation ── */
@@ -1384,9 +1393,10 @@ __NAV:brief__
         <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif?v=__BUILD__" alt="">
       </div>
       <div id="copydone-fallback" class="note hidden">Open in Drive to view the copy ↗</div>
-      <!-- Amber, not red: the doc exists and holds whatever was drafted, so this
-           is a shortfall to act on rather than a failure. Set both ways by
-           renderNotice on every draft, so a recovered rerun clears it. -->
+      <!-- The ⚠ glyph, not .error's "!": the doc exists and holds whatever was
+           drafted, so this is a shortfall to act on rather than a failure —
+           carried by the glyph now, not by an amber-vs-red hue. Set both ways
+           by renderNotice on every draft, so a recovered rerun clears it. -->
       <div id="copydone-shortfall" class="notice hidden"></div>
       <!-- CAMPAIGN SUMMARY + WRITER DIRECTION, ADDED DELIBERATELY — this was an
            omission, not a decision. This screen never carried them: there was no
@@ -1510,8 +1520,9 @@ __NAV:brief__
   <div class="toast" id="toast"></div>
 
   <!-- Stale-shell banner: shown when the running app.html is older than the live
-       deploy (an edge cache serving old HTML). Tapping reloads to the fresh shell. -->
-  <div id="stale-shell-banner" onclick="location.reload(true)" style="display:none;position:fixed;top:0;left:0;right:0;z-index:300;background:#C0392B;color:#fff;font-family:'Zen Kaku Gothic New', sans-serif;font-size:13px;font-weight:600;text-align:center;padding:11px 14px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.25);">
+       deploy (an edge cache serving old HTML). Tapping reloads to the fresh shell.
+       Cream-on-navy, matching .toast — not a default red alert bar. -->
+  <div id="stale-shell-banner" onclick="location.reload(true)" style="display:none;position:fixed;top:0;left:0;right:0;z-index:300;background:rgba(21,44,112,.9);color:var(--q-cream);border-bottom:1px solid var(--q-cream);font-family:'Zen Kaku Gothic New', sans-serif;font-size:13px;font-weight:500;text-align:center;padding:11px 14px;cursor:pointer;">
     A newer version is available — tap to reload.
   </div>
 

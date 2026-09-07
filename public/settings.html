@@ -724,7 +724,9 @@
     .lib-toggle input:checked + .lib-track { background: var(--sky-btm); }
     .lib-toggle input:checked + .lib-track::before { transform: translateX(16px); }
     .lib-toggle input:disabled + .lib-track { opacity: 0.5; cursor: progress; }
-    .lib-rowerr { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: #8a1f1f; margin-top: 6px; }
+    /* Cream, not dark red — this row sits on the bare sky like the rest of the
+       library list, where #8a1f1f (tuned for a light card) went unreadable. */
+    .lib-rowerr { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: var(--q-cream); margin-top: 6px; }
 
     /* Create-an-asset form. Collapsed to a single button until opened, so the
        library stays a library.
@@ -921,9 +923,12 @@
     .tpl-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); margin-left: 6px; }
     .tpl-where { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; color: rgba(252,246,227,0.75); margin-top: 2px; }
     /* A malformed marker is shown, never swallowed — a tenant who typo'd a brace
-       has to see it here rather than discover it when nothing fills in. */
-    .tpl-warn { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: #8a1f1f; background: rgba(255,255,255,0.42);
-      border-left: 2px solid #8a1f1f; border-radius: 0 9px 9px 0; padding: 7px 10px; margin-top: 10px; }
+       has to see it here rather than discover it when nothing fills in.
+       Cream, not red-on-white — this sits among the cream .tpl-* siblings
+       above (bare sky, unlike .lib-new's own light card), so the old red
+       accent read as a leftover default rather than a deliberate warning. */
+    .tpl-warn { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: var(--q-cream); background: transparent;
+      border-left: 2px solid var(--q-cream); border-radius: 0; padding: 7px 10px; margin-top: 10px; }
     .tpl-empty { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: rgba(252,246,227,0.6); margin-top: 8px; }
 
 

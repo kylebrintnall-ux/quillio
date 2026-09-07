@@ -104,7 +104,13 @@
     a { color: #1a9a9a; }
 
     label { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
-    input[type="text"], textarea {
+    /* Legacy pre-v8 rule, superseded by the v8 input[type="text"]/textarea/select
+       rule further down — normally that would be automatic (equal specificity,
+       later wins), but the v8 rule is now wrapped in :where() so it can't leak
+       into .hdr-field/.lib-new/etc (see its own comment). :where() drops out of
+       the specificity tiebreak entirely, so this rule has to be neutralised the
+       same way, or its ordinary specificity would let IT win back by default. */
+    :where(input[type="text"], textarea) {
       width: 100%; font: inherit; padding: 11px 12px;
       border: 1px solid var(--line); border-radius: 8px; resize: vertical; font-family: 'Zen Kaku Gothic New', sans-serif;
     }
@@ -223,8 +229,13 @@
     .hdr-iconbtn { font-family: 'Zen Kaku Gothic New', sans-serif; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; line-height: 1; }
     .hdr-iconbtn:hover { color: var(--ink, #1a1a2e); border-color: var(--accent); }
     .hdr-field { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px; align-items: center; margin: 6px 0; }
-    .hdr-field input, .hdr-block > input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; box-sizing: border-box; font-family: 'Zen Kaku Gothic New', sans-serif; }
-    .hdr-field select { padding: 7px 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; font-family: 'Zen Kaku Gothic New', sans-serif; }
+    /* background/color restated explicitly on both rules below — neither used
+       to set them and both were relying on the generic bare-field rule, which
+       FIXES-HANDOFF.md bucket 2 moved to cream-on-transparent. .hdr-block is on
+       the "no spec values yet" list, so its fields stay at what that fallback
+       used to supply rather than drifting with it. */
+    .hdr-field input, .hdr-block > input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; box-sizing: border-box; font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(255,255,255,0.5); color: var(--ink); -webkit-appearance: none; }
+    .hdr-field select { padding: 7px 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; color: var(--ink); font-family: 'Zen Kaku Gothic New', sans-serif; }
     .hdr-addfield { margin-top: 6px; }
     .hdr-preview { border: 1px solid var(--line); border-radius: 10px; padding: 18px; background: #fff; min-height: 120px; overflow-x: auto; }
     .pv-heading { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 700; font-size: 20px; margin: 0 0 6px; }
@@ -257,8 +268,10 @@
       flex: none; width: 26px; height: 30px; display: flex; align-items: center; justify-content: center;
       color: rgba(26,26,46,0.4); font-size: 16px; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
     }
+    /* color restated explicitly — this rule never set it and was relying on
+       the generic bare-field rule, same story as .hdr-field just above. */
     .naming-seg select, .naming-seg input {
-      font: inherit; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; background: #fff; font-family: 'Zen Kaku Gothic New', sans-serif;
+      font: inherit; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; background: #fff; color: var(--ink); font-family: 'Zen Kaku Gothic New', sans-serif;
     }
     .naming-seg .naming-type { flex: none; }
     .naming-seg .naming-val { flex: 1 1 auto; min-width: 0; }
@@ -469,10 +482,23 @@
        label and .tpl-namerow label already override it with their own
        colors and are unaffected. */
     label { font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--q-cream); font-weight: 500; font-size: 13px; }
-    input[type="text"], textarea {
-      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
-      color: var(--ink); -webkit-appearance: none; padding: 12px 14px;
+    /* FIXES-HANDOFF.md bucket 2 — transparent, cream border, square: one rule
+       for every form field on the page, select included for the first time.
+       :where() ZEROES this selector's specificity on purpose: input[type="text"]
+       is a class-tier selector (an attribute selector), so bare it would tie
+       .hdr-field input / .lib-new input[type="text"] / .naming-seg input and
+       (being later in the file) WIN the tiebreak — exactly the leak into
+       .hdr-upload-card, .hdr-block, .naming-preview, .naming-seg and .lib-new
+       this pass is not supposed to touch. :where() keeps this a fallback: any
+       more specific rule, anywhere in the file regardless of order, still wins. */
+    :where(input[type="text"], textarea, select) {
+      width: 100%; background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 14px; padding: 12px 14px; -webkit-appearance: none;
     }
+    :where(textarea) { min-height: 96px; resize: vertical; line-height: 1.6; }
+    ::placeholder { color: var(--q-cream-55); }
+    select { appearance: none; -webkit-appearance: none; cursor: pointer; }
     input:focus, textarea:focus { outline: none; border-color: rgba(255,255,255,0.95); }
     /* SURFACES-HANDOFF.md §4 — the given spec-sheet rule names this .acct-row,
        but .card is the one real selector behind BOTH the Account panel's
@@ -718,7 +744,19 @@
     .lib-new h2, .lib-new .lib-limit, .lib-new .lib-tier:not(.enforced), .lib-new .lib-fresh { color: var(--ink); }
     .lib-new h2 { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; margin: 0 0 4px; }
     .lib-new label { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
-    .lib-new input[type="text"], .lib-new textarea { font-family: 'Zen Kaku Gothic New', sans-serif; width: 100%; font-size: 14px; }
+    /* Frozen at the values the old generic bare-input rule used to supply.
+       .lib-new never set its own border/background/color — it relied entirely
+       on that fallback, which FIXES-HANDOFF.md bucket 2 moved to cream-on-
+       transparent for the rest of the page. This card is light with dark text
+       throughout (h2/lib-limit/lib-tier/lib-fresh/label all stay --ink-family
+       above), so cream text and a cream border here would go near-invisible
+       against its own near-white fill — restated explicitly, not left to a
+       fallback that has since changed underneath it. */
+    .lib-new input[type="text"], .lib-new textarea {
+      font-family: 'Zen Kaku Gothic New', sans-serif; width: 100%; font-size: 14px;
+      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
+      color: var(--ink); -webkit-appearance: none; padding: 12px 14px;
+    }
     .lib-new textarea { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.5; }
     /* The paste box is the primary input for a feature whose whole point is a
        dozen-plus fields, so it opens at eight lines and grows with what is in it

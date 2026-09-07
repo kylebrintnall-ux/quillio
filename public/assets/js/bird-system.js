@@ -160,9 +160,6 @@
     var self = this;
     var k = opt.k || FLY_K;
     var w = Math.round(CLIP.fly.w * k), h = Math.round(CLIP.fly.h * k);
-    /* .clouds-wrap is position:fixed;inset:0 — the viewport, not the scrollable
-       body (frame:'body' makes this.phone the document, whose height grows with
-       content). Sprites live in that fixed layer, so its box is the geometry. */
     var W = this.wrap.clientWidth;
     var ltr = opt.dir !== 'rtl';
     var el = img(CLIP.fly, w, h);
@@ -203,7 +200,7 @@
     this.after(delay, function () {
       if (!self.running) return;
       if (self.canLaunch()) {
-        var H = self.wrap.clientHeight;   // viewport height, not the document's
+        var H = self.wrap.clientHeight;
         var lanes = self.desktop ? [96, H - 220] : [70, H - 190];
         self.claim();
         self.fly({
@@ -221,7 +218,7 @@
   Scene.prototype.treePoints = function () {
     /* the tree band is a baked background on .clouds-wrap::after, so the
        canopy points come from the band's own geometry, not a screenshot */
-    var W = this.wrap.clientWidth, H = this.wrap.clientHeight;   // viewport, via the fixed sky layer
+    var W = this.wrap.clientWidth, H = this.wrap.clientHeight;
     var tw = this.desktop ? 248 : 124, th = this.desktop ? 168 : 84;
     var inset = 16;
     /* perch on top of the canopy, just inside its silhouette, so the bird
@@ -373,6 +370,40 @@
     }
   };
 
+  /* ---------- ground scrim ---------- */
+
+  /* The ground band is opaque pixel art at the bottom of a fixed layer, so
+     content scrolling over it collides. A scrim hazes the lower strip — but
+     only while there is still page left: as the scroll reaches the end, the
+     haze clears so the trees and grass are seen plainly. Published as a
+     custom property; the CSS owns the gradient. */
+  function scrim(scenes) {
+    var FADE = 260;        // px from the bottom over which the haze clears
+    var queued = false;
+
+    function apply() {
+      queued = false;
+      var doc = document.documentElement;
+      var y = window.pageYOffset || doc.scrollTop || 0;
+      var remaining = Math.max(0, doc.scrollHeight - y - window.innerHeight);
+      /* a page too short to scroll has nothing to obscure, so no haze */
+      var strength = doc.scrollHeight - window.innerHeight < 40
+        ? 0
+        : Math.min(1, remaining / FADE);
+      scenes.forEach(function (s) {
+        s.wrap.style.setProperty('--q-scrim', strength.toFixed(3));
+      });
+    }
+
+    addEventListener('scroll', function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(apply);
+    }, { passive: true });
+    apply();
+    return apply;
+  }
+
   /* ---------- controller ---------- */
 
   function init(cfg) {
@@ -418,10 +449,13 @@
     }
     document.addEventListener('visibilitychange', onVis);
 
+    var resyncScrim = cfg.scrim === false ? null : scrim(scenes);
+
     var rt;
     addEventListener('resize', function () {
       clearTimeout(rt);
       rt = setTimeout(function () {
+        if (resyncScrim) resyncScrim();
         visible.forEach(function (s) { s.stop(); s.start(); });
       }, 250);
     });

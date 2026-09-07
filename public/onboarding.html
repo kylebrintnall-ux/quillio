@@ -88,6 +88,17 @@
           url('/assets/images/grass-tile-solid.png?v=__BUILD__') bottom left / 512px 88px repeat-x;
       }
     }
+    /* Scroll-aware haze over the ground band, published as --q-scrim by
+       bird-system.js (1 mid-page, fading to 0 over the last 260px of scroll,
+       0 on a page too short to scroll). Runs to bottom: 0, not the top of the
+       tree band — stopping at the band's edge leaves a visible hard line
+       across the gradient. The band is a ::after so it still paints above
+       this and stays crisp. The var(--q-scrim, 1) default degrades to a
+       static haze with no JS. */
+    .ground-scrim { position: absolute; left: 0; right: 0; bottom: 0; height: 234px; pointer-events: none;
+      opacity: var(--q-scrim, 1); transition: opacity .18s linear;
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.22) 40%, rgba(222,235,252,.52) 66%, rgba(222,235,252,.74) 100%); }
+    @media (min-width: 768px) { .ground-scrim { height: 398px; } }
 
     /* Nav — dark glass, StarCrush wordmark/links */
     /* Transparent, sitting directly on the sky gradient — see the fuller note
@@ -253,7 +264,7 @@
 </head>
 <body>
   <div class="sky-bg"></div>
-  <div class="clouds-wrap"></div>
+  <div class="clouds-wrap"><div class="ground-scrim"></div></div>
   <nav>
     <a class="nav-logo" href="/app">
       <span class="nav-wordmark">Quillio</span>

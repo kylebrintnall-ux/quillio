@@ -341,6 +341,19 @@
       opacity: var(--q-scrim, 1); transition: opacity .18s linear;
       background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.22) 40%, rgba(222,235,252,.52) 66%, rgba(222,235,252,.74) 100%); }
     @media (min-width: 768px) { .ground-scrim { height: 398px; } }
+    /* CONTENT fade, not a ground fade — .ground-scrim hazes the BACKGROUND
+       behind scrolling content; this fades the CONTENT ITSELF as it nears the
+       bottom of the viewport, so a card or panel never sits half-legible
+       against the ground band. Same colour and --q-scrim binding as
+       .ground-scrim, but a separate fixed element ABOVE main (z-index 5)
+       rather than behind it, ramping further (.98 vs .74) since it has to
+       fully obscure content, not just soften a background. pointer-events:
+       none — fading content is still tappable underneath. Clears at the true
+       bottom exactly when .ground-scrim does. */
+    .content-fade { position: fixed; left: 0; right: 0; bottom: 0; height: 234px; z-index: 10; pointer-events: none;
+      opacity: var(--q-scrim, 1); transition: opacity .18s linear;
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.55) 55%, rgba(222,235,252,.88) 80%, rgba(222,235,252,.98) 100%); }
+    @media (min-width: 768px) { .content-fade { height: 398px; } }
 
     /* Transparent, sitting directly on the sky gradient — see the fuller note
        on the same rule in app.html. */
@@ -926,6 +939,7 @@
 <body>
   <div class="sky-bg"></div>
   <div class="clouds-wrap"><div class="ground-scrim"></div></div>
+  <div class="content-fade"></div>
 __NAV:settings__
 
   <main>

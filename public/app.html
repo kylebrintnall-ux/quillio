@@ -286,6 +286,21 @@
       opacity: var(--q-scrim, 1); transition: opacity .18s linear;
       background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.22) 40%, rgba(222,235,252,.52) 66%, rgba(222,235,252,.74) 100%); }
     @media (min-width: 768px) { .ground-scrim { height: 398px; } }
+    /* CONTENT fade, not a ground fade — .ground-scrim hazes the BACKGROUND
+       behind scrolling content; this fades the CONTENT ITSELF (transparent,
+       cream-bordered cards) as it nears the bottom of the viewport, so a card
+       never sits half-legible against the ground band. Same colour and same
+       --q-scrim binding as .ground-scrim (one atmosphere, not two), but a
+       separate fixed element ABOVE <main> (z-index 5) rather than behind it,
+       and it ramps further (.98 vs .74) because it has to fully obscure text,
+       not just soften a background. Sits below .output-ctas (z-index 20) so
+       it never washes out a CTA bar sitting on top of it. pointer-events:none
+       — a card fading out is still tappable underneath. Clears at the true
+       bottom exactly when .ground-scrim does: nothing left below to hide. */
+    .content-fade { position: fixed; left: 0; right: 0; bottom: 0; height: 234px; z-index: 10; pointer-events: none;
+      opacity: var(--q-scrim, 1); transition: opacity .18s linear;
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.55) 55%, rgba(222,235,252,.88) 80%, rgba(222,235,252,.98) 100%); }
+    @media (min-width: 768px) { .content-fade { height: 398px; } }
 
     /* Nav — transparent, StarCrush wordmark/links. Was a solid navy glass band
        (background + blur + border-bottom); the spec sheet sits it directly on
@@ -1206,6 +1221,7 @@
 <body>
   <div class="sky-bg"></div>
   <div class="clouds-wrap"><div class="ground-scrim"></div></div>
+  <div class="content-fade"></div>
 __NAV:brief__
   <main>
 

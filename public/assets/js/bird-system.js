@@ -390,6 +390,14 @@
       var strength = doc.scrollHeight - window.innerHeight < 40
         ? 0
         : Math.min(1, remaining / FADE);
+      /* Also published on <html>, not just each scene's own sky layer: a
+         consumer that has to sit ABOVE page content (a fade over the content
+         itself, not just the sky behind it) can't be a descendant of
+         .clouds-wrap without being capped at its stacking level, so it lives
+         outside that subtree — and a custom property only inherits down the
+         tree it's set on. <html> is the one ancestor every such consumer
+         shares. */
+      doc.style.setProperty('--q-scrim', strength.toFixed(3));
       scenes.forEach(function (s) {
         s.wrap.style.setProperty('--q-scrim', strength.toFixed(3));
       });

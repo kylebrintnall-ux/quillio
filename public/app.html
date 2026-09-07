@@ -513,13 +513,36 @@
       padding: 13px 14px; margin-bottom: 8px; cursor: pointer;
       -webkit-tap-highlight-color: transparent; transition: background 0.12s ease, border-color 0.12s ease;
     }
-    .picker-row:active { background: rgba(201,168,76,0.10); }
-    .picker-row input { width: 20px; height: 20px; flex: none; accent-color: var(--gold); margin: 0; }
+    /* cursor: pointer plus the checkbox's own :checked response is enough —
+       no separate :active tint. */
+    /* Custom checkbox: appearance:none + a flex box is the structural half the
+       spec sheet's :checked/::before rules assume but don't restate — without
+       it there's no clean box to fill or center a checkmark inside. Resting
+       state (cream border, transparent, square) matches every other unchecked
+       control on this page; only the gold :checked/::before values below are
+       the spec sheet's own. #show-closed is grouped in throughout — same
+       control, different context (the projects list's own toggle, not a
+       picker row). */
+    .picker-row input, #show-closed {
+      width: 20px; height: 20px; flex: none; margin: 0;
+      appearance: none; -webkit-appearance: none; display: inline-flex;
+      align-items: center; justify-content: center; cursor: pointer;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+    }
+    .picker-row input:checked, #show-closed:checked { background: var(--q-gold); border-color: var(--q-gold); }
+    .picker-row input:checked::before, #show-closed:checked::before {
+      content: '\2713'; font: 700 12px/1 'Zen Kaku Gothic New', sans-serif; color: var(--q-ink);
+    }
     /* var(--ink) was dark-on-light for the row's old frosted-white fill; the
        row is transparent now, so the name has to be cream or it goes unreadable
        against the sky — same fix as .search-input just above. */
     .picker-row-name { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14.5px; color: var(--q-cream); overflow-wrap: anywhere; }
-    .picker-row.checked { background: rgba(201,168,76,0.16); border-color: rgba(201,168,76,0.7); }
+    /* Gold border, not a gold fill — the row itself is a background wash, the
+       checkbox is where the filled "you clicked this" signal belongs (same
+       reasoning as .lib-tier.enforced being the one filled chip). Not the
+       step-8 gold-is-a-warning case: that was ambient state on a read-only
+       row; this is a functional control responding to a click. */
+    .picker-row.checked { border: 1px solid var(--q-gold); }
     /* THE GLASS SURFACE, EXTRACTED — not a new treatment. These four
        declarations are the ones .asset-card and .doc-row already carry, verbatim;
        this class exists so the text that used to sit on raw sky can join the same

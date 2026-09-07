@@ -40,11 +40,14 @@
     /* SURFACES-HANDOFF.md §5 — one of the four floating surfaces that get
        frosted glass. Already a dark surface with light text below
        (.notif-item etc. are rgba(255,255,255,...)), so no text-colour fix
-       needed alongside the background swap. */
+       needed alongside the background swap.
+       FIXES-HANDOFF.md §6 — denser than the other three (.modal-sheet,
+       .toast, .status-dropdown stay at .55): unlike a modal it has no
+       dimmed overlay behind it to separate it from a busy page. */
     .notif-panel {
       display: none; position: absolute; top: calc(100% + 10px); right: 0; z-index: 60;
       width: 320px; max-width: calc(100vw - 24px);
-      background: rgba(21,44,112,.55);
+      background: rgba(16,34,88,.9);
       backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
       border: 1px solid var(--q-cream); border-radius: 0; overflow: hidden;
       color: var(--q-cream);

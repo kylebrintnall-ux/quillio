@@ -145,15 +145,34 @@
     .terminal .t-p { margin: 6px 0; }
     textarea.terminal { min-height: 320px; white-space: pre; }
 
-    .note { display: flex; align-items: center; gap: 10px; color: var(--muted); margin: 12px 0; }
     .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
 
-    .banner { font-family: 'Zen Kaku Gothic New', sans-serif; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #b3e6c4; background: #d8f5e0; color: #0a5d2a; border-radius: 8px; font-size: 14px; }
-    .error { font-family: 'Zen Kaku Gothic New', sans-serif; margin-top: 12px; padding: 10px 12px; border: 1px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 8px; font-size: 14px; }
-    .empty { margin-top: 16px; padding: 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; }
-    .progress { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    /* FIXES-HANDOFF.md §9 — messages: cream only, pixel glyphs, no hue.
+       Complete rules (not a patch), so the old partial overrides further down
+       ("Notes / banners / states on the sky") are gone with them — nothing was
+       left for them to override. */
+    .banner, .error, .note { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.5;
+                             padding: 10px 12px; margin-top: 14px; display: flex; gap: 10px;
+                             align-items: flex-start; border-radius: 0; background: transparent; }
+    .banner { border: 1px solid var(--q-cream); color: var(--q-cream); }
+    .banner::before { content: '\2713'; flex: 0 0 16px; width: 16px; height: 16px;
+                      border: 1px solid var(--q-cream); font-family: 'StarCrush', serif;
+                      font-size: 11px; line-height: 16px; text-align: center; }
+    .error  { border: 1px solid var(--q-cream); color: var(--q-cream); }
+    .error::before  { content: '!'; flex: 0 0 16px; width: 16px; height: 16px;
+                      border: 1px solid var(--q-cream); font-family: 'StarCrush', serif;
+                      font-size: 11px; line-height: 16px; text-align: center; }
+    .note   { border: 1px dotted var(--q-cream-75); color: var(--q-cream-75); }
+    .empty  { border: 1px dotted var(--q-cream); color: var(--q-cream-75);
+              font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; text-align: center;
+              padding: 30px 20px; background: transparent; border-radius: 0; }
+
+    .progress { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: var(--q-cream-75); margin-bottom: 10px; }
+    .spinner  { display: inline-block; width: 32px; height: 32px;
+                background: url('/assets/gifs/quillio_magic_v27.gif?v=__BUILD__') center / contain no-repeat;
+                image-rendering: pixelated; vertical-align: -10px; margin-right: 8px; }
     .hidden { display: none !important; }
 
     /* --- Doc Header setup (step 6b) --- */
@@ -396,12 +415,17 @@
     h2 { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(252,246,227,0.72); margin: 22px 0 10px; }
 
     /* Voice terminal */
+    /* FIXES-HANDOFF.md §9 — cream border, denser navy, no radius. The one
+       *content* surface that keeps glass rather than a plain border: this is
+       the voice guide's document body, and the tint separates it from the
+       prose around it. */
     .terminal {
-      background: rgba(26,26,46,0.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      color: rgba(255,255,255,0.85); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 16px; padding: 20px;
-      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.7;
+      border: 1px solid var(--q-cream); background: rgba(21,44,112,.42);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      color: var(--q-cream-85); font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 13px; line-height: 1.7; border-radius: 0; padding: 16px 18px;
     }
-    .terminal .t-h { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px; letter-spacing: 0.03em; color: var(--sky-btm); margin: 14px 0 4px; }
+    .terminal .t-h { font-family: 'StarCrush', serif; font-size: 15px; color: var(--q-cream); margin: 14px 0 4px; }
     .terminal .t-h:first-child { margin-top: 0; }
     .terminal .t-p { color: rgba(255,255,255,0.75); margin: 6px 0; }
     .terminal .t-ul { margin: 4px 0 10px; padding-left: 20px; }
@@ -581,11 +605,14 @@
     /* THE CONTROL THAT UNDOES AN OVERRIDE, AND IT WAS INVISIBLE. var(--sky-btm)
        is #4DD9D9 — measured at 1.10:1 on this card, which is the worst number
        anywhere on the panel. The variable is not wrong; it is a DARK-surface
-       colour and it is correct on .terminal .t-h, which is why the fix is
+       colour and it is correct on .settings-back:hover (bare sky, same dark
+       class as this card's near-white fill is not), which is why the fix is
        local to this button rather than to the token. (SURFACES step 7 moved
        .nav-link.active off --sky-btm onto --q-gold — a different rule, for a
        different reason: text-only nav links, not a contrast fix — so it is no
-       longer the second example this comment could point to.)
+       longer the second example this comment could point to. FIXES-HANDOFF.md
+       §9 later moved .terminal .t-h off --sky-btm too, onto var(--q-cream) —
+       it was this comment's original example and no longer carries the token.)
        #0a5c5c -> 5.02:1, the same hue family with the value taken down. */
     .lib-resetbtn { background: none; border: none; padding: 0; cursor: pointer;
       font-family: inherit; font-size: 11.5px; font-weight: 600; color: #0a5c5c;
@@ -837,17 +864,6 @@
       border-left: 2px solid #8a1f1f; border-radius: 0 9px 9px 0; padding: 7px 10px; margin-top: 10px; }
     .tpl-empty { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: rgba(252,246,227,0.6); margin-top: 8px; }
 
-    /* Notes / banners / states on the sky */
-    .note { color: rgba(252,246,227,0.65); }
-    .banner { background: #C6F0D8; border: 1.5px solid #2ECC71; color: #0A5C32; border-radius: 12px; }
-    .error { border-radius: 12px; }
-    /* Another SURFACES step 4 gap, same shape as app.html's #history-empty /
-       #screen-project .empty: still a translucent-white dashed box (0.3 alpha)
-       when every named content surface on this page went transparent and
-       cream. Closed here alongside the text audit rather than left as the one
-       "empty state" card still on the old design. */
-    .empty { background: transparent; border: 1.5px dashed var(--q-cream); color: rgba(252,246,227,0.65); border-radius: 0; }
-    .progress { color: rgba(252,246,227,0.6); }
 
     /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
        screens use the horizontal space instead of a phone-width strip. Purely

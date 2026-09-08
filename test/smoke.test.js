@@ -11786,7 +11786,10 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
   assert.match(html, /diverged_overwritten_count/);
   assert.match(html, /this tenant/, 'and names the rows whose own value is gone');
   // Amber — a fact to weigh, not an error that blocked the write.
-  assert.match(html, /\.msg\.warn\s*\{[^}]*--warn/);
+  // Token renamed --warn -> --q-warn by the design-system pass (rebrand/cleanup):
+  // namespaced alongside --q-cream/--q-plum/etc. rather than left as the one
+  // un-prefixed survivor. Same amber value, same rule, new name.
+  assert.match(html, /\.msg\.warn\s*\{[^}]*--q-warn/);
 });
 
 // --- Silent failure 3: a write that lands on nothing reported success ---------

@@ -299,15 +299,20 @@
        cream-bordered cards) as it nears the bottom of the viewport, so a card
        never sits half-legible against the ground band. Same colour and same
        --q-scrim binding as .ground-scrim (one atmosphere, not two), but a
-       separate fixed element ABOVE <main> (z-index 5) rather than behind it,
-       and it ramps further (.98 vs .74) because it has to fully obscure text,
-       not just soften a background. Sits below .output-ctas (z-index 20) so
-       it never washes out a CTA bar sitting on top of it. pointer-events:none
-       — a card fading out is still tappable underneath. Clears at the true
-       bottom exactly when .ground-scrim does: nothing left below to hide. */
+       separate fixed element ABOVE <main> (z-index 5) rather than behind it.
+       Sits below .output-ctas (z-index 20) so it never washes out a CTA bar
+       sitting on top of it. pointer-events:none — a card fading out is still
+       tappable underneath. Clears at the true bottom exactly when
+       .ground-scrim does: nothing left below to hide.
+       RAMP WAS .55/.88/.98 — "it has to fully obscure text" was the original
+       design intent, and on a device it was the defect: rows well above the
+       true bottom (asset cards, not just the ground band) were reading as
+       near-invisible, called out directly as "obstructs what should be
+       visible." Content should blend as it nears the ground, not disappear
+       a third of the way through the fade's own height. Roughly halved. */
     .content-fade { position: fixed; left: 0; right: 0; bottom: 0; height: 234px; z-index: 10; pointer-events: none;
       opacity: var(--q-scrim, 1); transition: opacity .18s linear;
-      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.55) 55%, rgba(222,235,252,.88) 80%, rgba(222,235,252,.98) 100%); }
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.22) 55%, rgba(222,235,252,.42) 80%, rgba(222,235,252,.6) 100%); }
     @media (min-width: 768px) { .content-fade { height: 398px; } }
 
     /* Nav — transparent, StarCrush wordmark/links. Was a solid navy glass band
@@ -492,7 +497,13 @@
       width: 100%; max-width: 360px; margin: 0 auto;
       background: none; border: none; border-radius: 0; padding: 0;
     }
-    .progress-estimate { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; color: var(--sky-btm); margin-bottom: 12px; text-align: left; }
+    /* Label left, estimate right, one row above the bar — see the markup
+       comment on #screen-progress. */
+    .progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    /* Was var(--sky-btm), the pre-rebrand turquoise token — a device pass
+       called the whole loading screen's text "outdated." Cream, like every
+       other label on this screen now. */
+    .progress-estimate { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; color: var(--q-cream-75); flex-shrink: 0; text-align: right; }
     /* SURFACES-HANDOFF.md §8 — segmented, outlined track, no glow. The old
        box-shadow was `var(--sky-btm)`'s own glow colour; --q-fill has no
        equivalent specified, so a filled segment is just solid fill now, and
@@ -503,8 +514,10 @@
     .progress-seg.filled { background: var(--q-fill); }
     .progress-track.pulsing .progress-seg.filled { animation: segPulse 1s ease-in-out infinite; }
     @keyframes segPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-    .progress-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.92); margin-top: 14px; min-height: 20px; text-align: left; }
-    .progress-sublabel { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 400; color: rgba(255,255,255,0.55); margin-top: 4px; min-height: 16px; text-align: left; }
+    /* Both were plain white (rgba(255,255,255,…)), not --q-cream — the same
+       leftover-token pattern as .progress-estimate above. */
+    .progress-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 600; color: var(--q-cream); min-height: 20px; text-align: left; }
+    .progress-sublabel { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 400; color: var(--q-cream-55); margin-top: 4px; min-height: 16px; text-align: left; }
     #screen-progress .error { width: 100%; max-width: 360px; margin-top: 16px; }
     #progress-check-projects { width: 100%; max-width: 360px; margin-top: 14px; }
     #progress-back { width: 100%; max-width: 360px; margin-top: 10px; }
@@ -515,8 +528,10 @@
        floats OVER the end of the page instead of taking up flow space. Without
        this padding the final ~150px of content sits under the bar permanently —
        the page has nothing left to scroll, so it can never be brought into view.
-       150px ≈ the bar's two buttons (17px padding each) plus its 14/28px padding. */
-    #screen-output { padding-bottom: 150px; }
+       150px ≈ the bar's two buttons (17px padding each) plus its 14/28px padding.
+       #screen-output is NOT in this list any more — its actions moved in-flow
+       (.output-actions, below the header) rather than into a fixed bottom bar,
+       so it needs no reserved room at all. See .output-actions for why. */
     #screen-confirm { padding-bottom: 150px; }
     #screen-picker { padding-bottom: 150px; }
     /* The picker's opening line is not a HINT, it is the explanation of why this
@@ -680,7 +695,24 @@
        is just title + state gif, with no surface of its own to pad. */
     .output-header.glass-panel { background: transparent; border: none; padding: 0; margin-bottom: 16px; }
     .output-title { font-family: 'StarCrush', serif; font-size: 24px; line-height: 1.2; color: var(--q-cream); letter-spacing: 0.02em; flex: 1; margin: 0; }
-    .header-gif { width: 52px; height: 52px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
+    /* Was 52px — read as a small afterthought beside a 24px display headline.
+       68px is closer in visual weight to the title without crowding it. */
+    .header-gif { width: 68px; height: 68px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
+    /* The doc-output screen's own action row, IN-FLOW rather than a fixed
+       bottom bar — see the markup comment on #screen-output for why. A first
+       version gave the primary the full-width treatment and shrank only the
+       two Drive links, which read as two tiny buttons next to one giant one —
+       called out directly. Three equal columns instead, same principle as
+       #screen-project's own 2x2: a fixed set of actions on this screen reads
+       as one row of equal choices, not a hierarchy. .output-actions-secondary
+       contributes no box of its own (display: contents), so its two buttons
+       take grid cells directly alongside the primary. */
+    .output-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0 0 16px; }
+    .output-actions .cta-primary,
+    .output-actions .cta-secondary {
+      padding: 8px 14px; font-size: 12px;
+    }
+    .output-actions-secondary { display: contents; }
     /* FIXES-HANDOFF.md §7 — full cream, not the muted 0.75/rgba(...,.78) these
        used to share with .assets-label. Split out of the combined selector so
        .assets-label (metadata, not prose to read) keeps its own muted rule
@@ -994,11 +1026,19 @@
       .matrix-controls { flex: 1; }
     }
 
-    /* Fixed bottom CTA bar (output) */
+    /* Fixed bottom CTA bar — still used by the picker, confirm and copy-done
+       screens (the doc-output screen moved off it; see .output-actions
+       above). Backdrop was a straight turquoise (--sky-btm, #4DD9D9) left
+       over from before the cream rebrand — a device pass asked outright what
+       it was doing there. Replaced with the same navy-translucent treatment
+       every other floating surface in this redesign already uses
+       (.status-dropdown, the notification panel, .angle-menu), at the denser
+       .9 rather than .55: like those other two, this bar has no dimmed
+       overlay behind it to separate it from a busy, scrolling page. */
     .output-ctas {
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
       padding: 14px 26px 28px; max-width: 520px; margin: 0 auto;
-      background: linear-gradient(0deg, rgba(77,217,217,0.97) 60%, transparent);
+      background: linear-gradient(0deg, rgba(21,44,112,.9) 65%, transparent);
       display: flex; flex-direction: column; gap: 10px;
     }
     /* SURFACES-HANDOFF.md §7 — solid cream fill, dark navy text, zero radius.
@@ -1200,22 +1240,26 @@
        box it was aligning to — FIXES-HANDOFF.md §4 made .output-header.glass-panel
        padding: 0 everywhere, project detail included. */
     /* ABOVE the content now (see the markup), so the margin moved with it. */
-    /* A 2-column GRID, not a wrapping flex row — a wrap row sizes each button
-       to its own label, so "Campaign folder" is wider than "Regenerate" and
-       whichever button lands alone on the last line sits flush left at its
-       own width instead of matching the row above. Grid's 1fr columns force
-       every cell (button) to the same width regardless of label length, and
-       align-items: stretch (the default) gives every button in the row the
-       same height too. With the four buttons this screen normally shows,
-       that reads as a clean 2x2. .project-actions-secondary contributes no
-       box of its own (display: contents), so its children take grid cells
-       directly rather than being sized by their own wrapper. KNOWN EDGE CASE
-       — deliberately not handled: a project with a template document shows a
-       fifth button (#project-template-btn), which lands alone in column 1 of
-       a third row rather than centered or spanning both columns. Not part of
-       the shape this fix was asked for, and not visually broken — just not
-       as tidy as the four-button case. */
-    .project-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; }
+    /* A GRID whose COLUMN COUNT IS SET BY JS (syncProjectActionsGrid), not a
+       fixed 2. A static 2 columns put whichever button didn't have a partner
+       alone in the next row, flush left at full width — and that is not a
+       rare shape here: an undrafted project shows exactly THREE buttons (the
+       primary, Campaign folder, Copy doc — Review Copy only appears once
+       there's copy to review), which is the common case a fixed 2-column
+       grid gets wrong, not an edge case. Called out directly as buttons that
+       were "too wide" and not "three across."
+       The rule (in the JS): columns = the visible count when that's 3 or
+       fewer (one clean row), else 2 — so 2 buttons get 2 columns, 3 get 3,
+       and the drafted 4-button case keeps the 2x2 that already reads well.
+       grid-template-columns defaults to 2 below purely so the layout is sane
+       for the instant before JS runs. KNOWN EDGE CASE, still not handled: a
+       project with a template document shows a FIFTH button, which the rule
+       above sends through the else-2 branch — same 2x2-plus-one-alone shape
+       as before, just for a rarer count. .project-actions-secondary
+       contributes no box of its own (display: contents), so its children
+       take grid cells directly rather than being sized by their own
+       wrapper — and so JS can count every button with one selector. */
+    .project-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 0 0 16px; }
     .project-actions .cta-primary,
     .project-actions .cta-secondary {
       padding: 8px 14px; font-size: 12px;
@@ -1321,9 +1365,15 @@ __NAV:brief__
     <section id="screen-progress" class="screen">
       <img id="progress-gif" class="progress-gif" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt="">
       <div class="progress-panel">
-        <div class="progress-estimate" id="brief-progress-estimate">Estimated: ~20s</div>
+        <!-- Label left, estimate right, ONE row above the bar — a mockup called
+             out the old order (estimate alone above the bar, the stage label
+             alone below it) directly. Same two elements, same ids; only the
+             position moved, so nothing reading them by id needed to change. -->
+        <div class="progress-head">
+          <div class="progress-label" id="brief-progress-label">Parsing brief…</div>
+          <div class="progress-estimate" id="brief-progress-estimate">Estimated: ~20s</div>
+        </div>
         <div class="progress-track" id="brief-progress-track"></div>
-        <div class="progress-label" id="brief-progress-label">Parsing brief…</div>
         <div class="progress-sublabel" id="brief-progress-sublabel"></div>
       </div>
       <div id="progress-error" class="error hidden"></div>
@@ -1403,6 +1453,29 @@ __NAV:brief__
         <div id="out-docs"></div>
       </div>
 
+      <!-- IN-FLOW, RIGHT UNDER THE DOCUMENTS PANEL — NOT A FIXED BOTTOM BAR.
+           This used to be .output-ctas: position:fixed, bottom of the
+           viewport, with a turquoise (--sky-btm) gradient backdrop left over
+           from before the cream rebrand. On a page whose content sits
+           directly on the sky (no opaque card under most of it), that fixed
+           gradient is exactly the .content-fade cream fade this same
+           redesign added at the true bottom of the screen — the two washed
+           each other and the buttons out. Moved in-flow, matching
+           #screen-project's own .project-actions: on screen the moment the
+           page loads, no reserved bottom padding, no backdrop needed. -->
+      <div class="output-actions">
+        <button class="cta-primary" id="draft-btn">Generate First Draft</button>
+        <!-- The FOLDER first: a run can produce more than one document, so
+             opening one of them picks a winner arbitrarily, and the folder shows
+             everything the run produced. The copy doc keeps its own button —
+             it is what a writer usually wants next. -->
+        <div class="output-actions-secondary">
+          <button class="cta-secondary" id="open-btn">Campaign folder</button>
+          <button class="cta-secondary" id="open-doc-btn">Copy doc</button>
+        </div>
+      </div>
+      <div id="output-error" class="error hidden"></div>
+
       <div class="glass-panel run">
         <div class="section-label">Campaign Summary</div>
         <p class="section-body" id="out-summary"></p>
@@ -1425,17 +1498,6 @@ __NAV:brief__
            carrying both would make either imply the other. Same rule the Slack
            card follows for its two context blocks. -->
       <div id="out-missing-fact" class="notice hidden"></div>
-      <div id="output-error" class="error hidden"></div>
-
-      <div class="output-ctas">
-        <button class="cta-primary" id="draft-btn">Generate First Draft</button>
-        <!-- The FOLDER first: a run can produce more than one document, so
-             opening one of them picks a winner arbitrarily, and the folder shows
-             everything the run produced. The copy doc keeps its own button —
-             it is what a writer usually wants next. -->
-        <button class="cta-secondary" id="open-btn">Campaign folder</button>
-        <button class="cta-secondary" id="open-doc-btn">Copy doc</button>
-      </div>
     </section>
 
     <!-- SCREEN 4 — GENERATING (magic quill + rotating writer phrases). No progress
@@ -1782,6 +1844,27 @@ __NAV:brief__
     }
     window.addEventListener('resize', syncCtaRoom);
     window.addEventListener('orientationchange', syncCtaRoom);
+
+    // .project-actions' column count follows however many of its buttons are
+    // ACTUALLY visible right now — see the CSS comment on .project-actions for
+    // the rule and why a fixed 2 columns was wrong for the common 3-button
+    // case. A MutationObserver on every button's class, not a call added at
+    // each show()/hide() site: the buttons toggle from several different
+    // functions (setDraftAffordance, the template-doc check, the selection
+    // handler), and a layout rule should not depend on every one of them
+    // remembering to re-run it.
+    (function () {
+      var box = document.querySelector('.project-actions');
+      if (!box) return;
+      function sync() {
+        var count = box.querySelectorAll('button:not(.hidden)').length;
+        var cols = count > 0 && count <= 3 ? count : 2;
+        box.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+      }
+      var actionsObserver = new MutationObserver(sync);
+      actionsObserver.observe(box, { attributes: true, attributeFilter: ['class'], subtree: true });
+      sync();
+    })();
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
     function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
     // Advisory notice (amber, not red): render when there's a message, hide when

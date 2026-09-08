@@ -37,6 +37,12 @@
       line-height: 15px; text-align: center; box-shadow: 0 0 0 2px rgba(26,26,46,0.9);
     }
     .nav-bell-count.on { display: block; }
+    /* Scales with the rest of the nav bar on wide screens — see the fuller
+       note on app.html's own nav media query. */
+    @media (min-width: 768px) {
+      .nav-bell { width: 38px; height: 38px; }
+      .nav-bell svg { width: 20px; height: 20px; }
+    }
     /* SURFACES-HANDOFF.md §5 — one of the four floating surfaces that get
        frosted glass. Already a dark surface with light text below
        (.notif-item etc. are rgba(255,255,255,...)), so no text-colour fix

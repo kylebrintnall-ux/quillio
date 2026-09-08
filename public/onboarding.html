@@ -301,9 +301,15 @@
     /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
        screens use the horizontal space instead of a phone-width strip. Purely
        ADDITIVE — below 768px this block does nothing, so the phone layout is
-       byte-identical. Capped at a comfortable reading width, not edge-to-edge. */
+       byte-identical. Capped at a comfortable reading width, not edge-to-edge.
+       nav itself scales too now — see the fuller note on the same rule in
+       app.html: it stayed at its phone size even as the content column grew,
+       and read as "way too tiny" against a wide screen. */
     @media (min-width: 768px) {
       main { max-width: 900px; padding-bottom: 480px; }
+      nav { height: 76px; padding: 0 32px; }
+      .nav-wordmark { font-size: 28px; }
+      .nav-link { font-size: 15px; padding: 9px 11px; }
     }
   </style>
 </head>

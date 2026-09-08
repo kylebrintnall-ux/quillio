@@ -1358,10 +1358,17 @@
        ADDITIVE — below 768px this block does nothing, so the phone layout is
        byte-identical. Capped at a comfortable reading width, not edge-to-edge.
        The fixed CTA bar widens to match so its buttons stay aligned with the
-       cards above them. */
+       cards above them.
+       nav itself stayed at its phone size (58px tall, a 21px wordmark, 12px
+       links) even as the content column below it grew — called out directly
+       as reading "way too tiny" against a wide screen. Scaled up with it,
+       same ~1.35x the content column got. */
     @media (min-width: 768px) {
       main { max-width: 900px; padding-bottom: 480px; }
       .output-ctas { max-width: 900px; }
+      nav { height: 76px; padding: 0 32px; }
+      .nav-wordmark { font-size: 28px; }
+      .nav-link { font-size: 15px; padding: 9px 11px; }
     }
   </style>
 </head>
@@ -1380,7 +1387,11 @@ __NAV:brief__
            up; below that (320-325px) it wraps at the space between the two
            spans, "Build a" / "document.", never mid-word. -->
       <h1 class="brief-headline"><span>Build a</span> <span>document.</span></h1>
-      <p class="brief-sub">Describe the campaign, drop a link, or paste a brief. Quillio handles the rest.</p>
+      <!-- Was "Describe the campaign, drop a link, or paste a brief" — opened
+           with the same three words the textarea placeholder opens with,
+           right above it, called out directly as reading redundant. Same
+           three input paths, without echoing the placeholder's own phrasing. -->
+      <p class="brief-sub">Paste a brief, drop a link, or just start typing — Quillio handles the rest.</p>
       <div class="glass-card">
         <textarea id="brief" class="glass-textarea" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>
         <div class="card-footer">

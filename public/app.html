@@ -416,9 +416,14 @@
     .glass-textarea::placeholder { color: rgba(252,246,227,0.4); font-size: 14px; }
     /* FIXES-HANDOFF.md §3 — attach/run match the CTAs elsewhere: transparent
        or cream fill, cream border, zero radius, no glow. */
+    /* Left/right/bottom were 0 — flush against the card's own border on three
+       sides while the textarea above it insets 18px on every side. Matched to
+       the textarea's own horizontal padding (18px) and given a bottom inset
+       to match, so the footer reads as inside the card rather than pinned to
+       its edges. */
     .card-footer {
       display: flex; align-items: center; gap: 10px;
-      padding: 16px 0 0; border: none;
+      padding: 16px 18px 18px; border: none;
     }
     .attach-btn {
       width: 48px; height: 48px; flex: 0 0 48px;

@@ -365,10 +365,17 @@
     .nav-link.active { color: var(--q-gold); background: none; }
 
     /* Content column */
+    /* Bottom padding was 40px — nowhere near enough to clear the fixed ground
+       band (.clouds-wrap::after, 84px tall here / 168px at the desktop
+       breakpoint below), so a long screen's last rows scrolled up UNDER the
+       tree/grass art rather than stopping short of it — .content-fade only
+       ever softened that collision, it never prevented it. 300px clears the
+       ground band with genuine margin left over, on every screen, not just
+       the ones a device pass happened to scroll to the bottom of. */
     main {
       position: relative; z-index: 5;
       max-width: 520px; margin: 0 auto; width: 100%;
-      padding: 32px 26px 40px;
+      padding: 32px 26px 300px;
     }
 
     /* ── BRIEF (v8) ── */
@@ -1332,7 +1339,7 @@
        The fixed CTA bar widens to match so its buttons stay aligned with the
        cards above them. */
     @media (min-width: 768px) {
-      main { max-width: 900px; }
+      main { max-width: 900px; padding-bottom: 480px; }
       .output-ctas { max-width: 900px; }
     }
   </style>

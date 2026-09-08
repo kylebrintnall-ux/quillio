@@ -397,7 +397,11 @@
     .nav-link:hover { color: var(--q-gold); }
     .nav-link.active { color: var(--q-gold); background: none; }
 
-    main { position: relative; z-index: 5; max-width: 520px; margin: 0 auto; width: 100%; padding: 24px 26px 60px; }
+    /* Bottom padding was 60px — see the fuller note on the same rule in
+       app.html: nowhere near enough to clear the fixed ground band
+       (.clouds-wrap::after), so a long panel's last rows scrolled up under
+       the tree/grass art instead of stopping short of it. */
+    main { position: relative; z-index: 5; max-width: 520px; margin: 0 auto; width: 100%; padding: 24px 26px 300px; }
     .layout { flex-direction: column; gap: 0; }
     .content { flex: 1; }
 
@@ -954,7 +958,7 @@
        ADDITIVE — below 768px this block does nothing, so the phone layout is
        byte-identical. Capped at a comfortable reading width, not edge-to-edge. */
     @media (min-width: 768px) {
-      main { max-width: 900px; }
+      main { max-width: 900px; padding-bottom: 480px; }
     }
   </style>
 </head>

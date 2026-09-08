@@ -125,6 +125,13 @@
     .meta { font-size: 12.5px; color: var(--q-cream-75); word-break: break-all; margin: 6px 0; }
     .hash { font-family: var(--q-body); font-size: 12px; }
     .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    /* Flag card only: separates Dismiss from Review change… so they read as
+       different tiers of action rather than peers — same dotted-divider idiom
+       .wl-table already uses for a repeat, reused here for a tier split. Only
+       applied when there's a primary group above it to separate FROM (a test
+       card, which has no Review change… button, keeps the plain .actions
+       spacing it always had). */
+    .dismiss-row { margin-top: 4px; padding-top: 10px; border-top: 1px dotted var(--q-cream-55); }
     .empty { border: 1px dotted var(--q-cream); color: var(--q-cream-75); font-style: italic;
       font-size: 14px; text-align: center; padding: 24px 20px; background: transparent; }
 
@@ -383,10 +390,20 @@ function flagCard(f, isTest) {
   ]));
   card.appendChild(el('div',{class:'meta'},['flag #'+f.id+' · detected '+new Date(f.detected_at).toLocaleString()]));
   card.appendChild(el('div',{class:'meta hash'},['old '+short(f.old_hash)+'  →  new '+short(f.new_hash)]));
-  const actions = el('div',{class:'actions'});
-  if (!isTest) actions.appendChild(el('button',{class:'primary',onclick:()=>openApprove(f.id)},['Approve…']));
-  actions.appendChild(el('button',{class:'warn',onclick:()=>doDismiss(f.id)},['Dismiss']));
-  card.appendChild(actions);
+  // Two groups, not one row: Review change… opens a two-step write, Dismiss
+  // closes the flag in one. They read as peers when they sit in the same
+  // .actions block with nothing between them — that was the defect. The
+  // dotted top border on the second group is the same repeat-divider the rest
+  // of this page already uses (.wl-table's row rule), reused here for a tier
+  // split rather than a repeat.
+  if (!isTest) {
+    card.appendChild(el('div',{class:'actions'},[
+      el('button',{class:'primary',onclick:()=>openApprove(f.id)},['Review change…']),
+    ]));
+  }
+  card.appendChild(el('div',{class:'actions'+(isTest?'':' dismiss-row')},[
+    el('button',{class:'warn',onclick:()=>doDismiss(f.id)},['Dismiss']),
+  ]));
   return card;
 }
 async function doDismiss(flagId) {
@@ -401,7 +418,10 @@ async function openApprove(flagId) {
   try { flag = (await api('/admin/api/flag/'+flagId)).flag; }
   catch (e) { alert('Load failed: '+e.message); return; }
   panel.innerHTML='';
-  panel.appendChild(el('h1',{text:'Approve flag #'+flag.id}));
+  // The step marker is what tells a reader this screen is not the end — the
+  // word "Approve" used to carry that job and didn't: clicking it opened this
+  // checklist, which has no control that writes anything.
+  panel.appendChild(el('h1',{text:'Step 1 of 2 — choose fields (flag #'+flag.id+')'}));
   panel.appendChild(el('p',{class:'note',text:flag.source_url}));
   panel.appendChild(el('p',{class:'note',text:'Check only the field(s) this change actually applies to, and type the new value. Unchecked fields are never touched.'}));
 
@@ -414,13 +434,26 @@ async function openApprove(flagId) {
   table.appendChild(thead);
   const tbody = el('tbody');
   const inputs = [];
+  // Created before the loop so the per-row checkbox listener can close over it.
+  // Starts disabled — "checked at least one field" is a real precondition for
+  // moving forward and the control now says so, instead of only preview()'s
+  // inline error saying so after the fact (kept below as a fallback).
+  const nextBtn = el('button',{class:'primary',onclick:()=>preview(flag, inputs, msg)},['Next: review diff →']);
+  nextBtn.disabled = true;
   for (const fld of flag.fields) {
     const cb = el('input',{type:'checkbox'});
     const cmax = el('input',{type:'number',min:'1',placeholder:fld.current_char_max||''});
     const note = el('input',{type:'text',placeholder:'leave blank to keep'});
     const hint = el('div',{class:'note'});
     cmax.disabled = true; note.disabled = true;
-    cb.addEventListener('change',()=>{ cmax.disabled=!cb.checked; note.disabled=!cb.checked; });
+    // Extended, not a second listener: the existing per-row toggle now also
+    // re-evaluates across ALL rows, since one box anywhere is enough to move
+    // forward. inputs already holds every earlier row by the time this fires
+    // (it's an async event, long after the loop that builds it has finished).
+    cb.addEventListener('change',()=>{
+      cmax.disabled=!cb.checked; note.disabled=!cb.checked;
+      nextBtn.disabled = !inputs.some((r)=>r.cb.checked);
+    });
     inputs.push({fld, cb, cmax, note, hint});
     // Divergence shown on the FORM as well as the preview: an admin choosing what
     // to type should know up front that tenants don't currently agree.
@@ -442,7 +475,7 @@ async function openApprove(flagId) {
   panel.appendChild(msg);
   const bar = el('div',{class:'actions'},[
     el('button',{onclick:()=>suggest(flag, inputs, msg)},['Suggest values']),
-    el('button',{class:'primary',onclick:()=>preview(flag, inputs, msg)},['Preview changes']),
+    nextBtn,
     el('button',{onclick:closeOverlay},['Cancel']),
   ]);
   panel.appendChild(bar);
@@ -520,7 +553,10 @@ async function preview(flag, inputs, msg) {
 }
 function renderPreview(flag, edits, pv, msg) {
   panel.innerHTML='';
-  panel.appendChild(el('h1',{text:'Confirm write — flag #'+flag.id}));
+  // Mirrors Screen 1's marker. "Confirm write" is doing enough work as the one
+  // accurate button label in this flow — the heading's job is to say this is
+  // the LAST step, not to repeat the button.
+  panel.appendChild(el('h1',{text:'Step 2 of 2 — confirm (flag #'+flag.id+')'}));
   panel.appendChild(el('p',{class:'note',text:'Nothing has been written yet. Review the diff, then confirm.'}));
   // Up front, before the table: this write has no tenant filter, so if any row
   // disagrees it is about to be reverted. Stated as a count of fields so it is

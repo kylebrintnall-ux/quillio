@@ -18783,7 +18783,7 @@ test('the provenance clause records an EVENT, and only where it has a referent',
   // into a file nothing can update — true-but-weak on an untouched page and false
   // the moment one changed. This records a FIXED historical event instead.
   const line = fieldHint(f()).text;
-  assert.match(line, /Verified against LinkedIn's spec page on 2026-08-20\.$/);
+  assert.match(line, /Read against LinkedIn's spec page on 2026-08-20\.$/);
   assert.ok(!/unchanged/.test(line), 'never claims a state that keeps changing after the doc is written');
 
   // NAMES THE PLATFORM, through the SAME resolution the hyperlink uses. The point
@@ -18791,13 +18791,13 @@ test('the provenance clause records an EVENT, and only where it has a referent',
   // it is that "the source page" would survive being pointed at the wrong page
   // and "LinkedIn's spec page" reads wrong under a Meta field.
   assert.match(fieldHint(f({ specSource: META, specType: 'recommended' })).text,
-    /Verified against Meta's spec page on 2026-08-20\.$/);
+    /Read against Meta's spec page on 2026-08-20\.$/);
 
   // ONLY WHERE THE PARAGRAPH HAS ALREADY NAMED A SOURCE — the same nameStart test
   // that decides whether the platform name is hyperlinked.
-  assert.ok(!/Verified against/.test(fieldHint(f({ specType: 'house_default', specSource: 'quillio_default' })).text),
+  assert.ok(!/Read against/.test(fieldHint(f({ specType: 'house_default', specSource: 'quillio_default' })).text),
     'a house default names no source, so it gets no verification clause');
-  assert.ok(!/Verified against/.test(fieldHint(f({ specSource: 'https://example.com/unknown' })).text),
+  assert.ok(!/Read against/.test(fieldHint(f({ specSource: 'https://example.com/unknown' })).text),
     'an unrecognised source renders the no-source form and gets no clause');
   assert.strictEqual(fieldHint(f({ specType: null, specSource: null, specNote: 'Keep it punchy.' })).text,
     'Keep it punchy.', 'a tenant-authored field has no tier line and no clause');
@@ -18881,7 +18881,7 @@ test('a show-once note renders on the first of an ADJACENT run and nowhere after
   assert.strictEqual(laterHint, 'Recommended by Meta.',
     'the attribution stays on every field — it is the claim, and it is the link');
   assert.ok(!/Not a hard limit/.test(laterHint), 'the boilerplate tail goes');
-  assert.ok(!/Verified against/.test(laterHint), 'and the date it shares with Card 1 goes with it');
+  assert.ok(!/Read against/.test(laterHint), 'and the date it shares with Card 1 goes with it');
 
   // A GAP RESTORES IT. The same sentence after an intervening field is a
   // different reader, not a repetition — a Set of "seen in this asset" would
@@ -19034,7 +19034,7 @@ test('the sole-witness verification quotes the pages it claims were read', () =>
   const flat = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
 
   // SAME RULE AS THE BACKFILL TEST ABOVE, and it is the rule rather than a habit:
-  // a stamp on spec_verified_at renders "Verified against X's spec page on DATE."
+  // a stamp on spec_verified_at renders "Read against X's spec page on DATE."
   // into tenant documents, so a header that cites four pages without carrying
   // their words leaves a reader nothing to check the claim against except the
   // claim. This asserts the quotes are PRESENT — it cannot and does not assert
@@ -21311,6 +21311,11 @@ test('sweep: the bracket is composed in ONE place, shared with fieldLabel', () =
 // batch that must still apply back to front. A source scan cannot see whether
 // the second edit addressed the right characters after the first had moved them.
 
+// The CURRENT wording (verifiedSentence composes this today).
+const HINT_READ = 'Platform limit (LinkedIn). Stay within this count. '
+  + "Read against LinkedIn's spec page on 2026-08-20.";
+// SUPERSEDED 2026-09 by HINT_READ above. Still real: every document built
+// between b018606 and the rename says this and always will.
 const HINT_VERIFIED = 'Platform limit (LinkedIn). Stay within this count. '
   + "Verified against LinkedIn's spec page on 2026-08-20.";
 const HINT_SUPERSEDED = 'Platform limit (LinkedIn). Stay within this count. '
@@ -21395,6 +21400,22 @@ test('sweep: the SUPERSEDED wording is recognised and replaced', async () => {
   assert.strictEqual(res.applied[0].provenanceFrom, 'Source unchanged as of 2026-08-20.');
   assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.'));
   assert.ok(!doc.text.includes('Source unchanged'));
+});
+
+test('sweep: the CURRENT (READ) wording is recognised and replaced', async () => {
+  // Mirrors the SUPERSEDED test above, for the wording verifiedSentence composes
+  // today. PROVENANCE_AT_END has to match this one too, or a field corrected on
+  // a document built after the 2026-09 rename keeps its stale "Read against …"
+  // clause sitting next to a fresh "Limit corrected" sentence — two provenance
+  // claims in one paragraph, which the whole point of REPLACE (not append) exists
+  // to prevent.
+  const doc = sweepDoc(HINT_READ);
+  const { res, paras } = await runSweep(doc);
+
+  assert.strictEqual(res.applied[0].provenance, 'rewritten');
+  assert.strictEqual(res.applied[0].provenanceFrom, "Read against LinkedIn's spec page on 2026-08-20.");
+  assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.'));
+  assert.ok(!doc.text.includes('Read against'));
 });
 
 test('sweep: a SECOND correction replaces the date rather than stacking', async () => {
@@ -21494,11 +21515,18 @@ test('the strip removes every provenance wording, not just the current one', () 
   const { stripReaderOnlyLines } = require('../src/destinations/googleDocs');
   const base = 'Front-load the first 40 characters.';
 
-  assert.strictEqual(stripReaderOnlyLines(`${base} Verified against Meta's spec page on 2026-08-20.`), base);
-  // THE ONE THAT WAS LEAKING. When VERIFIED_LINE replaced CHECKED_LINE, the
+  // THE CURRENT WORDING. verifiedSentence has composed "Read against …" since
+  // 2026-09; this is what a field drafted today carries.
+  assert.strictEqual(stripReaderOnlyLines(`${base} Read against Meta's spec page on 2026-08-20.`), base);
+  // THE FIRST ONE THAT WAS LEAKING. When VERIFIED_LINE replaced CHECKED_LINE, the
   // superseded wording stopped being stripped — so every document from that
   // window had been shipping it into its own Field guidance.
   assert.strictEqual(stripReaderOnlyLines(`${base} Source unchanged as of 2026-08-20.`), base);
+  // THE SECOND SUPERSEDED WORDING. "Verified against …" was the composed sentence
+  // from b018606 until the rename to "Read" — every document built in that
+  // (much longer) window still says "Verified" and always will, so this has to
+  // keep matching even though nothing writes it any more.
+  assert.strictEqual(stripReaderOnlyLines(`${base} Verified against Meta's spec page on 2026-08-20.`), base);
   // And the sentence the sweep writes is reader-facing by exactly the same test:
   // it tells whoever opens the document that its limit moved. It tells a model
   // writing copy nothing it can act on.
@@ -21599,22 +21627,25 @@ test('freshness: the second line withdraws — it is never a badge', () => {
   }
 });
 
-test('freshness: the verified sentence is the DOCUMENT\'s, byte for byte', () => {
+test('freshness: the read sentence is the DOCUMENT\'s, byte for byte', () => {
   const { verifiedSentence } = require('../src/utils/specFreshness');
   const { fieldHint } = require('../src/destinations/googleDocs');
 
   const sentence = verifiedSentence('2026-08-20', LI_SPECS);
-  assert.strictEqual(sentence, "Verified against LinkedIn's spec page on 2026-08-20.");
+  assert.strictEqual(sentence, "Read against LinkedIn's spec page on 2026-08-20.");
   // The document composes its hint through the same function, so a reworded
   // screen cannot describe a sentence the document no longer says.
   const hint = fieldHint({ specType: 'enforced', specSource: LI_SPECS, specVerifiedAt: '2026-08-20' });
   assert.ok(hint.text.endsWith(sentence), 'the doc ends with the identical sentence');
 
-  // "VERIFIED" IS RIGHT HERE and only here: a human read that page. The rule
-  // against the word covers the weekly mechanism, which compares a hash and never
-  // re-reads a number — so the machine line must not use it.
+  // NEITHER "VERIFIED" NOR "CHECKED" APPEARS HERE, and that is now true of the
+  // whole codebase, not just this sentence: "verified" was the word here until
+  // 2026-09 (it read as a currency claim it didn't mean — see verifiedSentence's
+  // header), and "checked" was always reserved for the machine line below, which
+  // never claimed a re-read and still doesn't.
   const { freshnessLine } = require('../src/utils/specFreshness');
   assert.ok(!/verif/i.test(freshnessLine(watch())));
+  assert.ok(!/verif/i.test(sentence), 'the document sentence itself no longer uses the word either');
 
   // Every failure renders NOTHING rather than something malformed.
   assert.strictEqual(verifiedSentence(null, LI_SPECS), '');
@@ -21650,7 +21681,7 @@ test('freshness: the verification survives a stuck detector', () => {
   // fact about the machine, not about the reading — so the first line stays and
   // only the second withdraws.
   const f = specFreshness({ specVerifiedAt: '2026-08-20', specSource: LI_SPECS, watch: watch({ unconfirmed: 5 }) });
-  assert.strictEqual(f.verified, "Verified against LinkedIn's spec page on 2026-08-20.");
+  assert.strictEqual(f.verified, "Read against LinkedIn's spec page on 2026-08-20.");
   assert.strictEqual(f.state, 'unstable');
   assert.match(f.machine, /reads differently every time/);
 });
@@ -21872,7 +21903,7 @@ test('provenance run: the attribution stays, the boilerplate and the date go', (
 
   assert.strictEqual(fieldHint(f).text,
     'Recommended by Meta (Facebook Feed). Not a hard limit — adjust for your brand and goal. '
-    + "Verified against Meta's spec page on 2026-08-20.");
+    + "Read against Meta's spec page on 2026-08-20.");
   assert.strictEqual(fieldHint(f, { suppressDetail: true }).text,
     'Recommended by Meta (Facebook Feed).');
 
@@ -22004,7 +22035,7 @@ test('provenance run: replayed through appendBody over the real seed', () => {
   // (it carries a conditional second limit), so its collapsed cards render
   // "<note> Platform limit (LinkedIn)." and a bare-line test would score them 0.
   const bare = (a) => render(a).filter((l) => /(Recommended by [^.]+\.|Platform limit \([^)]+\)\.)/.test(l)
-    && !/Verified against/.test(l)).length;
+    && !/Read against/.test(l)).length;
 
   // COLLAPSED — runs of 4, 5 and 6. These are the walls the rule was built for.
   assert.strictEqual(bare(DEFAULT_ASSETS.find((a) => a.name === 'Meta Carousel Ad')), 5);

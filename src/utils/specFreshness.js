@@ -72,20 +72,36 @@ function isoDay(value) {
   return d.toISOString().slice(0, 10);
 }
 
-// "Verified against LinkedIn's spec page on 2026-08-20.", or '' when there is
+// "Read against LinkedIn's spec page on 2026-08-20.", or '' when there is
 // nothing to say.
 //
-// "VERIFIED" IS THE RIGHT WORD HERE and it is the one place in this codebase
-// that may use it. The rule elsewhere — say "checked", never "verified" — exists
-// because the weekly detector compares a hash and never re-reads the number, so
-// "verified" would claim something the machine does not do. This sentence is
-// about a HUMAN who did read the page. Where the claim is genuinely a person's,
-// the word is literally true.
+// "READ", NOT "VERIFIED" — changed 2026-09, after this exact sentence was
+// misread. Kyle saw "Verified against X's spec page on 2026-08-26" and read it
+// as "last confirmed two weeks ago" — a currency claim. It never was one: the
+// date is a single human event (someone opened the cited page, once, that day)
+// and it does not move because the machine re-checks that page every Monday
+// without re-reading the number. "Verified" was defensible — the reading did
+// happen — but it carries an implication of ongoing validity this sentence
+// cannot back up. "Read" names the event and stops there.
+//
+// This function was the ONE place in the codebase that used "verified" — the
+// rule everywhere else has always been "checked", never "verified" (see
+// freshnessLine below, and CLAUDE.md), because the weekly detector compares a
+// hash and never re-reads the number, so "verified" would claim something the
+// machine does not do. That rule is unchanged and untouched by this edit; what
+// changed is that the one sentence which used to earn an exception to it no
+// longer needs one — after this change "verified" appears nowhere this codebase
+// writes.
+//
+// A DOCUMENT ALREADY BUILT MAY STILL SAY "Verified against …" — this function
+// cannot reach into a file that already shipped. destinations/googleDocs.js's
+// stripReaderOnlyLines and PROVENANCE_AT_END both carry a pattern for the old
+// wording as well as this one; see VERIFIED_LINE_SUPERSEDED there.
 //
 // EVERY FAILURE LANDS ON THE SAME SILENT PATH. No date, a value that is not a
 // date, an unparseable one, and a source that resolves to no platform name all
 // return '' — a field with no recorded verification must render with NO clause
-// rather than an empty or malformed one. "Verified against null's spec page on
+// rather than an empty or malformed one. "Read against null's spec page on
 // Invalid Date." is what these guards make unreachable.
 //
 // KNOWN WORDING EDGE, currently unreachable. "spec page" is right for the six
@@ -93,7 +109,7 @@ function isoDay(value) {
 // two `recommended` fields whose sources are research, and specSourceName does
 // resolve both. No such field carries a verification date today and the backfill
 // does not give them one, so the sentence cannot render for them. If one is ever
-// verified, the wording needs a second form rather than calling a study a spec
+// read, the wording needs a second form rather than calling a study a spec
 // page.
 function verifiedSentence(specVerifiedAt, specSource) {
   if (!specVerifiedAt) return '';
@@ -101,7 +117,7 @@ function verifiedSentence(specVerifiedAt, specSource) {
   if (!sourceName) return '';
   const day = isoDay(specVerifiedAt);
   if (!day) return '';
-  return `Verified against ${sourceName}'s spec page on ${day}.`;
+  return `Read against ${sourceName}'s spec page on ${day}.`;
 }
 
 // A failing read is called out from TWO in a row, not one. One bad Monday is a

@@ -754,9 +754,19 @@
     }
     /* FIXES-HANDOFF.md §7 — full cream, not the muted 0.75/rgba(...,.78) these
        used to share with .assets-label. */
+    /* margin-top was 18px. Reported twice as "a strange amount of margin
+       space above writer direction" — once on #screen-output, which turned
+       out to be a separate leading-newline bug in the data (fixed above,
+       search .trim()), and again on #screen-project after that fix, which
+       measured clean: the visible gap there is exactly this rule's own
+       margin-top colliding with .section-body's margin-bottom:8px (they
+       collapse to the larger of the two, not a sum, so the rendered gap was
+       18px regardless of the 8px). The data was never the problem on that
+       screen — this value was always what the user was seeing. Cut to 10px,
+       which collapses to max(8,10)=10px instead of max(8,18)=18px. */
     .section-label {
       font-family: 'StarCrush', serif; font-size: 14px; color: var(--q-cream);
-      letter-spacing: 2px; text-transform: uppercase; margin: 18px 0 8px;
+      letter-spacing: 2px; text-transform: uppercase; margin: 10px 0 8px;
     }
     /* .assets-label WAS SPLIT OUT to stay muted (13px, opacity 0.75) on the
        reasoning that "Documents"/"Assets" are metadata rather than prose to

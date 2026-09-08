@@ -524,10 +524,14 @@
        .hdr-upload-card, .hdr-block, .naming-preview, .naming-seg and .lib-new
        this pass is not supposed to touch. :where() keeps this a fallback: any
        more specific rule, anywhere in the file regardless of order, still wins. */
+    /* 16px, not 14 — iOS Safari auto-zooms the whole viewport on focusing any
+       input/textarea/select under 16px, and that zoom can persist through a
+       JS-driven screen change rather than resetting on its own (see the
+       fuller note on .glass-textarea in app.html, where this was reported). */
     :where(input[type="text"], textarea, select) {
       width: 100%; background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
       color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
-      font-size: 14px; padding: 12px 14px; -webkit-appearance: none;
+      font-size: 16px; padding: 12px 14px; -webkit-appearance: none;
     }
     :where(textarea) { min-height: 96px; resize: vertical; line-height: 1.6; }
     ::placeholder { color: var(--q-cream-55); }

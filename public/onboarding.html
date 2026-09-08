@@ -175,8 +175,12 @@
     .stepdots span.on { background: var(--sky-btm); }
 
     label { display: block; font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.02em; color: rgba(26,26,46,0.75); margin: 16px 0 6px; }
+    /* 16px, not 15 — iOS Safari auto-zooms the viewport on focusing any
+       input/textarea under 16px, and that zoom can outlast a JS-driven
+       screen change rather than resetting on its own (see the fuller note
+       on .glass-textarea in app.html, where this was reported). */
     input[type="text"], textarea {
-      width: 100%; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; resize: vertical;
+      width: 100%; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 16px; resize: vertical;
       padding: 12px 14px; color: var(--ink); -webkit-appearance: none;
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
     }

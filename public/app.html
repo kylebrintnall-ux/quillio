@@ -401,22 +401,28 @@
       box-shadow: none;
     }
     /* HEIGHTS ARE WHOLE LINE BOXES, and the arithmetic is the point.
-       font-size 15 x line-height 1.6 = 24px per line; padding 18 top + 14 bottom
-       = 32px. The old min-height of 172px gave 140px of content — 5.83 lines —
-       so the sixth line was cut 83% of the way down, slicing the glyphs
-       horizontally right above the Run Brief bar. That happened at every length,
-       because the box height simply was not a multiple of the line height.
-         min-height  6 lines: 6*24 + 32 = 176
-         max-height 16 lines: 16*24 + 32 = 416
+       font-size is 16px now (was 15 — see the note on the rule below; bumped
+       to stop iOS auto-zooming the viewport on focus), x line-height 1.6 =
+       25.6px per line; padding 18 top + 14 bottom = 32px. 25.6 only divides
+       evenly into a whole pixel count every 5 lines (25.6 = 128/5), so the
+       bounds sit on 5-line multiples rather than the whole numbers a 24px
+       line let any integer line count hit:
+         min-height  5 lines: 5*25.6 + 32 = 160  (was 6 lines at 176px, 24px line)
+         max-height 15 lines: 15*25.6 + 32 = 416 (was 16 lines — same 416px value)
        The box grows with its content between those two (see autoGrowBrief), so
-       an ordinary brief never scrolls at all; past 16 lines it does, and because
-       the cap is also whole lines the clip lands on a line boundary rather than
-       through one. */
+       an ordinary brief never scrolls at all; past 15 lines it does, and because
+       the cap is also a whole line count the clip lands on a line boundary
+       rather than through one. */
     .glass-textarea {
-      width: 100%; min-height: 176px; max-height: 416px; overflow-y: auto;
+      width: 100%; min-height: 160px; max-height: 416px; overflow-y: auto;
       border: none; outline: none; resize: none;
       background: transparent; font-family: 'Zen Kaku Gothic New', sans-serif;
-      font-size: 15px; font-weight: 400; line-height: 1.6; color: var(--q-cream);
+      /* 16px: iOS Safari's no-zoom-on-focus floor. Reported directly — the
+         doc-output screen appeared oversized for a moment right after a
+         brief finished, the zoom this textarea triggered on focus still in
+         effect until a tap forced Safari to recalculate. See the block
+         comment above for what changing this did to the height arithmetic. */
+      font-size: 16px; font-weight: 400; line-height: 1.6; color: var(--q-cream);
       padding: 18px 18px 14px; -webkit-appearance: none;
     }
     .glass-textarea:focus { outline: none; border: none; }
@@ -563,7 +569,8 @@
       display: block; width: 100%; box-sizing: border-box; margin: 0 0 16px;
       background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
       color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
-      font-size: 15px; padding: 13px 14px; outline: none; -webkit-appearance: none;
+      /* 16px — see the fuller note on .glass-textarea. */
+      font-size: 16px; padding: 13px 14px; outline: none; -webkit-appearance: none;
     }
     .picker-search::placeholder { color: var(--q-cream-55); }
     .picker-group { margin-bottom: 18px; }
@@ -746,19 +753,24 @@
       padding: 8px 14px; font-size: 12px;
     }
     /* FIXES-HANDOFF.md §7 — full cream, not the muted 0.75/rgba(...,.78) these
-       used to share with .assets-label. Split out of the combined selector so
-       .assets-label (metadata, not prose to read) keeps its own muted rule
-       untouched below. See the .glass-panel comment above: the AA-contrast
-       math it cites for "the two alpha'd rules" was for THESE two at their old
-       opacity — full cream only raises those ratios further, so the panel's
-       reason for existing is unaffected. */
+       used to share with .assets-label. */
     .section-label {
       font-family: 'StarCrush', serif; font-size: 14px; color: var(--q-cream);
       letter-spacing: 2px; text-transform: uppercase; margin: 18px 0 8px;
     }
+    /* .assets-label WAS SPLIT OUT to stay muted (13px, opacity 0.75) on the
+       reasoning that "Documents"/"Assets" are metadata rather than prose to
+       read, next to .section-label's full-brightness 14px for "Campaign
+       Summary"/"Writer Direction". A device pass read that split as the
+       small/dim headers being a bug rather than a deliberate hierarchy — they
+       are all section headers within their own panels, and having two
+       visibly different weights for the same kind of element looked
+       inconsistent rather than intentional. Matched to .section-label's size
+       and full brightness; letter-spacing and margin stay its own since
+       those aren't what was called out. */
     .assets-label {
-      font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: var(--q-cream); opacity: 0.75; margin-bottom: 14px;
+      font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--q-cream); margin-bottom: 14px;
     }
     .section-body {
       font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; line-height: 1.7;
@@ -1148,7 +1160,8 @@
       display: block; width: 100%; min-height: 120px; outline: none; resize: none;
       background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
       color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
-      font-size: 15px; line-height: 1.6; padding: 13px 14px;
+      /* 16px — see the fuller note on .glass-textarea. */
+      font-size: 16px; line-height: 1.6; padding: 13px 14px;
       margin-bottom: 14px; -webkit-appearance: none;
     }
     .modal-textarea::placeholder { color: var(--q-cream-55); }
@@ -1190,7 +1203,8 @@
       background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
       padding: 13px 14px;
     }
-    .search-input { flex: 1; border: none; outline: none; background: transparent; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; color: var(--q-cream); -webkit-appearance: none; }
+    /* 16px — see the fuller note on .glass-textarea. */
+    .search-input { flex: 1; border: none; outline: none; background: transparent; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 16px; color: var(--q-cream); -webkit-appearance: none; }
     .search-input::placeholder { color: var(--q-cream-55); }
     .filter-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
     .filter-row::-webkit-scrollbar { display: none; }
@@ -2780,8 +2794,16 @@ __NAV:brief__
       state.campaignTitle = data.campaignTitle || 'Campaign';
 
       document.getElementById('out-title').textContent = state.campaignTitle;
-      document.getElementById('out-summary').textContent = data.summary || '—';
-      document.getElementById('out-direction').textContent = data.writerDirection || '—';
+      // .trim() — .section-body is white-space: pre-wrap so it can preserve a
+      // writer's own line breaks, which also means a LEADING newline in the
+      // API response renders as a literal blank first line. MEASURED, not
+      // assumed: a trailing newline turned out to be harmless (a pre-wrap
+      // block doesn't grow for empty lines with nothing after them — checked
+      // up to 3 in a row), but a leading one in writerDirection added a full
+      // line-height of blank space between the "Writer Direction" label and
+      // its own text — exactly the "strange gap" a device pass found there.
+      document.getElementById('out-summary').textContent = (data.summary || '').trim() || '—';
+      document.getElementById('out-direction').textContent = (data.writerDirection || '').trim() || '—';
 
       // Both documents, before the copy doc's spec preview — the run made two
       // things and the first question is which one you want.
@@ -2930,7 +2952,7 @@ __NAV:brief__
       };
       var interp = (data && data.interpretation) || {};
       document.getElementById('picker-title').textContent = interp.campaignTitle || 'Campaign';
-      document.getElementById('picker-summary').textContent = interp.summary || '—';
+      document.getElementById('picker-summary').textContent = (interp.summary || '').trim() || '—';
       renderNotice('picker-unmatched', interp.unmatchedNotice);
       clearError(document.getElementById('picker-error'));
       document.getElementById('picker-search').value = '';
@@ -3021,8 +3043,8 @@ __NAV:brief__
       var interp = (data && data.interpretation) || {};
       pendingBrief = { pendingId: data.pendingId, plan: (interp.plan || []).slice() };
       document.getElementById('confirm-title').textContent = interp.campaignTitle || 'Campaign';
-      document.getElementById('confirm-summary').textContent = interp.summary || '—';
-      document.getElementById('confirm-direction').textContent = interp.writerDirection || '—';
+      document.getElementById('confirm-summary').textContent = (interp.summary || '').trim() || '—';
+      document.getElementById('confirm-direction').textContent = (interp.writerDirection || '').trim() || '—';
       // Shown before anything is built, so a name that didn't map can still be
       // fixed by cancelling and rewording rather than found missing in the doc.
       renderNotice('confirm-unmatched', interp.unmatchedNotice);
@@ -3566,8 +3588,9 @@ __NAV:brief__
     // markup comment on #copydone-brief.
     //
     // ONE DIVERGENCE FROM THE PROJECT VIEW, AND IT IS ON PURPOSE. That view
-    // renders `content.summary || '—'`, so an absent summary still draws its
-    // label with an em-dash under it. Here an absent section is omitted whole.
+    // renders `(content.summary || '').trim() || '—'`, so an absent summary
+    // still draws its label with an em-dash under it. Here an absent section
+    // is omitted whole.
     // The pattern is the project view's OWN template branch, whose comment gives
     // the reason: a label over an em-dash "would read as content that failed to
     // load". On this screen that reading is worse than on the project view — it
@@ -4380,10 +4403,10 @@ __NAV:brief__
       var brief = el('div', 'glass-panel run');
       if (!isTemplate) {
         brief.appendChild(el('div', 'section-label', 'Campaign Summary'));
-        brief.appendChild(el('div', 'section-body', content.summary || '—'));
+        brief.appendChild(el('div', 'section-body', (content.summary || '').trim() || '—'));
 
         brief.appendChild(el('div', 'section-label', 'Writer Direction'));
-        brief.appendChild(el('div', 'section-body', content.writerDirection || '—'));
+        brief.appendChild(el('div', 'section-body', (content.writerDirection || '').trim() || '—'));
       }
 
       if (brief.firstChild) projectContentEl.appendChild(brief);

@@ -457,12 +457,35 @@
     var sel = cfg.frame || '.phone';
     var scenes = [];
     var visible = new Set();
+    /* STOP IS DEBOUNCED; START IS NOT. Reported directly: scrolling froze a
+       bird mid-landing and it vanished — exactly Scene.stop()'s behavior
+       (every timer cleared, every live sprite dropped with no transition).
+       frame is 'body' in this app (there is one scene, the whole page, not
+       several independent phone mockups scrolling past each other), and iOS
+       Safari resizes the viewport live as its address bar collapses and
+       expands during a scroll — which is exactly when IntersectionObserver
+       recalculates every observed target's intersection against that
+       changing root. A target sitting near the root's edge can read as
+       momentarily not-intersecting for a single tick with nothing about the
+       page actually having changed. Immediate stop() treated that tick as a
+       genuine exit; a 400ms grace period treats it as the blip it is, while
+       a real, sustained scroll-away (more than a few ticks) still stops the
+       scene same as before — the debounce delays the stop, it doesn't skip
+       it. */
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
         var s = scenes[+e.target.dataset.qbIndex];
         if (!s) return;
-        if (e.isIntersecting) { visible.add(s); if (!document.hidden) s.start(); }
-        else { visible.delete(s); s.stop(); }
+        if (e.isIntersecting) {
+          visible.add(s);
+          if (s.pendingStop) { clearTimeout(s.pendingStop); s.pendingStop = null; }
+          if (!document.hidden) s.start();
+        } else {
+          visible.delete(s);
+          if (!s.pendingStop) {
+            s.pendingStop = setTimeout(function () { s.pendingStop = null; s.stop(); }, 400);
+          }
+        }
       });
     }, { rootMargin: '120px' });
 

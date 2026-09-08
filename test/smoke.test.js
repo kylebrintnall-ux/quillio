@@ -18026,17 +18026,21 @@ test('a spent brief clears the input — and the three paths that must keep it d
 test('the brief box is whole line boxes, and grows with its content', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
 
-  // THE ARITHMETIC IS THE FIX. 15px x 1.6 = 24px per line; 18 + 14 = 32px of
-  // padding. The old min-height of 172 gave 140px of content — 5.83 lines — so
-  // the sixth was cut 83% down, slicing glyphs horizontally above the Run Brief
-  // bar. Both bounds are now whole lines: 6*24+32 = 176, 16*24+32 = 416.
+  // THE ARITHMETIC IS THE FIX. font-size was 15px (24px/line); bumped to 16px
+  // to stop iOS Safari auto-zooming the viewport on focus (16px is its
+  // no-zoom floor for a focusable field), which changed the line height to
+  // 16*1.6 = 25.6px — no longer a whole divisor of 24-based bounds. 25.6 only
+  // divides evenly into a whole pixel count every 5 lines (25.6 = 128/5), so
+  // the bounds moved to the nearest 5-line multiples: 5*25.6+32 = 160
+  // (was 6 lines at 176), 15*25.6+32 = 416 (was 16 lines — same 416px value,
+  // one fewer line at the taller font). 18 + 14 = 32px of padding, unchanged.
   const css = html.slice(html.indexOf('.glass-textarea {'), html.indexOf('.glass-textarea:focus'));
-  assert.match(css, /min-height: 176px/);
+  assert.match(css, /min-height: 160px/);
   assert.match(css, /max-height: 416px/);
   assert.match(css, /line-height: 1\.6/);
-  assert.match(css, /font-size: 15px/);
+  assert.match(css, /font-size: 16px/);
   assert.match(css, /padding: 18px 18px 14px/);
-  assert.ok(!/min-height: 172px/.test(css), 'the 5.83-line height is gone');
+  assert.ok(!/min-height: 176px/.test(css), 'the pre-16px-font whole-line height is gone');
   // Recompute rather than trust the numbers above: if someone changes the font
   // size or the padding, these bounds stop being whole lines and this fails.
   const px = (re) => Number(css.match(re)[1]);

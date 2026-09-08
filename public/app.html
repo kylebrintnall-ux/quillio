@@ -317,8 +317,23 @@
        it) for the spec's uniform 20px, and gap goes with it too — nav has
        exactly two children (.nav-logo, .nav-links) under space-between, which
        already maximises the room between them regardless of gap. */
+    /* z-index: 30, NOT the 2 this used to carry. nav and main are siblings,
+       each establishing its own stacking context (position:relative + a
+       z-index), so nav's children — including the notification bell's
+       dropdown panel (owned entirely by the nav partial — see nav.html),
+       itself carrying a much higher z-index of its own, but one that only
+       ranks it WITHIN nav's own context — painted entirely below <main>
+       (z-index: 5) regardless of how high a z-index a nav descendant
+       carried. Wherever main's own content has no opaque card behind it (the
+       brief screen's headline sits directly on the sky), the dropdown showed
+       straight through, interleaved with the page text it was supposed to
+       sit on top of. 30 clears main (5), .content-fade (10) and
+       .output-ctas (20) — the only
+       three siblings nav could ever need to outrank — while staying below the
+       modal/dropdown/toast layer (100/200/300), which must still be able to
+       cover nav itself. */
     nav {
-      position: relative; z-index: 2;
+      position: relative; z-index: 30;
       display: flex; align-items: center; justify-content: space-between;
       height: 58px; padding: 0 20px;
       background: transparent; border: none; box-shadow: none;
@@ -823,29 +838,26 @@
     .field-char.over { color: #c0392b; font-weight: 600; }
     .field-char.placeholder { font-style: italic; }
     /* Selective regen (Phase 1): tap a field to select it for scoped generate/regen. */
-    .asset-field.selectable { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 10px; padding-left: 10px; padding-right: 10px; margin: 0 -10px; transition: background 0.12s ease, box-shadow 0.12s ease; position: relative; flex-wrap: wrap; }
+    .asset-field.selectable { cursor: pointer; -webkit-tap-highlight-color: transparent; border-radius: 0; padding-left: 10px; padding-right: 10px; margin: 0 -10px; transition: background 0.12s ease, box-shadow 0.12s ease; position: relative; flex-wrap: wrap; }
     .asset-field.selectable:active { background: rgba(201,168,76,0.08); }
-    /* FIXES-HANDOFF.md §8 — selection = border goes solid + a faint wash + an
-       inset bar, not a gold fill. Gold reads as a warning on a design that
-       reserves it for hover and the one emphatic badge (.asset-card-badge
-       .drafted); a filled block and a gold check both looked like one. */
+    /* FIXES-HANDOFF.md §8 — selection = border goes solid + a faint wash, not a
+       gold fill. Gold reads as a warning on a design that reserves it for
+       hover and the one emphatic badge (.asset-card-badge .drafted); a filled
+       block read as one too.
+       A DEVICE PASS CALLED THE CHECKMARK BADGE REDUNDANT WITH THE BORDER, SO
+       IT'S GONE (the .field-check span this used to reveal is no longer
+       appended at all — see appendAssetCard). The border alone now has to
+       carry the whole signal, so it goes from a top-edge line + a 2px inset
+       bar on the left to a full outline on all four sides. `outline`, not
+       `border`: an outline sits outside the box model entirely, so toggling
+       .selected never reflows the field's own padding the way switching a
+       real border on and off would. */
     .asset-field.selected {
-      border-top-style: solid; border-top-color: var(--q-cream);
+      outline: 2px solid var(--q-cream);
+      outline-offset: -2px;
       background: rgba(252,246,227,.09);
-      box-shadow: inset 2px 0 0 var(--q-cream);
-      padding-left: 12px; padding-right: 12px;
     }
     .asset-field.selected .field-name { color: var(--q-cream); }
-    /* position/display stay structural (absolute corner badge, hidden until
-       selected) — the spec's rule below is the visual treatment only. */
-    .field-check {
-      position: absolute; top: 8px; right: 8px; display: none;
-      width: 18px; height: 18px; border-radius: 0;
-      background: var(--q-cream); color: var(--q-ink);
-      font-family: 'StarCrush', serif; font-size: 12px;
-      align-items: center; justify-content: center;
-    }
-    .asset-field.selected .field-check { display: inline-flex; }
     .asset-field.selectable.has-copy { padding-top: 12px; }
     /* Variation controls (Step 3b): the per-field variations matrix. Hidden until
        the field is selected + expanded (progressive disclosure). */
@@ -864,91 +876,117 @@
        was the same token on the same background carrying the same limit;
        .output-title is cream now for the same reason this is. */
     .field-select-hint { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; line-height: 1.6; color: var(--q-cream); margin: 0 0 14px; }
-    .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(201,168,76,0.4); }
+    .var-controls { display: none; width: 100%; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--q-cream-55); }
     /* Progressive disclosure (Step 2): the controls are hidden behind a chevron on
        a selected field, and revealed only once the writer expands it. */
     .asset-field.expanded .var-controls { display: flex; }
-    .field-expand { display: none; align-items: center; gap: 7px; align-self: flex-start; margin-top: 10px; padding: 6px 12px; background: rgba(201,168,76,0.12); border: 1.5px solid rgba(201,168,76,0.55); border-radius: 100px; cursor: pointer; -webkit-tap-highlight-color: transparent; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 700; color: var(--ink); transition: background 0.12s ease, border-color 0.12s ease; }
+    /* THE WHOLE RIFF PANEL WAS A LEFTOVER OF THE PRE-REBRAND UI: filled gold
+       pills, white glass cards, drop shadows, --gold/--ink/--white (the OLD
+       tokens — --q-gold/--q-cream/--q-ink replaced them everywhere else). A
+       device pass called it out by name. Squared, transparent-on-cream to
+       match every other control on this screen; the disclosure chevron here
+       is cream, not gold, matching .asset-card-chev's precedent that a plain
+       expand/collapse indicator is not one of the deliberate-emphasis cases
+       gold is reserved for. */
+    .field-expand { display: none; align-items: center; gap: 7px; align-self: flex-start; margin-top: 10px; padding: 6px 12px; background: transparent; border: 1px solid var(--q-cream); border-radius: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 700; color: var(--q-cream); transition: background 0.12s ease, border-color 0.12s ease; }
     .asset-field.selected .field-expand { display: inline-flex; }
-    .field-expand:active { background: rgba(201,168,76,0.22); }
-    .field-expand .chev { display: inline-block; color: #8A6A15; font-weight: 700; transition: transform 0.15s ease; }
+    .field-expand:active { background: rgba(252,246,227,0.1); }
+    .field-expand .chev { display: inline-block; color: var(--q-cream-75); font-weight: 700; transition: transform 0.15s ease; }
     .asset-field.expanded .field-expand .chev { transform: rotate(90deg); }
     /* Why there is no Riff button on this field. Sits exactly where the button
        would have been, and only on a field that could otherwise have had one —
        see appendAssetCard: a marker with no room below it. */
     .field-no-riff { font-family: 'Zen Kaku Gothic New', sans-serif; display: none; align-self: flex-start; margin-top: 10px; font-size: 11.5px; font-style: italic; line-height: 1.5; color: rgba(252,246,227,0.45); }
     .asset-field.selected .field-no-riff { display: block; }
-    /* Riff button — the additive action inside a field's expanded panel. Star
-       Crush, gold fill, ink text — matches the app's action buttons (not a slab):
-       sized to content, centered. */
+    /* Riff button — the panel's own primary action, now styled exactly like
+       .cta-primary (cream fill, ink text, cream border, square, gold on
+       hover) instead of a bespoke gold pill with its own shadow. */
     .riff-row { display: flex; margin-top: 16px; }
     /* Full-width so it anchors the panel stably at any matrix size. */
-    .riff-btn { width: 100%; font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--ink); background: var(--gold); border: none; border-radius: 100px; padding: 13px 30px; cursor: pointer; -webkit-tap-highlight-color: transparent; box-shadow: 0 3px 12px rgba(201,168,76,0.35); transition: transform 0.1s ease, filter 0.12s ease, box-shadow 0.12s ease; }
-    .riff-btn:hover { filter: brightness(1.04); box-shadow: 0 4px 15px rgba(201,168,76,0.45); }
-    .riff-btn:active { transform: scale(0.97); }
-    .riff-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+    .riff-btn { width: 100%; font-family: 'StarCrush', serif; font-size: 13px; letter-spacing: 0.05em; color: var(--q-ink); background: var(--q-fill); border: 1px solid var(--q-cream); border-radius: 0; padding: 13px 30px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.1s ease, background 0.12s ease, border-color 0.12s ease; }
+    .riff-btn:hover:not(:disabled) { background: var(--q-gold); border-color: var(--q-gold); }
+    .riff-btn:active { transform: scale(0.98); }
+    /* Same reasoning as .cta-primary:disabled — solid and opaque, never
+       translucent, so nothing behind this fixed-flow button shows through it. */
+    .riff-btn:disabled { opacity: 1; background: #B7C2C6; color: rgba(26,26,46,0.45); cursor: default; }
     /* ---- Variations Matrix (Step 3b) — the add-a-row control ----
-       On-brand: each row is a translucent glass chip; text is ink (Star Crush for
-       display bits, Zen Kaku Gothic New for controls); gold is fill/accent ONLY (rail, thumb,
-       the "+", the caret) — never body text on the light card. */
+       Cream-on-transparent throughout, matching every other repeating-row /
+       select / stepper on this screen — no glass, no gold fill, no radius.
+       Gold stays where the rest of the app keeps it: the "on" state in the
+       angle menu below. */
     .matrix { display: flex; flex-direction: column; gap: 10px; }
-    /* The row is a translucent glass chip — it sits ON the (already light) asset
-       card, so its white is kept low to let the blue bleed through, like the
-       project cards. The controls inside it are the whiter, raised surfaces. */
-    .matrix-row { display: flex; flex-direction: column; gap: 12px; padding: 13px; border-radius: 14px; background: rgba(255,255,255,0.14); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: 1.5px solid rgba(255,255,255,0.4); box-shadow: 0 1px 6px rgba(26,26,46,0.06); }
-    /* Angle field — a custom trigger (opens the dark angle menu). A whiter, raised
-       field so it reads as tappable against the glass row; Star Crush ink label,
-       gold caret. */
-    .matrix-angle { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left; font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.03em; color: var(--ink); background: rgba(255,255,255,0.82); border: 1.5px solid rgba(26,26,46,0.14); border-radius: 10px; padding: 11px 13px; cursor: pointer; -webkit-tap-highlight-color: transparent; box-shadow: 0 1px 3px rgba(26,26,46,0.10); }
-    .matrix-angle:active { background: #fff; }
-    .matrix-angle-caret { width: 12px; height: 8px; flex-shrink: 0; background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23C9A84C' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); }
+    /* A repeating row inside a container — same distinction as .picker-row and
+       .doc-row-body: dotted, not solid. */
+    .matrix-row { display: flex; flex-direction: column; gap: 12px; padding: 13px; border-radius: 0; background: transparent; border: 1px dotted var(--q-cream); }
+    /* Angle field — a custom trigger (opens the dark angle menu). Matches the
+       app's <select> treatment (settings.html): transparent, cream border,
+       cream label; the caret stays a small accent, cream to match every other
+       disclosure indicator rather than gold. */
+    .matrix-angle { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left; font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.03em; color: var(--q-cream); background: transparent; border: 1px solid var(--q-cream); border-radius: 0; padding: 11px 13px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .matrix-angle:active { background: rgba(252,246,227,0.1); }
+    .matrix-angle-caret { width: 12px; height: 8px; flex-shrink: 0; background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23FCF6E3' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); }
     .matrix-controls { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; }
-    .matrix-count { display: inline-flex; align-items: center; gap: 2px; background: rgba(255,255,255,0.82); border: 1.5px solid rgba(26,26,46,0.14); border-radius: 10px; padding: 2px; box-shadow: 0 1px 3px rgba(26,26,46,0.10); }
-    .matrix-step { display: inline-flex; align-items: center; justify-content: center; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 17px; font-weight: 700; color: var(--ink); background: none; border: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; line-height: 1; padding: 0; }
-    .matrix-step:active { background: rgba(26,26,46,0.08); }
-    .matrix-count-val { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 20px; text-align: center; }
+    .matrix-count { display: inline-flex; align-items: center; gap: 2px; background: transparent; border: 1px solid var(--q-cream); border-radius: 0; padding: 2px; }
+    .matrix-step { display: inline-flex; align-items: center; justify-content: center; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 17px; font-weight: 700; color: var(--q-cream); background: none; border: none; border-radius: 0; width: 30px; height: 30px; cursor: pointer; -webkit-tap-highlight-color: transparent; line-height: 1; padding: 0; }
+    .matrix-step:active { background: rgba(252,246,227,0.1); }
+    .matrix-count-val { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 700; color: var(--q-cream); font-variant-numeric: tabular-nums; min-width: 20px; text-align: center; }
     .matrix-intensity { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-width: 0; }
     .matrix-ticks { display: flex; justify-content: space-between; }
-    .matrix-tick { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10.5px; font-weight: 600; color: rgba(26,26,46,0.55); transition: color 0.12s ease; }
-    .matrix-tick.on { color: var(--ink); font-weight: 700; }
-    .matrix-x { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: rgba(26,26,46,0.5); background: none; border: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; flex-shrink: 0; }
-    .matrix-x:active { background: rgba(26,26,46,0.08); color: var(--ink); }
-    .matrix-add { align-self: flex-start; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-weight: 700; color: var(--ink); background: rgba(201,168,76,0.10); border: 1.5px dashed rgba(201,168,76,0.6); border-radius: 12px; padding: 10px 15px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.12s ease; }
-    .matrix-add:active { background: rgba(201,168,76,0.22); }
-    /* Dark angle menu — mirrors the project status dropdown. Name in Star Crush,
-       description in Zen Kaku Gothic New, both light on the dark ink card. */
+    .matrix-tick { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10.5px; font-weight: 600; color: var(--q-cream-55); transition: color 0.12s ease; }
+    .matrix-tick.on { color: var(--q-cream); font-weight: 700; }
+    .matrix-x { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: var(--q-cream-75); background: none; border: none; border-radius: 0; width: 30px; height: 30px; cursor: pointer; -webkit-tap-highlight-color: transparent; flex-shrink: 0; }
+    .matrix-x:active { background: rgba(252,246,227,0.1); color: var(--q-cream); }
+    .matrix-add { align-self: flex-start; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-weight: 700; color: var(--q-cream); background: transparent; border: 1px dashed var(--q-cream-75); border-radius: 0; padding: 10px 15px; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.12s ease; }
+    .matrix-add:active { background: rgba(252,246,227,0.08); }
+    /* Dark angle menu — mirrors the project status dropdown (.status-dropdown)
+       exactly now: same navy-translucent fill, same blur, same cream border,
+       square. The comment used to say "mirrors" while carrying a different
+       background, a cyan-tinted border and 12px corners of its own — this is
+       the actual mirror. No standing dim overlay behind it, same as the
+       notification bell's own dropdown (nav.html), so it takes that
+       surface's denser .9 fill rather than .status-dropdown's .55. */
     /* Internal scroll so a menu taller than its slot scrolls itself; overscroll-
        behavior:contain stops the scroll chaining to the page. max-height + the
        above/below placement are set by JS (openAngleMenu) so the menu always fits
        the viewport. The body is locked (.angle-menu-lock + a touchmove blocker in
        JS) while it's open so the page can't move. */
-    .angle-menu { position: fixed; z-index: 200; max-width: 340px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; background: rgba(26,26,46,0.96); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); display: none; }
+    .angle-menu { position: fixed; z-index: 200; max-width: 340px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; background: rgba(16,34,88,.9); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); border: 1px solid var(--q-cream); border-radius: 0; display: none; }
     body.angle-menu-lock { overflow: hidden; }
     .angle-menu.open { display: block; }
     .angle-menu-item { display: flex; flex-direction: column; gap: 1px; padding: 8px 16px; cursor: pointer; transition: background 0.1s; -webkit-tap-highlight-color: transparent; }
     .angle-menu-item + .angle-menu-item { border-top: 1px solid rgba(255,255,255,0.06); }
     .angle-menu-item:hover { background: rgba(255,255,255,0.08); }
     .angle-menu-item:active { background: rgba(255,255,255,0.14); }
-    .angle-menu-item.on { background: rgba(201,168,76,0.16); }
-    .angle-menu-name { font-family: 'StarCrush', serif; font-size: 12.5px; letter-spacing: 0.04em; color: var(--white); }
-    .angle-menu-desc { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; line-height: 1.25; color: rgba(255,255,255,0.55); }
-    /* Slide-rule rail — reused by the intensity control. Gold fill (up to the thumb)
-       is set inline by JS. touch-action:none lets the thumb own horizontal drags on
-       iOS instead of the page stealing them for a scroll. */
-    .var-range { -webkit-appearance: none; appearance: none; width: 100%; height: 5px; margin: 6px 0 2px; border-radius: 100px; background: rgba(26,26,46,0.14); outline: none; cursor: pointer; touch-action: none; }
-    .var-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--gold); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(26,26,46,0.28); cursor: pointer; }
-    .var-range::-moz-range-thumb { width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%; background: var(--gold); box-shadow: 0 1px 4px rgba(26,26,46,0.28); cursor: pointer; }
-    .var-range::-moz-range-track { height: 5px; border-radius: 100px; background: rgba(26,26,46,0.14); }
+    .angle-menu-item.on { background: rgba(245,197,24,0.16); }
+    .angle-menu-name { font-family: 'StarCrush', serif; font-size: 12.5px; letter-spacing: 0.04em; color: var(--q-cream); }
+    .angle-menu-desc { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; line-height: 1.25; color: var(--q-cream-55); }
+    /* Slide-rule rail — reused by the intensity control. EXEMPT from the square-
+       corners pass, same as every other slider/toggle in the app (.var-range
+       elsewhere, .lib-track): a round thumb on a pill track is the expected,
+       universal shape for this control, and squaring it would look broken
+       rather than on-brand. Gold fill (up to the thumb) is set inline by JS.
+       touch-action:none lets the thumb own horizontal drags on iOS instead of
+       the page stealing them for a scroll. */
+    .var-range { -webkit-appearance: none; appearance: none; width: 100%; height: 5px; margin: 6px 0 2px; border-radius: 100px; background: rgba(252,246,227,0.2); outline: none; cursor: pointer; touch-action: none; }
+    .var-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--q-gold); border: 2px solid var(--q-cream); box-shadow: 0 1px 4px rgba(10,34,51,0.28); cursor: pointer; }
+    .var-range::-moz-range-thumb { width: 22px; height: 22px; border: 2px solid var(--q-cream); border-radius: 50%; background: var(--q-gold); box-shadow: 0 1px 4px rgba(10,34,51,0.28); cursor: pointer; }
+    .var-range::-moz-range-track { height: 5px; border-radius: 100px; background: rgba(252,246,227,0.2); }
     .var-range:active::-webkit-slider-thumb { transform: scale(1.08); }
-    /* Multi-variant read-back badges on a drafted field. */
-    .field-options { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 700; color: #7A5E12; background: rgba(201,168,76,0.22); border-radius: 6px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
-    .doorway-chip { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #1A1A2E; background: rgba(201,168,76,0.9); border-radius: 5px; padding: 2px 7px; margin-right: auto; }
-    /* Riff N batch dividers in the project view (Step 3b). Faint like the doc, but
-       an INK label (not gold) so it stays legible on the light card. */
+    /* Multi-variant read-back badges on a drafted field — squared, transparent,
+       gold border+text, matching .asset-card-badge.drafted's treatment of the
+       one other emphatic badge on this screen. */
+    .field-options { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 700; color: var(--q-gold); background: transparent; border: 1px solid var(--q-gold); border-radius: 0; padding: 2px 8px; font-variant-numeric: tabular-nums; }
+    .doorway-chip { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--q-gold); background: transparent; border: 1px solid var(--q-gold); border-radius: 0; padding: 2px 7px; margin-right: auto; }
+    /* Riff N batch dividers in the project view (Step 3b). STALE COMMENT FIXED:
+       this used to say "an INK label so it stays legible on the light card" —
+       Step 4 removed that light card two rebrand passes ago (see the note on
+       .field-select-hint above), so an ink-on-transparent divider had been
+       reading at near-zero contrast since. Cream, like every other muted aside
+       on this card now. */
     .field-copy .riff-line { white-space: pre-wrap; }
     .riff-divider { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; }
-    .riff-divider::before, .riff-divider::after { content: ''; flex: 1; height: 1px; background: rgba(26,26,46,0.12); }
-    .riff-divider-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(26,26,46,0.45); }
+    .riff-divider::before, .riff-divider::after { content: ''; flex: 1; height: 1px; background: rgba(252,246,227,0.15); }
+    .riff-divider-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--q-cream-55); }
     /* Desktop: let each matrix row breathe — angle + controls sit inline. */
     @media (min-width: 460px) {
       .matrix-row { flex-direction: row; align-items: center; flex-wrap: wrap; }
@@ -2261,8 +2299,8 @@ __NAV:brief__
         function paint() {
           var pct = (Number(range.value) / 2) * 100;
           range.style.background =
-            'linear-gradient(to right, var(--gold) 0%, var(--gold) ' + pct +
-            '%, rgba(26,26,46,0.14) ' + pct + '%, rgba(26,26,46,0.14) 100%)';
+            'linear-gradient(to right, var(--q-gold) 0%, var(--q-gold) ' + pct +
+            '%, rgba(252,246,227,0.2) ' + pct + '%, rgba(252,246,227,0.2) 100%)';
           tickEls.forEach(function (t, ti) { t.classList.toggle('on', ti === Number(range.value)); });
         }
         paint();
@@ -2490,7 +2528,6 @@ __NAV:brief__
           var aInst = asset.instance;
           var fName = f.fieldName;
           fieldEl.classList.add('selectable');
-          fieldEl.appendChild(el('span', 'field-check', '✓'));
 
           // "Riff on this" riffs off a field's EXISTING copy, so only offer it on
           // drafted fields. Blank fields stay selectable (to generate them) but

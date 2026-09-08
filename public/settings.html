@@ -369,10 +369,13 @@
     @media (min-width: 768px) { .content-fade { height: 398px; } }
 
     /* Transparent, sitting directly on the sky gradient — see the fuller note
-       on the same rule in app.html. */
+       on the same rule in app.html. That note now also covers WHY this is 30
+       and not 2: nav and main are sibling stacking contexts, and main's
+       z-index 5 was outranking nav's notification dropdown regardless of the
+       dropdown's own (higher, but locally-scoped) z-index. */
     nav {
       font-family: 'Zen Kaku Gothic New', sans-serif;
-      position: relative; z-index: 2;
+      position: relative; z-index: 30;
       display: flex; align-items: center; justify-content: space-between;
       height: 58px; padding: 0 20px;
       background: transparent; border: none; box-shadow: none;

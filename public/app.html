@@ -299,15 +299,20 @@
        cream-bordered cards) as it nears the bottom of the viewport, so a card
        never sits half-legible against the ground band. Same colour and same
        --q-scrim binding as .ground-scrim (one atmosphere, not two), but a
-       separate fixed element ABOVE <main> (z-index 5) rather than behind it,
-       and it ramps further (.98 vs .74) because it has to fully obscure text,
-       not just soften a background. Sits below .output-ctas (z-index 20) so
-       it never washes out a CTA bar sitting on top of it. pointer-events:none
-       — a card fading out is still tappable underneath. Clears at the true
-       bottom exactly when .ground-scrim does: nothing left below to hide. */
+       separate fixed element ABOVE <main> (z-index 5) rather than behind it.
+       Sits below .output-ctas (z-index 20) so it never washes out a CTA bar
+       sitting on top of it. pointer-events:none — a card fading out is still
+       tappable underneath. Clears at the true bottom exactly when
+       .ground-scrim does: nothing left below to hide.
+       RAMP WAS .55/.88/.98 — "it has to fully obscure text" was the original
+       design intent, and on a device it was the defect: rows well above the
+       true bottom (asset cards, not just the ground band) were reading as
+       near-invisible, called out directly as "obstructs what should be
+       visible." Content should blend as it nears the ground, not disappear
+       a third of the way through the fade's own height. Roughly halved. */
     .content-fade { position: fixed; left: 0; right: 0; bottom: 0; height: 234px; z-index: 10; pointer-events: none;
       opacity: var(--q-scrim, 1); transition: opacity .18s linear;
-      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.55) 55%, rgba(222,235,252,.88) 80%, rgba(222,235,252,.98) 100%); }
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.22) 55%, rgba(222,235,252,.42) 80%, rgba(222,235,252,.6) 100%); }
     @media (min-width: 768px) { .content-fade { height: 398px; } }
 
     /* Nav — transparent, StarCrush wordmark/links. Was a solid navy glass band
@@ -1235,22 +1240,26 @@
        box it was aligning to — FIXES-HANDOFF.md §4 made .output-header.glass-panel
        padding: 0 everywhere, project detail included. */
     /* ABOVE the content now (see the markup), so the margin moved with it. */
-    /* A 2-column GRID, not a wrapping flex row — a wrap row sizes each button
-       to its own label, so "Campaign folder" is wider than "Regenerate" and
-       whichever button lands alone on the last line sits flush left at its
-       own width instead of matching the row above. Grid's 1fr columns force
-       every cell (button) to the same width regardless of label length, and
-       align-items: stretch (the default) gives every button in the row the
-       same height too. With the four buttons this screen normally shows,
-       that reads as a clean 2x2. .project-actions-secondary contributes no
-       box of its own (display: contents), so its children take grid cells
-       directly rather than being sized by their own wrapper. KNOWN EDGE CASE
-       — deliberately not handled: a project with a template document shows a
-       fifth button (#project-template-btn), which lands alone in column 1 of
-       a third row rather than centered or spanning both columns. Not part of
-       the shape this fix was asked for, and not visually broken — just not
-       as tidy as the four-button case. */
-    .project-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; }
+    /* A GRID whose COLUMN COUNT IS SET BY JS (syncProjectActionsGrid), not a
+       fixed 2. A static 2 columns put whichever button didn't have a partner
+       alone in the next row, flush left at full width — and that is not a
+       rare shape here: an undrafted project shows exactly THREE buttons (the
+       primary, Campaign folder, Copy doc — Review Copy only appears once
+       there's copy to review), which is the common case a fixed 2-column
+       grid gets wrong, not an edge case. Called out directly as buttons that
+       were "too wide" and not "three across."
+       The rule (in the JS): columns = the visible count when that's 3 or
+       fewer (one clean row), else 2 — so 2 buttons get 2 columns, 3 get 3,
+       and the drafted 4-button case keeps the 2x2 that already reads well.
+       grid-template-columns defaults to 2 below purely so the layout is sane
+       for the instant before JS runs. KNOWN EDGE CASE, still not handled: a
+       project with a template document shows a FIFTH button, which the rule
+       above sends through the else-2 branch — same 2x2-plus-one-alone shape
+       as before, just for a rarer count. .project-actions-secondary
+       contributes no box of its own (display: contents), so its children
+       take grid cells directly rather than being sized by their own
+       wrapper — and so JS can count every button with one selector. */
+    .project-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 0 0 16px; }
     .project-actions .cta-primary,
     .project-actions .cta-secondary {
       padding: 8px 14px; font-size: 12px;
@@ -1835,6 +1844,27 @@ __NAV:brief__
     }
     window.addEventListener('resize', syncCtaRoom);
     window.addEventListener('orientationchange', syncCtaRoom);
+
+    // .project-actions' column count follows however many of its buttons are
+    // ACTUALLY visible right now — see the CSS comment on .project-actions for
+    // the rule and why a fixed 2 columns was wrong for the common 3-button
+    // case. A MutationObserver on every button's class, not a call added at
+    // each show()/hide() site: the buttons toggle from several different
+    // functions (setDraftAffordance, the template-doc check, the selection
+    // handler), and a layout rule should not depend on every one of them
+    // remembering to re-run it.
+    (function () {
+      var box = document.querySelector('.project-actions');
+      if (!box) return;
+      function sync() {
+        var count = box.querySelectorAll('button:not(.hidden)').length;
+        var cols = count > 0 && count <= 3 ? count : 2;
+        box.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+      }
+      var actionsObserver = new MutationObserver(sync);
+      actionsObserver.observe(box, { attributes: true, attributeFilter: ['class'], subtree: true });
+      sync();
+    })();
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
     function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
     // Advisory notice (amber, not red): render when there's a message, hide when

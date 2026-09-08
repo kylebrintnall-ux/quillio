@@ -344,12 +344,25 @@
     el.style.zIndex = '6';
     icon.style.visibility = 'hidden';
     this.hiddenIcon = icon;
-    this.dropinDone = true;             // one arrival per page load, ever
     this.adopt(el, this.phone);
     /* Reveal the scroll UNDER the overlay a beat before the clip would loop
        back to its empty first frame, then drop the overlay on the next frame.
-       Swapping in the other order leaves a blank gap. */
+       Swapping in the other order leaves a blank gap.
+       dropinDone IS SET HERE, NOT AT THE TOP OF THIS FUNCTION — it used to be,
+       on the comment "one arrival per page load, ever", and that is exactly
+       what made a brief that finished while the tab was backgrounded show NO
+       arrival at all rather than a late one. stop() (fired by the
+       visibilitychange handler when a tab backgrounds) clears every timer and
+       tears down every live sprite unconditionally, INCLUDING this one
+       mid-flight — so the bird vanished, the icon was revealed early, and
+       with the flag already true from the top of dropin(), the retry loop in
+       queueDropin refused to ever try again once the tab came back. Setting
+       it only on genuine completion means an interruption leaves dropinDone
+       false, so the next start() (fired the moment the tab is visible again)
+       re-arms queueDropin and the arrival gets a real second attempt instead
+       of silently never happening. */
     this.after(CLIP.dropin.dur - 140, function () {
+      self.dropinDone = true;
       self.revealIcon(true);
       requestAnimationFrame(function () { self.drop(el); });
     });

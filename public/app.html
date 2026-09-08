@@ -528,7 +528,10 @@
     @keyframes segPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
     /* Both were plain white (rgba(255,255,255,…)), not --q-cream — the same
        leftover-token pattern as .progress-estimate above. */
-    .progress-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 600; color: var(--q-cream); min-height: 20px; text-align: left; }
+    /* Was Zen Kaku Gothic New — the one label on this screen that reads as a
+       headline (bold, largest text here) should be in the display face like
+       every other headline in the app, not the body/UI face. */
+    .progress-label { font-family: 'StarCrush', serif; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; color: var(--q-cream); min-height: 20px; text-align: left; }
     .progress-sublabel { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 400; color: var(--q-cream-55); margin-top: 4px; min-height: 16px; text-align: left; }
     #screen-progress .error { width: 100%; max-width: 360px; margin-top: 16px; }
     #progress-check-projects { width: 100%; max-width: 360px; margin-top: 14px; }
@@ -702,7 +705,14 @@
     .glass-panel.list .asset-card-header + .asset-direction { margin-top: 12px; }
     .glass-panel.list .asset-card-header + .asset-field { padding-top: 16px; }
     .glass-panel.run > *:last-child { margin-bottom: 0; }
-    .output-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
+    /* align-items was flex-start, which pinned the title to the top of the row.
+       That read fine when the icon was 52px, close to the title's own line
+       height — but the icon is 68px now (see .header-gif), so flex-start left
+       the title's vertical center sitting ~17px above the icon's, reading as
+       the title floating near the top of the row while a noticeably bigger
+       icon hung below it. Centered instead, so growing the icon further
+       doesn't reopen this. */
+    .output-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
     /* FIXES-HANDOFF.md §4 — no box. The title sits bare on the sky; the row
        is just title + state gif, with no surface of its own to pad. */
     .output-header.glass-panel { background: transparent; border: none; padding: 0; margin-bottom: 16px; }
@@ -725,6 +735,16 @@
       padding: 8px 14px; font-size: 12px;
     }
     .output-actions-secondary { display: contents; }
+    /* Copy-done screen's own action row — see the markup comment on
+       #screen-copydone. Column count is set by JS (syncActionGrid, shared
+       with .project-actions since the rule is identical): visible count when
+       3 or fewer, else 2. Defaults to 2 here purely so the layout is sane for
+       the instant before JS runs. */
+    .copydone-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 0 0 16px; }
+    .copydone-actions .cta-primary,
+    .copydone-actions .cta-secondary {
+      padding: 8px 14px; font-size: 12px;
+    }
     /* FIXES-HANDOFF.md §7 — full cream, not the muted 0.75/rgba(...,.78) these
        used to share with .assets-label. Split out of the combined selector so
        .assets-label (metadata, not prose to read) keeps its own muted rule
@@ -1252,7 +1272,8 @@
        box it was aligning to — FIXES-HANDOFF.md §4 made .output-header.glass-panel
        padding: 0 everywhere, project detail included. */
     /* ABOVE the content now (see the markup), so the margin moved with it. */
-    /* A GRID whose COLUMN COUNT IS SET BY JS (syncProjectActionsGrid), not a
+    /* A GRID whose COLUMN COUNT IS SET BY JS (syncActionGrid — shared with
+       .copydone-actions, since both follow the same rule), not a
        fixed 2. A static 2 columns put whichever button didn't have a partner
        alone in the next row, flush left at full width — and that is not a
        rare shape here: an undrafted project shows exactly THREE buttons (the
@@ -1527,6 +1548,27 @@ __NAV:brief__
         <h2 class="output-title" id="copydone-title">Your copy is ready</h2>
         <img class="header-gif" src="/assets/gifs/quillio-copy-done.gif?v=__BUILD__" alt="">
       </div>
+
+      <!-- IN-FLOW, RIGHT UNDER THE HEADER — this used to be .output-ctas, the
+           same fixed-bottom turquoise-then-navy bar #screen-output moved off
+           of. Same problem here: content sitting directly on the sky, a fixed
+           bar fighting .content-fade for the same visual space, buttons
+           stranded at the end of a long scroll instead of on screen where the
+           page loads. .copydone-actions is a grid whose column count is set
+           by JS (the same syncActionGrid used for .project-actions, since the
+           rule is identical): the visible count when 3 or fewer, else 2 — so
+           this screen's usual 4 (Review Copy, Regenerate, Campaign folder,
+           Copy doc) reads as a clean 2x2, and the 3-button case (no Campaign
+           folder link yet) still gets one even row instead of a lone
+           leftover. -->
+      <div class="copydone-actions">
+        <button class="cta-primary" id="copydone-review-btn">Review Copy</button>
+        <button class="cta-primary" id="copydone-regen-btn">Regenerate</button>
+        <button class="cta-secondary" id="copydone-open-btn">Campaign folder</button>
+        <button class="cta-secondary" id="copydone-open-doc-btn">Copy doc</button>
+      </div>
+      <div id="copydone-error" class="error hidden"></div>
+
       <div id="copydone-fallback" class="note hidden">Open in Drive to view the copy ↗</div>
       <!-- The ⚠ glyph, not .error's "!": the doc exists and holds whatever was
            drafted, so this is a shortfall to act on rather than a failure —
@@ -1549,14 +1591,6 @@ __NAV:brief__
            rather than trailing it. -->
       <div id="copydone-brief"></div>
       <div id="copydone-assets"></div>
-      <div id="copydone-error" class="error hidden"></div>
-
-      <div class="output-ctas">
-        <button class="cta-primary" id="copydone-review-btn">Review Copy</button>
-        <button class="cta-primary" id="copydone-regen-btn">Regenerate</button>
-        <button class="cta-secondary" id="copydone-open-btn">Campaign folder</button>
-        <button class="cta-secondary" id="copydone-open-doc-btn">Copy doc</button>
-      </div>
     </section>
 
     <!-- SCREEN 6 — PROJECTS (list) -->
@@ -1857,26 +1891,29 @@ __NAV:brief__
     window.addEventListener('resize', syncCtaRoom);
     window.addEventListener('orientationchange', syncCtaRoom);
 
-    // .project-actions' column count follows however many of its buttons are
+    // An action grid's column count follows however many of its buttons are
     // ACTUALLY visible right now — see the CSS comment on .project-actions for
     // the rule and why a fixed 2 columns was wrong for the common 3-button
-    // case. A MutationObserver on every button's class, not a call added at
-    // each show()/hide() site: the buttons toggle from several different
-    // functions (setDraftAffordance, the template-doc check, the selection
-    // handler), and a layout rule should not depend on every one of them
-    // remembering to re-run it.
-    (function () {
-      var box = document.querySelector('.project-actions');
+    // case. .copydone-actions shares the exact same rule (its usual 4 reads
+    // as a 2x2, same as the drafted state of .project-actions; a 3-button
+    // case still gets one even row). A MutationObserver on every button's
+    // class, not a call added at each show()/hide() site: the buttons toggle
+    // from several different functions (setDraftAffordance, the template-doc
+    // check, the selection handler, paintDriveButtons), and a layout rule
+    // should not depend on every one of them remembering to re-run it.
+    function syncActionGrid(box) {
+      var count = box.querySelectorAll('button:not(.hidden)').length;
+      var cols = count > 0 && count <= 3 ? count : 2;
+      box.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+    }
+    ['.project-actions', '.copydone-actions'].forEach(function (sel) {
+      var box = document.querySelector(sel);
       if (!box) return;
-      function sync() {
-        var count = box.querySelectorAll('button:not(.hidden)').length;
-        var cols = count > 0 && count <= 3 ? count : 2;
-        box.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
-      }
+      var sync = function () { syncActionGrid(box); };
       var actionsObserver = new MutationObserver(sync);
       actionsObserver.observe(box, { attributes: true, attributeFilter: ['class'], subtree: true });
       sync();
-    })();
+    });
     function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
     function clearError(el) { el.textContent = ''; el.classList.add('hidden'); }
     // Advisory notice (amber, not red): render when there's a message, hide when

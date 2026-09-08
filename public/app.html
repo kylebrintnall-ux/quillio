@@ -492,10 +492,13 @@
       width: 100%; max-width: 360px; margin: 0 auto;
       background: none; border: none; border-radius: 0; padding: 0;
     }
+    /* Label left, estimate right, one row above the bar — see the markup
+       comment on #screen-progress. */
+    .progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
     /* Was var(--sky-btm), the pre-rebrand turquoise token — a device pass
        called the whole loading screen's text "outdated." Cream, like every
        other label on this screen now. */
-    .progress-estimate { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; color: var(--q-cream-75); margin-bottom: 12px; text-align: left; }
+    .progress-estimate { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; color: var(--q-cream-75); flex-shrink: 0; text-align: right; }
     /* SURFACES-HANDOFF.md §8 — segmented, outlined track, no glow. The old
        box-shadow was `var(--sky-btm)`'s own glow colour; --q-fill has no
        equivalent specified, so a filled segment is just solid fill now, and
@@ -508,7 +511,7 @@
     @keyframes segPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
     /* Both were plain white (rgba(255,255,255,…)), not --q-cream — the same
        leftover-token pattern as .progress-estimate above. */
-    .progress-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 600; color: var(--q-cream); margin-top: 14px; min-height: 20px; text-align: left; }
+    .progress-label { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 600; color: var(--q-cream); min-height: 20px; text-align: left; }
     .progress-sublabel { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-weight: 400; color: var(--q-cream-55); margin-top: 4px; min-height: 16px; text-align: left; }
     #screen-progress .error { width: 100%; max-width: 360px; margin-top: 16px; }
     #progress-check-projects { width: 100%; max-width: 360px; margin-top: 14px; }
@@ -691,16 +694,20 @@
        68px is closer in visual weight to the title without crowding it. */
     .header-gif { width: 68px; height: 68px; image-rendering: pixelated; flex-shrink: 0; align-self: flex-start; margin-top: -2px; animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
     /* The doc-output screen's own action row, IN-FLOW rather than a fixed
-       bottom bar — see the markup comment on #screen-output for why. Mirrors
-       #screen-project's ORIGINAL .project-actions shape (a full-width
-       primary, small-rectangle secondaries below it) rather than its later
-       uniform 2x2 grid: that grid was tuned for exactly 4 near-equal actions,
-       and forcing 3 buttons of clearly different weight (one primary CTA, two
-       Drive links) into it would either leave an empty cell or flatten
-       "Generate First Draft" to the same visual priority as "Copy doc". */
-    .output-actions { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
-    .output-actions-secondary { display: flex; flex-wrap: wrap; gap: 10px; }
-    .output-actions-secondary .cta-secondary { flex: 0 0 auto; padding: 8px 14px; font-size: 12px; }
+       bottom bar — see the markup comment on #screen-output for why. A first
+       version gave the primary the full-width treatment and shrank only the
+       two Drive links, which read as two tiny buttons next to one giant one —
+       called out directly. Three equal columns instead, same principle as
+       #screen-project's own 2x2: a fixed set of actions on this screen reads
+       as one row of equal choices, not a hierarchy. .output-actions-secondary
+       contributes no box of its own (display: contents), so its two buttons
+       take grid cells directly alongside the primary. */
+    .output-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0 0 16px; }
+    .output-actions .cta-primary,
+    .output-actions .cta-secondary {
+      padding: 8px 14px; font-size: 12px;
+    }
+    .output-actions-secondary { display: contents; }
     /* FIXES-HANDOFF.md §7 — full cream, not the muted 0.75/rgba(...,.78) these
        used to share with .assets-label. Split out of the combined selector so
        .assets-label (metadata, not prose to read) keeps its own muted rule
@@ -1349,9 +1356,15 @@ __NAV:brief__
     <section id="screen-progress" class="screen">
       <img id="progress-gif" class="progress-gif" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt="">
       <div class="progress-panel">
-        <div class="progress-estimate" id="brief-progress-estimate">Estimated: ~20s</div>
+        <!-- Label left, estimate right, ONE row above the bar — a mockup called
+             out the old order (estimate alone above the bar, the stage label
+             alone below it) directly. Same two elements, same ids; only the
+             position moved, so nothing reading them by id needed to change. -->
+        <div class="progress-head">
+          <div class="progress-label" id="brief-progress-label">Parsing brief…</div>
+          <div class="progress-estimate" id="brief-progress-estimate">Estimated: ~20s</div>
+        </div>
         <div class="progress-track" id="brief-progress-track"></div>
-        <div class="progress-label" id="brief-progress-label">Parsing brief…</div>
         <div class="progress-sublabel" id="brief-progress-sublabel"></div>
       </div>
       <div id="progress-error" class="error hidden"></div>

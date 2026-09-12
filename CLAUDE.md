@@ -3518,6 +3518,45 @@ no record, which is why `appendBody` takes a `provenanceOut` sink and
 it **off** before `doc` travels anywhere, so the object the adapters and the
 browser see is byte-identical to what it always was.
 
+**CONFIRMED IN PRODUCTION 2026-09-12 — project 138, "Agentforce for Service Cloud
+Campaign", a real brief on the first deploy after `main` became the deployed
+branch.** Read with `scripts/queryFieldManifest.js`:
+
+```
+field_manifest: version 2   9 field(s)
+cited to a real page 6   carrying specVerifiedAt 6
+provenance non-empty 9   recorded absences 0
+specType  enforced 6, house_default 3
+Card 1 Headline  "Platform limit (LinkedIn). Stay within this count.
+                  Read against LinkedIn's spec page on 2026-08-25."
+Cards 2-4        "Platform limit (LinkedIn)."
+```
+
+**What this settles that the 231-field seed sweep could not.** That sweep drove
+the renderer directly over `DEFAULT_ASSETS` with synthetic values; it proved the
+RULE. This proves the WIRE — `createDocument` → `fieldProvenance` →
+`generateDoc`'s destructure → `buildFieldManifest` → `saveProject`'s power-set
+INSERT → JSONB → back out — on data nothing in the test suite supplies:
+
+- **`spec_verified_at` arrives as a Postgres `TIMESTAMP`**, not the ISO string the
+  seed sweep used, so `isoDay`'s `instanceof Date` branch is exercised for real.
+  It narrowed to `2026-08-25` — production's own sole-witness verification date,
+  not the seed's.
+- **The run collapse holds on a real document.** Card 1 carries the full sentence
+  and the later cards carry the bare attribution, which is the case a recomputed
+  manifest gets wrong on every member after the first.
+- **`saveProject` chose a column set** through its power-set fallback and kept
+  `field_manifest`.
+
+**The one number to keep honest.** With uniform tier/source/date across Cards 1-5
+the collapse withholds FOUR fields (Cards 2, 3, 4 and 5) — measured against a
+local Postgres built from this repo's own migrations. The production readout above
+reports Cards 2-4. If that is three rather than an abbreviated range, Card 5's
+stored `spec_type`/`spec_source`/`spec_verified_at` differs from Cards 1-4, which
+takes it out of the run and correctly restores its own full line. That would be
+the renderer working, and a sign a value migration reached four of five cards.
+**It is not a code path to fix; it is a row to look at.**
+
 **Why the sentence and not only the columns.** The columns let a reader recompute;
 they do not say what this document said. The wording has already changed **twice**,
 and the second time is the one that settles the argument:

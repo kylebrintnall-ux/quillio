@@ -337,7 +337,21 @@ const LANDING_HTML = `<!doctype html>
   <script>window.QUILLIO_BIRDS_MANUAL = true;</script>
   <script src="/assets/js/bird-system.js?v=${buildId()}"></script>
   <script>
-    QuillioBirds.init({ frame: 'body', assetBase: '/assets/gifs/', skyLayer: '.clouds-wrap' });
+    // Scene reads 'desktop' off <body> once, at construction, to pick tree
+    // width/height and perch points (app.html/onboarding.html/settings.html
+    // all do this same sync — this page was missing it entirely, so its
+    // birds always used mobile tree geometry even though the CSS above
+    // switches .clouds-wrap::after to the two-tree desktop band at 768px).
+    (function () {
+      var desktopMQ = window.matchMedia('(min-width: 768px)');
+      function syncDesktop(matches) { document.body.classList.toggle('desktop', matches); }
+      syncDesktop(desktopMQ.matches);
+      var birds = QuillioBirds.init({ frame: 'body', assetBase: '/assets/gifs/', skyLayer: '.clouds-wrap' });
+      desktopMQ.addEventListener('change', function (e) {
+        syncDesktop(e.matches);
+        if (birds) birds.scenes.forEach(function (s) { s.desktop = e.matches; });
+      });
+    })();
   </script>
 </body>
 </html>`;

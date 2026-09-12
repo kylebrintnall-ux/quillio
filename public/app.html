@@ -2815,6 +2815,16 @@ __NAV:brief__
       document.getElementById('out-summary').textContent = (data.summary || '').trim() || '—';
       document.getElementById('out-direction').textContent = (data.writerDirection || '').trim() || '—';
 
+      // Re-arm the drop-in bird for THIS document. Reported directly: the
+      // arrival only ever played on the first document of a session — every
+      // build after that showed the doc-done GIF with no bird visit at all.
+      // renderOutput only ever runs against a genuinely built doc (see the
+      // guard at the top of this function), which is exactly the condition
+      // that should replay it — unlike showScreen('output')'s other caller,
+      // the draft-failure fallback in generateDraft(), which returns to a
+      // document already on screen and has nothing new to announce.
+      if (window.quillioBirds) window.quillioBirds.armDropin();
+
       // Both documents, before the copy doc's spec preview — the run made two
       // things and the first question is which one you want.
       renderOutputDocs(data);
@@ -4793,6 +4803,12 @@ __NAV:brief__
         skyLayer: '.clouds-wrap',
         docIcon: '#screen-output .header-gif'
       });
+      // Global, not a closure-local var: renderOutput() (defined in the main
+      // app script, above this one) is what knows a NEW document just landed
+      // on #screen-output, and it has to reach into this controller to
+      // re-arm the drop-in bird for it — see armDropin's own comment in
+      // bird-system.js for why that arming can't happen on its own.
+      window.quillioBirds = birds;
       desktopMQ.addEventListener('change', function (e) {
         syncDesktop(e.matches);
         if (birds) birds.scenes.forEach(function (s) { s.desktop = e.matches; });

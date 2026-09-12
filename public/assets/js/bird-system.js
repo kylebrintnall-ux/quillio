@@ -328,6 +328,23 @@
     });
   };
 
+  /* Called by the host page when a NEW document has just finished building
+     and the icon deserves a fresh arrival. dropinDone reads as "once per
+     page load" but the Scene for frame:'body' is a SINGLETON that outlives
+     every document an SPA session builds — start() only calls queueDropin
+     from inside itself, and start() is a no-op once `running` is already
+     true (see the STOP IS DEBOUNCED comment in init() for why running stays
+     true across an ordinary scroll). So on every document after the first,
+     nothing was ever going to call queueDropin again: not stop/start (the
+     page never leaves the intersection root), not the dropinDone flag alone
+     (clearing it with nothing to re-check it is silent). This re-arms both
+     halves — clears the flag AND re-queues the check directly — which is
+     why it exists as its own method rather than being folded into start(). */
+  Scene.prototype.armDropin = function () {
+    this.dropinDone = false;
+    if (this.running) this.queueDropin(rand(1200, 3000));
+  };
+
   Scene.prototype.dropin = function (icon) {
     var self = this;
     var at = offsetIn(icon, this.phone);
@@ -519,6 +536,12 @@
 
     return {
       scenes: scenes,
+      /* One document just finished building — see Scene.prototype.armDropin
+         for why this has to be called explicitly rather than happening on
+         its own. Safe to call for every scene: a scene with no docIcon in
+         its DOM never queues a dropin in the first place (queueDropin's own
+         onScreen check keeps it dormant until the icon is actually visible). */
+      armDropin: function () { scenes.forEach(function (s) { s.armDropin(); }); },
       destroy: function () {
         io.disconnect();
         mo.disconnect();

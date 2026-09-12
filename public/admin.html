@@ -145,8 +145,59 @@
        would have been a third. -55 stays in use below, but only for borders
        and placeholders — never for text a reader has to read. */
     .note { font-size: 12.5px; color: var(--q-cream-75); }
+
+    /* THE ONLY ANCHOR ON THIS PAGE, and it needed its own rule — found in a
+       browser pass, invisible to every string test in the suite.
+       Added with no styling, it inherited the USER-AGENT default (#0000EE) and
+       measured 1.37:1 against the overlay's rgb(21,44,112). The AA floor is
+       4.5. That is the .lib-resetbtn failure again — a colour that looks
+       unremarkable in source and is near-invisible on the surface it actually
+       lands on — and it was on a link whose whole job is to be clicked.
+       Full-strength cream, not -75: this is an action, not metadata. The
+       underline carries "link" so hue is not the only signal, which is the
+       same reason this page keeps a second cue on its disabled controls.
+       overflow-wrap because a real spec URL is one unbreakable token ~80
+       characters long, and .note (unlike .meta) sets no word-break. */
+    #panel a { color: var(--q-cream); text-decoration: underline; overflow-wrap: anywhere; }
+    #panel a:visited { color: var(--q-cream); }
+    #panel a:hover { color: var(--q-gold); }
     .summary { font-size: 13.5px; margin: 0 0 12px; color: var(--q-cream); }
     .summary > div { margin: 4px 0; }
+
+    /* --- The agentic proposal (shadow mode) ---------------------------------
+       Rendered beside each field on the approve form so confirming is "does
+       this look right" rather than "go and read the page yourself". It is
+       EVIDENCE, never an instruction: nothing here writes, nothing here ticks
+       a checkbox, and a proposal that could not ground its own citation
+       deliberately does not pre-fill the input.
+
+       COLOUR: --q-cream-75 for every muted line, never -55. That is not a
+       preference, it is the number measured against THIS page's --q-plum
+       background and recorded twenty lines above — -55 computes to 4.31:1 and
+       fails AA here, -75 clears at 6.54:1. NOT independently re-measured for
+       these rules: scripts/checkContrast.js has a fixture for settings.html
+       only, and admin.html is one of the three pages with no fixture at all,
+       so this inherits a measurement rather than making one. Reusing the one
+       token this page has already proven is the safe move available. */
+    .agent { margin: 6px 0 2px; padding: 8px 10px; border-left: 2px solid var(--q-cream-55); }
+    .agent-head { font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--q-cream); }
+    /* 12.5px, matching .note — this page's smallest proven-legible body size.
+       Hierarchy below comes from weight and case, not from a further dim step:
+       "muted label" is the tool this project has twice measured into an AA
+       failure (CLAUDE.md, "DIMMING CANNOT CARRY HIERARCHY"). */
+    .agent-line { font-size: 12.5px; color: var(--q-cream-75); margin: 3px 0; }
+    .agent-quote { font-size: 12.5px; color: var(--q-cream-75); margin: 4px 0;
+      padding-left: 8px; border-left: 1px dotted var(--q-cream-55); font-style: italic; }
+    .agent-val { color: var(--q-cream); font-weight: 700; font-style: normal; }
+    /* An ambiguity is the thing a reviewer is being asked to settle, so it is
+       full-strength ink on a marked row rather than another muted line. The
+       amber left border is the same "look here" idiom .err-row uses, one step
+       down in severity: this is not an error, it is a question. */
+    .agent-amb { font-size: 12.5px; color: var(--q-cream); margin: 3px 0;
+      border-left: 2px solid var(--q-warn); padding-left: 8px; }
+    .agent-amb b { letter-spacing: .03em; }
+    /* The one state that must not read as a normal proposal. */
+    .agent.ungrounded { border-left-color: var(--q-danger); }
 
     /* --- The three tables on this page (watch list, approve-form, diff
        preview) share one responsive pattern: stacked cards below 768px, a
@@ -435,6 +486,8 @@ function flagCard(f, isTest) {
   ]));
   card.appendChild(el('div',{class:'meta'},['flag #'+f.id+' · detected '+new Date(f.detected_at).toLocaleString()]));
   card.appendChild(el('div',{class:'meta hash'},['old '+short(f.old_hash)+'  →  new '+short(f.new_hash)]));
+  const agentBadge = agentQueueLine(f.agent_proposal);
+  if (agentBadge) card.appendChild(el('div',{class:'meta',text:agentBadge}));
   // Two groups, not one row: Review change… opens a two-step write, Dismiss
   // closes the flag in one. They read as peers when they sit in the same
   // .actions block with nothing between them — that was the defect. The
@@ -467,8 +520,16 @@ async function openApprove(flagId) {
   // word "Approve" used to carry that job and didn't: clicking it opened this
   // checklist, which has no control that writes anything.
   panel.appendChild(el('h1',{text:'Step 1 of 2 — choose fields (flag #'+flag.id+')'}));
-  panel.appendChild(el('p',{class:'note',text:flag.source_url}));
+  // A LINK, not text. The whole point of the proposal below is that confirming
+  // should be a glance rather than a research task — and the one thing a glance
+  // needs, when a proposal is flagged for a human, is the page itself one click
+  // away. rel=noopener because target=_blank without it hands the opened page a
+  // handle on this one.
+  panel.appendChild(el('p',{class:'note'},[
+    el('a',{href:flag.source_url,target:'_blank',rel:'noopener noreferrer',text:flag.source_url}),
+  ]));
   panel.appendChild(el('p',{class:'note',text:'Check only the field(s) this change actually applies to, and type the new value. Unchecked fields are never touched.'}));
+  panel.appendChild(el('p',{class:'note',text:agentPanelNote(flag)}));
 
   const table = el('table',{class:'wl-table'});
   const thead = el('thead');
@@ -503,6 +564,30 @@ async function openApprove(flagId) {
     // Divergence shown on the FORM as well as the preview: an admin choosing what
     // to type should know up front that tenants don't currently agree.
     const cell = el('td',{'data-label':'Asset / Field'},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'}), hint]);
+
+    // The stored proposal for THIS pair, matched on asset+field the same way
+    // suggest() matches its live re-read. A proposal the detector produced for a
+    // pair the form no longer renders simply never matches — which is the right
+    // outcome, since affected_fields is the gate both sides read.
+    const fp = agentProposalFor(flag, fld);
+    const block = agentFieldBlock(fp);
+    if (block) {
+      cell.appendChild(block);
+      // PRE-FILL ONLY WHAT THE MODEL COULD GROUND. A number whose citation was
+      // not found in the page is displayed in the block above and deliberately
+      // NOT written into the input: a value already sitting in the field reads
+      // as checked, and this one is the opposite of checked. The admin can still
+      // type it — this removes a shortcut, not a choice.
+      //
+      // `value`, not `placeholder`, for a grounded one: collectEdits submits
+      // .value and ignores .placeholder, and the placeholder slot already holds
+      // the CURRENT value, which is the comparison this row exists to show.
+      // Pre-filling writes nothing on its own — the field still has to be ticked,
+      // previewed as a diff and confirmed, which is the same two-step gate
+      // “Suggest values” has always fed.
+      const grounded = fp.suggestedCharMax != null && (fp.ambiguities || []).indexOf('citation_unverified') < 0;
+      if (grounded) cmax.value = String(fp.suggestedCharMax);
+    }
     const dMax = divergenceNode(fld.char_max_divergence, 'char_max');
     if (dMax) cell.appendChild(dMax);
     const dNote = divergenceNode(fld.spec_note_divergence, 'spec_note');
@@ -526,9 +611,137 @@ async function openApprove(flagId) {
   panel.appendChild(bar);
   overlay.style.display='block';
 }
+// --- The persisted agentic proposal (shadow mode) ---------------------------
+//
+// Read at DETECTION time from the bytes that raised the flag, stored on
+// spec_review_queue.agent_proposal, and rendered here so confirming a change is
+// "does this look right" rather than "go and read the whole page yourself".
+//
+// THREE RULES THIS RENDERER KEEPS, all of them load-bearing:
+//
+//  1. NULL AND [] ARE NOT THE SAME. A null column means no agentic read happened;
+//     a 'read' status with an empty fields array means the page was read and
+//     stated nothing. Every branch below asks `status` and never infers from the
+//     presence or emptiness of `fields` — the stored shape omits that key
+//     entirely on any outcome that did not read the page.
+//  2. AN UNGROUNDED PROPOSAL NEVER PRE-FILLS. If the model's citation could not
+//     be found in the page, the number still SHOWS — suppressing it would hide
+//     the fact that the model proposed something — but the input stays empty so
+//     the admin has to type it deliberately. A number sitting in the field you
+//     are about to confirm reads as checked, and that one was not.
+//  3. NOTHING HERE TICKS A CHECKBOX OR WRITES. Shadow mode: the proposal is
+//     evidence for a review, never a substitute for one.
+
+function agentQueueLine(p) {
+  if (!p) return '';
+  if (p.status !== 'read') return 'agent: ' + p.status + (p.reason ? ' (' + p.reason + ')' : '');
+  const fields = p.fields || [];
+  const proposed = fields.filter((f) => f.suggestedCharMax != null).length;
+  const flagged = fields.filter((f) => (f.ambiguities || []).length > 0).length;
+  if (!fields.length) return 'agent: read the page, proposed nothing';
+  return 'agent: ' + proposed + ' of ' + fields.length + ' field(s) proposed'
+    + (flagged ? ' · ' + flagged + ' needing a human' : '');
+}
+
+// Wording for one ambiguity code. The codes are stable (the report script buckets
+// on them); these sentences are for a person, and each says what to go and check
+// rather than naming the trigger that fired.
+const AGENT_AMBIGUITY_TEXT = {
+  citation_unverified: 'The model could not ground this number — its quote is not on the page. Treat the value as unchecked.',
+  citation_fuzzy_match: 'The quote matched only loosely (spacing or capitalisation), so confirm it is the right line.',
+  snippet_omits_number: 'The quoted line does not contain the proposed number.',
+  conditional_limit: 'The page may state this limit conditionally — check whether a second number applies.',
+  multiple_candidates: 'The page states more than one number that could be this limit.',
+  large_delta: 'This moves the stored value by a lot.',
+  implausible_value: 'This is far outside the range of a copy-field limit.',
+  current_value_diverges: 'Tenants do not currently agree on this value.',
+  current_value_unknown: 'There is no single stored value to compare against.',
+  first_change_since_baseline: 'First change since this page was baselined — there is no prior change to compare against.',
+  change_history_unavailable: 'This database has no run history, so that check could not run.',
+  page_text_truncated: 'The model saw only the first part of the page.',
+};
+
+// The stored proposal for one form row, or null.
+//
+// GUARDS ON `status` RATHER THAN ON `fields`, which is the whole invariant of the
+// stored shape: a skipped or failed read carries NO fields key at all, so reading
+// `p.fields` on one would be reading a claim that was deliberately never made.
+function agentProposalFor(flag, fld) {
+  const p = flag && flag.agent_proposal;
+  if (!p || p.status !== 'read' || !Array.isArray(p.fields)) return null;
+  for (const f of p.fields) {
+    if (f && f.asset === fld.asset && f.field === fld.field) return f;
+  }
+  return null;
+}
+
+function agentFieldBlock(fp) {
+  if (!fp) return null;
+  const ambiguities = fp.ambiguities || [];
+  const ungrounded = ambiguities.indexOf('citation_unverified') >= 0;
+  const box = el('div',{class:'agent'+(ungrounded?' ungrounded':'')});
+  box.appendChild(el('div',{class:'agent-head',text:'AGENT PROPOSAL'}));
+
+  const proposed = fp.suggestedCharMax != null ? String(fp.suggestedCharMax) : null;
+  const line = el('div',{class:'agent-line'});
+  if (proposed) {
+    line.appendChild(document.createTextNode('proposes '));
+    line.appendChild(el('span',{class:'agent-val',text:proposed}));
+    line.appendChild(document.createTextNode(' · stored ' + (fp.currentCharMax || '—') + ' · confidence ' + fp.confidence));
+  } else {
+    line.textContent = 'no value found on the page for this field · stored ' + (fp.currentCharMax || '—');
+  }
+  box.appendChild(line);
+
+  // The citation. Shown only when it verified — an unverified one is EMPTY in the
+  // stored record, by the same rule, so there is nothing here to render and the
+  // ambiguity below says why.
+  if (fp.snippet) {
+    box.appendChild(el('div',{class:'agent-quote',text:'“'+fp.snippet+'”'}));
+  }
+  if (fp.candidates && fp.candidates.length > 1) {
+    box.appendChild(el('div',{class:'agent-line',text:'numbers on the page: '+fp.candidates.join(', ')}));
+  }
+  for (const code of ambiguities) {
+    const amb = el('div',{class:'agent-amb'});
+    amb.appendChild(el('b',{text:'CHECK: '}));
+    amb.appendChild(document.createTextNode(AGENT_AMBIGUITY_TEXT[code] || code));
+    const detail = fp.ambiguityDetail && fp.ambiguityDetail[code];
+    if (detail) amb.appendChild(document.createTextNode(' (' + detail + ')'));
+    box.appendChild(amb);
+  }
+  return box;
+}
+
+// Panel-level note describing the read as a whole, plus the one staleness fact
+// that matters: whether the proposal was taken from the same bytes as this flag.
+function agentPanelNote(flag) {
+  const p = flag.agent_proposal;
+  if (!p) {
+    return 'No agentic read for this flag — it predates the feature, or the reader was off '
+      + 'when it was raised. Use “Suggest values” to read the page as it is NOW.';
+  }
+  if (p.status !== 'read') {
+    return 'The agent did not read this page (' + p.status
+      + (p.reason ? ': ' + p.reason : '') + '). Use “Suggest values” to read it now.';
+  }
+  const when = p.readAt ? new Date(p.readAt).toLocaleString() : 'an unknown time';
+  const stale = p.pageHash && flag.new_hash && p.pageHash !== flag.new_hash;
+  return 'Read ' + when + ' from the page that raised this flag'
+    + (p.model ? ' (' + p.model + ')' : '') + '. '
+    + (stale
+      ? 'NOTE: the stored hash no longer matches this flag — the page has moved since. Re-read before trusting it.'
+      : 'Nothing below is written until you tick a field and confirm.');
+}
+
 // Chunk 3b: read the source page and pre-fill suggested char_max per field.
 // Suggestion only — pre-fills the (disabled) input + shows the snippet; the admin
 // still ticks the field and confirms the diff. Nothing is written here.
+//
+// STILL HERE, AND NOW THE RE-READ RATHER THAN THE ONLY READ. The stored proposal
+// above was taken when the flag was raised; this button asks the page as it is
+// TODAY. Those are different questions and the form says which is which, so the
+// button keeps its job instead of being replaced by the persisted record.
 async function suggest(flag, inputs, msg) {
   msg.innerHTML='';
   const info = el('div',{class:'msg',text:'Reading the source page… (a few seconds)'});

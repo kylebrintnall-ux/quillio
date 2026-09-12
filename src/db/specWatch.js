@@ -101,16 +101,77 @@ async function setTestPageContent(content) {
 
 // All review-queue rows (flagged changes). Empty until the detector runs in a
 // later chunk. Newest first. Returns [] when there's no DB.
+//
+// TWO TIERS, for the same reason WATCH_TIERS has six: agent_proposal arrives with
+// scripts/migrateAddAgentProposal.js, Railway auto-deploys main on merge, and this
+// code therefore runs against a database without the column first. The fallback
+// row LACKS the key rather than carrying null — "no agentic read happened" and
+// "this deploy cannot see the column" are different facts, and only the renderer
+// can tell them apart if the key's absence survives.
+const QUEUE_BASE = `id, watch_id, source_url, old_hash, new_hash, detected_at,
+            status, is_test, created_at`;
+const QUEUE_ORDER = 'ORDER BY detected_at DESC, id DESC';
+const QUEUE_TIERS = [
+  { extra: 'agent_proposal' },
+  { extra: null, missing: ['spec_review_queue.agent_proposal', 'scripts/migrateAddAgentProposal.js'] },
+];
+
 async function getReviewQueue() {
   const p = getPool();
   if (!p) return [];
-  const res = await p.query(
-    `SELECT id, watch_id, source_url, old_hash, new_hash, detected_at,
-            status, is_test, created_at
-       FROM spec_review_queue
-      ORDER BY detected_at DESC, id DESC`
+  let lastErr = null;
+  for (const tier of QUEUE_TIERS) {
+    const cols = tier.extra ? `${QUEUE_BASE}, ${tier.extra}` : QUEUE_BASE;
+    try {
+      const res = await p.query(`SELECT ${cols} FROM spec_review_queue ${QUEUE_ORDER}`);
+      if (tier.missing) warnMissingSchema(tier.missing[0], tier.missing[1]);
+      return (res && res.rows) || [];
+    } catch (err) {
+      if (!isUndefinedColumn(err)) throw err;
+      lastErr = err;
+    }
+  }
+  // Even the base columns are missing — a broken table, not a pre-migration
+  // deploy. Swallowing it would report an empty queue, which reads as "nothing
+  // to review" about a table nobody can read.
+  throw lastErr;
+}
+
+// THE ONE READ OF A PAIR'S CURRENT PER-TENANT VALUES, and the is_active filter is
+// why it lives here rather than at each call site.
+//
+// ACTIVE ROWS ONLY. Deactivating an asset type is how this schema removes one
+// (db/assets.js; there is no DELETE FROM asset_types anywhere), and an inactive
+// row is invisible to every doc — getTenantAssets filters on is_active, so its
+// values cannot reach a brief, a draft or a review. Counting it would inflate
+// tenant_count and pad the divergence breakdown with tenants who are not actually
+// affected, and that breakdown exists precisely so an admin can see whether
+// tenants already disagree before deciding what to type. A number that includes
+// dead rows is a number that lies about the blast radius.
+//
+// IT MOVED DOWN HERE FROM services/specReview.js, where its comment already said
+// the filter belongs in one place because every caller goes through it. A sixth
+// caller then turned up in services/specAgent.js and could not import it: specAgent
+// is required BY services/specDetector.js, and specReview requires specDetector, so
+// specAgent → specReview would close a cycle and hand specReview a
+// half-initialised specDetector (its module.exports assignment is at the bottom of
+// the file, so `{ fetchText, normalize }` would destructure undefined). This module
+// requires only ../db, so both callers can reach it. specReview.currentValues now
+// delegates here and keeps its name.
+//
+// Takes a RUNNER — pool or transaction client — because commitReview calls it
+// inside its write transaction and must see the same snapshot as its own UPDATE.
+async function currentFieldValues(runner, asset, field) {
+  const res = await runner.query(
+    'SELECT at.tenant_id, cf.char_max, cf.spec_note' +
+      '  FROM copy_fields cf' +
+      '  JOIN asset_types at ON at.id = cf.asset_type_id' +
+      ' WHERE at.name = $1 AND cf.field_name = $2' +
+      '   AND at.is_active' +
+      ' ORDER BY at.tenant_id',
+    [asset, field]
   );
-  return (res && res.rows) || [];
+  return res.rows;
 }
 
 // Detection health (read-only, chunk 4c). The watch-list state the admin page's
@@ -230,6 +291,11 @@ module.exports = {
   getTestPageContent,
   setTestPageContent,
   getDetectionHealth,
+  // The one read of a pair's current per-tenant values. Shared by
+  // services/specReview.js (which wraps it as currentValues) and
+  // services/specAgent.js, which cannot import specReview without closing a
+  // require cycle. See the comment on the function.
+  currentFieldValues,
   // The tenant-facing subset of the same rows. Derived from getWatchList, like
   // getDetectionHealth, so the two views cannot describe different states.
   getWatchStateBySource,

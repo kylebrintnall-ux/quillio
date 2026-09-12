@@ -56,8 +56,13 @@
 // scripts/migrateAddSourceKind.js (source_kind). All are tolerated absent.
 
 const crypto = require('crypto');
-const { getPool } = require('../db');
+const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
 const { getWatchList } = require('../db/specWatch');
+// The agentic read that runs on a confirmed change, before the hash advances.
+// One-directional: specAgent must never require this module back — it would close
+// a cycle and hand one of the two a half-initialised copy of the other, since both
+// assign module.exports at the bottom of the file.
+const { readSpecProposal, envMaxExtractions } = require('./specAgent');
 
 const FETCH_TIMEOUT_MS = 10000;
 // Delay before the confirmation refetch. Long enough that a per-request-varying
@@ -386,23 +391,67 @@ function stampChange(row) {
     : '';
 }
 
+// One line describing what the agentic read did, for the run log. A skip or a
+// failure NAMES ITS REASON — "agent skipped" on its own is the shape of the
+// silent-failure statuses this file already refuses elsewhere, and the reason is
+// the only part that tells an operator whether to do anything about it.
+function agentSummaryLine(p) {
+  if (p.status !== 'read') return `${p.status}: ${p.reason || 'no reason recorded'}`;
+  const proposed = p.fields.filter((f) => f.suggestedCharMax != null).length;
+  const flagged = p.fields.filter((f) => f.ambiguities.length > 0).length;
+  return `read ${p.fields.length} field(s), ${proposed} proposed, ${flagged} needing a human`;
+}
+
 // Record a detected change atomically: insert the flag, then advance the hash.
 // Wrapped in a transaction so we never insert a flag but fail to move the hash
 // (which would re-flag the same change on every subsequent run).
-async function recordChange(pool, row, newHash) {
+//
+// `proposal` is the agentic read (services/specAgent.js) for THIS change, or null
+// for "no agentic read happened". It rides the SAME INSERT as the flag rather than
+// a follow-up UPDATE, so a flag and its proposal are one atomic write and no
+// reader can ever catch a flag mid-way to having one. The read itself happens
+// BEFORE this function is called — a model call inside an open transaction would
+// hold a pool connection and the row's locks for up to 45 seconds.
+//
+// THE 42703 FALLBACK IS LOAD-BEARING AND IS NOT DEFENSIVE PROGRAMMING. Railway
+// auto-deploys main on merge, so this code runs against a database without
+// agent_proposal until somebody runs scripts/migrateAddAgentProposal.js. An
+// undefined-column error raised HERE aborts the transaction that also advances
+// current_hash, so without this retry the detector would stop recording flags
+// entirely — silently, reporting `changed` in its summary while the queue stayed
+// empty and the hash never moved. Postgres aborts the whole transaction on the
+// failed statement, so the retry restarts it rather than continuing inside it.
+// This is the same tolerance db/projects.saveProject applies to its own column
+// groups, and the reason CLAUDE.md insists either deploy order must be safe.
+const QUEUE_INSERT_WITH_PROPOSAL = `INSERT INTO spec_review_queue (watch_id, source_url, old_hash, new_hash, detected_at, status, is_test, agent_proposal)
+         VALUES ($1, $2, $3, $4, NOW(), 'pending', $5, $6)`;
+const QUEUE_INSERT_BASE = `INSERT INTO spec_review_queue (watch_id, source_url, old_hash, new_hash, detected_at, status, is_test)
+         VALUES ($1, $2, $3, $4, NOW(), 'pending', $5)`;
+
+async function recordChange(pool, row, newHash, proposal) {
   const client = await pool.connect();
+  const base = [row.id, row.source_url, row.current_hash, newHash, row.is_test];
+  const advance = `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)}${stampChange(row)} WHERE id = $2`;
+
+  // `undefined` and `null` are the same stored value here — SQL NULL — and that is
+  // the correct one for both: "no agentic read happened".
+  const payload = proposal == null ? null : JSON.stringify(proposal);
+
   try {
-    await client.query('BEGIN');
-    await client.query(
-      `INSERT INTO spec_review_queue (watch_id, source_url, old_hash, new_hash, detected_at, status, is_test)
-         VALUES ($1, $2, $3, $4, NOW(), 'pending', $5)`,
-      [row.id, row.source_url, row.current_hash, newHash, row.is_test]
-    );
-    await client.query(
-      `UPDATE spec_watch_list SET current_hash = $1, last_checked_at = NOW(), last_error = NULL${resetStreaks(row)}${stampChange(row)} WHERE id = $2`,
-      [newHash, row.id]
-    );
-    await client.query('COMMIT');
+    try {
+      await client.query('BEGIN');
+      await client.query(QUEUE_INSERT_WITH_PROPOSAL, base.concat([payload]));
+      await client.query(advance, [newHash, row.id]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (!isUndefinedColumn(err)) throw err;
+      warnMissingSchema('spec_review_queue.agent_proposal', 'scripts/migrateAddAgentProposal.js');
+      await client.query('BEGIN');
+      await client.query(QUEUE_INSERT_BASE, base);
+      await client.query(advance, [newHash, row.id]);
+      await client.query('COMMIT');
+    }
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -526,7 +575,32 @@ async function runDetection({ watchId } = {}) {
     unanchored: 0,
     stuck: 0,
     not_watched: 0,
+    // THE AGENTIC READ'S OWN AXIS, and it is an axis rather than a status for the
+    // same reason `unanchored` and `stuck` are: a row is `changed` AND its
+    // proposal was read, or `changed` AND its proposal was skipped, and both
+    // facts matter. These three sum to at most `changed` — every other status
+    // raises no flag, so there is nothing for a proposal to attach to. Pre-seeded
+    // to 0 so a run with the reader switched off reports zeros rather than
+    // omitting the keys, which read differently to whoever is scanning.
+    agent_read: 0,
+    agent_skipped: 0,
+    agent_failed: 0,
   };
+
+  // THE PER-RUN EXTRACTION BUDGET, in RUN scope. A module-level counter would be
+  // shared between the weekly cron and every on-demand POST
+  // /admin/api/run-detection in the same process, so an admin poking the test row
+  // could silently spend the budget the next real run needed — or, worse, a
+  // long-lived process would exhaust it once and never extract again.
+  //
+  // The case it exists for is not one noisy page. Changing normalize() re-hashes
+  // every watched row at once, so the pathological run flags ALL of them and asks
+  // for eleven extractions in a burst (CLAUDE.md, "Changing `normalize()`
+  // re-baselines every affected page — plan for it").
+  //
+  // Read per RUN, not at module load, so an operator can change the cap between
+  // an on-demand run and the next one without restarting the process.
+  const agentBudget = { max: envMaxExtractions(), used: 0 };
 
   for (const row of rows) {
     let status;
@@ -534,6 +608,9 @@ async function runDetection({ watchId } = {}) {
     let failures = null;
     let streak = null;
     let unconfirmedReason = null;
+    // Null on every branch but `changed` — no other status raises a flag, and a
+    // proposal with no flag to sit on has nowhere to be stored.
+    let agentProposal = null;
     // Read off the ROW, not off anchorInfo: an entry that never got as far as
     // the anchor check (the fetch threw) is not thereby "unanchored". Whether an
     // anchor is configured is a property of the entry and is true or false
@@ -663,7 +740,50 @@ async function runDetection({ watchId } = {}) {
           // verified. The refetch is implicitly anchored by the equality. A
           // checkAnchor call on this branch could never fail, i.e. it would be
           // dead code that reads like a safeguard.
-          await recordChange(pool, row, newHash);
+          //
+          // THE AGENTIC READ HAPPENS HERE, INLINE AND BEFORE recordChange, and
+          // both halves of that are the point. `normalized` is the exact text
+          // that produced newHash and it is never persisted — after this run it
+          // does not exist anywhere — so a later re-read would be asking a
+          // different page a question about this one. And it runs BEFORE the
+          // transaction rather than inside it, because a model call inside an
+          // open transaction holds a pool connection and the row's locks for as
+          // long as the model takes.
+          //
+          // It cannot throw (services/specAgent.js catches everything and returns
+          // a record instead), so no try/catch here would ever fire. The budget
+          // is passed by value and the counter advanced from the returned status,
+          // which keeps it in this RUN's scope: a module-level counter would leak
+          // across the on-demand POST /admin/api/run-detection calls that share
+          // this process with the weekly cron.
+          agentProposal = await readSpecProposal({
+            row,
+            pageText: normalized,
+            pageHash: newHash,
+            budget: { max: agentBudget.max, used: agentBudget.used },
+            runner: pool,
+          });
+          // A FAILED READ SPENDS BUDGET TOO. It got as far as trying, which on the
+          // one outage this project has on record is exactly the state that
+          // matters: a spent Gemini balance returns 429 to every call, so a run
+          // that only counted successes would make eleven doomed requests instead
+          // of three. A skip spends nothing, because a skip is the budget working.
+          if (agentProposal && (agentProposal.status === 'read' || agentProposal.status === 'failed')) {
+            agentBudget.used += 1;
+          }
+          // Guarded on key presence rather than incrementing whatever comes
+          // back: the three statuses are specAgent's contract AND are pre-seeded
+          // above, so a fourth one added later would otherwise turn a summary
+          // counter into NaN — which prints, sums and compares like a number
+          // without being one, in the object an operator reads to decide whether
+          // the run went well.
+          const agentKey = agentProposal && `agent_${agentProposal.status}`;
+          if (agentKey && agentKey in summary) summary[agentKey] += 1;
+          else if (agentProposal) {
+            console.warn(`[detector] unrecognised agent status ${JSON.stringify(agentProposal.status)} — not counted`);
+          }
+
+          await recordChange(pool, row, newHash, agentProposal);
           status = 'changed';
         } else {
           // Did not reproduce. DON'T flag, DON'T advance the baseline hash.
@@ -731,13 +851,35 @@ async function runDetection({ watchId } = {}) {
       consecutive_unconfirmed: streakAfter,
       unconfirmed_reason: unconfirmedReason,
       source_kind: 'platform_enforced',
+      // A COMPACT SUMMARY, never the proposal itself. The full object goes to the
+      // database, where an admin opening the flag reads it; this array is a run
+      // report, and inlining every snippet and ambiguity would bury the ten other
+      // rows' statuses in one row's evidence. null means no flag was raised or no
+      // read happened — the same distinction the stored column draws.
+      agent: agentProposal
+        ? {
+            status: agentProposal.status,
+            reason: agentProposal.reason || null,
+            // Present only on a read, exactly as in the stored shape: a count of
+            // fields on a skipped read would be a number about a page nobody
+            // looked at.
+            ...(agentProposal.status === 'read'
+              ? {
+                  fields: agentProposal.fields.length,
+                  proposed: agentProposal.fields.filter((f) => f.suggestedCharMax != null).length,
+                  flagged: agentProposal.fields.filter((f) => f.ambiguities.length > 0).length,
+                }
+              : {}),
+          }
+        : null,
     });
     console.log(
       `[detector] ${row.display_name}: ${status}${anchored ? '' : ' (no anchor)'}` +
         `${error ? ` (${error})` : ''}` +
         `${failures > 1 ? ` [${failures} consecutive failures]` : ''}` +
         `${streakAfter ? ` [unconfirmed ${streakAfter} in a row: ${unconfirmedReason}]` : ''}` +
-        `${streakAfter >= UNCONFIRMED_STREAK_ALERT ? ' — STUCK, this page is not being watched' : ''}`
+        `${streakAfter >= UNCONFIRMED_STREAK_ALERT ? ' — STUCK, this page is not being watched' : ''}` +
+        `${agentProposal ? ` [agent ${agentSummaryLine(agentProposal)}]` : ''}`
     );
   }
 

@@ -3510,11 +3510,64 @@ async function reviewVariationStack({ assetType, fieldName, charMax, fieldType, 
 // caller maps suggestions to the exact (asset,field) even when field names repeat.
 const SPEC_EXTRACT_MAX = 12000; // page-text cap protecting the context window
 
+// BUMP THIS WHEN THE PROMPT BELOW CHANGES. services/specAgent.js stores it beside
+// every persisted proposal, because shadow mode's question is comparative — "does
+// this model, with this prompt, catch conditional limits" — and a stored result
+// that cannot name the prompt that produced it silently pools two populations the
+// moment the wording moves. The model travels beside it, from config.GEMINI_MODEL.
+const SPEC_EXTRACT_PROMPT_VERSION = 2;
+
+// THE DETAILED FORM, and the reason it exists is a distinction extractSpecValues
+// cannot make. That function returns [] on a model failure AND [] when the page
+// genuinely states no limit for any requested field — one value for two outcomes.
+// That is harmless for getSuggestions, which degrades to manual entry either way,
+// and is a false record for services/specAgent.js, which PERSISTS the result:
+// storing `fields: []` for a call that never reached the model would claim the
+// page was read and stated nothing. So this returns the outcome as well as the
+// rows, and extractSpecValues below is a thin wrapper over it whose return value
+// is byte-identical to what it always was.
+//
+// `truncated` reports the SPEC_EXTRACT_MAX cut, which is a different cap from the
+// per-run extraction budget specAgent enforces. Both are called "capped" in
+// conversation and folding them into one flag would misreport which one fired:
+// this one means "the model did not see the whole page", the other means "this
+// flag was not read at all".
+async function extractSpecValuesDetailed({ pageText, fields } = {}) {
+  const full = String(pageText || '');
+  const text = full.slice(0, SPEC_EXTRACT_MAX);
+  const truncated = full.length > SPEC_EXTRACT_MAX;
+  const list = Array.isArray(fields) ? fields : [];
+  if (!text) return { ok: false, rows: [], error: 'no page text', truncated };
+  if (list.length === 0) return { ok: false, rows: [], error: 'no fields requested', truncated };
+
+  const out = await extractSpecCall(text, list);
+  return { ...out, truncated };
+}
+
 async function extractSpecValues({ pageText, fields } = {}) {
   const text = String(pageText || '').slice(0, SPEC_EXTRACT_MAX);
   const list = Array.isArray(fields) ? fields : [];
   if (!text || list.length === 0) return [];
 
+  const out = await extractSpecCall(text, list);
+  return out.rows;
+}
+
+// ONE PROMPT, TWO CALLERS, DELIBERATELY. getSuggestions (admin, on demand) and
+// specAgent (the weekly detector) ask the page the same question, and this file's
+// own history — the review overlay's duplicated wording, FUNNEL_STAGE_INFERENCE's
+// three call sites — is that two copies of one prompt become two answers with no
+// way to tell which is current.
+//
+// `candidates` is ADDITIVE and is why the prompt grew: an ambiguity the detector
+// has to catch is a page stating more than one number that could be this field's
+// limit (LinkedIn Carousel's card headline is 45 to a destination URL and 30 with
+// a Lead Gen Form CTA — one field, two published limits). A single
+// suggested_char_max cannot express that, and picking one silently is the false
+// confidence the whole persisted-proposal design exists to surface. getSuggestions
+// reads only suggested_char_max / snippet / confidence, so its behaviour and its
+// returned shape are unchanged by this key existing.
+async function extractSpecCall(text, list) {
   const fieldLines = list
     .map(
       (f, i) =>
@@ -3530,11 +3583,17 @@ async function extractSpecValues({ pageText, fields } = {}) {
     '  { "ref": <the field\'s ref number>,',
     '    "suggested_char_max": <integer, or null if the page does not clearly state one>,',
     '    "snippet": <a short verbatim quote (<=160 chars) from the page supporting the number, else "">,',
+    '    "candidates": <array of EVERY distinct integer on the page that could plausibly be',
+    '                   this field\'s limit, including the suggested one; [] if none>,',
     '    "confidence": "high" | "medium" | "low" }',
     'Rules: use ONLY numbers actually present in the page text. If a field is not clearly',
     'addressed, set suggested_char_max=null, snippet="", confidence="low". Do NOT guess or',
     'invent numbers. Match platform wording to the field by meaning (e.g. page "Headline"',
     'wording may map to field "Short Headline").',
+    'The snippet must be copied CHARACTER FOR CHARACTER from the page text below — it is',
+    'checked against the page, and a quote that cannot be found there is discarded.',
+    'If the page states the limit CONDITIONALLY (a different number for a different ad',
+    'format, placement, or CTA type), list every one of those numbers in candidates.',
     '',
     'FIELDS:',
     fieldLines,
@@ -3556,28 +3615,45 @@ async function extractSpecValues({ pageText, fields } = {}) {
     parsed = extractJsonArray(out);
   } catch (err) {
     console.error('[gemini] extractSpecValues failed:', err.message);
-    return [];
+    return { ok: false, rows: [], error: err.message || String(err) };
   }
-  if (!Array.isArray(parsed)) return [];
+  // A response that arrived but did not parse is a FAILURE, not an empty page.
+  // Same distinction as the catch above, and the one extractSpecValues collapses.
+  if (!Array.isArray(parsed)) {
+    return { ok: false, rows: [], error: 'model response did not parse as a JSON array' };
+  }
 
   // Sanitize each row to the expected shape; a positive integer within bounds or null.
-  return parsed
+  const rows = parsed
     .map((r) => {
       if (!r || typeof r !== 'object') return null;
       const ref = Number(r.ref);
       const n = Number(r.suggested_char_max);
+      const cand = Array.isArray(r.candidates) ? r.candidates : [];
       return {
         ref: Number.isInteger(ref) ? ref : null,
         suggested_char_max: Number.isInteger(n) && n > 0 && n <= 100000 ? n : null,
         snippet: r.snippet ? String(r.snippet).slice(0, 200) : '',
+        // Same bounds as suggested_char_max, deduped and capped — an unbounded
+        // array from a model is a payload this ends up storing as JSONB.
+        candidates: Array.from(
+          new Set(cand.map((c) => Number(c)).filter((c) => Number.isInteger(c) && c > 0 && c <= 100000))
+        ).slice(0, 12),
         confidence: ['high', 'medium', 'low'].includes(r.confidence) ? r.confidence : 'low',
       };
     })
     .filter((r) => r && r.ref !== null);
+  return { ok: true, rows, error: null };
 }
 
 module.exports = {
   extractSpecValues,
+  // The detailed form, for services/specAgent.js: distinguishes a model failure
+  // from a page that stated nothing. extractSpecValues cannot, and specAgent
+  // PERSISTS the difference.
+  extractSpecValuesDetailed,
+  // Stored on every persisted proposal — see the constant's own comment.
+  SPEC_EXTRACT_PROMPT_VERSION,
   parseBrief,
   enrichWithReferences,
   generateFieldDraft,

@@ -168,7 +168,9 @@ src/
                      limit, a unit, a note, plus the CELL it lives in.
     notifications.js Notification writes/reads + per-user read state.
                      Catches 42P01 and degrades to "no notifications".
-    specWatch.js     LiveSpecs watch list / review queue reads.
+    specWatch.js     LiveSpecs watch list / review queue reads, plus
+                     currentFieldValues — the ONE read of a pair's per-tenant
+                     values, shared by specReview and specAgent.
 
   utils/
     normalize.js     Asset-name normalization (case, dash variants, spacing).
@@ -199,6 +201,10 @@ src/
     templateReview.js Review a built TEMPLATE document. Not copyReview: neither
                      half of that transfers to a matrix.
     specDetector.js  LiveSpecs change detection (fetch → normalize → hash).
+    specAgent.js     The agentic read the detector takes ON a confirmed change,
+                     from the bytes that raised the flag, stored on
+                     spec_review_queue.agent_proposal. Shadow mode: proposes,
+                     never writes. Must never require specDetector back.
     specReview.js    The ONLY place that writes copy_fields. Gated + two-step.
 
   destinations/      Output adapters — where the brief gets written.
@@ -1128,7 +1134,8 @@ Optional: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`
 `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_USER_TOKEN`,
 `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`,
 `SLACK_REVIEW_EMOJI`, `SLACK_USE_CUSTOM_EMOJI`, `SESSION_SECRET`,
-`PUBLIC_BASE_URL`. See `.env.example` and `README.md`.
+`PUBLIC_BASE_URL`, `SPEC_AGENT_ENABLED`, `SPEC_AGENT_MAX_EXTRACTIONS`. See
+`.env.example` and `README.md`.
 
 Note: `SLACK_SIGNING_SECRET` is listed as optional above because the app boots
 without it, but the Slack endpoints **fail closed** — `verifySlack` rejects every
@@ -1145,11 +1152,26 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 23,903 lines and 802 tests** —
-measured on the merge that brought `rebrand/cleanup` onto `main`, and written as
-a reading taken on a date rather than as a standing figure, because
+regression guards. **As of this commit it is 24,799 lines and 821 tests** —
+measured on the commit that added the agentic detection read, on **Node 22**, and
+written as a reading taken on a date rather than as a standing figure, because
 the previous version of this sentence said 635 and was wrong by 114 tests and
-about 3,900 lines. The number had been correct once. Nothing updates it, nothing
+about 3,900 lines.
+
+**AND THE RUNTIME IS PART OF THE READING, which this sentence did not used to
+say.** The figure it replaces was 802 at 23,903 lines. Re-running that same tree
+on Node 22 reported **790** — identical line count, twelve fewer tests — so the
+two numbers disagree about a file neither of them changed. Node's test runner
+counts subtests differently between majors, and 802 was almost certainly taken on
+CI's Node 20 (`.github/workflows/ci.yml` pins it). The old number was therefore
+not wrong; it was **undated as to runtime**, which is the same defect as a derived
+count being undated as to migrations. If your reading disagrees with this one,
+check your Node version before assuming a test was lost.
+
+Worth settling separately: **nothing declares production's Node version.**
+`package.json` says `engines: ">=18"`, `railway.json` pins nothing, and Nixpacks
+resolves it at build time — so the deployed runtime can move under a rebuild with
+no commit anywhere. That is a real gap, not a documentation one. The number had been correct once. Nothing updates it, nothing
 checks it, and a stale count in the one file whose value is that it can be
 believed without re-deriving it is the same defect this file's own preamble is
 about.
@@ -3776,6 +3798,199 @@ new row has produced its clean comparison, so the single-image entry can now be
 re-derived (`scripts/rederiveAffectedFields.js --only=<id>`, dry-run first)
 whenever somebody wants to — it will drop the six carousel pairs, which is
 correct, because they are gated by row #12 now.
+
+## The agentic read runs AT DETECTION, and what it stores is evidence, not a value
+
+`services/specAgent.js`. When the detector confirms a change and raises a flag, it
+reads the page it just hashed and stores a per-field proposal on
+`spec_review_queue.agent_proposal` (JSONB, `scripts/migrateAddAgentProposal.js` —
+**not yet run in production**).
+
+**WHY AT DETECTION AND NOT AT REVIEW.** `specReview.getSuggestions` has always
+asked the same question of the same page — it is the "Suggest values" button on
+the approve form — and it keeps nothing, so every answer is computed from a fetch
+made whenever somebody happens to open the flag. **The text that raised the flag
+exists exactly once, in memory, in the run that raised it.** Nothing persists it,
+and `recordChange` advances `current_hash` in the same transaction that inserts
+the flag, so a later re-read is asking a possibly-different page a question about
+this one, against a hash that already moved. The read now happens while those
+bytes are in hand.
+
+It runs BEFORE `recordChange` rather than inside it: a model call inside an open
+transaction holds a pool connection and the row's locks for up to 45 seconds. The
+proposal then rides the SAME INSERT as the flag, so a flag and its proposal are
+one atomic write and no reader can catch a flag on its way to having one.
+
+`getSuggestions` is **not** replaced. It is now the RE-READ — the page as it is
+today — beside a stored record of the page as it was. The form says which is
+which, and flags the one case that makes the stored one stale rather than merely
+old: `agent_proposal.pageHash !== flag.new_hash`.
+
+### FOUR STATES, AND `fields` IS ABSENT ON THREE OF THEM
+
+| Stored | Means |
+| --- | --- |
+| column `NULL` | **no agentic read happened** — a pre-migration row, or the reader off (no `GEMINI_API_KEY`, or `SPEC_AGENT_ENABLED=false`) |
+| `{ status: 'skipped', reason, … }` | the reader was on and declined — the run budget was spent, or the watch row named no pairs |
+| `{ status: 'failed', reason, … }` | it tried and the model or the lookup failed |
+| `{ status: 'read', fields: [...], … }` | the page was read. **Here** `fields: []` means "read, proposed nothing" |
+
+**The `fields` key is omitted entirely on the first three**, so nothing can
+destructure a claim out of an outcome that never made one. This is the same
+three-state discipline `projects.field_manifest`'s `provenance` uses, and the case
+where it bites is already live rather than hypothetical: `affected_fields` is a
+snapshot nothing recomputes, so a watch row whose pairs went stale yields NO fields
+to propose on — and recording that as `[]` would report **a gate problem as a page
+fact**. Branch on `status`; never infer from `fields`.
+
+`extractSpecValues` could not express that distinction: it returns `[]` on a model
+failure AND on a page that states nothing. Harmless for `getSuggestions`, which
+degrades to manual entry either way, and a FALSE RECORD here — so
+`extractSpecValuesDetailed` returns `{ ok, rows, error, truncated }` and
+`extractSpecValues` is a thin wrapper whose own return is byte-identical.
+
+### THE CITATION IS VERIFIED BEFORE IT IS STORED, AND A MISS IS DEMOTED, NOT DROPPED
+
+A stored proposal whose quote is not in the page is **worse than no proposal**: it
+renders in the admin form as a quote, which is what grounding looks like, without
+being grounding. So the snippet is checked against the same text the model was
+given, in three tiers — exact, whitespace-collapsed, case-insensitive. The two
+weaker tiers are real matches on real pages (they are the two ways
+`migrateAddSpecAnchors --verify` already reports a good anchor missing: a capital
+letter and a tag boundary), so they verify **and** raise `citation_fuzzy_match`.
+Both facts are kept rather than one being rounded to the other.
+
+A miss empties the snippet, pins confidence to `low`, and raises
+`citation_unverified`. **The NUMBER survives** — dropping it would hide that the
+model proposed anything — and the admin form shows it as text while deliberately
+**not** pre-filling the input. A value already sitting in the field you are about
+to confirm reads as checked, and that one is the opposite of checked.
+
+### THE AMBIGUITY TRIGGERS ARE OVER-INCLUSIVE ON PURPOSE
+
+Any of these caps confidence and tells the reviewer what to settle:
+`citation_unverified`, `citation_fuzzy_match`, `snippet_omits_number`,
+`conditional_limit`, `multiple_candidates`, `large_delta`, `implausible_value`,
+`current_value_diverges`, `current_value_unknown`, `first_change_since_baseline`,
+`change_history_unavailable`, `page_text_truncated`.
+
+**The case the feature exists for is LinkedIn Carousel's card headline** — 45 to a
+destination URL, 30 with a Lead Gen Form CTA, one field and two published limits,
+which `src/data/defaultAssets.js` already carries a note about. An extraction
+returning 45 with high confidence is not wrong about the page; it is silent about
+the half that changes the answer. Conditional wording is detected in CODE, over a
+window around the CITED line rather than the whole page (a multi-format spec page
+has conditional wording on it somewhere, always), and the model is separately asked
+for every candidate number.
+
+Two of them are worth stating because the obvious reading is the wrong one:
+
+- **`first_change_since_baseline` is not "the baseline run".** A baseline run
+  records no flag, so that state cannot carry a proposal at all. What this catches
+  is the first CHANGE after a baseline — a row with no prior confirmed change, whose
+  extraction has never been checked against a human decision.
+- **`change_history_unavailable` is the pre-migration case, and it FIRES.**
+  `change_count` ABSENT is not `change_count` zero, and a trigger that could not be
+  evaluated must not read as one that passed. That is the same key-presence rule the
+  detector's own run-history writes use.
+
+The thresholds (`LARGE_DELTA_RATIO` 0.5, `IMPLAUSIBLE_CHAR_MAX` 5000,
+`DEFAULT_MAX_EXTRACTIONS` 3) are **arguments, not measurements**, and say so in the
+source. Nothing here has measured how often a correct extraction moves a limit by
+more than half; the sample that could is the one shadow mode exists to collect.
+45 → 30 is a 33% move and deliberately does NOT trip `large_delta` — the
+conditional triggers catch that class, and a delta threshold low enough to also
+catch it would fire on every routine correction.
+
+### THE TWO GUARDS, AND THE SECOND ONE IS NOT WHERE YOU WOULD LOOK
+
+**1. It must never fail the detection run.** `railway.cron.json` sets
+`restartPolicyType: NEVER`, so an uncaught throw out of the weekly run is not a
+retry — it is **no detection until next Monday**. `readSpecProposal` is awaited,
+catches everything, logs with a stack and returns a `failed` record rather than
+propagating. Exactly the shape `adapters/web.js` `notifyDraftComplete` uses, and
+the reasoning transfers: a flag with no proposal is acceptable, a run that died
+recording one is not.
+
+**THE SHARPER HALF IS IN `recordChange`, NOT IN `specAgent`.** The INSERT naming
+`agent_proposal` runs inside the transaction that also advances `current_hash`.
+Railway auto-deploys `main`, so this code runs against a database without the
+column first — and an unhandled `42703` there would roll back **the flag as well**.
+The detector would report `changed` in its summary while the queue stayed empty and
+the hash never moved: silent, and lasting until somebody ran the migration. So the
+INSERT retries without the column on `42703`, **restarting the transaction** rather
+than continuing inside it (Postgres aborts the whole transaction on the failed
+statement, so a retry issued inside the same one fails with `25P02` and loses the
+flag anyway). A test pins the exact statement sequence
+`BEGIN / ROLLBACK / BEGIN / COMMIT`.
+
+**2. Extractions are capped per run**, budget in the RUN's scope — not a module
+global, which would leak across the on-demand `POST /admin/api/run-detection` calls
+sharing the process with the weekly cron. The case it exists for is not one noisy
+page: changing `normalize()` re-hashes every watched row at once, so the
+pathological run flags ALL of them and asks for eleven extractions in a burst.
+
+**A FAILED read spends budget too.** It got as far as trying, and on the one outage
+this project has on record a spent Gemini balance returned 429 to every call — a
+budget counting only successes would make eleven doomed requests instead of three.
+A SKIP spends nothing, because a skip is the budget working.
+
+### SHADOW MODE IS STRUCTURAL, NOT A MATTER OF DISCIPLINE
+
+Nothing auto-publishes, and that does not rest on nobody reading a key.
+`loadFlag` feeds BOTH the read path and every write-path decision
+(`guardEdits` → `buildPreview` → `commitReview`), so `agent_proposal` is loaded by
+a **separate** `loadAgentProposal` called only from `getFlagForReview`. The write
+path cannot read a column it never selects, and a future change that wanted to
+would have to add the read itself, in a diff that says so. Tests pin that, and pin
+the detector as the column's only writer.
+
+**Test flags ARE read, deliberately**, which departs from `getSuggestions` refusing
+them. Its reason does not transfer: it refuses because it is a step toward a WRITE,
+and test flags are barred from writes. A proposal is not a write, and the test row
+is the only page anybody can move on demand — so it is the only way to exercise
+this wire in production without waiting for a platform to change a number. The
+precision report counts them and never scores them.
+
+### MEASURING IT: `scripts/agentProposalReport.js`
+
+Read-only, `--selftest`-able. Joins stored proposals to `spec_change_log` by
+(flag, asset, field) — not by flag, since an admin commonly approves some pairs and
+leaves others — and reports agreement overall, by confidence, and **by ambiguity
+code**, which is the only way to answer whether flagging these actually catches the
+ones we get wrong.
+
+Four things it is careful about, each a shape this file has recorded before:
+
+- **Silence is a MISS, not a pass.** A proposal of null on a field a human then
+  filled in is counted as a failure. Scored the other way, a model that declined
+  everything would report perfect precision.
+- **It only sees APPROVED flags.** Dismissed and pending flags have no committed
+  value; they are reported as context and never divided into.
+- **It refuses to pool arms.** More than one `model` or `promptVersion` in the
+  data prints a warning that the totals answer neither — which is why the proposal
+  records both in the first place.
+- **n is small and will stay small.** Eleven hash-watched pages, weekly, almost
+  always unchanged. Under 20 scoreable fields the report says so on its own output,
+  because this file's record has an aggregate at n=5 reverse itself on a second run.
+
+### WHAT SHADOW MODE IS AND IS NOT MEASURING RIGHT NOW
+
+**The extraction runs on Gemini Flash (`config.GEMINI_MODEL`), not on Claude.**
+This is worth stating plainly because the work was scoped on the belief that it had
+already moved: there is no Anthropic dependency in `package.json`, no
+`ANTHROPIC_API_KEY` in `config.js` or `.env.example`, and no call to any Anthropic
+endpoint anywhere in `src/`. `extractSpecValues` has always gone through
+`callGemini`.
+
+So the shadow run now starting collects a **Flash baseline**. That is not a
+consolation prize — "does model X materially improve the conditional-limit catch
+rate" is a comparative claim, and this file's own rule is that a mode metric needs
+a control arm exactly as much as a range metric does, and that **a new metric's
+first run establishes a baseline and answers nothing**. A model swap is a
+one-constant change (`GEMINI_MODEL`, or a new transport behind
+`extractSpecCall`), and every proposal already records the `model` and
+`promptVersion` that produced it so the two arms cannot be pooled by accident.
 
 ## Vision & roadmap
 

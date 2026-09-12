@@ -20,7 +20,8 @@
 // and the flag status flip in ONE transaction across ALL tenant rows for each
 // field -- all-or-nothing.
 
-const { getPool } = require('../db');
+const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
+const { currentFieldValues } = require('../db/specWatch');
 const { fetchText, normalize } = require('./specDetector');
 const { extractSpecValues } = require('./gemini');
 
@@ -121,34 +122,23 @@ function validateEdit(edit) {
 // Current per-tenant values for a (asset, field) pair. Uses a supplied runner
 // (pool or transaction client).
 //
-// ACTIVE ROWS ONLY. Deactivating an asset type is how this schema removes one
-// (db/assets.js; there is no DELETE FROM asset_types anywhere), and an inactive
-// row is invisible to every doc — getTenantAssets filters on is_active, so its
-// values cannot reach a brief, a draft or a review. Counting it here would
-// inflate tenant_count and pad the divergence breakdown with tenants who are not
-// actually affected, and that breakdown exists precisely so an admin can see
-// whether tenants already disagree before deciding what to type. A number that
-// includes dead rows is a number that lies about the blast radius.
-//
-// This is the ONLY read in this file that joins asset_types, and all four
-// callers (getFlagForReview, buildPreview, commitReview's `before` capture, and
-// getSuggestions) go through it — which is why the filter belongs here and not
-// at each call site. The UPDATE in commitReview carries the same predicate.
+// THE SQL MOVED TO db/specWatch.currentFieldValues AND THIS IS NOW A DELEGATION.
+// The reason is the same one the old comment here gave for keeping the is_active
+// filter in one function: all four callers in this file (getFlagForReview,
+// buildPreview, commitReview's `before` capture, and getSuggestions) go through
+// it, so the predicate belongs at one point and not at each call site. A fifth
+// caller then appeared in services/specAgent.js, which cannot require this module
+// — specDetector requires specAgent, and this module requires specDetector, so the
+// import would close a cycle and hand this file a half-initialised specDetector.
+// Moving the read DOWN to the data layer keeps the single point the comment was
+// about; copying the SQL into specAgent would have destroyed it. The UPDATE in
+// commitReview carries the same predicate.
 //
 // Inert today: nothing retired so far has a tiered field, so no pair reachable
 // through affected_fields has an inactive row behind it. This is the guard for
 // the next retirement, not a fix for a live miscount.
 async function currentValues(runner, asset, field) {
-  const res = await runner.query(
-    'SELECT at.tenant_id, cf.char_max, cf.spec_note' +
-      '  FROM copy_fields cf' +
-      '  JOIN asset_types at ON at.id = cf.asset_type_id' +
-      ' WHERE at.name = $1 AND cf.field_name = $2' +
-      '   AND at.is_active' +
-      ' ORDER BY at.tenant_id',
-    [asset, field]
-  );
-  return res.rows;
+  return currentFieldValues(runner, asset, field);
 }
 
 // Distinct current value of one attribute across tenant rows, as a string for
@@ -293,8 +283,45 @@ async function getFlagForReview(flagId) {
     is_test: flag.is_test,
     status: flag.status,
     detected_at: flag.detected_at,
+    // The hash this flag was raised on. The form compares it against the stored
+    // proposal's pageHash: equal means the proposal was read from the same bytes
+    // that raised this flag, and different means the page has moved since, which
+    // is the one thing that makes a stored proposal stale rather than merely old.
+    new_hash: flag.new_hash,
     fields,
+    // The agentic read taken when this flag was raised, for the admin to compare
+    // against. Loaded SEPARATELY rather than added to loadFlag's SELECT — see
+    // loadAgentProposal for why that separation is the shadow-mode guarantee
+    // rather than a style choice.
+    agent_proposal: await loadAgentProposal(pool, flagId),
   };
+}
+
+// The persisted agentic proposal for a flag, or null.
+//
+// IT HAS ITS OWN LOADER, AND THAT IS THE POINT. loadFlag feeds BOTH the read path
+// (this function's caller) and the WRITE path — guardEdits, buildPreview and
+// commitReview all start from it. Adding agent_proposal to that SELECT would put
+// a model's suggestion on the object every write-path decision is made from, and
+// "shadow mode" would then rest on nobody happening to read a key that was sitting
+// right there. Loading it here instead makes it structural: the write path cannot
+// read a column it never selects, and a future edit that wanted to would have to
+// add the read itself, in a diff that says so.
+//
+// 42703 → null, for the same deploy-order reason recordChange retries its INSERT:
+// Railway ships main before anybody runs scripts/migrateAddAgentProposal.js, and
+// the approve form must render on that deploy exactly as it always did.
+async function loadAgentProposal(runner, flagId) {
+  try {
+    const res = await runner.query('SELECT agent_proposal FROM spec_review_queue WHERE id = $1', [
+      flagId,
+    ]);
+    return (res.rows && res.rows[0] && res.rows[0].agent_proposal) || null;
+  } catch (err) {
+    if (!isUndefinedColumn(err)) throw err;
+    warnMissingSchema('spec_review_queue.agent_proposal', 'scripts/migrateAddAgentProposal.js');
+    return null;
+  }
 }
 
 // Shared guard: load the flag, block test flags and non-pending flags, and check

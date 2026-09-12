@@ -12690,23 +12690,45 @@ test('the unmatched message names the gate that actually ran', () => {
 test('LiveSpecs reads and writes both skip deactivated asset rows', () => {
   const fs = require('fs');
   const path = require('path');
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8');
+  const src = read('services/specReview.js');
+  const watch = read('db/specWatch.js');
+  const agent = read('services/specAgent.js');
 
-  // currentValues is the ONLY read in the file that joins asset_types, and all
-  // four callers go through it — so one predicate here covers the review form,
-  // the preview, the pre-commit capture and the Gemini suggestion pass.
-  const read = src.slice(src.indexOf('async function currentValues'), src.indexOf('// Distinct current value'));
-  assert.match(read, /JOIN asset_types at ON at\.id = cf\.asset_type_id/);
-  assert.match(read, /AND at\.is_active/, 'the shared read filters inactive assets');
-  assert.strictEqual(
-    (src.match(/JOIN asset_types at ON at\.id = cf\.asset_type_id/g) || []).length,
-    1,
-    'still exactly one asset_types read — a second would need its own filter'
+  // THE SHARED READ MOVED — specReview.currentValues is now a delegation to
+  // db/specWatch.currentFieldValues — AND THE PROPERTY DID NOT. One function
+  // still joins asset_types for every LiveSpecs caller, so one predicate here
+  // still covers the review form, the preview, the pre-commit capture, the
+  // Gemini suggestion pass and (new) the detector's persisted proposal.
+  //
+  // It moved because services/specAgent.js became a caller and could not import
+  // specReview: specDetector requires specAgent, and specReview requires
+  // specDetector, so that import would close a cycle. Copying the SQL into
+  // specAgent was the alternative, and it is the thing this test exists to
+  // prevent — which is why the assertion followed the function down rather than
+  // being deleted with it.
+  const shared = sliceBetween(watch, 'async function currentFieldValues', '\n}');
+  assert.match(shared, /JOIN asset_types at ON at\.id = cf\.asset_type_id/);
+  assert.match(shared, /AND at\.is_active/, 'the shared read filters inactive assets');
+
+  // STILL EXACTLY ONE, and now counted across all three files rather than one —
+  // a second read anywhere in the LiveSpecs path would need its own filter, and
+  // the whole point of the move was that there is no second one.
+  const joins = (s) => (s.match(/JOIN asset_types at ON at\.id = cf\.asset_type_id/g) || []).length;
+  assert.strictEqual(joins(watch), 1, 'the one asset_types read lives in db/specWatch');
+  assert.strictEqual(joins(src), 0, 'specReview delegates rather than holding a copy');
+  assert.strictEqual(joins(agent), 0, 'specAgent delegates rather than holding a copy');
+  // And the delegation is real: a currentValues that stopped calling through
+  // would satisfy every count above while reading nothing.
+  assert.match(
+    sliceBetween(src, 'async function currentValues', '\n}'),
+    /return currentFieldValues\(runner, asset, field\)/,
+    'specReview.currentValues calls the shared read'
   );
 
   // The write must agree with the read: `before` is captured through
   // currentValues, so a row the capture skipped must not then be written.
-  const write = src.slice(src.indexOf("'UPDATE copy_fields cf'"), src.indexOf('RETURNING at.tenant_id'));
+  const write = sliceBetween(src, "'UPDATE copy_fields cf'", 'RETURNING at.tenant_id');
   assert.match(write, /AND at\.is_active/, 'and so does the write');
 });
 
@@ -18691,7 +18713,7 @@ function fakeDetectorPool(rows) {
 // Load a FRESH detector bound to a fake pool. specDetector and db/specWatch both
 // destructure getPool at require time, so the patch has to happen before either
 // is loaded — hence the cache eviction rather than a simple assignment.
-async function runDetectorWith({ rows, fetchImpl, detectionOpts }) {
+async function runDetectorWith({ rows, fetchImpl, detectionOpts, agentImpl }) {
   const db = require('../src/db');
   const realGetPool = db.getPool;
   const realFetch = globalThis.fetch;
@@ -18701,6 +18723,21 @@ async function runDetectorWith({ rows, fetchImpl, detectionOpts }) {
   const pool = fakeDetectorPool(rows);
   db.getPool = () => pool;
   globalThis.fetch = fetchImpl;
+  // THE AGENTIC READ IS PATCHED ON THE MODULE, NOT INJECTED THROUGH A PARAMETER.
+  // Same mechanism as db.getPool above and for the same reason: specDetector
+  // DESTRUCTURES readSpecProposal at require time, and the harness evicts and
+  // re-requires specDetector below, so a patch applied here is what the fresh
+  // copy binds to. Leaving runDetection's signature alone matters — a test-only
+  // parameter on the function the weekly cron calls is a seam production would
+  // carry forever for the tests' benefit.
+  //
+  // Unpatched, the REAL reader runs and returns null (no GEMINI_API_KEY in the
+  // suite, so readerEnabled() is false), which is the correct default for every
+  // pre-existing detection test: they assert flag and hash behaviour that must be
+  // byte-identical whether or not a proposal was taken.
+  const agent = require('../src/services/specAgent');
+  const realRead = agent.readSpecProposal;
+  if (agentImpl) agent.readSpecProposal = agentImpl;
   // The confirm-on-refetch path sleeps 1.5s by default. The module reads this at
   // LOAD, and we evict it below, so setting the env here is enough — no fake
   // timers, no stubbed sleep. It is also why the `|| 1500` this used to use had
@@ -18718,6 +18755,7 @@ async function runDetectorWith({ rows, fetchImpl, detectionOpts }) {
   } finally {
     db.getPool = realGetPool;
     globalThis.fetch = realFetch;
+    agent.readSpecProposal = realRead;
     if (realDelay === undefined) delete process.env.SPEC_REFETCH_DELAY_MS;
     else process.env.SPEC_REFETCH_DELAY_MS = realDelay;
     delete require.cache[detPath];
@@ -23900,4 +23938,862 @@ test('migrateFixLinkedInCarouselAnchor: the boundary fallback is refused by the 
     'so the heading is the only eligible candidate');
   assert.match(fallback.why, /EXTENDS PAST SECTION\.to/,
     'and the candidate itself records that, so the refusal is not a surprise');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AGENTIC SPEC EXTRACTION IN THE DETECTION FLOW
+//
+// The proposal services/specAgent.js takes when the detector raises a flag, and
+// persists on spec_review_queue.agent_proposal.
+//
+// WHAT THESE ARE GUARDING, stated once so the individual cases read as instances
+// rather than as a pile: every failure mode here is SILENT. A proposal that
+// records `[]` for a read that never happened, a citation that renders as a quote
+// without being in the page, an ambiguity check that could not run and therefore
+// did not fire, an extraction throw that takes the weekly cron down until next
+// Monday, a 42703 that rolls back the flag along with the proposal — none of them
+// errors, and every one of them produces output a reader is entitled to believe.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const specAgent = require('../src/services/specAgent');
+
+// A page with the shape the real ones have: a limit, and a second limit for the
+// same field under a different condition. This is LinkedIn Carousel's actual
+// published situation (45 to a destination URL, 30 with a Lead Gen Form CTA),
+// which src/data/defaultAssets.js already carries a note about.
+const CONDITIONAL_PAGE =
+  'Card headline: 45 characters. If the carousel CTA opens a Lead Gen Form, the cap is 30 characters.';
+const PLAIN_PAGE = 'Headline: 40 characters maximum. Body text is limited to 90 characters.';
+
+function agentField(over) {
+  return Object.assign(
+    { asset: 'A', field: 'Headline', current: specAgent.collapseCurrentCharMax([{ char_max: 45 }]) },
+    over || {}
+  );
+}
+function extracted(over) {
+  return Object.assign(
+    { suggested_char_max: 40, snippet: 'Headline: 40 characters maximum', candidates: [], confidence: 'high' },
+    over || {}
+  );
+}
+function proposalFor(over, pageText) {
+  return specAgent.buildFieldProposal({
+    field: agentField(),
+    extracted: extracted(over),
+    pageText: pageText || PLAIN_PAGE,
+    rowAmbiguities: [],
+    truncated: false,
+  });
+}
+
+// --- Citation verification ---------------------------------------------------
+
+test('agent citation: the three verification tiers, and a miss is a miss', () => {
+  const page = 'Headline:  40 characters   maximum. See the Table above.';
+  // Exact.
+  assert.deepStrictEqual(specAgent.verifyCitation('40 characters', page).tier, 'exact');
+  // Whitespace — the tag-boundary case. normalize() collapses runs, but a model
+  // quoting from a rendered table commonly returns single spaces where the page
+  // has several.
+  const ws = specAgent.verifyCitation('Headline: 40 characters maximum', page);
+  assert.strictEqual(ws.verified, true);
+  assert.strictEqual(ws.tier, 'whitespace');
+  // Case — the other documented way a good anchor silently misses.
+  const ci = specAgent.verifyCitation('see the table above', page);
+  assert.strictEqual(ci.verified, true);
+  assert.strictEqual(ci.tier, 'case');
+  // Absent.
+  const none = specAgent.verifyCitation('Headline: 55 characters', page);
+  assert.strictEqual(none.verified, false);
+  assert.strictEqual(none.tier, 'none');
+  // An empty snippet is not a verified one — this is the branch that would
+  // otherwise let "no citation at all" pass as grounded.
+  assert.strictEqual(specAgent.verifyCitation('', page).verified, false);
+  assert.strictEqual(specAgent.verifyCitation(null, page).verified, false);
+});
+
+test('agent citation: an unverifiable quote is DEMOTED AND SURFACED, never suppressed', () => {
+  const p = proposalFor({ snippet: 'Headline: 55 characters per line', confidence: 'high' });
+
+  // The quote is emptied — it is what makes an ungrounded number look sourced,
+  // and it is the one thing that must not reach the admin form.
+  assert.strictEqual(p.snippet, '', 'the unverifiable quote is not stored');
+  // The NUMBER survives. Dropping it would hide that the model proposed
+  // something, which is the opposite of surfacing.
+  assert.strictEqual(p.suggestedCharMax, 40, 'the proposed value is still reported');
+  assert.strictEqual(p.confidence, 'low', 'and a "high" from the model is pinned to the floor');
+  assert.ok(
+    p.ambiguities.includes('citation_unverified'),
+    'the reviewer is told the model could not ground it'
+  );
+  assert.ok(p.ambiguityDetail.citation_unverified, 'and why');
+});
+
+test('agent citation: a loose match verifies AND raises its own ambiguity', () => {
+  // Both facts are kept. Rounding a fuzzy match up to "verified" loses the
+  // warning; rounding it down to "unverified" throws away a real citation.
+  const p = proposalFor({ snippet: 'headline: 40 CHARACTERS maximum' });
+  assert.notStrictEqual(p.snippet, '', 'a real match on a real page is kept');
+  assert.strictEqual(p.citationTier, 'case');
+  assert.ok(p.ambiguities.includes('citation_fuzzy_match'));
+  assert.ok(!p.ambiguities.includes('citation_unverified'));
+});
+
+test('agent citation: a field the model correctly declined is NOT an unverified citation', () => {
+  // Null value, no snippet. Marking this as an ungrounded citation would bury the
+  // real ones under a code that fires on every silent field.
+  const p = proposalFor({ suggested_char_max: null, snippet: '', confidence: 'low' });
+  assert.strictEqual(p.suggestedCharMax, null);
+  assert.ok(!p.ambiguities.includes('citation_unverified'),
+    'declining to answer is not a failed citation');
+});
+
+test('agent citation: a verified quote that omits the number supports nothing', () => {
+  // The quote is really on the page, and it is not evidence for this value.
+  const p = proposalFor({ suggested_char_max: 40, snippet: 'Body text is limited to' });
+  assert.notStrictEqual(p.snippet, '', 'the quote verified');
+  assert.ok(p.ambiguities.includes('snippet_omits_number'));
+});
+
+// --- Ambiguity triggers ------------------------------------------------------
+
+test('agent ambiguity: the LinkedIn Carousel conditional case is caught', () => {
+  // THE CASE THE FEATURE EXISTS FOR. The page states 45, and states 30 for the
+  // same field under a Lead Gen Form CTA. An extraction returning 45 is not wrong
+  // about the page — it is silent about the half that changes the answer.
+  const p = specAgent.buildFieldProposal({
+    field: agentField({ field: 'Card 1 Headline' }),
+    extracted: extracted({ suggested_char_max: 45, snippet: 'Card headline: 45 characters', candidates: [45, 30] }),
+    pageText: CONDITIONAL_PAGE,
+    rowAmbiguities: [],
+    truncated: false,
+  });
+  assert.ok(p.ambiguities.includes('conditional_limit'), 'the conditional wording is detected');
+  assert.ok(p.ambiguities.includes('multiple_candidates'), 'and both numbers are reported');
+  assert.deepStrictEqual(p.candidates.sort((a, b) => a - b), [30, 45]);
+  assert.notStrictEqual(p.confidence, 'high', 'so it cannot arrive wearing high confidence');
+
+  // 45 → 30 is a 33% move and deliberately does NOT trip large_delta. The
+  // division of labour is the point: the conditional triggers catch this class,
+  // and a delta threshold set low enough to also catch it would fire on every
+  // routine correction.
+  assert.ok(!p.ambiguities.includes('large_delta'));
+});
+
+test('agent ambiguity: conditional detection is SCOPED to the cited line, not the page', () => {
+  // A multi-format spec page has conditional wording somewhere on it, always. A
+  // whole-page search would therefore flag every field on every such page, which
+  // is noise rather than over-inclusion.
+  const page =
+    'Headline: 40 characters maximum.' +
+    ' '.repeat(50) +
+    'x'.repeat(900) +
+    ' If you are running a Lead Gen Form, different limits apply.';
+  const p = proposalFor({ snippet: 'Headline: 40 characters maximum' }, page);
+  assert.ok(!p.ambiguities.includes('conditional_limit'),
+    'wording 900 characters away does not condition this line');
+});
+
+test('agent ambiguity: a large move from the stored value is flagged', () => {
+  const p = specAgent.buildFieldProposal({
+    field: agentField({ current: specAgent.collapseCurrentCharMax([{ char_max: 600 }]) }),
+    extracted: extracted({ suggested_char_max: 255, snippet: 'Headline: 40 characters maximum' }),
+    pageText: PLAIN_PAGE,
+    rowAmbiguities: [],
+    truncated: false,
+  });
+  assert.ok(p.ambiguities.includes('large_delta'));
+  assert.match(p.ambiguityDetail.large_delta, /600 → 255/);
+});
+
+test('agent ambiguity: an implausible value is flagged as one', () => {
+  const p = proposalFor({ suggested_char_max: 90000, snippet: 'Headline: 40 characters maximum' });
+  assert.ok(p.ambiguities.includes('implausible_value'),
+    'a five-figure "character limit" is a pixel size or a file size read off the wrong table');
+});
+
+test('agent ambiguity: tenant divergence blocks the delta rather than computing a wrong one', () => {
+  // commitReview writes by asset+field with no tenant predicate, so tenants CAN
+  // hold different values, and distinctValue reports that as "45 | 30". A delta
+  // against that string is a delta against nothing.
+  const current = specAgent.collapseCurrentCharMax([{ char_max: 45 }, { char_max: 30 }]);
+  assert.strictEqual(current.diverges, true);
+  assert.strictEqual(current.numeric, null, 'there is no single number to compare against');
+  const p = specAgent.buildFieldProposal({
+    field: agentField({ current }),
+    extracted: extracted({ suggested_char_max: 500, snippet: 'Headline: 40 characters maximum' }),
+    pageText: PLAIN_PAGE,
+    rowAmbiguities: [],
+    truncated: false,
+  });
+  assert.ok(p.ambiguities.includes('current_value_diverges'));
+  assert.ok(!p.ambiguities.includes('large_delta'), 'and no delta is invented from a joined string');
+});
+
+test('agent ambiguity: the current-value collapse agrees with specReview.distinctValue', () => {
+  // A CONSISTENCY CHECK BETWEEN TWO FILES, not a claim about either. specAgent
+  // cannot import specReview (that would close a require cycle through
+  // specDetector), so it derives the display string itself. The two must agree,
+  // because the admin form renders specReview's and the proposal stores this one
+  // beside it — two spellings of one value on one screen is the drift this
+  // project keeps recording.
+  const spec = require('../src/services/specReview.js');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+  assert.match(src, /function distinctValue\(rows, attr\)/, 'the function this is checked against exists');
+  for (const rows of [
+    [{ char_max: 45 }],
+    [{ char_max: 45 }, { char_max: 45 }],
+    [{ char_max: 45 }, { char_max: 30 }],
+    [{ char_max: null }],
+    [],
+  ]) {
+    // distinctValue is private, so drive the collapse through the same rowValue
+    // semantics it uses: null/undefined → '', joined with ' | '.
+    const expected = Array.from(
+      new Set(rows.map((r) => (r.char_max === null || r.char_max === undefined ? '' : String(r.char_max))))
+    ).join(' | ');
+    assert.strictEqual(
+      specAgent.collapseCurrentCharMax(rows).display,
+      expected,
+      `collapse disagrees on ${JSON.stringify(rows)}`
+    );
+  }
+  assert.strictEqual(typeof spec.getSuggestions, 'function');
+});
+
+test('agent ambiguity: change history ABSENT is not change history ZERO', () => {
+  const A = specAgent.AMBIGUITY;
+  // Zero changes = first change since baseline. A real trigger.
+  assert.strictEqual(specAgent.changeHistoryAmbiguity({ change_count: 0 }), A.FIRST_CHANGE);
+  assert.strictEqual(specAgent.changeHistoryAmbiguity({ change_count: null }), A.FIRST_CHANGE);
+  // A row with history is not flagged.
+  assert.strictEqual(specAgent.changeHistoryAmbiguity({ change_count: 3 }), null);
+  // THE ONE THAT WOULD BE WRONG QUIETLY: on a pre-migration database the column
+  // is ABSENT, and "cannot assess" must not read as "assessed and passed". That
+  // is the same key-presence rule the detector's own run-history writes use.
+  assert.strictEqual(specAgent.changeHistoryAmbiguity({}), A.HISTORY_UNAVAILABLE);
+  assert.strictEqual(specAgent.changeHistoryAmbiguity(null), A.HISTORY_UNAVAILABLE);
+});
+
+test('agent confidence: ambiguities cap it and never raise it', () => {
+  const cap = specAgent.cappedConfidence;
+  assert.strictEqual(cap('high', []), 'high', 'a clean high stays high');
+  assert.strictEqual(cap('high', ['large_delta']), 'medium');
+  assert.strictEqual(cap('medium', ['large_delta']), 'medium', 'capped, not laddered down forever');
+  assert.strictEqual(cap('low', []), 'low');
+  // An unverifiable citation pins to the floor whatever else is true.
+  assert.strictEqual(cap('high', ['citation_unverified']), 'low');
+  // A model returning nonsense for its own confidence defaults to the floor
+  // rather than to the middle.
+  assert.strictEqual(cap('certain', []), 'low');
+  assert.strictEqual(cap(undefined, []), 'low');
+});
+
+// --- The stored shape --------------------------------------------------------
+
+test('agent shape: `fields` is ABSENT on every outcome but a read', async () => {
+  // THE INVARIANT A READER OF THIS COLUMN MUST NOT LOSE. `[]` is a claim about a
+  // page — "we looked, it stated nothing". A skipped or failed read makes no such
+  // claim, and the live case is not hypothetical: affected_fields is a snapshot
+  // nothing recomputes, so a stale watch row yields no pairs, and recording that
+  // as `[]` would report a gate problem as a page fact.
+  const withKey = (o) => Object.prototype.hasOwnProperty.call(o, 'fields');
+
+  // THE READER HAS TO BE ON for any of this to be reachable: readerEnabled() is
+  // checked BEFORE the cap, deliberately, because a switched-off reader did not
+  // skip for want of budget — it did not run at all, and NULL is what says so.
+  // The suite has no GEMINI_API_KEY, so without this every case below returns
+  // null and the assertions would be testing the off switch four times.
+  const cfg = require('../src/config');
+  const realKey = cfg.GEMINI_API_KEY;
+  cfg.GEMINI_API_KEY = 'test-key-present';
+  try {
+
+  const capped = await specAgent.readSpecProposal({
+    row: { affected_fields: [{ asset: 'A', field: 'F' }], change_count: 1 },
+    pageText: PLAIN_PAGE,
+    pageHash: 'abc',
+    budget: { max: 1, used: 1 },
+  });
+  assert.strictEqual(capped.status, 'skipped');
+  assert.strictEqual(capped.reason, 'run_cap');
+  assert.strictEqual(capped.capped, true);
+  assert.strictEqual(withKey(capped), false, 'a capped read carries no fields key');
+
+  const noPairs = await specAgent.readSpecProposal({
+    row: { affected_fields: [], change_count: 1 },
+    pageText: PLAIN_PAGE,
+    pageHash: 'abc',
+    budget: { max: 3, used: 0 },
+  });
+  assert.strictEqual(noPairs.status, 'skipped');
+  assert.strictEqual(noPairs.reason, 'no_affected_fields');
+  assert.strictEqual(withKey(noPairs), false, 'an empty gate is not an empty page');
+  assert.strictEqual(noPairs.capped, false, 'and it is not the cap that stopped it');
+
+  } finally {
+    cfg.GEMINI_API_KEY = realKey;
+  }
+});
+
+test('agent shape: the reader OFF stores NULL, which is not a skipped read', async () => {
+  // NULL means no agentic read happened — a pre-migration row, or the feature
+  // switched off. That is a different fact from "the reader ran and declined",
+  // and only the second is evidence about this flag.
+  const realKey = require('../src/config').GEMINI_API_KEY;
+  const cfg = require('../src/config');
+  try {
+    cfg.GEMINI_API_KEY = '';
+    const out = await specAgent.readSpecProposal({
+      row: { affected_fields: [{ asset: 'A', field: 'F' }] },
+      pageText: PLAIN_PAGE,
+      pageHash: 'abc',
+    });
+    assert.strictEqual(out, null, 'no key → NULL, not a status object');
+  } finally {
+    cfg.GEMINI_API_KEY = realKey;
+  }
+});
+
+test('agent shape: readSpecProposal NEVER throws — the cron cannot die for a proposal', async () => {
+  // railway.cron.json sets restartPolicyType: NEVER, so a throw out of the weekly
+  // run is not a retry, it is no detection until next Monday. Same guard, and the
+  // same reasoning, as adapters/web.js notifyDraftComplete.
+  const cfg = require('../src/config');
+  const realKey = cfg.GEMINI_API_KEY;
+  try {
+    cfg.GEMINI_API_KEY = 'test-key-present';
+    // INJECTED THROUGH `runner`, NOT BY PATCHING db.getPool. specAgent
+    // DESTRUCTURES getPool at require time, so a later patch on the db module is
+    // invisible to it — the first version of this test did exactly that, the call
+    // fell out at the 'no database' guard, and it reported a clean `failed`
+    // without ever reaching the catch it exists to exercise. That is this
+    // project's own test-rig failure (a rig that omits what the code under test
+    // reads, so the path does nothing and reports success), and the assertion on
+    // the MESSAGE is what caught it: `status === 'failed'` alone passed.
+    const explodingPool = {
+      query: async () => {
+        throw new Error('boom: the database went away mid-run');
+      },
+    };
+    const out = await specAgent.readSpecProposal({
+      row: { affected_fields: [{ asset: 'A', field: 'F' }], change_count: 1 },
+      pageText: PLAIN_PAGE,
+      pageHash: 'abc',
+      budget: { max: 3, used: 0 },
+      runner: explodingPool,
+    });
+    // It returns a RECORD of the failure rather than propagating it, and the
+    // record says what happened rather than going quiet.
+    assert.strictEqual(out.status, 'failed');
+    assert.match(out.reason, /boom/, 'the real throw was caught, not a guard short-circuit');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(out, 'fields'), false,
+      'a failed read makes no claim about the page');
+  } finally {
+    cfg.GEMINI_API_KEY = realKey;
+  }
+});
+
+test('agent shape: a model failure is recorded as failed, not as an empty page', async () => {
+  // extractSpecValues returns [] on a model failure AND on a page that states
+  // nothing — one value for two outcomes. Harmless for getSuggestions, a FALSE
+  // RECORD here. extractSpecValuesDetailed exists for exactly this distinction,
+  // and this is the test that it is actually used.
+  const gem = require('../src/services/gemini.js');
+  const cfg = require('../src/config');
+  const db = require('../src/db');
+  const realDetailed = gem.extractSpecValuesDetailed;
+  const realKey = cfg.GEMINI_API_KEY;
+  const realGetPool = db.getPool;
+  const agentPath = require.resolve('../src/services/specAgent');
+  try {
+    cfg.GEMINI_API_KEY = 'test-key-present';
+    db.getPool = () => ({ query: async () => ({ rows: [{ tenant_id: 't', char_max: 45 }] }) });
+    gem.extractSpecValuesDetailed = async () => ({ ok: false, rows: [], error: 'Gemini API error 429', truncated: false });
+    delete require.cache[agentPath];
+    const fresh = require(agentPath);
+    const out = await fresh.readSpecProposal({
+      row: { affected_fields: [{ asset: 'A', field: 'F' }], change_count: 1 },
+      pageText: PLAIN_PAGE,
+      pageHash: 'abc',
+      budget: { max: 3, used: 0 },
+    });
+    assert.strictEqual(out.status, 'failed');
+    assert.match(out.reason, /429/, 'and it names the cause rather than a generic failure');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(out, 'fields'), false);
+
+    // And the other side of the same distinction: a SUCCESSFUL call that
+    // proposed nothing does carry `fields`, empty.
+    gem.extractSpecValuesDetailed = async () => ({ ok: true, rows: [], error: null, truncated: false });
+    delete require.cache[agentPath];
+    const fresh2 = require(agentPath);
+    const empty = await fresh2.readSpecProposal({
+      row: { affected_fields: [{ asset: 'A', field: 'F' }], change_count: 1 },
+      pageText: PLAIN_PAGE,
+      pageHash: 'abc',
+      budget: { max: 3, used: 0 },
+    });
+    assert.strictEqual(empty.status, 'read');
+    assert.strictEqual(Array.isArray(empty.fields), true);
+    assert.strictEqual(empty.fields.length, 1, 'one row per requested field, even with no value');
+    assert.strictEqual(empty.fields[0].suggestedCharMax, null);
+  } finally {
+    gem.extractSpecValuesDetailed = realDetailed;
+    cfg.GEMINI_API_KEY = realKey;
+    db.getPool = realGetPool;
+    delete require.cache[agentPath];
+  }
+});
+
+test('agent shape: a read records WHAT PRODUCED IT', async () => {
+  // Shadow mode's question is comparative — whether one model catches conditional
+  // limits another misses. A stored proposal that cannot name its model and
+  // prompt pools two populations the moment either changes, and no later query
+  // can unpool them.
+  const gem = require('../src/services/gemini.js');
+  const cfg = require('../src/config');
+  const db = require('../src/db');
+  const realDetailed = gem.extractSpecValuesDetailed;
+  const realKey = cfg.GEMINI_API_KEY;
+  const realGetPool = db.getPool;
+  const agentPath = require.resolve('../src/services/specAgent');
+  try {
+    cfg.GEMINI_API_KEY = 'test-key-present';
+    db.getPool = () => ({ query: async () => ({ rows: [{ tenant_id: 't', char_max: 45 }] }) });
+    gem.extractSpecValuesDetailed = async () => ({
+      ok: true,
+      truncated: true,
+      error: null,
+      rows: [{ ref: 0, suggested_char_max: 40, snippet: 'Headline: 40 characters maximum', candidates: [], confidence: 'high' }],
+    });
+    delete require.cache[agentPath];
+    const fresh = require(agentPath);
+    const out = await fresh.readSpecProposal({
+      row: { affected_fields: [{ asset: 'A', field: 'Headline' }], change_count: 2 },
+      pageText: PLAIN_PAGE,
+      pageHash: 'deadbeef',
+      budget: { max: 3, used: 1 },
+    });
+    assert.strictEqual(out.status, 'read');
+    assert.strictEqual(out.pageHash, 'deadbeef', 'the bytes it was read from are identified');
+    assert.ok(out.model, 'the model is recorded');
+    assert.strictEqual(out.promptVersion, gem.SPEC_EXTRACT_PROMPT_VERSION);
+    assert.ok(out.readAt, 'and when');
+    assert.deepStrictEqual(out.budget, { max: 3, used: 1 }, 'and where in the run budget it fell');
+    // The page-text cut is its OWN flag, separate from the run cap. Folding them
+    // into one `capped` would misreport which one fired.
+    assert.strictEqual(out.pageTextTruncated, true);
+    assert.strictEqual(out.capped, false, 'the run cap did not stop this read');
+    assert.ok(out.fields[0].ambiguities.includes('page_text_truncated'),
+      'and the reviewer is told the model saw only part of the page');
+  } finally {
+    gem.extractSpecValuesDetailed = realDetailed;
+    cfg.GEMINI_API_KEY = realKey;
+    db.getPool = realGetPool;
+    delete require.cache[agentPath];
+  }
+});
+
+// --- The detector wiring -----------------------------------------------------
+//
+// Driven through the REAL runDetection with a stubbed pool and a stubbed reader,
+// because every property below is about what the run WRITES and in what order —
+// none of it is visible to a source scan.
+
+// A stub reader that records how it was called and answers from a script. The
+// call record is what makes "it was given the bytes that raised the flag"
+// assertable rather than assumed.
+function fakeAgent(...answers) {
+  let i = 0;
+  const calls = [];
+  const impl = async (args) => {
+    calls.push(args);
+    const a = answers[Math.min(i, answers.length - 1)];
+    i += 1;
+    return typeof a === 'function' ? a(args) : a;
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+// The INSERT that creates a flag, whichever column set it used.
+function queueInserts(queries) {
+  return queries.filter((q) => /INSERT INTO spec_review_queue/.test(q.sql));
+}
+
+test('detector: the proposal rides the SAME INSERT as the flag', async () => {
+  const proposal = { version: 1, status: 'read', capped: false, pageHash: 'x', fields: [] };
+  const agentImpl = fakeAgent(proposal);
+  const { out, queries } = await runDetectorWith({
+    rows: [historyRow({ current_hash: 'stale-hash-from-last-week' })],
+    fetchImpl: historyFetch,
+    agentImpl,
+  });
+  assert.strictEqual(out.summary.changed, 1);
+
+  // ONE insert, carrying the proposal. Not an insert plus a follow-up UPDATE:
+  // a flag and its proposal are one atomic write, so no reader can catch a flag
+  // on its way to having one.
+  const inserts = queueInserts(queries);
+  assert.strictEqual(inserts.length, 1);
+  assert.match(inserts[0].sql, /agent_proposal/);
+  assert.strictEqual(inserts[0].params.length, 6);
+  assert.deepStrictEqual(JSON.parse(inserts[0].params[5]), proposal);
+  assert.ok(
+    !queries.some((q) => /UPDATE spec_review_queue SET agent_proposal/.test(q.sql)),
+    'never a second write to fill it in'
+  );
+
+  // IT WAS GIVEN THE BYTES THAT RAISED THE FLAG. This is the whole reason the
+  // read happens at detection time instead of at review time — that text is
+  // never persisted, so nothing later can ask the same question of it.
+  assert.strictEqual(agentImpl.calls.length, 1);
+  const call = agentImpl.calls[0];
+  assert.match(call.pageText, /a stable spec page with limits 30 and 90/);
+  assert.ok(!/<html>/.test(call.pageText), 'normalized text, the bytes that were hashed');
+  const hashWrite = hashUpdate(queries)[0];
+  assert.strictEqual(call.pageHash, hashWrite.params[0],
+    'and the hash it is recorded against is the one the run just advanced to');
+});
+
+test('detector: an extraction failure still records the flag and advances the hash', async () => {
+  // GUARD ONE. railway.cron.json sets restartPolicyType: NEVER, so the cost of
+  // getting this wrong is not a retry — it is no detection until next Monday.
+  const { out, queries } = await runDetectorWith({
+    rows: [historyRow({ current_hash: 'stale' })],
+    fetchImpl: historyFetch,
+    agentImpl: fakeAgent({ version: 1, status: 'failed', reason: 'Gemini API error 429', capped: false }),
+  });
+  assert.strictEqual(out.summary.changed, 1, 'the change is still detected');
+  assert.strictEqual(out.summary.agent_failed, 1, 'and the failure is counted, not hidden');
+  assert.strictEqual(queueInserts(queries).length, 1, 'the flag is still raised');
+  assert.strictEqual(hashUpdate(queries).length, 1, 'and the hash still advances');
+  // A re-flag on every subsequent run is what an un-advanced hash would cause.
+  assert.strictEqual(hashUpdate(queries)[0].params[0].length, 64, 'to the real new hash');
+});
+
+test('detector: a 42703 on the proposal column keeps BOTH the flag and the hash', async () => {
+  // THE SHARPEST VERSION OF GUARD ONE, and the reason it is not merely defensive:
+  // Railway auto-deploys main, so this code runs against a database without
+  // agent_proposal until somebody runs the migration. The INSERT is inside the
+  // transaction that also advances current_hash, so an unhandled undefined-column
+  // would roll back the FLAG TOO — and the detector would report `changed` in its
+  // summary while the queue stayed empty and the hash never moved. Silent, and it
+  // would last until the migration ran.
+  const rows = [historyRow({ current_hash: 'stale' })];
+  const inner = fakeDetectorPool(rows);
+  let refusals = 0;
+  const run = async (sql, params) => {
+    if (/INSERT INTO spec_review_queue/.test(String(sql)) && /agent_proposal/.test(String(sql))) {
+      refusals += 1;
+      const e = new Error('column "agent_proposal" of relation "spec_review_queue" does not exist');
+      e.code = '42703';
+      throw e;
+    }
+    return inner.query(sql, params);
+  };
+  const pool = { queries: inner.queries, query: run, connect: async () => ({ query: run, release() {} }) };
+
+  const db = require('../src/db');
+  const realGetPool = db.getPool;
+  const realFetch = globalThis.fetch;
+  const realDelay = process.env.SPEC_REFETCH_DELAY_MS;
+  const detPath = require.resolve('../src/services/specDetector');
+  const wlPath = require.resolve('../src/db/specWatch');
+  const agent = require('../src/services/specAgent');
+  const realRead = agent.readSpecProposal;
+  try {
+    db.getPool = () => pool;
+    globalThis.fetch = historyFetch;
+    process.env.SPEC_REFETCH_DELAY_MS = '0';
+    agent.readSpecProposal = fakeAgent({ version: 1, status: 'read', capped: false, fields: [] });
+    delete require.cache[detPath];
+    delete require.cache[wlPath];
+    const out = await require(detPath).runDetection({});
+
+    assert.strictEqual(refusals, 1, 'the modern INSERT was tried first');
+    assert.strictEqual(out.summary.changed, 1);
+    const inserts = queueInserts(pool.queries);
+    assert.strictEqual(inserts.length, 1, 'and the retry landed a flag');
+    assert.ok(!/agent_proposal/.test(inserts[0].sql), 'without the column this database lacks');
+    assert.strictEqual(inserts[0].params.length, 5, 'and without its parameter');
+    // The transaction was RESTARTED, not continued: Postgres aborts the whole
+    // transaction on a failed statement, so a retry issued inside the same one
+    // would fail with 25P02 and lose the flag anyway.
+    const txn = pool.queries.filter((q) => /^(BEGIN|COMMIT|ROLLBACK)$/.test(q.sql));
+    assert.deepStrictEqual(txn.map((q) => q.sql), ['BEGIN', 'ROLLBACK', 'BEGIN', 'COMMIT']);
+    assert.strictEqual(hashUpdate(pool.queries).length, 1, 'and the hash still advanced');
+  } finally {
+    db.getPool = realGetPool;
+    globalThis.fetch = realFetch;
+    agent.readSpecProposal = realRead;
+    if (realDelay === undefined) delete process.env.SPEC_REFETCH_DELAY_MS;
+    else process.env.SPEC_REFETCH_DELAY_MS = realDelay;
+    delete require.cache[detPath];
+    delete require.cache[wlPath];
+  }
+});
+
+test('detector: the per-run cap bounds extractions and every refusal is recorded', async () => {
+  // GUARD TWO. The pathological run is not one noisy page — a normalize() change
+  // re-hashes every watched row at once, so it is ALL of them, and the budget is
+  // what stops one deploy turning into eleven extractions in a burst.
+  const realMax = process.env.SPEC_AGENT_MAX_EXTRACTIONS;
+  try {
+    process.env.SPEC_AGENT_MAX_EXTRACTIONS = '1';
+    const agentImpl = fakeAgent((args) =>
+      args.budget.used >= args.budget.max
+        ? { version: 1, status: 'skipped', reason: 'run_cap', capped: true }
+        : { version: 1, status: 'read', capped: false, fields: [] }
+    );
+    const { out } = await runDetectorWith({
+      rows: [
+        historyRow({ id: 1, source_url: 'https://example.test/one', current_hash: 'stale' }),
+        historyRow({ id: 2, source_url: 'https://example.test/two', current_hash: 'stale' }),
+        historyRow({ id: 3, source_url: 'https://example.test/three', current_hash: 'stale' }),
+      ],
+      fetchImpl: historyFetch,
+      agentImpl,
+    });
+
+    assert.strictEqual(out.summary.changed, 3, 'every change is still detected and flagged');
+    assert.strictEqual(out.summary.agent_read, 1, 'but only one page is read');
+    assert.strictEqual(out.summary.agent_skipped, 2);
+    // A REFUSAL IS RECORDED, NOT SILENTLY ABSENT. A flag with no proposal and a
+    // flag whose proposal was refused for budget look identical otherwise, and
+    // only the second says the cap was hit.
+    const skipped = out.results.filter((r) => r.agent && r.agent.status === 'skipped');
+    assert.strictEqual(skipped.length, 2);
+    assert.ok(skipped.every((r) => r.agent.reason === 'run_cap'));
+    // The compact run report carries counts only on a read — a field count on a
+    // skipped read would be a number about a page nobody looked at.
+    assert.ok(skipped.every((r) => !('fields' in r.agent)));
+  } finally {
+    if (realMax === undefined) delete process.env.SPEC_AGENT_MAX_EXTRACTIONS;
+    else process.env.SPEC_AGENT_MAX_EXTRACTIONS = realMax;
+  }
+});
+
+test('detector: a FAILED extraction spends budget, so an outage cannot burn the whole list', async () => {
+  // The one recorded outage on this project was a spent Gemini balance returning
+  // 429 to every call while the system kept trying. A budget that only counted
+  // successes would make eleven doomed requests instead of three.
+  const realMax = process.env.SPEC_AGENT_MAX_EXTRACTIONS;
+  try {
+    process.env.SPEC_AGENT_MAX_EXTRACTIONS = '2';
+    const seen = [];
+    const agentImpl = fakeAgent((args) => {
+      seen.push(args.budget.used);
+      return args.budget.used >= args.budget.max
+        ? { version: 1, status: 'skipped', reason: 'run_cap', capped: true }
+        : { version: 1, status: 'failed', reason: 'Gemini API error 429', capped: false };
+    });
+    const { out } = await runDetectorWith({
+      rows: [1, 2, 3, 4].map((id) =>
+        historyRow({ id, source_url: `https://example.test/${id}`, current_hash: 'stale' })
+      ),
+      fetchImpl: historyFetch,
+      agentImpl,
+    });
+    assert.deepStrictEqual(seen, [0, 1, 2, 2], 'each failure advanced the counter');
+    assert.strictEqual(out.summary.agent_failed, 2, 'two attempts, then the budget closed');
+    assert.strictEqual(out.summary.agent_skipped, 2);
+    assert.strictEqual(out.summary.changed, 4, 'and all four flags were still raised');
+  } finally {
+    if (realMax === undefined) delete process.env.SPEC_AGENT_MAX_EXTRACTIONS;
+    else process.env.SPEC_AGENT_MAX_EXTRACTIONS = realMax;
+  }
+});
+
+test('detector: no flag, no proposal — the read is only ever taken on a confirmed change', async () => {
+  const agentImpl = fakeAgent({ version: 1, status: 'read', capped: false, fields: [] });
+  // Baseline (no prior hash), then unchanged. Neither raises a flag, so neither
+  // has anywhere to put a proposal — and neither should spend a model call.
+  const first = await runDetectorWith({
+    rows: [historyRow({ current_hash: null })], fetchImpl: historyFetch, agentImpl,
+  });
+  assert.strictEqual(first.out.summary.baseline, 1);
+  const hash = hashUpdate(first.queries)[0].params[0];
+
+  const second = await runDetectorWith({
+    rows: [historyRow({ current_hash: hash })], fetchImpl: historyFetch, agentImpl,
+  });
+  assert.strictEqual(second.out.summary.unchanged, 1);
+
+  assert.strictEqual(agentImpl.calls.length, 0, 'the reader was never called');
+  assert.strictEqual(first.out.summary.agent_read, 0);
+  assert.strictEqual(second.out.summary.agent_read, 0);
+  assert.strictEqual(first.out.results[0].agent, null, 'and the run reports that plainly');
+});
+
+test('detector: with the reader off, the run is byte-identical to what it always was', async () => {
+  // The suite has no GEMINI_API_KEY, so this drives the REAL reader, not a stub —
+  // which is the case every pre-existing detection test in this file runs under.
+  // A proposal must be purely additive: no change to the flag, the hash, or the
+  // statuses, whether or not one was taken.
+  const { out, queries } = await runDetectorWith({
+    rows: [historyRow({ current_hash: 'stale' })],
+    fetchImpl: historyFetch,
+  });
+  assert.strictEqual(out.summary.changed, 1);
+  assert.strictEqual(out.summary.agent_read, 0);
+  assert.strictEqual(out.summary.agent_skipped, 0);
+  assert.strictEqual(out.summary.agent_failed, 0);
+  const inserts = queueInserts(queries);
+  assert.strictEqual(inserts.length, 1);
+  // NULL is stored, which is exactly "no agentic read happened".
+  assert.strictEqual(inserts[0].params[5], null);
+  assert.strictEqual(out.results[0].agent, null);
+});
+
+// --- Shadow mode is structural, not a matter of discipline -------------------
+
+test('shadow mode: the WRITE path cannot read the proposal, because it never loads it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specReview.js'), 'utf8');
+
+  // loadFlag feeds BOTH the read path (getFlagForReview) and every write-path
+  // decision (guardEdits → buildPreview → commitReview). Putting agent_proposal
+  // on its SELECT would place a model's suggestion on the object those decisions
+  // are made from, and "shadow mode" would then rest on nobody happening to read
+  // a key that was sitting right there.
+  const loadFlag = sliceBetween(src, 'async function loadFlag(runner, flagId)', '\n}');
+  assert.ok(!/agent_proposal/.test(loadFlag),
+    'loadFlag does not select agent_proposal — the write path cannot read what it never loads');
+
+  // The write functions never name it either.
+  for (const fn of ['async function guardEdits', 'async function buildPreview', 'async function commitReview']) {
+    const body = sliceBetween(src, fn, '\n}\n');
+    assert.ok(!/agent_proposal/.test(body), `${fn} never reads the proposal`);
+  }
+
+  // And it IS loaded, separately, for the read path — otherwise the admin form
+  // would have nothing to render and this test would pass on a broken feature.
+  assert.match(src, /async function loadAgentProposal\(runner, flagId\)/);
+  const forReview = sliceBetween(src, 'async function getFlagForReview', '\n}\n');
+  assert.match(forReview, /loadAgentProposal\(pool, flagId\)/);
+});
+
+test('shadow mode: the detector is the only writer of agent_proposal', () => {
+  // A grep across src/ rather than a claim about one file: the column is written
+  // in exactly one place, and every other module that names it only reads.
+  const files = [];
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) walk(full);
+      else if (name.endsWith('.js')) files.push(full);
+    }
+  };
+  walk(path.join(__dirname, '..', 'src'));
+
+  const writers = [];
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    if (!/agent_proposal/.test(src)) continue;
+    if (/INSERT INTO spec_review_queue[\s\S]{0,400}agent_proposal|UPDATE spec_review_queue[\s\S]{0,200}agent_proposal/.test(src)) {
+      writers.push(path.relative(path.join(__dirname, '..'), f));
+    }
+  }
+  assert.deepStrictEqual(writers, ['src/services/specDetector.js'],
+    'exactly one writer, and it is the detector');
+});
+
+// --- The admin surface -------------------------------------------------------
+//
+// STRING TESTS, AND LABELLED AS SUCH. public/admin.html is read here as text —
+// no jsdom, no browser, no JS execution — so these assert that the rules are
+// PRESENT, never that the page renders correctly. Per CLAUDE.md the device is
+// the test for anything visual; this is the tripwire under it.
+
+test('admin: the proposal renderer branches on status, never on the fields key', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+
+  const lookup = sliceBetween(html, 'function agentProposalFor(flag, fld)', '\n}');
+  assert.match(lookup, /p\.status !== 'read'/,
+    'a skipped or failed read carries no fields key, so status is the only safe guard');
+
+  // The ungrounded rule: the number renders, the input does not pre-fill.
+  const form = sliceBetween(html, 'const fp = agentProposalFor(flag, fld);', 'tbody.appendChild');
+  assert.match(form, /indexOf\('citation_unverified'\) < 0/);
+  assert.match(form, /if \(grounded\) cmax\.value/,
+    'only a grounded proposal reaches the input');
+
+  // The block still SHOWS an ungrounded value — demoted and surfaced, never
+  // suppressed. Suppressing it would hide that the model proposed anything.
+  const block = sliceBetween(html, 'function agentFieldBlock(fp)', 'function agentPanelNote');
+  assert.match(block, /agent-val/);
+  assert.match(block, /ungrounded/);
+
+  // Every ambiguity code the service can emit has a sentence for a person. A
+  // missing one renders the raw code, which is not wrong but is not a sentence.
+  const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specAgent.js'), 'utf8');
+  const codes = Array.from(agentSrc.matchAll(/^\s+[A-Z_]+: '([a-z_]+)',$/gm)).map((m) => m[1]);
+  assert.ok(codes.length >= 10, `found ${codes.length} ambiguity codes to check`);
+  const texts = sliceBetween(html, 'const AGENT_AMBIGUITY_TEXT = {', '};');
+  for (const code of codes) {
+    assert.ok(texts.includes(code + ':'), `admin.html has wording for ${code}`);
+  }
+});
+
+test('admin: the source page is a link, and the stored read says which bytes it read', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  const open = sliceBetween(html, 'async function openApprove(flagId)', 'const table =');
+  assert.match(open, /el\('a',\{href:flag\.source_url,target:'_blank',rel:'noopener noreferrer'/,
+    'confirming should be a glance, which needs the page one click away');
+
+  const note = sliceBetween(html, 'function agentPanelNote(flag)', '\n}');
+  // The one fact that makes a stored proposal STALE rather than merely old.
+  assert.match(note, /p\.pageHash !== flag\.new_hash/);
+  assert.match(note, /moved since/i);
+  // NULL and a non-read status say different things, and neither is "read".
+  assert.match(note, /No agentic read for this flag/);
+  assert.match(note, /did not read this page/);
+});
+
+test('report: the shadow-mode precision script is read-only and self-testable', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'agentProposalReport.js'), 'utf8');
+  // READ-ONLY is the property that makes it safe to run in production at any
+  // time, and the whole point of an instrument nobody hesitates to use.
+  for (const forbidden of [/\bINSERT\b/, /\bUPDATE\b/, /\bDELETE\b/, /\bALTER\b/]) {
+    assert.ok(!forbidden.test(src.replace(/--[^\n]*/g, '')), `no ${forbidden} in the report script`);
+  }
+  const rep = require('../scripts/agentProposalReport.js');
+  // SILENCE IS A MISS. A model that declines every field would otherwise report
+  // perfect precision, which is the reassuring-but-backwards number this
+  // project's own measurement history keeps producing.
+  assert.strictEqual(rep.scoreField({ suggestedCharMax: null }, '40'), rep.VERDICT.MISSED);
+  assert.strictEqual(rep.scoreField({ suggestedCharMax: 40 }, '40'), rep.VERDICT.AGREED);
+  assert.strictEqual(rep.scoreField({ suggestedCharMax: 40 }, '55'), rep.VERDICT.DISAGREED);
+  // Nothing committed is not a verdict either way, and must never divide into a rate.
+  assert.strictEqual(rep.scoreField({ suggestedCharMax: 40 }, null), rep.VERDICT.NO_OUTCOME);
+});
+
+test('admin: the source link is styled — A TRIPWIRE, not coverage', () => {
+  // WRITTEN AFTER A BROWSER FOUND IT, and labelled as a tripwire for exactly the
+  // reason CLAUDE.md gives: a structural test added once a device pass has
+  // located something stops that one thing returning, and says nothing about
+  // whether the page is right.
+  //
+  // WHAT IT FOUND. This anchor was added with no rule behind it, and admin.html
+  // has no `a` selector at all, so it inherited the user-agent default #0000EE.
+  // Measured in Chromium at 390px against the overlay's own rgb(21,44,112):
+  // 1.37:1, where the AA floor is 4.5. After the rule: 11.95:1. That is the
+  // .lib-resetbtn shape — a colour that looks unremarkable in source and is
+  // near-invisible on the surface it lands on — on the one control whose entire
+  // job is to be clicked.
+  //
+  // NOT MEASURED BY ANY COMMITTED TOOL. scripts/checkContrast.js has a fixture
+  // for settings.html only; admin.html is one of the three pages with none. The
+  // number above came from a throwaway script, which by this project's own rule
+  // makes it an assertion unless it is written down — so it is written down here,
+  // with the method: computed values composited over the opaque parent, which is
+  // exact on this page because it has no backdrop-filter anywhere.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.match(html, /#panel a \{[^}]*color: var\(--q-cream\)/,
+    'the anchor has an explicit colour rather than the user-agent default');
+  assert.match(html, /#panel a:visited \{[^}]*color: var\(--q-cream\)/,
+    'including :visited, which defaults to a still-darker purple');
+  assert.match(html, /#panel a \{[^}]*text-decoration: underline/,
+    'and hue is not the only thing marking it as a link');
 });

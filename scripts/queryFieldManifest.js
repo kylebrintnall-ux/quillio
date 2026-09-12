@@ -10,6 +10,36 @@
 //
 // Requires DATABASE_URL. Reads only — never writes. Sibling of queryProjects.js.
 //
+// ─── WHAT HAS ACTUALLY BEEN EXERCISED, AND HOW ──────────────────────────────
+// The first version of this file SELECTed `campaign_title` and failed on its
+// first real run: there is no such column, the campaign title is `projects.name`
+// (scripts/migrateDb.js). `--selftest` passed regardless, because it only drove
+// report(), which is pure and never sees the SQL.
+//
+// So the SQL is now covered two ways, and both are named because they cover
+// different things:
+//
+//   --selftest         derives the real projects columns from migrateDb.js's
+//                      CREATE TABLE plus every ALTER TABLE ... ADD COLUMN in
+//                      scripts/, and asserts each column this file reads is
+//                      DEFINED. Offline. Catches an invented name — the bug that
+//                      happened. Does NOT prove the column exists in the database
+//                      you are pointed at.
+//   a real Postgres    2026-09-12: schema built by running this repo's own
+//                      migrateDb.js and migrateAddProjectFieldManifest.js, a row
+//                      written through db/projects.saveProject with a manifest
+//                      from the real buildFieldManifest over a real appendBody
+//                      render of LinkedIn Carousel Ad, and all four argument
+//                      paths run against it. That is what settles whether the
+//                      query is well-formed; the derivation above cannot.
+//
+// The live run is the one that matters and the one nobody will repeat, so what
+// it established is written here rather than left in a terminal: version 2 with
+// nine fields, specVerifiedAt narrowed from a real Date through the JSONB round
+// trip, Card 1 carrying the full sentence and Cards 2-5 collapsed to the bare
+// attribution. If a future change makes any of that untrue, this paragraph is
+// the claim to disbelieve first.
+//
 // WHY THIS EXISTS RATHER THAN A PASTED ONE-LINER. The question it answers has
 // three possible answers that look alike in raw JSONB, and two of them are
 // failures that read as success:
@@ -25,6 +55,12 @@
 // Reading "not recorded" as "claimed nothing" is the one misreading that turns
 // this record into a false one, so the two are never printed the same way.
 
+// The columns this script reads, named ONCE so the SELECT and the schema check
+// below cannot disagree about what is being asserted. `name` is the campaign
+// title — there is no campaign_title column, which is what the first version of
+// this file got wrong.
+const PROJECT_COLUMNS = ['id', 'tenant_id', 'name', 'created_at', 'copy_doc_id', 'field_manifest'];
+
 const ARG = process.argv[2] || null;
 const BY_ID = ARG && /^\d+$/.test(ARG);
 
@@ -39,7 +75,7 @@ function report(project) {
   const say = (s) => out.push(s);
   if (!project) return ['[manifest] no project row found.'];
 
-  say(`project ${project.id} — ${project.campaign_title || '(untitled)'}`);
+  say(`project ${project.id} — ${project.name || '(untitled)'}`);
   say(`  tenant ${project.tenant_id}   created ${project.created_at}`);
   say(`  copy doc ${project.copy_doc_id || '(none)'}`);
 
@@ -110,8 +146,51 @@ function report(project) {
   return out;
 }
 
+// ─── THE CHECK THAT WOULD HAVE CAUGHT THE FIRST VERSION ─────────────────────
+// The first version of this script SELECTed `campaign_title`, a column that
+// exists nowhere in this codebase — the campaign title is `projects.name`. The
+// selftest passed anyway, because it only ever drove report(), which is pure and
+// never sees the SQL. A rig that omits the thing the code under test depends on
+// reports success while the path under test does nothing: CLAUDE.md's fourth
+// species, arriving in a script written days after that paragraph.
+//
+// So the column names are now derived from the repo's own schema and asserted.
+// Sources, both of which are the definitions the database was built from:
+//   scripts/migrateDb.js         CREATE TABLE projects (...)  — the base columns
+//   scripts/*.js                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS
+//
+// WHAT THIS PROVES AND WHAT IT DOES NOT. It proves a column is DEFINED somewhere
+// in this repo, which is exactly the failure that happened — an invented name.
+// It does NOT prove the column exists in the database you are pointed at: a
+// migration that has never been run defines a column no live table has. Only the
+// query settles that, which is why the live path also catches 42703 below and
+// says which migration is missing rather than surfacing a bare Postgres error.
+function projectColumnsFromRepo() {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname);
+  const found = new Set();
+
+  const base = fs.readFileSync(path.join(dir, 'migrateDb.js'), 'utf8');
+  const create = base.match(/CREATE TABLE IF NOT EXISTS projects \(([\s\S]*?)\)`/);
+  if (!create) throw new Error('could not locate CREATE TABLE projects in migrateDb.js');
+  for (const line of create[1].split('\n')) {
+    const m = line.trim().match(/^([a-z_]+)\s+[A-Z]/);
+    if (m) found.add(m[1]);
+  }
+
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.js')) continue;
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    const re = /ALTER TABLE projects\s+ADD COLUMN IF NOT EXISTS\s+([a-z_]+)/g;
+    let m;
+    while ((m = re.exec(src))) found.add(m[1]);
+  }
+  return found;
+}
+
 function selftest() {
-  const base = { id: 1, tenant_id: 'T', created_at: 'now', campaign_title: 'X', copy_doc_id: 'd' };
+  const base = { id: 1, tenant_id: 'T', created_at: 'now', name: 'X', copy_doc_id: 'd' };
   const cases = [
     ['NULL manifest', { ...base, field_manifest: null }, /NULL — meaning UNKNOWN/],
     ['v1', { ...base, field_manifest: { version: 1, writtenAt: 'w', fields: [{}] } }, /VERSION 1/],
@@ -138,6 +217,27 @@ function selftest() {
     }, /^(?!.*(?:VERSION 1|provenance key ABSENT|partial)).*field_manifest: version 2/s],
   ];
   let ok = true;
+
+  // SCHEMA FIRST — it is the check the live run actually failed on.
+  const schema = projectColumnsFromRepo();
+  console.log(`schema: ${schema.size} projects column(s) defined in this repo`);
+  for (const col of PROJECT_COLUMNS) {
+    const pass = schema.has(col);
+    if (!pass) ok = false;
+    console.log(`${pass ? 'ok  ' : 'FAIL'}  column ${col} is defined`);
+  }
+  // AND THE CHECK ITSELF IS NOT VACUOUS. A regex that matched nothing would make
+  // every line above pass trivially — an empty set has no counterexamples only
+  // because it has no members. Pin a column from each source.
+  for (const [label, col] of [['base table', 'name'], ['a migration', 'field_manifest']]) {
+    const pass = schema.has(col);
+    if (!pass) ok = false;
+    console.log(`${pass ? 'ok  ' : 'FAIL'}  derivation reaches ${label} (${col})`);
+  }
+  const invented = !schema.has('campaign_title');
+  if (!invented) ok = false;
+  console.log(`${invented ? 'ok  ' : 'FAIL'}  campaign_title is NOT a column (the original bug)`);
+
   for (const [name, row, expect] of cases) {
     const text = report(row).join('\n');
     const pass = expect.test(text);
@@ -175,7 +275,7 @@ async function main() {
     process.exit(1);
   }
   const client = new Client({ connectionString: url, ssl: sslFor(url) });
-  const cols = 'id, tenant_id, campaign_title, created_at, copy_doc_id, field_manifest';
+  const cols = PROJECT_COLUMNS.join(', ');
   try {
     await client.connect();
     let res;
@@ -188,6 +288,28 @@ async function main() {
     }
     console.log(report(res.rows[0]).join('\n'));
   } catch (err) {
+    // 42703 undefined_column — the one failure with a specific, actionable cause.
+    // A bare Postgres error here reads as a broken script; on this database it
+    // almost always means a migration has not been run. Named rather than
+    // guessed: the message says WHICH column and WHICH script supplies it.
+    if (err && err.code === '42703') {
+      const missing = /column "([a-z_]+)"/.exec(err.message);
+      const col = missing ? missing[1] : '(unknown)';
+      const SUPPLIED_BY = {
+        field_manifest: 'scripts/migrateAddProjectFieldManifest.js',
+        brief_raw: 'scripts/migrateAddProjectBriefRaw.js',
+        created_by: 'scripts/migrateAddUserCredentials.js',
+      };
+      console.error(`[manifest] this database has no projects.${col} column.`);
+      if (SUPPLIED_BY[col]) {
+        console.error(`[manifest] it is added by ${SUPPLIED_BY[col]} — run that first.`);
+      } else {
+        console.error('[manifest] that column is not one this script knows how to explain;');
+        console.error('[manifest] check it against scripts/migrateDb.js and the ALTER TABLE migrations.');
+      }
+      process.exitCode = 1;
+      return;
+    }
     console.error('[manifest] query failed: ' + err.message);
     process.exitCode = 1;
   } finally {

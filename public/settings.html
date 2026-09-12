@@ -3,14 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- iOS standalone mode is per-PAGE, not per-app: a page reachable from a
+       home-screen-installed shell that lacks this tag drops the visitor back
+       into a full Safari tab (URL bar, share/reload/tabs) the moment they
+       navigate to it. All three shells (and the / landing page) carry the
+       identical trio so navigating between them never breaks standalone. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <!-- default, not black-translucent: translucent extends the web content
+       UNDER the status bar, which needs viewport-fit=cover plus
+       env(safe-area-inset-top) padding on nav to keep the wordmark and links
+       clear of it — untested on real notched hardware from here, so the safe
+       choice is the style that reserves its own space and risks nothing. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Quillio" />
   <title>Quillio — Settings</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet" />
   <style>
+    /* ONE :root. This file used to declare two — a legacy block here and a v8
+       block ~215 lines below — and the only token they both defined was --ink,
+       so the v8 value won every use of var(--ink) in the file, including the
+       rules written above it (custom properties cascade per element and resolve
+       at use time, not in source order relative to the rule that reads them).
+       Measured before merging: zero elements on any panel computed to #111.
+       Every other token was unique to one block or the other, so neither block
+       could be deleted whole without dropping live tokens; they are merged
+       instead, each keeping the value it actually had at runtime. */
     :root {
       --accent: #4DD9D9;
-      --ink: #111;
+      --ink: #1A1A2E;        /* was --ink: #111 here and #1A1A2E below; #1A1A2E won */
       /* #666 measured 4.16:1 at 11px on .lib-asset — under the floor for the two
          smallest things that use it (.cf-meta, .cf-marker). #5a5a5a is 5.00:1
          there and darkens the other seventeen uses, all of which are larger and
@@ -22,6 +44,37 @@
       --soft: #f6f6f6;
       --navy: #1C1F3B;
       --cream: #F5F0E8;
+      /* --fg WAS NEVER DECLARED, and eight rules read it. An undeclared var()
+         with no fallback is invalid at computed-value time, which for `color`
+         (an inherited property) means the element inherits its parent's colour.
+         Measured, every one of those eight inherited #1A1A2E except .cf-meta b,
+         which sits inside .cf-meta and inherited var(--muted) instead — so no
+         single value of --fg preserves all eight. Declared here at the value
+         seven of them were already resolving to; .cf-meta b is pinned to
+         `inherit` at its own rule, which is exactly what it does today. */
+      --fg: var(--ink);
+      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
+      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF;
+
+      /* Rebrand palette (SURFACES-HANDOFF.md §0) — NEW NAMES, not new values for
+         the tokens above. --ink/--gold/--cream are dark text on light cards; the
+         rebrand's cards are transparent over a blue sky, so the same job now
+         mostly wants cream text instead. Redefining --ink etc. in place would
+         turn every existing dark-on-light rule into dark-on-dark in one commit.
+         These migrate in per rule, over later steps; the old tokens get deleted
+         only once nothing reads them any more. */
+      --q-cream: #FCF6E3;
+      --q-cream-85: rgba(252,246,227,.85);
+      --q-cream-75: rgba(252,246,227,.75);
+      --q-cream-55: rgba(252,246,227,.55);
+      --q-cream-35: rgba(252,246,227,.35);
+      --q-fill: #FDF6DC;      /* cream button fill */
+      --q-ink: #0A2233;       /* text on --q-fill only */
+      --q-gold: #F5C518;
+      --q-plum: #3D3566;
+      --q-glass: rgba(21,44,112,.55);
+      --q-display: 'StarCrush', serif;               /* already loaded below; no new @font-face */
+      --q-body: 'Zen Kaku Gothic New', sans-serif;    /* already the body font */
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; }
@@ -41,15 +94,6 @@
       justify-content: space-between;
       gap: 16px;
     }
-    nav .brand { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; cursor: pointer; }
-    nav .links { display: flex; gap: 16px; }
-    nav .navlink {
-      font-family: 'Zen Kaku Gothic New', sans-serif;
-      font-size: 15px; color: var(--muted); background: none; border: none;
-      padding: 0; font-weight: 600; cursor: pointer;
-    }
-    nav .navlink:hover { color: var(--ink); }
-    nav .navlink.active { color: var(--ink); }
 
     main { width: 100%; max-width: 860px; margin: 0 auto; padding: 24px 16px 56px; }
     .layout { display: flex; flex-direction: column; gap: 20px; }
@@ -73,7 +117,13 @@
     a { color: #1a9a9a; }
 
     label { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
-    input[type="text"], textarea {
+    /* Legacy pre-v8 rule, superseded by the v8 input[type="text"]/textarea/select
+       rule further down — normally that would be automatic (equal specificity,
+       later wins), but the v8 rule is now wrapped in :where() so it can't leak
+       into .hdr-field/.lib-new/etc (see its own comment). :where() drops out of
+       the specificity tiebreak entirely, so this rule has to be neutralised the
+       same way, or its ordinary specificity would let IT win back by default. */
+    :where(input[type="text"], textarea) {
       width: 100%; font: inherit; padding: 11px 12px;
       border: 1px solid var(--line); border-radius: 8px; resize: vertical; font-family: 'Zen Kaku Gothic New', sans-serif;
     }
@@ -114,15 +164,34 @@
     .terminal .t-p { margin: 6px 0; }
     textarea.terminal { min-height: 320px; white-space: pre; }
 
-    .note { display: flex; align-items: center; gap: 10px; color: var(--muted); margin: 12px 0; }
-    .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .note .dot { animation: none; } }
+    /* The pixel-art scroll, not a spinning ring — every circular CSS loader on
+       this page converged on the same GIF the brand already uses elsewhere. */
+    .loading-icon { width: 18px; height: 18px; image-rendering: pixelated; flex: none; }
 
-    .banner { font-family: 'Zen Kaku Gothic New', sans-serif; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #b3e6c4; background: #d8f5e0; color: #0a5d2a; border-radius: 8px; font-size: 14px; }
-    .error { font-family: 'Zen Kaku Gothic New', sans-serif; margin-top: 12px; padding: 10px 12px; border: 1px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 8px; font-size: 14px; }
-    .empty { margin-top: 16px; padding: 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; }
-    .progress { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    /* FIXES-HANDOFF.md §9 — messages: cream only, pixel glyphs, no hue.
+       Complete rules (not a patch), so the old partial overrides further down
+       ("Notes / banners / states on the sky") are gone with them — nothing was
+       left for them to override. */
+    .banner, .error, .note { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.5;
+                             padding: 10px 12px; margin-top: 14px; display: flex; gap: 10px;
+                             align-items: flex-start; border-radius: 0; background: transparent; }
+    .banner { border: 1px solid var(--q-cream); color: var(--q-cream); }
+    .banner::before { content: '\2713'; flex: 0 0 16px; width: 16px; height: 16px;
+                      border: 1px solid var(--q-cream); font-family: 'StarCrush', serif;
+                      font-size: 11px; line-height: 16px; text-align: center; }
+    .error  { border: 1px solid var(--q-cream); color: var(--q-cream); }
+    .error::before  { content: '!'; flex: 0 0 16px; width: 16px; height: 16px;
+                      border: 1px solid var(--q-cream); font-family: 'StarCrush', serif;
+                      font-size: 11px; line-height: 16px; text-align: center; }
+    .note   { border: 1px dotted var(--q-cream-75); color: var(--q-cream-75); }
+    .empty  { border: 1px dotted var(--q-cream); color: var(--q-cream-75);
+              font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; text-align: center;
+              padding: 30px 20px; background: transparent; border-radius: 0; }
+
+    .progress { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; color: var(--q-cream-75); margin-bottom: 10px; }
+    .spinner  { display: inline-block; width: 32px; height: 32px;
+                background: url('/assets/gifs/quillio_magic_v27.gif?v=__BUILD__') center / contain no-repeat;
+                image-rendering: pixelated; vertical-align: -10px; margin-right: 8px; }
     .hidden { display: none !important; }
 
     /* --- Doc Header setup (step 6b) --- */
@@ -147,22 +216,22 @@
     .hdr-upload-card .btn { margin: 0; }
     .hdr-upload-title { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 600; font-size: 14px; color: var(--ink); }
     .hdr-hint { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.55); font-size: 12px; margin: 0; }
-    /* Branded bottom toast (ported from the app) — replaces the generic banner. */
+    /* Branded bottom toast (ported from the app) — replaces the generic banner.
+       SURFACES-HANDOFF.md §5. */
     .toast {
       position: fixed; left: 50%; bottom: 28px; z-index: 300; max-width: 380px; width: max-content;
       transform: translateX(-50%) translateY(12px);
-      background: rgba(26,26,46,0.92); color: #fff;
-      border: 1.5px solid rgba(77,217,217,0.35); border-radius: 12px; padding: 13px 20px;
+      background: rgba(21,44,112,.55); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      color: var(--q-cream);
+      border: 1px solid var(--q-cream); border-radius: 0; padding: 13px 20px;
       font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; font-weight: 500; letter-spacing: 0.01em;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.32); text-align: center;
+      text-align: center;
       opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     /* Lock-in gets its own identity: gold accent + StarCrush wordmark styling. */
     .toast.locked { border-color: rgba(201,168,76,0.6); border-left: 3px solid var(--gold); }
     .toast.locked .tk { font-family: 'StarCrush', serif; font-weight: normal; color: var(--gold); letter-spacing: 0.03em; margin-right: 7px; }
-    .hdr-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
-    @media (max-width: 860px) { .hdr-cols { grid-template-columns: 1fr; } }
     .hdr-block {
       background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px; margin: 0 0 10px;
@@ -173,8 +242,13 @@
     .hdr-iconbtn { font-family: 'Zen Kaku Gothic New', sans-serif; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; line-height: 1; }
     .hdr-iconbtn:hover { color: var(--ink, #1a1a2e); border-color: var(--accent); }
     .hdr-field { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px; align-items: center; margin: 6px 0; }
-    .hdr-field input, .hdr-block > input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; box-sizing: border-box; font-family: 'Zen Kaku Gothic New', sans-serif; }
-    .hdr-field select { padding: 7px 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; font-family: 'Zen Kaku Gothic New', sans-serif; }
+    /* background/color restated explicitly on both rules below — neither used
+       to set them and both were relying on the generic bare-field rule, which
+       FIXES-HANDOFF.md bucket 2 moved to cream-on-transparent. .hdr-block is on
+       the "no spec values yet" list, so its fields stay at what that fallback
+       used to supply rather than drifting with it. */
+    .hdr-field input, .hdr-block > input { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; box-sizing: border-box; font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(255,255,255,0.5); color: var(--ink); -webkit-appearance: none; }
+    .hdr-field select { padding: 7px 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; color: var(--ink); font-family: 'Zen Kaku Gothic New', sans-serif; }
     .hdr-addfield { margin-top: 6px; }
     .hdr-preview { border: 1px solid var(--line); border-radius: 10px; padding: 18px; background: #fff; min-height: 120px; overflow-x: auto; }
     .pv-heading { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 700; font-size: 20px; margin: 0 0 6px; }
@@ -188,7 +262,7 @@
 
     /* --- File-naming pattern (§3, step 7b) --- */
     .hdr-divider { height: 1px; background: rgba(255,255,255,0.4); margin: 28px 0 20px; }
-    .naming-preview-label { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.72); margin: 0 0 8px; }
+    .naming-preview-label { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(252,246,227,0.72); margin: 0 0 8px; }
     .naming-preview {
       background: #fff; border: 1.5px solid rgba(255,255,255,0.68); border-radius: 12px;
       padding: 12px 14px; margin: 0 0 16px; font-family: 'Zen Kaku Gothic New', sans-serif;
@@ -207,12 +281,14 @@
       flex: none; width: 26px; height: 30px; display: flex; align-items: center; justify-content: center;
       color: rgba(26,26,46,0.4); font-size: 16px; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
     }
+    /* color restated explicitly — this rule never set it and was relying on
+       the generic bare-field rule, same story as .hdr-field just above. */
     .naming-seg select, .naming-seg input {
-      font: inherit; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; background: #fff; font-family: 'Zen Kaku Gothic New', sans-serif;
+      font: inherit; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; background: #fff; color: var(--ink); font-family: 'Zen Kaku Gothic New', sans-serif;
     }
     .naming-seg .naming-type { flex: none; }
     .naming-seg .naming-val { flex: 1 1 auto; min-width: 0; }
-    .naming-empty { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.6); font-size: 13px; margin: 4px 0 12px; }
+    .naming-empty { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.6); font-size: 13px; margin: 4px 0 12px; }
 
     @media (min-width: 720px) {
       .content { min-width: 0; }
@@ -227,70 +303,146 @@
       src: url('/fonts/Star_Crush.otf?v=__BUILD__') format('opentype');
       font-weight: normal; font-style: normal; font-display: swap;
     }
-    :root {
-      --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
-      --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF; --ink: #1A1A2E;
-    }
     html, body { height: auto; min-height: 100%; overflow-x: hidden; }
-    body { font-family: 'Zen Kaku Gothic New', sans-serif; background: var(--ink); color: var(--ink); -webkit-font-smoothing: antialiased; }
-    .sky-bg { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, #1E78BE 0%, #2FA8DC 35%, #3BBDE0 60%, #4DD9D9 100%); }
+    body { font-family: 'Zen Kaku Gothic New', sans-serif; background: var(--ink); color: var(--q-cream); -webkit-font-smoothing: antialiased; }
+    /* SURFACES-HANDOFF.md §2 — nine stops, not two: the blue holds deep through
+       78% of the height and only opens up in the last fifth, so the pale band
+       meets the grass instead of washing out the middle of the page. */
+    .sky-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background: linear-gradient(180deg,
+        #2E5FD6 0%,  #3068E0 30%, #3272E9 50%, #357EEF 65%, #3C8BF4 78%,
+        #539CF5 87%, #84B6F6 93%, #B3D0F9 97%, #DEEBFC 100%);
+    }
     .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+    /* Paper texture (SURFACES-HANDOFF.md §3) — above the sky, below the ground
+       band. soft-light at 28% is the whole effect; if it reads as visible grain
+       rather than almost subliminal, the blend mode got dropped, not the opacity. */
+    .clouds-wrap::before {
+      content: ''; position: absolute; inset: 0;
+      background: url('/assets/images/texture.jpg?v=__BUILD__') center / 600px auto repeat;
+      mix-blend-mode: soft-light; opacity: .28;
+    }
+    /* Ground band for the bird system: mobile is a single centred tree, desktop
+       (>=768px, matching the app's own breakpoint below) is a mirrored pair
+       inset 16px. Both render at an integer pixel scale of the source art —
+       mobile 1x, desktop 2x — so the grass and tree pixel grids agree. */
+    .clouds-wrap::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+      height: 84px; image-rendering: pixelated;
+      background:
+        url('/assets/images/tree-right-solid.png?v=__BUILD__') bottom 0 center / 124px 84px no-repeat,
+        url('/assets/images/grass-tile-solid.png?v=__BUILD__') bottom left / 256px 44px repeat-x;
+    }
+    @media (min-width: 768px) {
+      .clouds-wrap::after {
+        height: 168px;
+        background:
+          url('/assets/images/tree-left-solid.png?v=__BUILD__')  bottom 0 left  16px / 248px 168px no-repeat,
+          url('/assets/images/tree-right-solid.png?v=__BUILD__') bottom 0 right 16px / 248px 168px no-repeat,
+          url('/assets/images/grass-tile-solid.png?v=__BUILD__') bottom left / 512px 88px repeat-x;
+      }
+    }
+    /* Scroll-aware haze over the ground band, published as --q-scrim by
+       bird-system.js (1 mid-page, fading to 0 over the last 260px of scroll,
+       0 on a page too short to scroll). Runs to bottom: 0, not the top of the
+       tree band — stopping at the band's edge leaves a visible hard line
+       across the gradient. The band is a ::after so it still paints above
+       this and stays crisp. The var(--q-scrim, 1) default degrades to a
+       static haze with no JS. */
+    .ground-scrim { position: absolute; left: 0; right: 0; bottom: 0; height: 234px; pointer-events: none;
+      opacity: var(--q-scrim, 1); transition: opacity .18s linear;
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.22) 40%, rgba(222,235,252,.52) 66%, rgba(222,235,252,.74) 100%); }
+    @media (min-width: 768px) { .ground-scrim { height: 398px; } }
+    /* CONTENT fade, not a ground fade — .ground-scrim hazes the BACKGROUND
+       behind scrolling content; this fades the CONTENT ITSELF as it nears the
+       bottom of the viewport, so a card or panel never sits half-legible
+       against the ground band. Same colour and --q-scrim binding as
+       .ground-scrim, but a separate fixed element ABOVE main (z-index 5)
+       rather than behind it, ramping further (.98 vs .74) since it has to
+       fully obscure content, not just soften a background. pointer-events:
+       none — fading content is still tappable underneath. Clears at the true
+       bottom exactly when .ground-scrim does. */
+    .content-fade { position: fixed; left: 0; right: 0; bottom: 0; height: 234px; z-index: 10; pointer-events: none;
+      opacity: var(--q-scrim, 1); transition: opacity .18s linear;
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.55) 55%, rgba(222,235,252,.88) 80%, rgba(222,235,252,.98) 100%); }
+    @media (min-width: 768px) { .content-fade { height: 398px; } }
 
+    /* Transparent, sitting directly on the sky gradient — see the fuller note
+       on the same rule in app.html. That note now also covers WHY this is 30
+       and not 2: nav and main are sibling stacking contexts, and main's
+       z-index 5 was outranking nav's notification dropdown regardless of the
+       dropdown's own (higher, but locally-scoped) z-index. */
     nav {
       font-family: 'Zen Kaku Gothic New', sans-serif;
-      position: relative; z-index: 10;
+      position: relative; z-index: 30;
       display: flex; align-items: center; justify-content: space-between;
-      height: 58px; padding: 0 12px 0 18px; gap: 8px;
-      background: rgba(26,26,46,0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid rgba(77,217,217,0.15);
+      height: 58px; padding: 0 20px;
+      background: transparent; border: none; box-shadow: none;
     }
-    /* 6px, not 8: quillio-quill.png was trimmed to its alpha bounds, so the
-       3.3px of transparent padding that used to sit between the glyph and the
-       wordmark is gone from the asset. The quill is a diagonal whose mass sits up
-       and right, so it wants to sit tighter than a rectangular mark. See the
-       fuller note on the same rule in app.html. */
-    .nav-logo { display: flex; align-items: center; gap: 6px; flex: none; background: none; border: none; padding: 0; cursor: pointer; }
-    /* auto, not pixelated: this asset is an anti-aliased raster (6,014 colours,
-       graded alpha), not pixel art, so nearest-neighbour was discarding smoothing
-       the file actually has. Every workflow GIF IS pixel art and keeps pixelated.
-       See the fuller note on the same rule in app.html. */
-    .nav-quill-img { width: 28px; height: 28px; image-rendering: auto; object-fit: contain; }
+    /* The quill glyph beside the wordmark is gone (spec sheet: wordmark alone).
+       .nav-logo no longer needs a gap — it has one child now. */
+    .nav-logo { display: flex; align-items: center; flex: none; background: none; border: none; padding: 0; cursor: pointer; }
     .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
     .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
+    /* SURFACES-HANDOFF.md §7 — text-only: no pill, no filled active state.
+       The `/` between links is generated rather than added to the shared
+       nav.html markup, so nav.html itself needs no change. */
     .nav-link {
-      font-family: 'StarCrush', serif; font-size: 12px; color: rgba(255,255,255,0.4);
-      background: none; border: none; padding: 7px 9px; border-radius: 8px;
-      letter-spacing: 0.04em; white-space: nowrap; cursor: pointer; transition: color 0.15s, background 0.15s;
+      font-family: 'StarCrush', serif; font-size: 12px; color: rgba(252,246,227,0.55);
+      background: none; border: none; padding: 7px 9px; border-radius: 0;
+      letter-spacing: 0.04em; white-space: nowrap; cursor: pointer; transition: color 0.15s;
     }
-    .nav-link:hover { color: #fff; background: rgba(255,255,255,0.08); }
-    .nav-link.active { color: var(--sky-btm); background: rgba(77,217,217,0.12); }
+    .nav-link + .nav-link::before { content: '/'; margin-right: 9px; color: rgba(252,246,227,0.3); }
+    .nav-link:hover { color: var(--q-gold); }
+    .nav-link.active { color: var(--q-gold); background: none; }
 
-    main { position: relative; z-index: 5; max-width: 520px; margin: 0 auto; width: 100%; padding: 24px 26px 60px; }
+    /* Bottom padding was 60px — see the fuller note on the same rule in
+       app.html: nowhere near enough to clear the fixed ground band
+       (.clouds-wrap::after), so a long panel's last rows scrolled up under
+       the tree/grass art instead of stopping short of it. */
+    main { position: relative; z-index: 5; max-width: 520px; margin: 0 auto; width: 100%; padding: 24px 26px 300px; }
     .layout { flex-direction: column; gap: 0; }
     .content { flex: 1; }
 
     /* Title + tabs */
-    .settings-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--ink); letter-spacing: 0.02em; margin-bottom: 20px; }
+    .settings-title { font-family: 'StarCrush', serif; font-size: 26px; color: var(--q-cream); letter-spacing: 0.02em; margin-bottom: 20px; }
 
-    /* Settings hub — default landing: a grid of cards routing into each section. */
-    .hub { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 24px; }
+    /* Settings hub — default landing: a grid of cards routing into each section.
+       SURFACES-HANDOFF.md §4, settings.html has no literal glass-panel/
+       project-card match — these are its own equivalent, per exact spec-sheet
+       CSS.
+       ICONS, SECOND VERSION. The first was 6 rect-only glyphs with hardcoded
+       per-rect fills stripped so they could inherit --q-cream from .hub-icon
+       svg below — that fixed the colour but not the shape: Doc Header and
+       Template Documents drew an outer rectangle plus inner subpaths wound
+       the SAME direction, so under the default `nonzero` fill rule the inner
+       shapes filled solid instead of punching through, and both rendered as
+       an illegible monochrome block. Replaced wholesale with the spec sheet's
+       6 path-based glyphs (14x14 viewBox, scaled up by .hub-icon svg's own
+       width/height): Voice Guide and Template Documents declare
+       `fill-rule="evenodd"` because their subpaths (the page fold, the text
+       lines) need the hole punched through; the other four are disjoint
+       shapes that fill correctly under either rule. None of the six sets its
+       own `fill`, so all six inherit --q-cream exactly as intended the first
+       time. */
+    .hub { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+    @media (min-width: 768px) { .hub { grid-template-columns: repeat(3, 1fr); gap: 16px; } }
     .hub-card { appearance: none; -webkit-appearance: none; cursor: pointer;
-      display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;
-      padding: 22px 16px; border-radius: 16px;
-      background: rgba(255,255,255,0.35); border: 1.5px solid rgba(255,255,255,0.55);
-      box-shadow: 0 4px 16px rgba(26,26,46,0.06); transition: transform 0.12s, background 0.15s, box-shadow 0.15s; }
-    .hub-card:hover { background: rgba(255,255,255,0.55); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(26,26,46,0.12); }
-    .hub-icon { font-family: 'Zen Kaku Gothic New', sans-serif; width: 56px; height: 56px; border-radius: 12px; background: var(--cream);
-      display: flex; align-items: center; justify-content: center; }
-    .hub-icon svg { width: 40px; height: 40px; image-rendering: pixelated; display: block; }
-    .hub-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .hub-desc { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; line-height: 1.4; color: rgba(26,26,46,0.68); }
-    @media (max-width: 420px) { .hub { grid-template-columns: 1fr; } }
+      display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      padding: 20px 16px; text-align: left; transition: background 0.15s; }
+    .hub-card:hover { background: rgba(252,246,227,.1); }
+    .hub-icon { width: 26px; height: 26px; display: grid; place-items: center;
+      border: 1px solid var(--q-cream); }
+    .hub-icon svg { width: 18px; height: 18px; fill: var(--q-cream); image-rendering: pixelated; display: block; }
+    .hub-name { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.02em; color: var(--q-cream); }
+    .hub-desc { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; line-height: 1.4; color: rgba(252,246,227,0.68); }
 
     /* Back link at the top of a section (returns to the hub). */
     .settings-back { appearance: none; -webkit-appearance: none; cursor: pointer;
       align-self: flex-start; background: none; border: none; padding: 0 0 4px; margin-bottom: 12px;
-      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: var(--ink); }
+      font-family: 'StarCrush', serif; font-size: 12px; letter-spacing: 0.04em; color: var(--q-cream); }
     .settings-back:hover { color: var(--sky-btm); }
 
     /* Workspace connection rows: logo + name/status, action (button or badge) on the right. */
@@ -309,18 +461,28 @@
     .eyebrow { display: none; } /* v8: single Settings title + tabs */
     /* A simple per-section header so the copy below it reads with context. */
     .panel h1 {
-      font-family: 'StarCrush', serif; font-size: 19px; color: var(--ink);
+      font-family: 'StarCrush', serif; font-size: 19px; color: var(--q-cream);
       letter-spacing: 0.02em; margin: 0 0 14px; font-weight: normal;
     }
-    h2 { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(26,26,46,0.72); margin: 22px 0 10px; }
+    /* h2 is cream for every section header in the panel flow — all bare sky.
+       The one exception is .lib-new's own "New/Edit asset type" and "Set your
+       own limits" headings: that card kept its pre-rebrand translucent white
+       fill (see the note by .lib-new below), so its h2 is scoped back to
+       --ink alongside the other shared classes it did not convert. */
+    h2 { font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(252,246,227,0.72); margin: 22px 0 10px; }
 
     /* Voice terminal */
+    /* FIXES-HANDOFF.md §9 — cream border, denser navy, no radius. The one
+       *content* surface that keeps glass rather than a plain border: this is
+       the voice guide's document body, and the tint separates it from the
+       prose around it. */
     .terminal {
-      background: rgba(26,26,46,0.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      color: rgba(255,255,255,0.85); border: 1.5px solid rgba(77,217,217,0.2); border-radius: 16px; padding: 20px;
-      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.7;
+      border: 1px solid var(--q-cream); background: rgba(21,44,112,.42);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      color: var(--q-cream-85); font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 13px; line-height: 1.7; border-radius: 0; padding: 16px 18px;
     }
-    .terminal .t-h { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px; letter-spacing: 0.03em; color: var(--sky-btm); margin: 14px 0 4px; }
+    .terminal .t-h { font-family: 'StarCrush', serif; font-size: 15px; color: var(--q-cream); margin: 14px 0 4px; }
     .terminal .t-h:first-child { margin-top: 0; }
     .terminal .t-p { color: rgba(255,255,255,0.75); margin: 6px 0; }
     .terminal .t-ul { margin: 4px 0 10px; padding-left: 20px; }
@@ -348,28 +510,67 @@
     #voice-view .btnrow .btn { font-family: 'Zen Kaku Gothic New', sans-serif; flex: 1; font-size: 10px; padding: 11px 8px; text-align: center; }
 
     /* Rows / cards */
-    label { font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--ink); font-weight: 500; font-size: 13px; }
-    input[type="text"], textarea {
-      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
-      color: var(--ink); -webkit-appearance: none; padding: 12px 14px;
+    /* Cream: this is the fallback for a bare <label> with no more specific
+       rule (#voice-q-label, "Drive folder URL"), which is bare sky. .lib-new
+       label and .tpl-namerow label already override it with their own
+       colors and are unaffected. */
+    label { font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--q-cream); font-weight: 500; font-size: 13px; }
+    /* FIXES-HANDOFF.md bucket 2 — transparent, cream border, square: one rule
+       for every form field on the page, select included for the first time.
+       :where() ZEROES this selector's specificity on purpose: input[type="text"]
+       is a class-tier selector (an attribute selector), so bare it would tie
+       .hdr-field input / .lib-new input[type="text"] / .naming-seg input and
+       (being later in the file) WIN the tiebreak — exactly the leak into
+       .hdr-upload-card, .hdr-block, .naming-preview, .naming-seg and .lib-new
+       this pass is not supposed to touch. :where() keeps this a fallback: any
+       more specific rule, anywhere in the file regardless of order, still wins. */
+    /* 16px, not 14 — iOS Safari auto-zooms the whole viewport on focusing any
+       input/textarea/select under 16px, and that zoom can persist through a
+       JS-driven screen change rather than resetting on its own (see the
+       fuller note on .glass-textarea in app.html, where this was reported). */
+    :where(input[type="text"], textarea, select) {
+      width: 100%; background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 16px; padding: 12px 14px; -webkit-appearance: none;
     }
+    :where(textarea) { min-height: 96px; resize: vertical; line-height: 1.6; }
+    ::placeholder { color: var(--q-cream-55); }
+    select { appearance: none; -webkit-appearance: none; cursor: pointer; }
     input:focus, textarea:focus { outline: none; border-color: rgba(255,255,255,0.95); }
+    /* SURFACES-HANDOFF.md §4 — the given spec-sheet rule names this .acct-row,
+       but .card is the one real selector behind BOTH the Account panel's
+       Name/Email/Plan rows and the Workspace panel's connector rows (a legacy
+       pre-v8 .card at the top of this file, same unreachable shape as this
+       file's :root split, is left alone). Dotted row, same as .lib-asset/
+       .tpl-card above. .soon (not-yet-available connectors) now needs no
+       background/border override of its own — opacity alone reads as faded
+       over a transparent dotted row, where it did not over a frosted one. */
     .card {
-      background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 18px; margin: 8px 0;
+      background: transparent;
+      border: 1px dotted var(--q-cream); border-radius: 0; box-shadow: none;
+      padding: 13px 14px; margin-bottom: 8px;
     }
-    .card .k { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 500; color: var(--ink); font-size: 14px; }
-    .card .v { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.5); font-size: 12px; }
-    .pill { font-family: 'Zen Kaku Gothic New', sans-serif; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(26,26,46,0.75); }
-    .soon { opacity: 0.55; background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.3); }
-    .badge-soon { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.75); border: none; background: rgba(26,26,46,0.06); font-size: 11px; }
+    .card .k { font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 500; color: var(--q-cream); font-size: 14px; }
+    .card .v { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.5); font-size: 12px; }
+    /* Small, transparent, square — no fill, no rounded corners. */
+    .pill { font-family: 'Zen Kaku Gothic New', sans-serif; background: transparent; border: 1px solid rgba(252,246,227,0.75); border-radius: 0; padding: 4px 12px; font-size: 11px; font-weight: 600; color: rgba(252,246,227,0.75); }
+    .soon { opacity: 0.55; }
+    .badge-soon { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.75); border: 1px solid rgba(252,246,227,0.75); background: transparent; border-radius: 0; font-size: 11px; padding: 2px 8px; }
 
     /* Asset library (read-only). Two levels — asset, then its fields — so the
        structure a clone-and-edit feature will attach to is visible as structure,
        not as a flat list. No edit affordances anywhere in here on purpose. */
-    .lib-asset { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 12px 16px; margin: 10px 0; }
-    .lib-asset.off { opacity: 0.6; border-style: dashed; }
+    /* SURFACES-HANDOFF.md §4 — dotted row, not a solid card (repeating rows never
+       read as cards). The given spec-sheet rule also sets display:flex/gap for a
+       single-line row shape; .lib-asset is two-level (a .lib-head row, then a
+       .lib-fields list below it, both already flex/block internally), so only
+       the surface properties move here and the existing layout stays. */
+    .lib-asset {
+      background: transparent;
+      border: 1px dotted var(--q-cream); border-radius: 0; box-shadow: none;
+      padding: 13px 14px; margin-bottom: 8px;
+    }
+    .lib-asset.off { opacity: 0.5; }
     /* Two columns, and the toggle is never one of the things that wraps. The head
        used to be a single wrapping flex row holding name + group + toggle, so a
        long name ("LinkedIn Single Image Ad — Variant A", "Direct Mail — Note Card
@@ -386,42 +587,36 @@
        families; the split is now carried by size, weight, colour and italic
        alone. Every rule here declares its own family; none inherits from body. */
     .lib-name { font-family: 'StarCrush', serif; font-weight: normal; font-size: 15px;
-      letter-spacing: 0.02em; color: var(--ink); }
-    .lib-group { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); }
-    .lib-dir { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(26,26,46,0.75); margin-top: 4px; }
+      letter-spacing: 0.02em; color: var(--q-cream); }
+    .lib-group { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); }
+    .lib-dir { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; font-style: italic; color: rgba(252,246,227,0.75); margin-top: 4px; }
     .lib-fields { list-style: none; margin: 8px 0 0; padding: 0; }
     .lib-field { font-family: 'Zen Kaku Gothic New', sans-serif; padding: 5px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .lib-field:first-child { border-top: none; }
-    .lib-fname { color: var(--ink); }
-    .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(26,26,46,0.75); font-size: 12px; }
-    .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); margin-top: 2px; }
-    /* THE AUTHORITY CHIPS, AND WHY THEIR COLOURS ARE DARKER THAN THEY LOOK.
-       Measured with scripts/checkContrast.js against .lib-asset — rgba(255,255,255,0.5)
-       over backdrop-filter: blur(14px) over the sky gradient, which is why a hex
-       that reads fine in an editor lands somewhere else on screen:
-
-         enforced      #8a4b00 -> 2.01:1   #6b3a00 -> 5.18:1
-         recommended   #1E6F8E -> 3.74:1   #12506a -> 5.26:1
-         mine          #2f6b46 -> 3.75:1   #1f4d31 -> 5.74:1
-         house_default  a 0.5 alpha -> 2.90:1, at 0.75 -> 5.58:1
-
-       ALPHA COULD NOT HAVE FIXED THE FIRST THREE. The probe ladder tops out at
-       3.14:1 for the old amber at alpha 0.85 — the HUE is the ceiling, not the
-       opacity, and no amount of dimming-in-reverse reaches 4.5. That is the
-       difference between this group and the muted labels around it.
-
-       AND THE CHIP SETS THE CEILING FOR .lib-sub, which wraps it. Probing
-       .lib-sub plateaued at 3.78 no matter how dark its own text went, because
-       the darkest ink in the row belonged to the chip. Nothing in the stylesheet
-       says so; the worst-instance probe is what found it. */
-    .lib-tier { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; }
-    .lib-tier.enforced { color: #6b3a00; }
-    .lib-tier.recommended { color: #12506a; }
-    /* The two tenant-side chips. Quieter than the authority ones on purpose:
-       "House default" is not a warning, it is an invitation, and "Yours" is a
-       statement of fact about a number the tenant already set. */
-    .lib-tier.house_default { color: rgba(26,26,46,0.75); }
-    .lib-tier.mine { color: #1f4d31; }
+    /* var(--q-cream) here is read-only display text on the now-transparent
+       .lib-asset (SURFACES step 4). .lib-fname is ALSO the create/edit-form's
+       field-name input (.lib-frow input[type="text"], below) — that rule's own
+       higher specificity keeps its color at --ink regardless of this one, and
+       that input always renders inside .lib-new's own untouched fill anyway
+       (see the note by .lib-new). */
+    .lib-fname { color: var(--q-cream); }
+    /* .lib-limit ALSO renders inside .lib-new (libHouseRow's locked-row line);
+       the .lib-new-scoped override below restores --ink there. */
+    .lib-limit { font-family: 'Zen Kaku Gothic New', sans-serif; color: rgba(252,246,227,0.75); font-size: 12px; }
+    .lib-sub { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); margin-top: 2px; }
+    /* THE AUTHORITY CHIPS. Used to carry tier by HUE — a per-tier hex tuned
+       against .lib-asset's old translucent fill (see git history for that
+       measurement table). Surfaces step 4 removed that fill and left those
+       hexes an unmeasured, visibly low-contrast gap on the read-only card.
+       Rather than re-measure four hexes against the new sky, the spec sheet
+       removes the question: tier is carried by FILL PRESENCE, not hue — one
+       outlined chip, and a single filled variant for the one tier that is
+       actually a hard constraint. .recommended, .house_default and .mine get
+       no rule of their own; they fall through to the base outlined chip. */
+    .lib-tier { font-family: var(--q-body); font-size: 10px; color: var(--q-cream-75);
+                border: 1px solid var(--q-cream-55); padding: 2px 8px;
+                background: transparent; border-radius: 0; }
+    .lib-tier.enforced { color: var(--q-ink); background: var(--q-gold); border-color: var(--q-gold); }
 
     /* --- Reduced form: setting your own limits on a BUNDLED asset ---------- */
     /* A locked row is PRESENT but carries no controls — it renders its value the
@@ -454,18 +649,26 @@
          alpha 0.50  2.81:1     alpha 0.70  4.62:1
          alpha 0.55  3.15:1     alpha 0.75  5.21:1  <- used here
 
-       0.75 is .section-label's known-safe value; 0.70 is the floor. The machine
-       line takes no extra dimming at all: it is the CONTENT of this block, not a
-       footnote to the line above it. */
+       0.75 was .section-label's known-safe value when this was measured; 0.70
+       is the floor. FIXES-HANDOFF.md §7 has since taken .section-label to full
+       opacity in app.html, so that cross-reference is historical only — 0.75
+       stands on its own measured ratio here (5.21:1), not on matching a value
+       that no longer exists. The machine line takes no extra dimming at all: it
+       is the CONTENT of this block, not a footnote to the line above it.
+       STALE FOR THE READ-ONLY CARD AS OF SURFACES STEP 6, same story as the
+       authority chips above: .lib-asset's fill this was measured against is
+       gone from the read-only card (step 4), so .lib-fresh is cream there now.
+       STILL ACCURATE inside .lib-new — libHouseRow renders this same freshness
+       block a second time on the locked-row line, on the fill this comment
+       describes, hence the `.lib-new .lib-fresh` override below. */
     .lib-fresh { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px;
-      color: rgba(26,26,46,0.75); line-height: 1.5; margin-top: 4px; }
+      color: rgba(252,246,227,0.75); line-height: 1.5; margin-top: 4px; }
     .lib-fresh-v a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
     /* The one state that gets colour, on the MACHINE line only — the human
        verification is still true when the detector is stuck, so marking that too
-       would withdraw the wrong sentence. Amber rather than a fourth accent, and
-       #6b3a00 rather than the tier chip's #8a4b00: measured the same way, the
-       chip's value is 3.57:1 here against 4.95:1 for this one. The chip gets away
-       with it at 600 weight on its own line; this is body text on a busier row. */
+       would withdraw the wrong sentence. #6b3a00 measured 4.95:1 here; this is
+       body text on a busier row, unlike the tier chip above (which no longer
+       carries its own hex at all — see the note by .lib-tier). */
     .lib-fresh.flagged .lib-fresh-m { color: #6b3a00; }
     .lib-fresh.flagged .lib-fresh-m::before { content: '⚠ '; }
     /* The field name as TEXT, where the full form has an input. Same size and
@@ -477,8 +680,14 @@
     /* THE CONTROL THAT UNDOES AN OVERRIDE, AND IT WAS INVISIBLE. var(--sky-btm)
        is #4DD9D9 — measured at 1.10:1 on this card, which is the worst number
        anywhere on the panel. The variable is not wrong; it is a DARK-surface
-       colour and it is correct on .nav-link.active and .terminal .t-h, which is
-       why the fix is local to this button rather than to the token.
+       colour and it is correct on .settings-back:hover (bare sky, same dark
+       class as this card's near-white fill is not), which is why the fix is
+       local to this button rather than to the token. (SURFACES step 7 moved
+       .nav-link.active off --sky-btm onto --q-gold — a different rule, for a
+       different reason: text-only nav links, not a contrast fix — so it is no
+       longer the second example this comment could point to. FIXES-HANDOFF.md
+       §9 later moved .terminal .t-h off --sky-btm too, onto var(--q-cream) —
+       it was this comment's original example and no longer carries the token.)
        #0a5c5c -> 5.02:1, the same hue family with the value taken down. */
     .lib-resetbtn { background: none; border: none; padding: 0; cursor: pointer;
       font-family: inherit; font-size: 11.5px; font-weight: 600; color: #0a5c5c;
@@ -499,7 +708,7 @@
       font-family: 'Zen Kaku Gothic New', sans-serif;
       margin: 11px 0 0; padding: 0; border-top: none;
       font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-      color: rgba(26,26,46,0.75);
+      color: rgba(252,246,227,0.75);
     }
     .lib-grouplabel:first-child { margin-top: 2px; }
     /* Rows inside a group step in, and their divider steps in with them (margin,
@@ -540,16 +749,54 @@
     .lib-toggle input:checked + .lib-track { background: var(--sky-btm); }
     .lib-toggle input:checked + .lib-track::before { transform: translateX(16px); }
     .lib-toggle input:disabled + .lib-track { opacity: 0.5; cursor: progress; }
-    .lib-rowerr { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: #8a1f1f; margin-top: 6px; }
+    /* Cream, not dark red — this row sits on the bare sky like the rest of the
+       library list, where #8a1f1f (tuned for a light card) went unreadable. */
+    .lib-rowerr { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: var(--q-cream); margin-top: 6px; }
 
     /* Create-an-asset form. Collapsed to a single button until opened, so the
-       library stays a library. */
+       library stays a library.
+       NOT PART OF SURFACES STEP 4 — this card keeps its pre-rebrand
+       translucent-white glass (0.5 alpha, blur, 14px radius), same as
+       .hdr-upload-card / .naming-seg elsewhere on this page: it was never
+       named in step 4's hub-card/lib-asset/tpl-card/card list, so it was left
+       exactly as it was, own fill and all.
+       THE SAME CLASS RENDERS IN THREE PLACES, though, and only one of them is
+       this standalone "create a new asset" form. libOpenForm's full edit form
+       AND libOpenHouseForm's reduced house-defaults form (both opened FROM a
+       button on a read-only .lib-asset card, in place) also build `.lib-new`
+       boxes — box = el('div', 'lib-new') in both. So every field-row class
+       shared with the read-only display (.lib-fname, .lib-limit, .lib-tier,
+       .lib-fresh, h2) is ALWAYS on this same untouched fill wherever it
+       appears via .lib-new, never on bare sky — the base rules for those
+       classes went cream for their OTHER (read-only, now-transparent)
+       context, and are scoped back to ink here. `:not(.enforced)` on the tier
+       chip because .lib-tier.enforced is filled gold with its own --q-ink
+       text (see the note by .lib-tier) — legible on either fill already, so
+       scoping it back would only cost the correct token for a coincidentally
+       near-identical one. .lib-hint, .lib-sep, .lib-fdel,
+       .lib-fnotelab/.lib-fnotebtn, .lib-basehint, .lib-fstaticnote,
+       .lib-notewhy and .lib-kept needed no such scoping — every place they
+       render is inside a .lib-new box, so their base rules were simply left
+       alone. */
     .lib-newbtn { margin: 14px 0 4px; }
     .lib-new { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 16px 18px; margin: 12px 0; }
+    .lib-new h2, .lib-new .lib-limit, .lib-new .lib-tier:not(.enforced), .lib-new .lib-fresh { color: var(--ink); }
     .lib-new h2 { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; margin: 0 0 4px; }
     .lib-new label { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.65); margin: 12px 0 4px; }
-    .lib-new input[type="text"], .lib-new textarea { font-family: 'Zen Kaku Gothic New', sans-serif; width: 100%; font-size: 14px; }
+    /* Frozen at the values the old generic bare-input rule used to supply.
+       .lib-new never set its own border/background/color — it relied entirely
+       on that fallback, which FIXES-HANDOFF.md bucket 2 moved to cream-on-
+       transparent for the rest of the page. This card is light with dark text
+       throughout (h2/lib-limit/lib-tier/lib-fresh/label all stay --ink-family
+       above), so cream text and a cream border here would go near-invisible
+       against its own near-white fill — restated explicitly, not left to a
+       fallback that has since changed underneath it. */
+    .lib-new input[type="text"], .lib-new textarea {
+      font-family: 'Zen Kaku Gothic New', sans-serif; width: 100%; font-size: 14px;
+      background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
+      color: var(--ink); -webkit-appearance: none; padding: 12px 14px;
+    }
     .lib-new textarea { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.5; }
     /* The paste box is the primary input for a feature whose whole point is a
        dozen-plus fields, so it opens at eight lines and grows with what is in it
@@ -668,7 +915,11 @@
     .cf-unit { flex: 0 0 84px; padding: 6px 4px; font: inherit; font-size: 12px;
       border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-family: 'Zen Kaku Gothic New', sans-serif; }
     .cf-meta { font-family: 'Zen Kaku Gothic New', sans-serif; flex: 1 1 100%; font-size: 11px; color: var(--muted); padding-left: 26px; }
-    .cf-meta b { font-family: 'Zen Kaku Gothic New', sans-serif; color: var(--fg); font-weight: 500; }
+    /* `inherit`, not var(--fg): this <b> is inside .cf-meta, whose colour is
+       var(--muted). With --fg undeclared the rule was invalid at computed-value
+       time and the element inherited #5a5a5a; now that --fg resolves to --ink it
+       would darken to #1A1A2E, which is a visual change rather than a fix. */
+    .cf-meta b { font-family: 'Zen Kaku Gothic New', sans-serif; color: inherit; font-weight: 500; }
     .cf-guess { color: #8a6d3b; }
     .cf-actions { margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .cf-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: var(--muted); }
@@ -677,44 +928,54 @@
       .cf-limit, .cf-unit { flex: 1 1 calc(50% - 4px); }
       .cf-meta { padding-left: 0; }
     }
-    .tpl-card { background: rgba(255,255,255,0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      border: 1.5px solid rgba(255,255,255,0.68); border-radius: 14px; padding: 14px 16px; margin: 14px 0; }
+    /* SURFACES-HANDOFF.md §4 — same dotted-row treatment as .lib-asset above,
+       same reason for keeping the existing layout (.tpl-head / .tpl-marks
+       already handle their own flex/list display internally). */
+    .tpl-card {
+      background: transparent;
+      border: 1px dotted var(--q-cream); border-radius: 0; box-shadow: none;
+      padding: 13px 14px; margin-bottom: 8px;
+    }
     .tpl-head { display: flex; align-items: flex-start; gap: 10px; }
     .tpl-name { flex: 1; min-width: 0; font-family: 'StarCrush', serif; font-weight: normal;
-      font-size: 15px; letter-spacing: 0.02em; color: var(--ink); }
-    .tpl-open { font-family: 'Zen Kaku Gothic New', sans-serif; flex: none; font-size: 12px; font-weight: 600; color: rgba(26,26,46,0.7); text-decoration: underline; }
-    .tpl-meta { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(26,26,46,0.75); margin-top: 4px; }
+      font-size: 15px; letter-spacing: 0.02em; color: var(--q-cream); }
+    .tpl-open { font-family: 'Zen Kaku Gothic New', sans-serif; flex: none; font-size: 12px; font-weight: 600; color: rgba(252,246,227,0.7); text-decoration: underline; }
+    .tpl-meta { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11.5px; color: rgba(252,246,227,0.75); margin-top: 4px; }
     .tpl-marks { list-style: none; margin: 10px 0 0; padding: 0; }
     .tpl-mark { font-family: 'Zen Kaku Gothic New', sans-serif; padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.55); font-size: 13px; }
     .tpl-mark:first-child { border-top: none; }
-    .tpl-token { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: var(--ink); }
-    .tpl-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(26,26,46,0.75); margin-left: 6px; }
-    .tpl-where { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; color: rgba(26,26,46,0.75); margin-top: 2px; }
+    .tpl-token { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: var(--q-cream); }
+    .tpl-count { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; color: rgba(252,246,227,0.75); margin-left: 6px; }
+    .tpl-where { font-family: 'Zen Kaku Gothic New', sans-serif; display: block; font-size: 11px; color: rgba(252,246,227,0.75); margin-top: 2px; }
     /* A malformed marker is shown, never swallowed — a tenant who typo'd a brace
-       has to see it here rather than discover it when nothing fills in. */
-    .tpl-warn { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: #8a1f1f; background: rgba(255,255,255,0.42);
-      border-left: 2px solid #8a1f1f; border-radius: 0 9px 9px 0; padding: 7px 10px; margin-top: 10px; }
-    .tpl-empty { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: rgba(26,26,46,0.6); margin-top: 8px; }
+       has to see it here rather than discover it when nothing fills in.
+       Cream, not red-on-white — this sits among the cream .tpl-* siblings
+       above (bare sky, unlike .lib-new's own light card), so the old red
+       accent read as a leftover default rather than a deliberate warning. */
+    .tpl-warn { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: var(--q-cream); background: transparent;
+      border-left: 2px solid var(--q-cream); border-radius: 0; padding: 7px 10px; margin-top: 10px; }
+    .tpl-empty { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12.5px; color: rgba(252,246,227,0.6); margin-top: 8px; }
 
-    /* Notes / banners / states on the sky */
-    .note { color: rgba(26,26,46,0.65); }
-    .banner { background: #C6F0D8; border: 1.5px solid #2ECC71; color: #0A5C32; border-radius: 12px; }
-    .error { border-radius: 12px; }
-    .empty { background: rgba(255,255,255,0.3); border: 1.5px dashed rgba(255,255,255,0.6); color: rgba(26,26,46,0.65); border-radius: 14px; }
-    .progress { color: rgba(26,26,46,0.6); }
 
     /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
        screens use the horizontal space instead of a phone-width strip. Purely
        ADDITIVE — below 768px this block does nothing, so the phone layout is
-       byte-identical. Capped at a comfortable reading width, not edge-to-edge. */
+       byte-identical. Capped at a comfortable reading width, not edge-to-edge.
+       nav itself scales too now — see the fuller note on the same rule in
+       app.html: it stayed at its phone size even as the content column grew,
+       and read as "way too tiny" against a wide screen. */
     @media (min-width: 768px) {
-      main { max-width: 900px; }
+      main { max-width: 900px; padding-bottom: 480px; }
+      nav { height: 76px; padding: 0 32px; }
+      .nav-wordmark { font-size: 28px; }
+      .nav-link { font-size: 15px; padding: 9px 11px; }
     }
   </style>
 </head>
 <body>
   <div class="sky-bg"></div>
-  <div class="clouds-wrap"></div>
+  <div class="clouds-wrap"><div class="ground-scrim"></div></div>
+  <div class="content-fade"></div>
 __NAV:settings__
 
   <main>
@@ -723,32 +984,32 @@ __NAV:settings__
     <!-- Settings hub (default landing). Each card routes into a section's tab. -->
     <section id="settings-hub" class="hub">
       <button class="hub-card" data-tab="voice">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="7" width="2" height="4" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="8" fill="#4DD9D9"/><rect x="8" y="3" width="2" height="12" fill="#C9A84C"/><rect x="11" y="5" width="2" height="8" fill="#4DD9D9"/><rect x="14" y="7" width="2" height="4" fill="#4DD9D9"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill-rule="evenodd" shape-rendering="crispEdges"><path d="M2 1h7l3 3v9H2V1zm7 1v3h3"/></svg></span>
         <span class="hub-name">Voice Guide</span>
         <span class="hub-desc">Define how your brand sounds so every draft stays on-voice.</span>
       </button>
       <button class="hub-card" data-tab="header">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="3" y="2" width="12" height="14" fill="#1C1F3B"/><rect x="4" y="3" width="10" height="3" fill="#4DD9D9"/><rect x="5" y="8" width="8" height="1" fill="#FFFFFF"/><rect x="5" y="10" width="8" height="1" fill="#FFFFFF"/><rect x="5" y="12" width="6" height="1" fill="#FFFFFF"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M1 2h12v4H1V2zm0 6h5v5H1V8zm7 0h5v5H8V8z"/></svg></span>
         <span class="hub-name">Doc Header</span>
         <span class="hub-desc">Set what appears at the top of every copy doc.</span>
       </button>
       <button class="hub-card" data-tab="library">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="3" width="4" height="12" fill="#4DD9D9"/><rect x="7" y="3" width="4" height="12" fill="#C9A84C"/><rect x="12" y="3" width="4" height="12" fill="#1C1F3B"/><rect x="3" y="5" width="2" height="1" fill="#1C1F3B"/><rect x="8" y="5" width="2" height="1" fill="#1C1F3B"/><rect x="13" y="5" width="2" height="1" fill="#F5F0E8"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M1 2h12v3H1V2zm0 4h12v3H1V6zm0 4h12v2H1v-2z"/></svg></span>
         <span class="hub-name">Asset Library</span>
         <span class="hub-desc">See every asset type and the copy fields Quillio writes for it.</span>
       </button>
       <button class="hub-card" data-tab="templates">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="2" y="2" width="14" height="14" fill="#4DD9D9"/><rect x="3" y="3" width="12" height="3" fill="#1C1F3B"/><rect x="3" y="7" width="5" height="8" fill="#F5F0E8"/><rect x="9" y="7" width="6" height="8" fill="#F5F0E8"/><rect x="10" y="9" width="4" height="1" fill="#C9A84C"/><rect x="10" y="11" width="4" height="1" fill="#C9A84C"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill-rule="evenodd" shape-rendering="crispEdges"><path d="M2 1h10v12H2V1zm2 3h6v1H4V4zm0 3h6v1H4V7zm0 3h4v1H4v-1z"/></svg></span>
         <span class="hub-name">Template Documents</span>
         <span class="hub-desc">Upload your own document — a copy matrix, a form spec — and see the markers Quillio finds in it.</span>
       </button>
       <button class="hub-card" data-tab="workspace">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="7" width="4" height="4" fill="#C9A84C"/><rect x="2" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="2" width="3" height="3" fill="#4DD9D9"/><rect x="2" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="13" y="13" width="3" height="3" fill="#4DD9D9"/><rect x="5" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="5" width="2" height="2" fill="#1C1F3B"/><rect x="5" y="11" width="2" height="2" fill="#1C1F3B"/><rect x="11" y="11" width="2" height="2" fill="#1C1F3B"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M1 3h5l1 2h6v7H1V3z"/></svg></span>
         <span class="hub-name">Workspace</span>
         <span class="hub-desc">Connect Slack, Google, and your writing tools.</span>
       </button>
       <button class="hub-card" data-tab="account">
-        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" shape-rendering="crispEdges"><rect x="7" y="3" width="4" height="1" fill="#4DD9D9"/><rect x="6" y="4" width="6" height="4" fill="#4DD9D9"/><rect x="7" y="8" width="4" height="1" fill="#4DD9D9"/><rect x="4" y="11" width="10" height="4" fill="#1C1F3B"/><rect x="6" y="10" width="6" height="1" fill="#1C1F3B"/></svg></span>
+        <span class="hub-icon"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges"><path d="M7 2a3 3 0 110 6 3 3 0 010-6zM2 13c0-2.8 2.2-4 5-4s5 1.2 5 4H2z"/></svg></span>
         <span class="hub-name">Account</span>
         <span class="hub-desc">Manage your login and account details.</span>
       </button>
@@ -771,7 +1032,7 @@ __NAV:settings__
           <div class="eyebrow">VOICE.MD</div>
           <h1>Voice Guide</h1>
 
-          <div id="voice-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+          <div id="voice-loading" class="note"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
           <div id="voice-error" class="error hidden"></div>
           <div id="voice-banner" class="banner hidden"></div>
 
@@ -807,14 +1068,14 @@ __NAV:settings__
           </div>
 
           <!-- generating -->
-          <div id="voice-generating" class="note hidden"><span class="dot"></span><span id="voice-gen-msg">Writing your voice.md…</span></div>
+          <div id="voice-generating" class="note hidden"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span id="voice-gen-msg">Writing your voice.md…</span></div>
         </section>
 
         <!-- WORKSPACE -->
         <section class="panel" id="panel-workspace">
           <h1>Workspace</h1>
           <div id="ws-banner" class="banner hidden"></div>
-          <div id="ws-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+          <div id="ws-loading" class="note"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
           <div id="ws-error" class="error hidden"></div>
 
           <div id="ws-body" class="hidden">
@@ -887,7 +1148,7 @@ __NAV:settings__
           <h1>Asset Library</h1>
           <p class="hdr-lede">Every asset type Quillio can write for you, and the copy fields inside each one. This is what a brief can ask for and what shapes each doc. Switch off anything you don't use — a brief can't ask for it, and it won't appear in a doc.</p>
           <div id="lib-error" class="error hidden"></div>
-          <div id="lib-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+          <div id="lib-loading" class="note"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
           <div id="lib-summary" class="note hidden"></div>
           <div class="lib-newbtn">
             <button class="btn" id="lib-new-open">+ New asset type</button>
@@ -918,7 +1179,7 @@ __NAV:settings__
             </div>
             <button class="btn primary hidden" id="tpl-upload-btn">Upload and find markers</button>
           </div>
-          <div id="tpl-loading" class="note hidden"><span class="dot"></span><span>Importing and reading it…</span></div>
+          <div id="tpl-loading" class="note hidden"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Importing and reading it…</span></div>
           <div id="tpl-list"></div>
         </section>
 
@@ -945,7 +1206,7 @@ __NAV:settings__
           <h1>Doc Header</h1>
           <p class="hdr-lede">Keep every copy doc on-brand. Quillio puts your team's header — logo, project, date, and the fields you use — at the top of every document it generates, formatted exactly the way you like.</p>
           <div id="hdr-error" class="error hidden"></div>
-          <div id="hdr-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+          <div id="hdr-loading" class="note"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
 
           <!-- LANDING: a header exists -> show its preview + Edit -->
           <div id="hdr-intro" class="hidden">
@@ -965,7 +1226,7 @@ __NAV:settings__
             </div>
           </div>
 
-          <div id="hdr-extracting" class="note hidden"><span class="dot"></span><span>Reading your header…</span></div>
+          <div id="hdr-extracting" class="note hidden"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Reading your header…</span></div>
 
           <!-- EDITOR: actions -> preview -> fields -> upload -->
           <div id="hdr-editor-wrap" class="hidden">
@@ -994,7 +1255,7 @@ __NAV:settings__
             <h2>File name</h2>
             <p class="hdr-lede">Build your file name from chunks. Each chunk is either text you type — kept exactly — or a dynamic value like Campaign or Date that fills itself in. Stack them in any order, drag to rearrange, and lock it in. Every doc Quillio creates follows your format.</p>
             <div id="naming-error" class="error hidden"></div>
-            <div id="naming-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+            <div id="naming-loading" class="note"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
 
             <div id="naming-body" class="hidden">
               <!-- LOCKED: the saved format + Edit -->
@@ -2763,54 +3024,6 @@ __NAV:settings__
       }
     })();
 
-    // --- Pixel clouds (v8 design system) -----------------------------------
-    (function () {
-      var cloudShapes = [
-        [[2,6,3,2],[3,4,5,3],[5,3,7,2],[9,2,5,2],[12,3,5,2],[14,4,4,3],[0,7,20,5],[1,6,18,2],[2,5,16,2],[0,10,20,3],[1,12,18,2],[2,13,14,1]],
-        [[3,5,4,2],[4,3,7,3],[7,2,5,2],[10,3,6,2],[1,6,18,5],[2,5,16,2],[0,8,20,4],[1,11,18,2],[2,12,15,1]],
-        [[1,5,3,2],[3,3,6,3],[7,2,7,2],[12,3,6,3],[15,4,3,2],[0,6,19,5],[1,5,17,2],[0,9,19,3],[1,11,17,1]],
-        [[2,4,4,2],[4,2,6,3],[8,1,5,2],[11,2,5,2],[1,5,14,4],[2,4,12,2],[0,7,15,3],[1,9,13,1]]
-      ];
-      var cloudConfigs = [
-        {shape:0,w:300,top:72, side:'right',offset:-20,anim:'driftL',dur:105,op:0.24},
-        {shape:1,w:220,top:190,side:'left', offset:-30,anim:'driftR',dur:135,op:0.20},
-        {shape:2,w:270,top:330,side:'right',offset:30, anim:'driftL',dur:165,op:0.18},
-        {shape:3,w:180,top:460,side:'left', offset:20, anim:'driftR',dur:98, op:0.15},
-        {shape:0,w:240,top:590,side:'right',offset:-10,anim:'driftL',dur:125,op:0.16},
-        {shape:1,w:250,top:710,side:'left', offset:-40,anim:'driftR',dur:150,op:0.14},
-        {shape:2,w:200,top:840,side:'right',offset:25, anim:'driftL',dur:115,op:0.17}
-      ];
-      var styleEl = document.createElement('style');
-      styleEl.textContent =
-        '@keyframes driftL { 0% { transform:translateX(0); } 100% { transform:translateX(-140vw); } }' +
-        '@keyframes driftR { 0% { transform:translateX(0); } 100% { transform:translateX(140vw); } }';
-      document.head.appendChild(styleEl);
-      function populateClouds(wrap) {
-        if (!wrap) return;
-        wrap.innerHTML = '';
-        cloudConfigs.forEach(function (c, i) {
-          var shape = cloudShapes[c.shape % cloudShapes.length];
-          var unit = Math.max(7, Math.floor(c.w / 22));
-          var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-          svg.setAttribute('viewBox', '0 0 ' + (22 * unit) + ' ' + (15 * unit));
-          svg.setAttribute('width', 22 * unit); svg.setAttribute('height', 15 * unit);
-          svg.style.cssText = 'position:absolute;image-rendering:pixelated;opacity:' + c.op + ';top:' + c.top + 'px;' +
-            (c.side === 'right' ? 'right:' + c.offset + 'px' : 'left:' + c.offset + 'px') +
-            ';animation:' + c.anim + ' ' + c.dur + 's linear ' + (i * -14) + 's infinite;';
-          shape.forEach(function (r) {
-            var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            rect.setAttribute('x', r[0] * unit); rect.setAttribute('y', r[1] * unit);
-            rect.setAttribute('width', r[2] * unit); rect.setAttribute('height', r[3] * unit);
-            rect.setAttribute('fill', r[1] >= 10 ? '#B8E4F8' : 'white');
-            rect.setAttribute('opacity', r[1] >= 10 ? '0.5' : '1');
-            svg.appendChild(rect);
-          });
-          wrap.appendChild(svg);
-        });
-      }
-      document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
-    })();
-
     // --- File-naming pattern (§3, step 7b) — reorderable segment list --------
     var namingSegs = [];
     var NAMING_TOKENS = [['campaign', 'Campaign'], ['date', 'Date'], ['version', 'Version'], ['writer', 'Writer'], ['year', 'Year']];
@@ -3281,6 +3494,29 @@ __NAV:settings__
       try { window.history.replaceState({}, '', '/settings'); } catch (e) {}
       if (asset) libFocusField(asset, field);
       else enterSection('library');
+    })();
+  </script>
+  <script>window.QUILLIO_BIRDS_MANUAL = true;</script>
+  <script src="/assets/js/bird-system.js?v=__BUILD__"></script>
+  <script>
+    // Scene reads a 'desktop' class off its frame element once, at construction,
+    // to pick tree width/height and perch points. Kept in sync with the CSS
+    // media query above (768px) — on load and across a live resize — so a
+    // perched bird's canopy math always matches what the ground band renders.
+    (function () {
+      var desktopMQ = window.matchMedia('(min-width: 768px)');
+      function syncDesktop(matches) { document.body.classList.toggle('desktop', matches); }
+      syncDesktop(desktopMQ.matches);
+      var birds = QuillioBirds.init({
+        frame: 'body',
+        assetBase: '/assets/gifs/',
+        skyLayer: '.clouds-wrap',
+        docIcon: '#screen-output .header-gif'
+      });
+      desktopMQ.addEventListener('change', function (e) {
+        syncDesktop(e.matches);
+        if (birds) birds.scenes.forEach(function (s) { s.desktop = e.matches; });
+      });
     })();
   </script>
 </body>

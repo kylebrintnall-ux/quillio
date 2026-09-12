@@ -3,6 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- iOS standalone mode is per-PAGE, not per-app: a page reachable from a
+       home-screen-installed shell that lacks this tag drops the visitor back
+       into a full Safari tab (URL bar, share/reload/tabs) the moment they
+       navigate to it. All three shells (and the / landing page) carry the
+       identical trio so navigating between them never breaks standalone. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <!-- default, not black-translucent: translucent extends the web content
+       UNDER the status bar, which needs viewport-fit=cover plus
+       env(safe-area-inset-top) padding on nav to keep the wordmark and links
+       clear of it — untested on real notched hardware from here, so the safe
+       choice is the style that reserves its own space and risks nothing. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Quillio" />
   <title>Quillio — Get set up</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -21,6 +34,27 @@
     :root {
       --sky-top: #1E78BE; --sky-mid: #2FA8DC; --sky-btm: #4DD9D9;
       --gold: #C9A84C; --gold-hover: #DDB95A; --white: #FFFFFF; --ink: #1A1A2E;
+
+      /* Rebrand palette (SURFACES-HANDOFF.md §0) — NEW NAMES, not new values for
+         the tokens above. --ink/--gold are dark text on light cards; the
+         rebrand's cards are transparent over a blue sky, so the same job now
+         mostly wants cream text instead. Redefining --ink etc. in place would
+         turn every existing dark-on-light rule into dark-on-dark in one commit.
+         These migrate in per rule, over later steps; the old tokens get deleted
+         only once nothing reads them any more. Shared background layer only
+         (§0-3) — onboarding's own screen designs are a separate pass. */
+      --q-cream: #FCF6E3;
+      --q-cream-85: rgba(252,246,227,.85);
+      --q-cream-75: rgba(252,246,227,.75);
+      --q-cream-55: rgba(252,246,227,.55);
+      --q-cream-35: rgba(252,246,227,.35);
+      --q-fill: #FDF6DC;      /* cream button fill */
+      --q-ink: #0A2233;       /* text on --q-fill only */
+      --q-gold: #F5C518;
+      --q-plum: #3D3566;
+      --q-glass: rgba(21,44,112,.55);
+      --q-display: 'StarCrush', serif;               /* already loaded above; no new @font-face */
+      --q-body: 'Zen Kaku Gothic New', sans-serif;    /* already the body font */
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; height: auto; min-height: 100%; overflow-x: hidden; }
@@ -29,28 +63,84 @@
       background: var(--ink); color: var(--ink);
       line-height: 1.5; -webkit-text-size-adjust: 100%; -webkit-font-smoothing: antialiased;
     }
-    .sky-bg { position: fixed; inset: 0; z-index: 0; background: linear-gradient(180deg, #1E78BE 0%, #2FA8DC 35%, #3BBDE0 60%, #4DD9D9 100%); }
-    .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
-
-    /* Nav — dark glass, pixel-quill logo + StarCrush wordmark/links */
-    nav {
-      position: relative; z-index: 10;
-      display: flex; align-items: center; justify-content: space-between;
-      height: 58px; padding: 0 12px 0 18px; gap: 8px;
-      background: rgba(26,26,46,0.9); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid rgba(77,217,217,0.15);
+    /* SURFACES-HANDOFF.md §2 — nine stops, not two: the blue holds deep through
+       78% of the height and only opens up in the last fifth, so the pale band
+       meets the grass instead of washing out the middle of the page. */
+    .sky-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background: linear-gradient(180deg,
+        #2E5FD6 0%,  #3068E0 30%, #3272E9 50%, #357EEF 65%, #3C8BF4 78%,
+        #539CF5 87%, #84B6F6 93%, #B3D0F9 97%, #DEEBFC 100%);
     }
-    /* 6px, not 8: quillio-quill.png was trimmed to its alpha bounds, so the
-       3.3px of transparent padding that used to sit between the glyph and the
-       wordmark is gone from the asset. The quill is a diagonal whose mass sits up
-       and right, so it wants to sit tighter than a rectangular mark. See the
-       fuller note on the same rule in app.html. */
-    .nav-logo { display: flex; align-items: center; gap: 6px; flex: none; background: none; border: none; padding: 0; cursor: pointer; text-decoration: none; }
-    /* auto, not pixelated: this asset is an anti-aliased raster (6,014 colours,
-       graded alpha), not pixel art, so nearest-neighbour was discarding smoothing
-       the file actually has. Every workflow GIF IS pixel art and keeps pixelated.
-       See the fuller note on the same rule in app.html. */
-    .nav-quill-img { width: 28px; height: 28px; image-rendering: auto; object-fit: contain; }
+    .clouds-wrap { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+    /* Paper texture (SURFACES-HANDOFF.md §3) — above the sky, below the ground
+       band. soft-light at 28% is the whole effect; if it reads as visible grain
+       rather than almost subliminal, the blend mode got dropped, not the opacity. */
+    .clouds-wrap::before {
+      content: ''; position: absolute; inset: 0;
+      background: url('/assets/images/texture.jpg?v=__BUILD__') center / 600px auto repeat;
+      mix-blend-mode: soft-light; opacity: .28;
+    }
+    /* Ground band for the bird system: mobile is a single centred tree, desktop
+       (>=768px, matching the app's own breakpoint below) is a mirrored pair
+       inset 16px. Both render at an integer pixel scale of the source art —
+       mobile 1x, desktop 2x — so the grass and tree pixel grids agree. */
+    .clouds-wrap::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+      height: 84px; image-rendering: pixelated;
+      background:
+        url('/assets/images/tree-right-solid.png?v=__BUILD__') bottom 0 center / 124px 84px no-repeat,
+        url('/assets/images/grass-tile-solid.png?v=__BUILD__') bottom left / 256px 44px repeat-x;
+    }
+    @media (min-width: 768px) {
+      .clouds-wrap::after {
+        height: 168px;
+        background:
+          url('/assets/images/tree-left-solid.png?v=__BUILD__')  bottom 0 left  16px / 248px 168px no-repeat,
+          url('/assets/images/tree-right-solid.png?v=__BUILD__') bottom 0 right 16px / 248px 168px no-repeat,
+          url('/assets/images/grass-tile-solid.png?v=__BUILD__') bottom left / 512px 88px repeat-x;
+      }
+    }
+    /* Scroll-aware haze over the ground band, published as --q-scrim by
+       bird-system.js (1 mid-page, fading to 0 over the last 260px of scroll,
+       0 on a page too short to scroll). Runs to bottom: 0, not the top of the
+       tree band — stopping at the band's edge leaves a visible hard line
+       across the gradient. The band is a ::after so it still paints above
+       this and stays crisp. The var(--q-scrim, 1) default degrades to a
+       static haze with no JS. */
+    .ground-scrim { position: absolute; left: 0; right: 0; bottom: 0; height: 234px; pointer-events: none;
+      opacity: var(--q-scrim, 1); transition: opacity .18s linear;
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.22) 40%, rgba(222,235,252,.52) 66%, rgba(222,235,252,.74) 100%); }
+    @media (min-width: 768px) { .ground-scrim { height: 398px; } }
+    /* CONTENT fade, not a ground fade — .ground-scrim hazes the BACKGROUND
+       behind scrolling content; this fades the CONTENT ITSELF as it nears the
+       bottom of the viewport, so a panel never sits half-legible against the
+       ground band. Same colour and --q-scrim binding as .ground-scrim, but a
+       separate fixed element ABOVE main (z-index 5) rather than behind it,
+       ramping further (.98 vs .74) since it has to fully obscure content, not
+       just soften a background. pointer-events: none — fading content is
+       still tappable underneath. Clears at the true bottom exactly when
+       .ground-scrim does. */
+    .content-fade { position: fixed; left: 0; right: 0; bottom: 0; height: 234px; z-index: 10; pointer-events: none;
+      opacity: var(--q-scrim, 1); transition: opacity .18s linear;
+      background: linear-gradient(180deg, rgba(222,235,252,0) 0%, rgba(222,235,252,.55) 55%, rgba(222,235,252,.88) 80%, rgba(222,235,252,.98) 100%); }
+    @media (min-width: 768px) { .content-fade { height: 398px; } }
+
+    /* Nav — dark glass, StarCrush wordmark/links */
+    /* Transparent, sitting directly on the sky gradient — see the fuller note
+       on the same rule in app.html. That note now also covers WHY this is 30
+       and not 2: nav and main are sibling stacking contexts, and main's
+       z-index 5 was outranking nav's notification dropdown regardless of the
+       dropdown's own (higher, but locally-scoped) z-index. */
+    nav {
+      position: relative; z-index: 30;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 58px; padding: 0 20px;
+      background: transparent; border: none; box-shadow: none;
+    }
+    /* The quill glyph beside the wordmark is gone (spec sheet: wordmark alone).
+       .nav-logo no longer needs a gap — it has one child now. */
+    .nav-logo { display: flex; align-items: center; flex: none; background: none; border: none; padding: 0; cursor: pointer; text-decoration: none; }
     .nav-wordmark { font-family: 'StarCrush', serif; font-size: 21px; color: var(--white); letter-spacing: 0.02em; }
     .nav-links { display: flex; align-items: center; gap: 2px; flex: none; }
     .nav-link {
@@ -61,7 +151,11 @@
     }
     .nav-link:hover { color: #fff; background: rgba(255,255,255,0.08); }
 
-    main { position: relative; z-index: 5; width: 100%; max-width: 520px; margin: 0 auto; padding: 32px 26px 56px; }
+    /* Bottom padding was 56px — see the fuller note on the same rule in
+       app.html: nowhere near enough to clear the fixed ground band
+       (.clouds-wrap::after), so a long step's last rows scrolled up under
+       the tree/grass art instead of stopping short of it. */
+    main { position: relative; z-index: 5; width: 100%; max-width: 520px; margin: 0 auto; padding: 32px 26px 300px; }
 
     .step { display: none; }
     .step.active { display: block; }
@@ -81,8 +175,12 @@
     .stepdots span.on { background: var(--sky-btm); }
 
     label { display: block; font-family: 'Zen Kaku Gothic New', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.02em; color: rgba(26,26,46,0.75); margin: 16px 0 6px; }
+    /* 16px, not 15 — iOS Safari auto-zooms the viewport on focusing any
+       input/textarea under 16px, and that zoom can outlast a JS-driven
+       screen change rather than resetting on its own (see the fuller note
+       on .glass-textarea in app.html, where this was reported). */
     input[type="text"], textarea {
-      width: 100%; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; resize: vertical;
+      width: 100%; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 16px; resize: vertical;
       padding: 12px 14px; color: var(--ink); -webkit-appearance: none;
       background: rgba(255,255,255,0.5); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 12px;
     }
@@ -134,7 +232,8 @@
     .gbtn .g { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--sky-btm); color: #06302f; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; font-family: 'Zen Kaku Gothic New', sans-serif; }
 
     .ok { color: #0A5C32; font-weight: 700; font-size: 20px; }
-    .pill { display: inline-block; background: rgba(26,26,46,0.08); border: none; border-radius: 100px; padding: 4px 12px; font-size: 13px; font-weight: 600; color: rgba(26,26,46,0.6); }
+    /* Small, transparent, square — no fill, no rounded corners. */
+    .pill { display: inline-block; background: transparent; border: 1px solid rgba(26,26,46,0.3); border-radius: 0; padding: 4px 12px; font-size: 13px; font-weight: 600; color: rgba(26,26,46,0.6); }
 
     /* Asset library — glass card per group */
     .group { background: rgba(255,255,255,0.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px; padding: 6px 16px 12px; margin: 12px 0; }
@@ -150,12 +249,23 @@
     .progress { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; color: rgba(26,26,46,0.6); margin-bottom: 6px; }
     .sample { background: rgba(255,255,255,0.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1.5px solid rgba(255,255,255,0.6); border-radius: 14px; padding: 16px; font-size: 15px; line-height: 1.6; color: var(--ink); }
 
-    .error { margin-top: 14px; padding: 10px 12px; border: 1.5px solid #e7b3b3; background: #fdf0f0; color: #8a1f1f; border-radius: 12px; font-size: 14px; }
+    /* Cream, pixel glyph, no hue — matches the same convergence app.html's
+       and settings.html's messages already made, rather than the default
+       red-on-pink alert box this used to be. */
+    .error {
+      margin-top: 14px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start;
+      background: transparent; border: 1px solid var(--q-cream); border-radius: 0;
+      color: var(--q-cream); font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px;
+    }
+    .error::before {
+      content: '!'; flex: 0 0 16px; width: 16px; height: 16px; border: 1px solid var(--q-cream);
+      font-family: 'StarCrush', serif; font-size: 11px; line-height: 16px; text-align: center;
+    }
     .hidden { display: none !important; }
     .note { display: flex; align-items: center; gap: 10px; color: rgba(26,26,46,0.65); margin-top: 14px; font-size: 14px; }
-    .note .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--sky-btm); border-top-color: transparent; animation: spin .8s linear infinite; flex: none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .note .dot, .spinner { animation: none; } }
+    /* The pixel-art scroll, not a spinning ring — every circular CSS loader on
+       this page converged on the same GIF the brand already uses elsewhere. */
+    .loading-icon { width: 18px; height: 18px; image-rendering: pixelated; flex: none; }
 
     .eyebrow { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(26,26,46,0.55); margin-bottom: 6px; }
     .break { overflow-wrap: anywhere; }
@@ -163,7 +273,7 @@
 
     /* voice.md generating animation */
     #voice-generating { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 0; color: rgba(255,255,255,0.85); }
-    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.25); border-top-color: var(--sky-btm); animation: spin .8s linear infinite; }
+    .loading-icon-lg { width: 30px; height: 30px; image-rendering: pixelated; }
     .genmsg { font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; }
 
     /* rendered voice.md preview — dark terminal block (matches settings) */
@@ -195,18 +305,24 @@
     /* Wide screens (tablet/desktop ≥ 768px): widen the content column so big
        screens use the horizontal space instead of a phone-width strip. Purely
        ADDITIVE — below 768px this block does nothing, so the phone layout is
-       byte-identical. Capped at a comfortable reading width, not edge-to-edge. */
+       byte-identical. Capped at a comfortable reading width, not edge-to-edge.
+       nav itself scales too now — see the fuller note on the same rule in
+       app.html: it stayed at its phone size even as the content column grew,
+       and read as "way too tiny" against a wide screen. */
     @media (min-width: 768px) {
-      main { max-width: 900px; }
+      main { max-width: 900px; padding-bottom: 480px; }
+      nav { height: 76px; padding: 0 32px; }
+      .nav-wordmark { font-size: 28px; }
+      .nav-link { font-size: 15px; padding: 9px 11px; }
     }
   </style>
 </head>
 <body>
   <div class="sky-bg"></div>
-  <div class="clouds-wrap"></div>
+  <div class="clouds-wrap"><div class="ground-scrim"></div></div>
+  <div class="content-fade"></div>
   <nav>
     <a class="nav-logo" href="/app">
-      <img class="nav-quill-img" src="/assets/images/quillio-quill.png?v=__BUILD__" alt="Quillio">
       <span class="nav-wordmark">Quillio</span>
     </a>
     <div class="nav-links">
@@ -266,7 +382,7 @@
     <section class="step" id="step-3">
       <h1>Here's your asset library</h1>
       <p class="muted">Deactivate asset types you'll never use. You can always change this later in Settings.</p>
-      <div id="assets-loading" class="note"><span class="dot"></span><span>Loading…</span></div>
+      <div id="assets-loading" class="note"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
       <div id="assets-list"></div>
       <div class="row">
         <button class="full" id="assets-next">Next →</button>
@@ -280,7 +396,7 @@
       <h1>Set up your Voice Guide</h1>
       <p class="muted">Your answers generate a voice.md file that Quillio injects into every first draft — keeping copy on-brand from the start.</p>
 
-      <div id="voice-loading" class="note hidden"><span class="dot"></span><span>Loading…</span></div>
+      <div id="voice-loading" class="note hidden"><img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Loading…</span></div>
 
       <div id="voice-questions" class="hidden">
         <div class="progress" id="voice-progress">Question 1 of 6</div>
@@ -293,7 +409,7 @@
       </div>
 
       <div id="voice-generating" class="hidden">
-        <div class="spinner"></div>
+        <img class="loading-icon-lg" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt="">
         <div class="genmsg" id="voice-genmsg">Reading your answers…</div>
       </div>
 
@@ -426,7 +542,7 @@
       var btn = $('folder-save');
       var url = $('folder-url').value.trim();
       btn.disabled = true;
-      msg.innerHTML = '<span class="dot"></span><span>Saving…</span>';
+      msg.innerHTML = '<img class="loading-icon" src="/assets/gifs/quillio-scroll.gif?v=__BUILD__" alt=""><span>Saving…</span>';
       show(msg);
       try {
         var res = await fetch('/api/onboarding/folder', {
@@ -801,52 +917,28 @@
       showStep(step >= 1 && step <= TOTAL_STEPS ? step : 1);
     })();
 
-    // --- Pixel clouds (v8 design system) -----------------------------------
+  </script>
+  <script>window.QUILLIO_BIRDS_MANUAL = true;</script>
+  <script src="/assets/js/bird-system.js?v=__BUILD__"></script>
+  <script>
+    // Scene reads a 'desktop' class off its frame element once, at construction,
+    // to pick tree width/height and perch points. Kept in sync with the CSS
+    // media query above (768px) — on load and across a live resize — so a
+    // perched bird's canopy math always matches what the ground band renders.
     (function () {
-      var cloudShapes = [
-        [[2,6,3,2],[3,4,5,3],[5,3,7,2],[9,2,5,2],[12,3,5,2],[14,4,4,3],[0,7,20,5],[1,6,18,2],[2,5,16,2],[0,10,20,3],[1,12,18,2],[2,13,14,1]],
-        [[3,5,4,2],[4,3,7,3],[7,2,5,2],[10,3,6,2],[1,6,18,5],[2,5,16,2],[0,8,20,4],[1,11,18,2],[2,12,15,1]],
-        [[1,5,3,2],[3,3,6,3],[7,2,7,2],[12,3,6,3],[15,4,3,2],[0,6,19,5],[1,5,17,2],[0,9,19,3],[1,11,17,1]],
-        [[2,4,4,2],[4,2,6,3],[8,1,5,2],[11,2,5,2],[1,5,14,4],[2,4,12,2],[0,7,15,3],[1,9,13,1]]
-      ];
-      var cloudConfigs = [
-        {shape:0,w:300,top:72, side:'right',offset:-20,anim:'driftL',dur:105,op:0.24},
-        {shape:1,w:220,top:190,side:'left', offset:-30,anim:'driftR',dur:135,op:0.20},
-        {shape:2,w:270,top:330,side:'right',offset:30, anim:'driftL',dur:165,op:0.18},
-        {shape:3,w:180,top:460,side:'left', offset:20, anim:'driftR',dur:98, op:0.15},
-        {shape:0,w:240,top:590,side:'right',offset:-10,anim:'driftL',dur:125,op:0.16},
-        {shape:1,w:250,top:710,side:'left', offset:-40,anim:'driftR',dur:150,op:0.14},
-        {shape:2,w:200,top:840,side:'right',offset:25, anim:'driftL',dur:115,op:0.17}
-      ];
-      var styleEl = document.createElement('style');
-      styleEl.textContent =
-        '@keyframes driftL { 0% { transform:translateX(0); } 100% { transform:translateX(-140vw); } }' +
-        '@keyframes driftR { 0% { transform:translateX(0); } 100% { transform:translateX(140vw); } }';
-      document.head.appendChild(styleEl);
-      function populateClouds(wrap) {
-        if (!wrap) return;
-        wrap.innerHTML = '';
-        cloudConfigs.forEach(function (c, i) {
-          var shape = cloudShapes[c.shape % cloudShapes.length];
-          var unit = Math.max(7, Math.floor(c.w / 22));
-          var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-          svg.setAttribute('viewBox', '0 0 ' + (22 * unit) + ' ' + (15 * unit));
-          svg.setAttribute('width', 22 * unit); svg.setAttribute('height', 15 * unit);
-          svg.style.cssText = 'position:absolute;image-rendering:pixelated;opacity:' + c.op + ';top:' + c.top + 'px;' +
-            (c.side === 'right' ? 'right:' + c.offset + 'px' : 'left:' + c.offset + 'px') +
-            ';animation:' + c.anim + ' ' + c.dur + 's linear ' + (i * -14) + 's infinite;';
-          shape.forEach(function (r) {
-            var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            rect.setAttribute('x', r[0] * unit); rect.setAttribute('y', r[1] * unit);
-            rect.setAttribute('width', r[2] * unit); rect.setAttribute('height', r[3] * unit);
-            rect.setAttribute('fill', r[1] >= 10 ? '#B8E4F8' : 'white');
-            rect.setAttribute('opacity', r[1] >= 10 ? '0.5' : '1');
-            svg.appendChild(rect);
-          });
-          wrap.appendChild(svg);
-        });
-      }
-      document.querySelectorAll('.clouds-wrap').forEach(populateClouds);
+      var desktopMQ = window.matchMedia('(min-width: 768px)');
+      function syncDesktop(matches) { document.body.classList.toggle('desktop', matches); }
+      syncDesktop(desktopMQ.matches);
+      var birds = QuillioBirds.init({
+        frame: 'body',
+        assetBase: '/assets/gifs/',
+        skyLayer: '.clouds-wrap',
+        docIcon: '#screen-output .header-gif'
+      });
+      desktopMQ.addEventListener('change', function (e) {
+        syncDesktop(e.matches);
+        if (birds) birds.scenes.forEach(function (s) { s.desktop = e.matches; });
+      });
     })();
   </script>
 </body>

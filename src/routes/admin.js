@@ -19,6 +19,7 @@ const {
   getDetectionHealth,
 } = require('../db/specWatch');
 const { runDetection, UNCONFIRMED_STREAK_ALERT } = require('../services/specDetector');
+const { runSpecSweep } = require('../services/specSweep');
 const {
   getFlagForReview,
   getSuggestions,
@@ -126,11 +127,35 @@ router.post('/admin/api/test-spec', requireAdmin, async (req, res) => {
   }
 });
 
-// POST /admin/api/run-detection — run the detector over ALL watch entries and
-// return a per-URL summary. Manual trigger only (no cron). Admin-gated.
+// POST /admin/api/run-detection — run the detector and return a per-URL summary.
+// Manual trigger only (no cron). Admin-gated.
+//
+// OPTIONAL `watchId` SCOPES THE RUN TO ONE ENTRY (body or query). Without it the
+// behaviour is exactly what it always was: every watch entry. With it, only that
+// entry is fetched — which is what makes poking the is_test row cheap, instead of
+// also fetching all ten real platform pages and possibly raising real flags in
+// the same run.
+//
+// AN UNKNOWN id IS A 400, NOT A 200 WITH AN EMPTY SUMMARY. A zero-row run
+// reports every count at zero, which reads as a clean pass rather than as a run
+// that examined nothing. `no-database` keeps its existing 200 + ran:false shape —
+// that is pre-existing behaviour and not this change's business.
 router.post('/admin/api/run-detection', requireAdmin, async (req, res) => {
+  const raw = (req.body && req.body.watchId) != null ? req.body.watchId : req.query.watchId;
+  let watchId;
+  if (raw != null && String(raw).trim() !== '') {
+    // Digits only. A non-numeric id can never match a BIGSERIAL row, so it is a
+    // caller error worth naming rather than a run that quietly finds nothing.
+    if (!/^\d+$/.test(String(raw).trim())) {
+      return res.status(400).json({ success: false, error: 'watchId must be a positive integer' });
+    }
+    watchId = String(raw).trim();
+  }
   try {
-    const result = await runDetection();
+    const result = await runDetection(watchId != null ? { watchId } : {});
+    if (result.reason === 'no-such-watch-row') {
+      return res.status(400).json({ success: false, error: `no watch row with id ${result.watchId}` });
+    }
     res.status(200).json({ success: true, ...result });
   } catch (err) {
     console.error('[admin] run-detection failed:', err.message);
@@ -198,6 +223,62 @@ router.post('/admin/api/approve-preview', requireAdmin, async (req, res) => {
   }
 });
 
+// A HEAD START ON THE WEEKLY SWEEP, fired after the response and awaited by
+// nobody. One scoped run per char_max change this approval created.
+//
+// WHY IT IS NOT AWAITED. A sweep corrects documents over the Google Docs API,
+// per tenant, per document — it is the slowest thing in this codebase. Holding
+// the admin's HTTP response open for a document-correction pass would make a
+// confirmation look hung, and a client timeout would tell them the write failed
+// when it had already committed. Same reasoning as the Slack ack.
+//
+// SO THE LOG IS THE ONLY CHANNEL LEFT, and it has to actually say something.
+// `.catch(() => {})` here would mean a sweep that failed for weeks looked
+// exactly like one that never needed to run — the staleness problem this
+// feature shortens, recreated one layer down. Every outcome is reported:
+//
+//   threw            console.error with the STACK, not just .message
+//   ran: false       refused (no such char_max change, or state not ready)
+//   status partial   finished without completing — also written durably to
+//                    spec_sweep_state by runSpecSweep, watermark untouched
+//   clean            one line, so a working head start is visible too
+//
+// Nothing here can reject: the loop is inside one try, and the whole thing is
+// invoked without await, so a throw would otherwise be an unhandled rejection
+// that takes the process down rather than the request.
+async function sweepConfirmedChanges(changeIds, flagId) {
+  const ids = Array.isArray(changeIds) ? changeIds : [];
+  if (ids.length === 0) return; // note-only approval: no bracket moved
+  for (const changeId of ids) {
+    try {
+      const r = await runSpecSweep({ changeId });
+      if (!r || r.ran === false) {
+        console.error(
+          `[admin] immediate sweep REFUSED for change ${changeId} (flag ${flagId}): ` +
+            `${(r && r.reason) || 'unknown'} — this change waits for the weekly cron`
+        );
+      } else if (r.status === 'partial') {
+        console.error(
+          `[admin] immediate sweep INCOMPLETE for change ${changeId} (flag ${flagId}): ` +
+            `stopped at ${r.stoppedAtChange}; ${r.documentsCorrected} document(s) corrected. ` +
+            'Recorded in spec_sweep_state; the weekly cron retries.'
+        );
+      } else {
+        console.log(
+          `[admin] immediate sweep for change ${changeId} (flag ${flagId}): ` +
+            `${r.documentsCorrected} document(s) corrected, ${r.notifications} notification(s)`
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[admin] immediate sweep THREW for change ${changeId} (flag ${flagId}) — ` +
+          'the approval itself committed and is unaffected; the weekly cron retries:',
+        err && err.stack ? err.stack : err
+      );
+    }
+  }
+}
+
 // POST /admin/api/approve-commit { flagId, edits } — THE ONLY path that writes
 // copy_fields. Re-validates server-side, then value write + spec_verified_at
 // stamp + audit log + flag flip in one transaction. changed_by is the signed-in
@@ -205,15 +286,24 @@ router.post('/admin/api/approve-preview', requireAdmin, async (req, res) => {
 router.post('/admin/api/approve-commit', requireAdmin, async (req, res) => {
   const { flagId, edits } = req.body || {};
   if (!flagId) return res.status(400).json({ success: false, error: 'flagId is required' });
+  let committed = null;
   try {
     const changedBy = req.user && req.user.id;
     const result = await commitReview(flagId, edits, changedBy);
     if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    committed = result;
     res.status(200).json({ success: true, ...result });
   } catch (err) {
     console.error('[admin] approve-commit failed:', err.message);
-    res.status(500).json({ success: false, error: 'Write failed' });
+    return res.status(500).json({ success: false, error: 'Write failed' });
   }
+  // AFTER the response and OUTSIDE the try, which is load-bearing rather than
+  // tidy. Inside it, anything that threw here would reach the catch — which
+  // calls res.status(500) on a response ALREADY SENT. That is
+  // ERR_HTTP_HEADERS_SENT, and it would report a write that committed as a
+  // failure. The `return` on the 500 branch is the other half: without it a
+  // failed commit would fall through to the kick-off below.
+  sweepConfirmedChanges(committed.change_ids, flagId);
 });
 
 module.exports = router;

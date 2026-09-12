@@ -37,8 +37,41 @@ class SpecWriteRefusal extends Error {
 }
 
 // A field name repeats across assets, so always match the (asset, field) PAIR.
+//
+// THE SEPARATOR IS \u0000 AND IT IS NOT DECORATION — the same rule, and the same
+// reason, as services/specSweep.js KEY_SEP. A space separator is AMBIGUOUS:
+// pairKey('A B', 'C') and pairKey('A', 'B C') both produce 'A B C', so membership
+// in the allowed Set authorises every re-split of the authorised concatenation at
+// any space boundary.
+//
+// IT MATTERS MORE HERE THAN IN THE SWEEP, BECAUSE THIS SET IS THE WRITE GATE.
+// guardEdits admits the pair, and commitReview then writes with the EDIT's own
+// strings — `at.name = $N`, raw equality, cross-tenant, deliberately with no
+// tenant predicate. Measured before this changed:
+//
+//   pairKey('Meta Single Image Ad Primary', 'Text')      one sacrificial pair
+//   pairKey('Meta Single Image Ad', 'Primary Text')      a REAL seeded field, 150
+//
+// both produced 'Meta Single Image Ad Primary Text', so a flag whose
+// affected_fields held only the first authorised an edit to the second, and every
+// tenant's row for that real field would be rewritten and stamped verified.
+// The sweep learned this and this gate did not; that asymmetry is the whole bug.
+//
+// RAW, NOT NORMALIZED, and that is deliberate. specSweep normalizes because it
+// matches library rows against change-log rows that may be spelled differently.
+// This gate's job is narrower: decide whether a submitted edit may be written,
+// and commitReview finds rows by RAW `at.name` equality. Keying the gate raw
+// makes it correspond one-to-one with the rows the write can reach. Normalizing
+// would admit pairs the write cannot then find — refused by commitReview's
+// zero-row guard, so louder, but a wider gate for no gain.
+//
+// Written as an ESCAPE, never as a literal byte: a literal NUL parses identically
+// and passes every test, and makes git classify the file as BINARY so the diff is
+// unreviewable — and any tool that strips control characters silently restores
+// the collision above.
+const PAIR_SEP = '\u0000';
 function pairKey(asset, field) {
-  return String(asset) + ' ' + String(field);
+  return String(asset) + PAIR_SEP + String(field);
 }
 
 // Parse the affected_fields JSONB (already an array of {asset, field}) into a
@@ -484,21 +517,40 @@ async function commitReview(flagId, edits, changedBy) {
       }
 
       // Audit log -- one row per changed attribute.
+      //
+      // RETURNING id, AND THE ID IS THE POINT RATHER THAN A CONVENIENCE.
+      // spec_change_log.id is the key the sweep's notification dedupes on
+      // (db/specSweep.hasSpecNotification matches `link ->> 'changeId'`), and it
+      // is what getChangesSince hands back per change. Without it a caller that
+      // wants to act on THIS approval -- notify about it, or sweep it
+      // immediately -- has no stable handle and would have to re-derive one by
+      // querying the log back by (flag_id, asset, field, attr), which is a
+      // second read that can also match an earlier approval of the same pair.
+      //
+      // CHAR_MAX AND SPEC_NOTE ARE KEPT APART because only one of them is
+      // sweepable: the sweep processes `field_attr = 'char_max'` and nothing
+      // else, so a spec_note id is a real audit row that no sweep will ever
+      // act on. Rolling both into one list would invite a caller to pass a
+      // spec_note id to a sweep that silently finds nothing to do.
+      let charMaxChangeId = null;
+      let specNoteChangeId = null;
       if (e.charMax !== undefined) {
-        await client.query(
+        const res = await client.query(
           'INSERT INTO spec_change_log' +
             ' (flag_id, asset_type, field_name, field_attr, old_value, new_value, tenant_count, source_url, changed_by)' +
-            " VALUES ($1,$2,$3,'char_max',$4,$5,$6,$7,$8)",
+            " VALUES ($1,$2,$3,'char_max',$4,$5,$6,$7,$8) RETURNING id",
           [flag.id, e.asset, e.field, distinctValue(before, 'char_max'), String(e.charMax), tenantCount, flag.source_url, changedBy || null]
         );
+        charMaxChangeId = (res.rows && res.rows[0] && res.rows[0].id) || null;
       }
       if (e.specNote !== undefined) {
-        await client.query(
+        const res = await client.query(
           'INSERT INTO spec_change_log' +
             ' (flag_id, asset_type, field_name, field_attr, old_value, new_value, tenant_count, source_url, changed_by)' +
-            " VALUES ($1,$2,$3,'spec_note',$4,$5,$6,$7,$8)",
+            " VALUES ($1,$2,$3,'spec_note',$4,$5,$6,$7,$8) RETURNING id",
           [flag.id, e.asset, e.field, distinctValue(before, 'spec_note'), e.specNote, tenantCount, flag.source_url, changedBy || null]
         );
+        specNoteChangeId = (res.rows && res.rows[0] && res.rows[0].id) || null;
       }
 
       written.push({
@@ -507,6 +559,10 @@ async function commitReview(flagId, edits, changedBy) {
         tenant_count: tenantCount,
         char_max: e.charMax,
         spec_note: e.specNote,
+        // Null when that attribute was not part of this edit. Null and absent
+        // say the same thing here, and the key is always present so a reader
+        // never has to tell "no change to this attribute" from "older code".
+        change_ids: { char_max: charMaxChangeId, spec_note: specNoteChangeId },
         // The audit trail for the silent half of this write: every row that held
         // something other than what we just set, and what it held. Empty on the
         // normal path where all tenants already agreed.
@@ -535,6 +591,12 @@ async function commitReview(flagId, edits, changedBy) {
       written,
       overwritten_count: overwrittenTotal,
       diverged_overwritten_count: divergedTotal,
+      // THE SWEEPABLE IDS, rolled up in write order. Exactly the char_max rows
+      // this approval created -- the set a caller would hand to a scoped sweep,
+      // one at a time. Empty when the approval changed only spec_notes, which is
+      // the correct answer: nothing about that approval moves a bracket, so
+      // there is nothing for a sweep to correct.
+      change_ids: written.map((w) => w.change_ids.char_max).filter((id) => id != null),
     };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -622,4 +684,8 @@ module.exports = {
   // exposed for unit tests — both are pure and carry the divergence reporting
   tenantValueBreakdown,
   changedRows,
+  // THE WRITE GATE'S KEY, exposed so its non-ambiguity is assertable directly.
+  // A test that can only reach it through guardEdits cannot show that the two
+  // colliding spellings are now distinct, which is the property that was broken.
+  pairKey,
 };

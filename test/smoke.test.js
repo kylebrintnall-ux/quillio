@@ -470,10 +470,14 @@ test('public/onboarding.html has all six steps and talks to the onboarding API',
   assert.ok(/\/oauth\/google\?redirect=onboarding/.test(html), 'Step 1 signs in with Google');
   assert.ok(/\/api\/onboarding\/voice/.test(html), 'voice step posts to the API');
   // v8 design system: StarCrush via @font-face + Zen Kaku Gothic New from Google
-  // Fonts (matches app.html / settings.html). Scripts must still all be inline.
+  // Fonts (matches app.html / settings.html).
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
   assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
-  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+  // Bird system, added on top of v8: one deliberate external script, same-origin
+  // and first-party (served from the existing /assets static mount) — not a
+  // framework or CDN. Anything else with a src= would be one re-entering.
+  const onboardingScriptSrcs = [...html.matchAll(/<script\s+[^>]*src=["']([^"']+)["']/gi)].map((m) => m[1]);
+  assert.deepStrictEqual(onboardingScriptSrcs, ['/assets/js/bird-system.js?v=__BUILD__'], 'only bird-system.js is an external script');
 });
 
 // --- Week 12: settings page ---
@@ -523,7 +527,11 @@ test('public/settings.html has the three sections, terminal styling, and setting
   assert.ok(/\/api\/settings\/voice/.test(html), 'talks to the voice API');
   assert.ok(/\/api\/auth\/signout/.test(html), 'wires sign out');
   assert.ok(/\/oauth\/google\?redirect=settings/.test(html), 'reconnect Google returns to settings');
-  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+  // Bird system, added on top of v8: one deliberate external script, same-origin
+  // and first-party (served from the existing /assets static mount) — not a
+  // framework or CDN. Anything else with a src= would be one re-entering.
+  const settingsScriptSrcs = [...html.matchAll(/<script\s+[^>]*src=["']([^"']+)["']/gi)].map((m) => m[1]);
+  assert.deepStrictEqual(settingsScriptSrcs, ['/assets/js/bird-system.js?v=__BUILD__'], 'only bird-system.js is an external script');
 });
 
 test('oauth.js handles redirect=settings for Google and Slack', () => {
@@ -4027,19 +4035,20 @@ test('public/app.html has the core screens, API wiring, and the v8 design system
   // It talks to the Week 8 API.
   assert.ok(html.includes('/api/brief'), 'app.html posts to /api/brief');
   assert.ok(html.includes('/api/draft'), 'app.html posts to /api/draft');
-  // No JS frameworks / CDNs — all client logic stays inline.
-  assert.ok(!/<script\s+[^>]*src=/i.test(html), 'no external scripts');
+  // No JS frameworks / CDNs. Bird system, added on top of v8, is the one
+  // deliberate exception — same-origin and first-party (served from the
+  // existing /assets static mount), not a framework or CDN.
+  const appScriptSrcs = [...html.matchAll(/<script\s+[^>]*src=["']([^"']+)["']/gi)].map((m) => m[1]);
+  assert.deepStrictEqual(appScriptSrcs, ['/assets/js/bird-system.js?v=__BUILD__'], 'only bird-system.js is an external script');
   // v8 design system (replaces the old "system fonts, no images" rule): the
   // StarCrush display font is loaded via @font-face, Zen Kaku Gothic New is the
   // body font, and the pixel-art assets are referenced from the scoped
   // /assets + /fonts static routes.
   assert.ok(/@font-face[\s\S]*Star_Crush\.otf/.test(html), 'loads the StarCrush font via @font-face');
   assert.ok(/Zen\+Kaku\+Gothic\+New/.test(html), 'loads Zen Kaku Gothic New');
-  // Read through renderShell, not off the raw file: the logo lives in the nav,
-  // and the nav is now the shared partial. The claim was always about the page
-  // the browser gets, and that is unchanged — see the shared-nav tests below.
-  const servedApp = require('../src/utils/shellHtml').renderShell(path.join(__dirname, '..', 'public', 'app.html'));
-  assert.ok(/\/assets\/images\/quillio-quill\.png/.test(servedApp), 'uses the pixel-quill logo');
+  // The quill glyph beside the wordmark was removed from the shared nav
+  // partial (spec sheet: wordmark alone) — see the shared-nav tests below for
+  // what the nav now serves instead.
   assert.ok(/\/assets\/gifs\//.test(html), 'uses the progress/header GIFs');
 });
 
@@ -11808,8 +11817,11 @@ test('app.html renders the unmatched notice on both the confirm and output scree
   assert.ok(html.includes('id="out-unmatched"'), 'the output screen has one too');
   assert.match(html, /renderNotice\('confirm-unmatched', interp\.unmatchedNotice\)/);
   assert.match(html, /renderNotice\('out-unmatched', data\.unmatchedNotice\)/);
-  // Amber, not red: the run SUCCEEDED, so it must not be styled as an error.
-  assert.match(html, /\.notice\s*\{[^}]*background:\s*#fdf8ec/);
+  // A distinct glyph, not a distinct hue: the run SUCCEEDED, so it must not
+  // read as an error, but the messages converged on cream-only chrome
+  // (no hue) and now carry that distinction via ::before content instead.
+  assert.match(html, /\.notice::before\s*\{\s*content:\s*'⚠'/);
+  assert.match(html, /\.error::before\s*\{\s*content:\s*'!'/);
   assert.ok(!/id="confirm-unmatched"[^>]*class="error/.test(html), 'not styled as an error');
 });
 
@@ -11903,7 +11915,10 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
   assert.match(html, /diverged_overwritten_count/);
   assert.match(html, /this tenant/, 'and names the rows whose own value is gone');
   // Amber — a fact to weigh, not an error that blocked the write.
-  assert.match(html, /\.msg\.warn\s*\{[^}]*--warn/);
+  // Token renamed --warn -> --q-warn by the design-system pass (rebrand/cleanup):
+  // namespaced alongside --q-cream/--q-plum/etc. rather than left as the one
+  // un-prefixed survivor. Same amber value, same rule, new name.
+  assert.match(html, /\.msg\.warn\s*\{[^}]*--q-warn/);
 });
 
 // --- Silent failure 3: a write that lands on nothing reported success ---------
@@ -11930,8 +11945,9 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
 // fully deactivated one — commitReview cannot tell those apart, because both are
 // invisible through the same `AND at.is_active` join, which is exactly why the
 // refusal message names both causes.
-function fakeSpecPool({ matched, before = [], pair }) {
+function fakeSpecPool({ matched, before = [], pair, isTest = false }) {
   const log = [];
+  let changeLogId = 100;
   const query = async (sql) => {
     const flat = String(sql).replace(/\s+/g, ' ').trim();
     log.push(flat);
@@ -11941,7 +11957,7 @@ function fakeSpecPool({ matched, before = [], pair }) {
       return {
         rows: [{
           id: 7, watch_id: 3, source_url: 'https://support.google.com/google-ads/answer/17090561',
-          old_hash: 'a', new_hash: 'b', status: 'pending', is_test: false,
+          old_hash: 'a', new_hash: 'b', status: 'pending', is_test: isTest,
           detected_at: new Date(), display_name: 'Google', affected_fields: [pair],
         }],
         rowCount: 1,
@@ -11951,7 +11967,12 @@ function fakeSpecPool({ matched, before = [], pair }) {
     if (has('UPDATE copy_fields cf')) {
       return { rows: Array.from({ length: matched }, (_, i) => ({ tenant_id: 'T' + i })), rowCount: matched };
     }
-    if (has('INSERT INTO spec_change_log')) return { rows: [], rowCount: 1 };
+    if (has('INSERT INTO spec_change_log')) {
+      // RETURNING id — distinct and increasing, so a test can tell the char_max
+      // row from the spec_note row rather than matching a shared placeholder.
+      changeLogId += 1;
+      return { rows: [{ id: changeLogId }], rowCount: 1 };
+    }
     if (has('UPDATE spec_review_queue SET status')) return { rows: [], rowCount: 1 };
     if (flat === 'BEGIN' || flat === 'COMMIT' || flat === 'ROLLBACK') return { rows: [], rowCount: 0 };
     throw new Error('fake spec pool: unhandled query → ' + flat);
@@ -11996,6 +12017,174 @@ function withFakeSpecPool(opts, fn) {
 const LIVE_PAIR = { asset: 'LinkedIn Single Image Ad', field: 'Intro Text' };
 const RENAMED_PAIR = { asset: 'Google DV360 / Responsive Display', field: 'Short Headline' };
 const DEACTIVATED_PAIR = { asset: 'LinkedIn Single Image Ad — Variant A', field: 'Intro Text' };
+
+// --- spec_change_log ids: the handle a caller needs to act on THIS approval ----
+
+test('commitReview returns the change-log id per attribute, and rolls up only the sweepable ones', async () => {
+  await withFakeSpecPool(
+    { matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150, spec_note: null }] },
+    async (spec, fake) => {
+      const r = await spec.commitReview(
+        7, [{ ...LIVE_PAIR, char_max: 200, spec_note: 'Front-load the first 40.' }], 1
+      );
+      assert.strictEqual(r.ok, true);
+
+      // BOTH ids are captured and kept apart.
+      const w = r.written[0];
+      assert.ok(Number.isInteger(w.change_ids.char_max), 'the char_max row id is returned');
+      assert.ok(Number.isInteger(w.change_ids.spec_note), 'the spec_note row id is returned');
+      assert.notStrictEqual(w.change_ids.char_max, w.change_ids.spec_note, 'two rows, two ids');
+
+      // THE ROLL-UP IS CHAR_MAX ONLY. The sweep processes field_attr='char_max'
+      // and nothing else, so a spec_note id handed to a scoped sweep would find
+      // nothing to do and report a clean run — exactly the silent-success shape
+      // this codebase keeps refusing.
+      assert.deepStrictEqual(r.change_ids, [w.change_ids.char_max]);
+
+      // And the SQL really asked for them.
+      const inserts = fake.log.filter((q) => /INSERT INTO spec_change_log/.test(q));
+      assert.strictEqual(inserts.length, 2);
+      assert.ok(inserts.every((q) => /RETURNING id/.test(q)), 'both INSERTs carry RETURNING id');
+    }
+  );
+});
+
+test('a spec_note-only approval rolls up NO sweepable ids', async () => {
+  // Not an edge case to tolerate — the correct answer. Nothing about a note
+  // change moves a bracket, so there is nothing for a sweep to correct, and an
+  // empty list says that where a null or a missing key would not.
+  await withFakeSpecPool(
+    { matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150, spec_note: null }] },
+    async (spec) => {
+      const r = await spec.commitReview(7, [{ ...LIVE_PAIR, spec_note: 'A note.' }], 1);
+      assert.strictEqual(r.ok, true);
+      assert.deepStrictEqual(r.change_ids, []);
+      assert.strictEqual(r.written[0].change_ids.char_max, null);
+      assert.ok(Number.isInteger(r.written[0].change_ids.spec_note));
+    }
+  );
+});
+
+// TRIPWIRE, NOT COVERAGE — and labelled as one because public/*.html is read as
+// a STRING here: no jsdom, no browser, no JS executed. It can only answer "is
+// this line present". Whether the panel actually renders, and whether it reads
+// right at 390px, is the device, per CLAUDE.md's own rule.
+test('tripwire: the admin console renders a deep-linked flag whatever its status', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.match(html, /<div id="linkedFlag"><\/div>/, 'the panel exists');
+  assert.match(html, /function renderLinkedFlag\(rows\)/);
+  // It must run BEFORE the pending filter, or it is reading an already-filtered
+  // list and a confirmed flag is gone again.
+  const q = sliceBetween(html, 'async function loadQueue()', 'function renderList(');
+  // ASSERT BOTH POSITIONS EXIST BEFORE COMPARING THEM. A missing call gives
+  // indexOf -1, and -1 < anything is true — so the ordering assertion below
+  // passed with the call DELETED. Caught by reverting the change and finding the
+  // test still green, which is the whole reason for that step. Same -1 hazard
+  // sliceBetween itself exists to close, arriving one line further in.
+  const callAt = q.indexOf('renderLinkedFlag(rows)');
+  const filterAt = q.indexOf("r.status === 'pending'");
+  assert.ok(callAt >= 0, 'loadQueue calls renderLinkedFlag');
+  assert.ok(filterAt >= 0, 'loadQueue still filters to pending');
+  assert.ok(callAt < filterAt, 'the linked flag is rendered from the UNFILTERED rows');
+  // No second endpoint: getReviewQueue already returns every status.
+  assert.strictEqual((q.match(/await api\(/g) || []).length, 1, 'still one fetch');
+});
+
+// --- The write gate: a space separator made it re-splittable -------------------
+//
+// These four are NOT a tripwire. The first two pin a property that was measurably
+// FALSE before this commit, and the last two pin two runtime guards the suite
+// had no coverage for at all.
+
+test('the write gate\'s pair key cannot be re-split — the space separator was a hole', () => {
+  const { pairKey } = require('../src/services/specReview');
+  const NUL = String.fromCharCode(0);
+
+  // THE MEASURED COLLISION, and the reason this commit exists. With ' ' as the
+  // separator BOTH of these produced 'Meta Single Image Ad Primary Text', so a
+  // flag whose affected_fields held only the first ALSO authorised an edit to
+  // the second — and the second is a real seeded field at char_max 150, written
+  // cross-tenant with no tenant predicate.
+  assert.notStrictEqual(
+    pairKey('Meta Single Image Ad Primary', 'Text'),
+    pairKey('Meta Single Image Ad', 'Primary Text'),
+    'the sacrificial pair must not key onto the real seeded pair'
+  );
+  // The GENERAL property, not just the one instance that was found.
+  assert.notStrictEqual(pairKey('A B', 'C'), pairKey('A', 'B C'));
+  assert.notStrictEqual(pairKey('Nurture Email', 'Subject'), pairKey('Nurture', 'Email Subject'));
+
+  // The separator is the one character normalize() can never emit — the same
+  // choice, for the same reason, as services/specSweep.js KEY_SEP.
+  assert.ok(pairKey('A', 'B').includes(NUL), 'the separator is NUL');
+  // And the same pair still keys the same, or the gate would refuse everything.
+  assert.strictEqual(pairKey('A', 'B'), pairKey('A', 'B'));
+
+  // WRITTEN AS AN ESCAPE, NEVER A LITERAL BYTE. A literal NUL parses identically
+  // and passes every assertion above, and makes git classify the file as BINARY
+  // so the diff is unreviewable. specSweep.js records that it was a literal once.
+  for (const f of ['src/services/specReview.js', 'src/services/specSweep.js']) {
+    const buf = fs.readFileSync(path.join(__dirname, '..', f));
+    assert.ok(!buf.includes(0), f + ' must contain no literal NUL byte');
+    assert.match(buf.toString('utf8'), /\\u0000/, f + ' declares the separator as an escape');
+  }
+});
+
+test('guardEdits refuses the off-list pair that the space separator used to admit', async () => {
+  // The exploit path, driven through the REAL gate rather than through pairKey:
+  // the flag authorises one sacrificial pair, and the submitted edit names a
+  // different, real pair whose space-joined key was identical.
+  await withFakeSpecPool(
+    { matched: 1, pair: { asset: 'Meta Single Image Ad Primary', field: 'Text' } },
+    async (spec, fake) => {
+      const r = await spec.buildPreview(7, [
+        { asset: 'Meta Single Image Ad', field: 'Primary Text', char_max: 999 },
+      ]);
+      assert.strictEqual(r.ok, false);
+      assert.match(r.error, /is not an affected field of this flag/);
+      // And nothing was read or written for the real pair on the way to refusing.
+      const joined = fake.log.join(' | ');
+      assert.ok(!/UPDATE copy_fields/.test(joined), 'no write was attempted');
+      assert.ok(!/SELECT at\.tenant_id/.test(joined), 'the real pair was never even read');
+    }
+  );
+});
+
+test('a test flag is barred from suggestions, preview and commit — and writes nothing', async () => {
+  // NEITHER of these two guards had any coverage. Deleting either line would
+  // have gone unnoticed, and the second is the one standing between the editable
+  // /admin/test-spec page and a real cross-tenant spec write.
+  await withFakeSpecPool({ matched: 1, pair: LIVE_PAIR, isTest: true }, async (spec, fake) => {
+    const sug = await spec.getSuggestions(7);
+    assert.strictEqual(sug.ok, false);
+    assert.match(sug.error, /test flags cannot be approved -- no suggestions/);
+
+    const prev = await spec.buildPreview(7, [{ ...LIVE_PAIR, char_max: 200 }]);
+    assert.strictEqual(prev.ok, false);
+    assert.match(prev.error, /test flags cannot be approved -- dismiss only/);
+
+    const commit = await spec.commitReview(7, [{ ...LIVE_PAIR, char_max: 200 }], 1);
+    assert.strictEqual(commit.ok, false);
+    assert.match(commit.error, /test flags cannot be approved -- dismiss only/);
+
+    const joined = fake.log.join(' | ');
+    assert.ok(!/UPDATE copy_fields/.test(joined), 'no copy_fields write');
+    assert.ok(!/INSERT INTO spec_change_log/.test(joined), 'no audit row');
+    assert.ok(!/UPDATE spec_review_queue SET status/.test(joined), 'the flag is not flipped');
+  });
+});
+
+test('a NON-test flag on the same fake still commits — the guard is the flag, not the harness', async () => {
+  // The control. Without it, the three refusals above would also pass if
+  // buildPreview/commitReview were broken for every input.
+  await withFakeSpecPool(
+    { matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150 }] },
+    async (spec) => {
+      const r = await spec.commitReview(7, [{ ...LIVE_PAIR, char_max: 200 }], 1);
+      assert.strictEqual(r.ok, true, 'is_test=false is the only difference');
+    }
+  );
+});
 
 test('commitReview: a pair that resolves writes, logs and flips the flag', async () => {
   await withFakeSpecPool(
@@ -12966,8 +13155,10 @@ test('the off state is the toggle and the card, with no pill to shift it', () =>
   assert.match(html, /\.lib-toggle \{[^}]*flex: none/);
   assert.ok(!/\.lib-head \{[^}]*flex-wrap: wrap/.test(html), 'the head itself never wraps');
   assert.match(html, /\.lib-headtext \{ flex: 1; min-width: 0;[^}]*flex-wrap: wrap/, 'the name column wraps instead');
-  // The remaining off cues are the dimmed, dashed card — unchanged.
-  assert.match(html, /\.lib-asset\.off \{ opacity: 0\.6; border-style: dashed; \}/);
+  // The off cue is opacity alone (SURFACES-HANDOFF.md §4 dropped the base
+  // .lib-asset's own border-style, so a dashed override no longer has a solid
+  // border to dash against — a dotted row read as "off" via alpha only).
+  assert.match(html, /\.lib-asset\.off \{ opacity: 0\.5; \}/);
   assert.match(html, /function libPaintActive\(card, active\) \{\s*card\.classList\.toggle\('off', !active\);\s*\}/);
 });
 
@@ -13429,7 +13620,7 @@ test('an asset name is a heading, and the toggle never moves', () => {
   // The create form's row-name rule is scoped, so it stops bolding the read-only
   // card's field names 70 lines above it.
   assert.match(html, /\.lib-frow \.lib-fname \{[^}]*flex: 1/);
-  assert.match(html, /\.lib-fname \{ color: var\(--ink\); \}/, 'the card\'s own rule is intact');
+  assert.match(html, /\.lib-fname \{ color: var\(--q-cream\); \}/, 'the card\'s own rule is intact');
 });
 
 test('the review modal reads its heading in the display face and cannot be abandoned', () => {
@@ -17887,12 +18078,18 @@ test('the project detail view: documents index, one back route, top actions', ()
   assert.match(html, /el\(opts\.collapsible \? 'button' : 'div', 'asset-card-header'\)/);
   // Width is not optional on a form control: shrink-to-fit left the nine bands
   // ragged, each ending at its own text. Found in a browser, invisible here.
-  assert.match(html, /\.glass-panel\.list button\.asset-card-header \{ width: calc\(100% \+ 36px\); \}/);
+  assert.match(html, /button\.asset-card-header \{[^}]*width: 100%;/);
+  // The +36px bleed-compensation variant is GONE, not just renamed: it existed
+  // only to counteract the header band's old `margin: 0 -18px` full-bleed trick,
+  // which SURFACES-HANDOFF.md §4 removed along with .asset-card's own side
+  // padding (there is nothing left to bleed past). A stray compensation rule
+  // sitting next to a since-removed bleed would silently overshoot the card.
+  assert.ok(!/width:\s*calc\(100% \+ 36px\)/.test(html), 'the bleed-compensation width is gone with the bleed it compensated for');
 
-  // 5. THE TITLE BLOCK SITS ON THE SAME SURFACE AS THE CARDS. Bare, it was 26px
-  //    from the column edge against the cards' 45px — a 19px step, measured.
+  // 5. THE TITLE BLOCK IS BARE ON THE SKY (FIXES-HANDOFF.md §4) — no box, no
+  //    padding to align against the cards below it any more.
   assert.match(html, /<div class="output-header glass-panel">\s*\n\s*<h2 class="output-title" id="project-title">/);
-  assert.match(html, /#screen-project \.output-header\.glass-panel \{ padding: 14px 18px; \}/);
+  assert.match(html, /\.output-header\.glass-panel \{ background: transparent; border: none; padding: 0; margin-bottom: 16px; \}/);
 
   // 6. THE EYEBROW USES THE ONE LABEL SYSTEM THIS PRODUCT HAS. It was 10px Zen
   //    Kaku 700 caps — a second, sans label language, three lines under a Star
@@ -17905,7 +18102,10 @@ test('the project detail view: documents index, one back route, top actions', ()
   // against the panel, both under the 4.5:1 AA floor this 11px text needs;
   // 0.75 measures 5.88:1. Dimming to signal "subordinate" is what fails on
   // these surfaces — the 11px against the heading's 13px carries that instead.
-  assert.match(html, /text-transform: uppercase; color: var\(--ink\); opacity: 0\.75;/);
+  // SURFACES step 6 hue-swapped --ink to --q-cream (the panel this was
+  // measured against lost its fill in step 4, so the text is cream-on-sky
+  // now); the 0.75 alpha carries over unchanged.
+  assert.match(html, /text-transform: uppercase; color: var\(--q-cream\); opacity: 0\.75;/);
 });
 
 // The other half of the same finding, on the other new element. 0.45 ink over
@@ -17913,9 +18113,11 @@ test('the project detail view: documents index, one back route, top actions', ()
 // — 2.74:1, under the 4.5:1 floor for 11px. 0.7 measures 5.78:1. Collapsed,
 // this count is the only thing on the band saying whether the group still needs
 // work, so it is the last text here that can afford to be hard to read.
+// SURFACES step 6: that header band lost its fill in step 4, so this is now
+// cream (rgba(252,246,227,...)) at the same 0.7 alpha rather than ink.
 test('the collapsed-band count clears the contrast floor', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
-  assert.match(html, /\.asset-card-count \{[^}]*color: rgba\(26,26,46,0\.7\);/);
+  assert.match(html, /\.asset-card-count \{[^}]*color: rgba\(252,246,227,0\.7\);/);
 });
 
 // A closed group still has to answer "does this one need work", so the band
@@ -18132,17 +18334,21 @@ test('a spent brief clears the input — and the three paths that must keep it d
 test('the brief box is whole line boxes, and grows with its content', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
 
-  // THE ARITHMETIC IS THE FIX. 15px x 1.6 = 24px per line; 18 + 14 = 32px of
-  // padding. The old min-height of 172 gave 140px of content — 5.83 lines — so
-  // the sixth was cut 83% down, slicing glyphs horizontally above the Run Brief
-  // bar. Both bounds are now whole lines: 6*24+32 = 176, 16*24+32 = 416.
+  // THE ARITHMETIC IS THE FIX. font-size was 15px (24px/line); bumped to 16px
+  // to stop iOS Safari auto-zooming the viewport on focus (16px is its
+  // no-zoom floor for a focusable field), which changed the line height to
+  // 16*1.6 = 25.6px — no longer a whole divisor of 24-based bounds. 25.6 only
+  // divides evenly into a whole pixel count every 5 lines (25.6 = 128/5), so
+  // the bounds moved to the nearest 5-line multiples: 5*25.6+32 = 160
+  // (was 6 lines at 176), 15*25.6+32 = 416 (was 16 lines — same 416px value,
+  // one fewer line at the taller font). 18 + 14 = 32px of padding, unchanged.
   const css = html.slice(html.indexOf('.glass-textarea {'), html.indexOf('.glass-textarea:focus'));
-  assert.match(css, /min-height: 176px/);
+  assert.match(css, /min-height: 160px/);
   assert.match(css, /max-height: 416px/);
   assert.match(css, /line-height: 1\.6/);
-  assert.match(css, /font-size: 15px/);
+  assert.match(css, /font-size: 16px/);
   assert.match(css, /padding: 18px 18px 14px/);
-  assert.ok(!/min-height: 172px/.test(css), 'the 5.83-line height is gone');
+  assert.ok(!/min-height: 176px/.test(css), 'the pre-16px-font whole-line height is gone');
   // Recompute rather than trust the numbers above: if someone changes the font
   // size or the padding, these bounds stop being whole lines and this fails.
   const px = (re) => Number(css.match(re)[1]);
@@ -18414,7 +18620,8 @@ test('a disabled primary is opaque, and the picker lede is body text', () => {
   // italic aside .field-select-hint gives a tappable-fields nudge. At 12.5px,
   // half-opacity and italic it was unreadable on the sky background on a phone.
   assert.match(html, /<p class="picker-lede">This brief didn’t name any assets/);
-  assert.match(html, /\.picker-lede \{ font-size: 14px; line-height: 1\.6; color: var\(--ink\); margin: 0 0 22px; \}/);
+  // SURFACES step 6: bare-sky text, hue-swapped from --ink to --q-cream.
+  assert.match(html, /\.picker-lede \{ font-size: 14px; line-height: 1\.6; color: var\(--q-cream\); margin: 0 0 22px; \}/);
   const lede = html.slice(html.indexOf('.picker-lede {'), html.indexOf('.picker-lede {') + 120);
   assert.ok(!/italic/.test(lede), 'not italic');
   assert.ok(!/rgba\(26,26,46,0\.\d/.test(lede), 'not a faded ink');
@@ -18484,7 +18691,7 @@ function fakeDetectorPool(rows) {
 // Load a FRESH detector bound to a fake pool. specDetector and db/specWatch both
 // destructure getPool at require time, so the patch has to happen before either
 // is loaded — hence the cache eviction rather than a simple assignment.
-async function runDetectorWith({ rows, fetchImpl }) {
+async function runDetectorWith({ rows, fetchImpl, detectionOpts }) {
   const db = require('../src/db');
   const realGetPool = db.getPool;
   const realFetch = globalThis.fetch;
@@ -18503,7 +18710,10 @@ async function runDetectorWith({ rows, fetchImpl }) {
   delete require.cache[wlPath];
   try {
     const det = require(detPath);
-    const out = await det.runDetection();
+    // runDetection({}) and runDetection() are the same path — the default
+    // parameter makes them identical — so passing {} keeps every existing caller
+    // of this driver byte-identical.
+    const out = await det.runDetection(detectionOpts || {});
     return { out, queries: pool.queries, det };
   } finally {
     db.getPool = realGetPool;
@@ -18884,7 +19094,7 @@ test('the provenance clause records an EVENT, and only where it has a referent',
   // into a file nothing can update — true-but-weak on an untouched page and false
   // the moment one changed. This records a FIXED historical event instead.
   const line = fieldHint(f()).text;
-  assert.match(line, /Verified against LinkedIn's spec page on 2026-08-20\.$/);
+  assert.match(line, /Read against LinkedIn's spec page on 2026-08-20\.$/);
   assert.ok(!/unchanged/.test(line), 'never claims a state that keeps changing after the doc is written');
 
   // NAMES THE PLATFORM, through the SAME resolution the hyperlink uses. The point
@@ -18892,13 +19102,13 @@ test('the provenance clause records an EVENT, and only where it has a referent',
   // it is that "the source page" would survive being pointed at the wrong page
   // and "LinkedIn's spec page" reads wrong under a Meta field.
   assert.match(fieldHint(f({ specSource: META, specType: 'recommended' })).text,
-    /Verified against Meta's spec page on 2026-08-20\.$/);
+    /Read against Meta's spec page on 2026-08-20\.$/);
 
   // ONLY WHERE THE PARAGRAPH HAS ALREADY NAMED A SOURCE — the same nameStart test
   // that decides whether the platform name is hyperlinked.
-  assert.ok(!/Verified against/.test(fieldHint(f({ specType: 'house_default', specSource: 'quillio_default' })).text),
+  assert.ok(!/Read against/.test(fieldHint(f({ specType: 'house_default', specSource: 'quillio_default' })).text),
     'a house default names no source, so it gets no verification clause');
-  assert.ok(!/Verified against/.test(fieldHint(f({ specSource: 'https://example.com/unknown' })).text),
+  assert.ok(!/Read against/.test(fieldHint(f({ specSource: 'https://example.com/unknown' })).text),
     'an unrecognised source renders the no-source form and gets no clause');
   assert.strictEqual(fieldHint(f({ specType: null, specSource: null, specNote: 'Keep it punchy.' })).text,
     'Keep it punchy.', 'a tenant-authored field has no tier line and no clause');
@@ -18982,7 +19192,7 @@ test('a show-once note renders on the first of an ADJACENT run and nowhere after
   assert.strictEqual(laterHint, 'Recommended by Meta.',
     'the attribution stays on every field — it is the claim, and it is the link');
   assert.ok(!/Not a hard limit/.test(laterHint), 'the boilerplate tail goes');
-  assert.ok(!/Verified against/.test(laterHint), 'and the date it shares with Card 1 goes with it');
+  assert.ok(!/Read against/.test(laterHint), 'and the date it shares with Card 1 goes with it');
 
   // A GAP RESTORES IT. The same sentence after an intervening field is a
   // different reader, not a repetition — a Set of "seen in this asset" would
@@ -19135,7 +19345,7 @@ test('the sole-witness verification quotes the pages it claims were read', () =>
   const flat = src.replace(/^\s*\/\/\s?/gm, '').replace(/\s+/g, ' ');
 
   // SAME RULE AS THE BACKFILL TEST ABOVE, and it is the rule rather than a habit:
-  // a stamp on spec_verified_at renders "Verified against X's spec page on DATE."
+  // a stamp on spec_verified_at renders "Read against X's spec page on DATE."
   // into tenant documents, so a header that cites four pages without carrying
   // their words leaves a reader nothing to check the claim against except the
   // claim. This asserts the quotes are PRESENT — it cannot and does not assert
@@ -19654,7 +19864,7 @@ test('runDetection calls normalize() DIRECTLY zero times — the guard, not the 
   // this file's own explanatory comments, and an unbounded slice runs past the
   // end of the function into module.exports. Both happened while writing this.
   const src = fs.readFileSync(require.resolve('../src/services/specDetector'), 'utf8');
-  const body = sliceBetween(src, 'async function runDetection()', '\nmodule.exports');
+  const body = sliceBetween(src, 'async function runDetection({ watchId } = {})', '\nmodule.exports');
   const masked = maskNonCode(body);
 
   const direct = [...masked.matchAll(/(?<![A-Za-z_.])normalize\(/g)];
@@ -20599,13 +20809,17 @@ test('sliceBetween fails on a missing anchor instead of checking somewhere else'
 // notice was the LAST element on its panel. copydone-shortfall is the first one
 // with content directly beneath it: its bottom edge landed on the "Assets" label
 // at exactly 0px, measured in Chromium at 390 x 844.
+//
+// .notice was later folded into a shared .error, .notice rule (cream-only,
+// glyph-not-hue messages) — re-measured after that change at 18px, still
+// clear of the content below.
 test('the shortfall notice does not sit flush against the copy list', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
   assert.match(html, /#copydone-shortfall \{ margin-bottom: 14px; \}/);
   // Scoped to the id on purpose — the three notices that predate it sit above
   // CTAs that bring their own spacing, and must not move.
-  assert.match(html, /\.notice \{\n\s*margin-top: 14px;\n\s*padding: 10px 12px;/);
-  assert.ok(!/\.notice \{[^}]*margin-bottom/.test(html), 'the shared rule is unchanged');
+  assert.match(html, /\.error, \.notice \{\n\s*margin-top: 14px; padding: 10px 12px;/);
+  assert.ok(!/\.error, \.notice \{[^}]*margin-bottom/.test(html), 'the shared rule is unchanged');
 });
 
 // === THE 189th CANNOT BE WRITTEN =============================================
@@ -20899,10 +21113,9 @@ const BELL_SVG =
   '<rect x="3" y="11" width="12" height="2"/><rect x="2" y="13" width="14" height="2"/>' +
   '<rect x="7" y="15" width="4" height="2"/></svg>';
 
-const NAV_BLOCK = (activeId, build) => [
+const NAV_BLOCK = (activeId) => [
   '  <nav>',
   '    <button type="button" class="nav-logo" id="nav-brand">',
-  `      <img class="nav-quill-img" src="/assets/images/quillio-quill.png?v=${build}" alt="Quillio">`,
   '      <span class="nav-wordmark">Quillio</span>',
   '    </button>',
   '    <div class="nav-links">',
@@ -20928,14 +21141,13 @@ const NAV_BLOCK = (activeId, build) => [
 ].join('\n');
 
 test('shared nav: each page serves the identical block, differing only in which link is active', () => {
-  const { renderShell, buildId } = require('../src/utils/shellHtml');
+  const { renderShell } = require('../src/utils/shellHtml');
   const shell = (f) => renderShell(path.join(__dirname, '..', 'public', f));
-  const b = buildId();
 
   const app = shell('app.html');
   const settings = shell('settings.html');
-  assert.ok(app.includes(NAV_BLOCK('nav-new', b)), 'app serves the nav with Brief active');
-  assert.ok(settings.includes(NAV_BLOCK('nav-settings', b)), 'settings serves the nav with Settings active');
+  assert.ok(app.includes(NAV_BLOCK('nav-new')), 'app serves the nav with Brief active');
+  assert.ok(settings.includes(NAV_BLOCK('nav-settings')), 'settings serves the nav with Settings active');
 
   // Exactly one active link on each page — not zero (a section name that no
   // longer matches) and not two (a slot left filled in the partial).
@@ -21252,6 +21464,154 @@ test('sweep: a null manifest is skipped and COUNTED, never opened', () => {
   assert.match(script, /skipped for a null manifest/);
 });
 
+// --- Scoped sweep: the head start on confirmation ------------------------------
+
+// Stub `pg`, reload db.js + db/specSweep + specSweep against it, run fn, restore.
+// Same shape as withFakeSpecPool; a separate one because the sweep reaches a
+// different set of tables and the two fakes would otherwise answer each other's
+// queries by accident.
+function withFakeSweepPool({ change = null, ready = true }, fn) {
+  const saved = new Map();
+  const remember = (x) => { if (!saved.has(x)) saved.set(x, require.cache[x]); };
+  const rel = (r) => require.resolve(path.join(__dirname, '..', r));
+  const savedUrl = process.env.DATABASE_URL;
+  const log = [];
+
+  const query = async (sql) => {
+    const flat = String(sql).replace(/\s+/g, ' ').trim();
+    log.push(flat);
+    if (flat.includes('FROM spec_sweep_state')) {
+      return ready
+        ? { rows: [{ id: 1, last_changed_at: null, last_change_id: null }], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    }
+    if (flat.includes('FROM spec_change_log')) {
+      return { rows: change ? [change] : [], rowCount: change ? 1 : 0 };
+    }
+    if (flat.includes('UPDATE spec_sweep_state')) return { rows: [], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+
+  const pgPath = require.resolve('pg');
+  remember(pgPath);
+  require.cache[pgPath] = {
+    id: pgPath, filename: pgPath, path: path.dirname(pgPath), loaded: true,
+    exports: { Pool: function () { return pool; } }, children: [], paths: [],
+  };
+  process.env.DATABASE_URL = 'postgres://fake/quillio';
+  for (const r of ['src/db', 'src/db/specSweep', 'src/services/specSweep']) {
+    const x = rel(r); remember(x); delete require.cache[x];
+  }
+  const sweep = require(rel('src/services/specSweep'));
+  return Promise.resolve(fn(sweep, log)).finally(() => {
+    for (const [x, mod] of saved) {
+      if (mod === undefined) delete require.cache[x]; else require.cache[x] = mod;
+    }
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  });
+}
+
+test('scoped sweep: an unresolvable changeId REFUSES and writes nothing', async () => {
+  // The failure this prevents: filtering to nothing and running would return
+  // status 'clean' with zero counts — "swept, nothing needed" for a run that
+  // never happened. Same rule as the detector's no-such-watch-row.
+  await withFakeSweepPool({ change: null }, async (sweep, log) => {
+    const r = await sweep.runSpecSweep({ changeId: 4242 });
+    assert.strictEqual(r.ran, false);
+    assert.strictEqual(r.reason, 'no-such-change');
+    assert.strictEqual(r.changeId, '4242', 'it names the id it could not resolve');
+    // AND THE WATERMARK IS UNTOUCHED. A refusal that wrote sweep state would
+    // stamp last_run_at for a run that examined nothing.
+    assert.ok(!log.some((q) => /UPDATE spec_sweep_state/.test(q)),
+      'a refused scoped run writes no sweep state at all');
+  });
+});
+
+test('scoped sweep: getChangeById filters to char_max, so a spec_note id refuses', async () => {
+  // commitReview keeps the two attributes apart and rolls up only char_max ids.
+  // This is the second half of that rule, enforced where the id is USED: a
+  // spec_note id that reached here would resolve, find no bracket to move, and
+  // report a clean sweep for a run that could never do anything.
+  await withFakeSweepPool({ change: null }, async (sweep, log) => {
+    const r = await sweep.runSpecSweep({ changeId: 7 });
+    assert.strictEqual(r.ran, false, 'refused because the row is not a char_max change');
+    const q = log.find((x) => /FROM spec_change_log/.test(x));
+    assert.ok(q, 'it queried the change log');
+    assert.match(q, /field_attr = 'char_max'/, 'the filter is in the SQL, not in a caller');
+    assert.match(q, /WHERE id = \$1::bigint/, 'and it is fetched by id');
+  });
+});
+
+test('scoped sweep: a not-ready state refuses before touching the change log', async () => {
+  await withFakeSweepPool({ ready: false }, async (sweep, log) => {
+    const r = await sweep.runSpecSweep({ changeId: 1 });
+    assert.strictEqual(r.ran, false);
+    assert.ok(!log.some((q) => /FROM spec_change_log/.test(q)),
+      'the readiness check comes first');
+  });
+});
+
+// TRIPWIRE, NOT COVERAGE. The scoped SUCCESS path needs getLibraryRows,
+// getSweepableProjects, a destination and Google clients to be stubbed as well —
+// a harness worth building when something drives it, and dishonest to imply
+// exists. These assert the two guards on the source instead, with anchors that
+// are checked rather than assumed.
+test('tripwire: a scoped sweep never advances the watermark', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  const fn = sliceBetween(src, 'async function runSpecSweep(', '\nmodule.exports');
+  // The full-watermark write is gated on !scoped. Without this, a one-change run
+  // would move the watermark PAST changes 4, 5 and 6 to sweep change 7, and the
+  // next full run would never see them — documents stale forever, silently.
+  assert.match(fn, /if \(!dryRun && !scoped\) \{\n\s*await setSweepState\(\{\n\s*changedAt:/,
+    'the watermark write is guarded on !scoped');
+  // A FAILED scoped run still records itself, without the watermark columns —
+  // setSweepState COALESCEs those, so omitting them leaves the watermark put.
+  assert.match(fn, /\} else if \(!dryRun && scoped && status === 'partial'\) \{/);
+  const durable = sliceBetween(fn, "} else if (!dryRun && scoped && status === 'partial') {", 'console.log(');
+  assert.ok(!/changedAt:/.test(durable) && !/changeId:/.test(durable),
+    'the failure record passes NEITHER watermark column');
+  assert.match(durable, /status: 'partial'/);
+});
+
+test('tripwire: the immediate sweep is fired after the response and OUTSIDE the try', () => {
+  const src = fs.readFileSync(require.resolve('../src/routes/admin'), 'utf8');
+  const route = sliceBetween(src, "router.post('/admin/api/approve-commit'", '\nmodule.exports');
+  // Inside the try, a throw here would reach the catch and call res.status(500)
+  // on a response ALREADY SENT — ERR_HTTP_HEADERS_SENT, reporting a committed
+  // write as failed. Assert positions exist before comparing them: a missing
+  // anchor gives indexOf -1, and -1 < anything passes.
+  const sendAt = route.indexOf('res.status(200).json({ success: true, ...result })');
+  const catchAt = route.indexOf('} catch (err) {');
+  const fireAt = route.indexOf('sweepConfirmedChanges(committed.change_ids, flagId)');
+  assert.ok(sendAt >= 0, 'the 200 is sent');
+  assert.ok(catchAt >= 0, 'the catch exists');
+  assert.ok(fireAt >= 0, 'the sweep is fired');
+  assert.ok(sendAt < catchAt, 'the response is sent inside the try');
+  assert.ok(fireAt > catchAt, 'and the kick-off is AFTER the catch block, not inside it');
+  // The 500 branch returns, or a failed commit falls through to the kick-off.
+  assert.match(route, /return res\.status\(500\)\.json\(\{ success: false, error: 'Write failed' \}\)/);
+  // It is not awaited — see the comment; a document-correction pass would hold
+  // the admin's response open.
+  assert.ok(!/await sweepConfirmedChanges/.test(route), 'fire-and-forget, never awaited');
+});
+
+test('tripwire: the fire-and-forget catch reports every outcome, and never swallows', () => {
+  const src = fs.readFileSync(require.resolve('../src/routes/admin'), 'utf8');
+  const fn = sliceBetween(src, 'async function sweepConfirmedChanges(', '\nrouter.post(');
+  // `.catch(() => {})` here would make a sweep that failed for weeks look exactly
+  // like one that never needed to run — the staleness problem one layer down.
+  assert.ok(!/catch\s*\(\s*\)\s*=>\s*\{\s*\}/.test(fn), 'no empty catch');
+  assert.match(fn, /console\.error\(/, 'failures go to console.error');
+  assert.match(fn, /err && err\.stack \? err\.stack : err/, 'a throw logs the STACK, not just .message');
+  assert.match(fn, /REFUSED/, 'a refusal is reported');
+  assert.match(fn, /INCOMPLETE/, 'a partial run is reported');
+  assert.match(fn, /THREW/, 'a throw is reported');
+  // A note-only approval has no char_max id and must not log a spurious sweep.
+  assert.match(fn, /if \(ids\.length === 0\) return;/);
+});
+
 test('sweep: the watermark stops at the first unfinished change, never skips it', () => {
   const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
   const fn = sliceBetween(src, 'async function runSpecSweep(', '\nmodule.exports');
@@ -21426,6 +21786,11 @@ test('sweep: the bracket is composed in ONE place, shared with fieldLabel', () =
 // batch that must still apply back to front. A source scan cannot see whether
 // the second edit addressed the right characters after the first had moved them.
 
+// The CURRENT wording (verifiedSentence composes this today).
+const HINT_READ = 'Platform limit (LinkedIn). Stay within this count. '
+  + "Read against LinkedIn's spec page on 2026-08-20.";
+// SUPERSEDED 2026-09 by HINT_READ above. Still real: every document built
+// between b018606 and the rename says this and always will.
 const HINT_VERIFIED = 'Platform limit (LinkedIn). Stay within this count. '
   + "Verified against LinkedIn's spec page on 2026-08-20.";
 const HINT_SUPERSEDED = 'Platform limit (LinkedIn). Stay within this count. '
@@ -21510,6 +21875,22 @@ test('sweep: the SUPERSEDED wording is recognised and replaced', async () => {
   assert.strictEqual(res.applied[0].provenanceFrom, 'Source unchanged as of 2026-08-20.');
   assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.'));
   assert.ok(!doc.text.includes('Source unchanged'));
+});
+
+test('sweep: the CURRENT (READ) wording is recognised and replaced', async () => {
+  // Mirrors the SUPERSEDED test above, for the wording verifiedSentence composes
+  // today. PROVENANCE_AT_END has to match this one too, or a field corrected on
+  // a document built after the 2026-09 rename keeps its stale "Read against …"
+  // clause sitting next to a fresh "Limit corrected" sentence — two provenance
+  // claims in one paragraph, which the whole point of REPLACE (not append) exists
+  // to prevent.
+  const doc = sweepDoc(HINT_READ);
+  const { res, paras } = await runSweep(doc);
+
+  assert.strictEqual(res.applied[0].provenance, 'rewritten');
+  assert.strictEqual(res.applied[0].provenanceFrom, "Read against LinkedIn's spec page on 2026-08-20.");
+  assert.ok(paras.includes('Platform limit (LinkedIn). Stay within this count. Limit corrected 2026-09-14.'));
+  assert.ok(!doc.text.includes('Read against'));
 });
 
 test('sweep: a SECOND correction replaces the date rather than stacking', async () => {
@@ -21609,11 +21990,18 @@ test('the strip removes every provenance wording, not just the current one', () 
   const { stripReaderOnlyLines } = require('../src/destinations/googleDocs');
   const base = 'Front-load the first 40 characters.';
 
-  assert.strictEqual(stripReaderOnlyLines(`${base} Verified against Meta's spec page on 2026-08-20.`), base);
-  // THE ONE THAT WAS LEAKING. When VERIFIED_LINE replaced CHECKED_LINE, the
+  // THE CURRENT WORDING. verifiedSentence has composed "Read against …" since
+  // 2026-09; this is what a field drafted today carries.
+  assert.strictEqual(stripReaderOnlyLines(`${base} Read against Meta's spec page on 2026-08-20.`), base);
+  // THE FIRST ONE THAT WAS LEAKING. When VERIFIED_LINE replaced CHECKED_LINE, the
   // superseded wording stopped being stripped — so every document from that
   // window had been shipping it into its own Field guidance.
   assert.strictEqual(stripReaderOnlyLines(`${base} Source unchanged as of 2026-08-20.`), base);
+  // THE SECOND SUPERSEDED WORDING. "Verified against …" was the composed sentence
+  // from b018606 until the rename to "Read" — every document built in that
+  // (much longer) window still says "Verified" and always will, so this has to
+  // keep matching even though nothing writes it any more.
+  assert.strictEqual(stripReaderOnlyLines(`${base} Verified against Meta's spec page on 2026-08-20.`), base);
   // And the sentence the sweep writes is reader-facing by exactly the same test:
   // it tells whoever opens the document that its limit moved. It tells a model
   // writing copy nothing it can act on.
@@ -21714,22 +22102,25 @@ test('freshness: the second line withdraws — it is never a badge', () => {
   }
 });
 
-test('freshness: the verified sentence is the DOCUMENT\'s, byte for byte', () => {
+test('freshness: the read sentence is the DOCUMENT\'s, byte for byte', () => {
   const { verifiedSentence } = require('../src/utils/specFreshness');
   const { fieldHint } = require('../src/destinations/googleDocs');
 
   const sentence = verifiedSentence('2026-08-20', LI_SPECS);
-  assert.strictEqual(sentence, "Verified against LinkedIn's spec page on 2026-08-20.");
+  assert.strictEqual(sentence, "Read against LinkedIn's spec page on 2026-08-20.");
   // The document composes its hint through the same function, so a reworded
   // screen cannot describe a sentence the document no longer says.
   const hint = fieldHint({ specType: 'enforced', specSource: LI_SPECS, specVerifiedAt: '2026-08-20' });
   assert.ok(hint.text.endsWith(sentence), 'the doc ends with the identical sentence');
 
-  // "VERIFIED" IS RIGHT HERE and only here: a human read that page. The rule
-  // against the word covers the weekly mechanism, which compares a hash and never
-  // re-reads a number — so the machine line must not use it.
+  // NEITHER "VERIFIED" NOR "CHECKED" APPEARS HERE, and that is now true of the
+  // whole codebase, not just this sentence: "verified" was the word here until
+  // 2026-09 (it read as a currency claim it didn't mean — see verifiedSentence's
+  // header), and "checked" was always reserved for the machine line below, which
+  // never claimed a re-read and still doesn't.
   const { freshnessLine } = require('../src/utils/specFreshness');
   assert.ok(!/verif/i.test(freshnessLine(watch())));
+  assert.ok(!/verif/i.test(sentence), 'the document sentence itself no longer uses the word either');
 
   // Every failure renders NOTHING rather than something malformed.
   assert.strictEqual(verifiedSentence(null, LI_SPECS), '');
@@ -21765,7 +22156,7 @@ test('freshness: the verification survives a stuck detector', () => {
   // fact about the machine, not about the reading — so the first line stays and
   // only the second withdraws.
   const f = specFreshness({ specVerifiedAt: '2026-08-20', specSource: LI_SPECS, watch: watch({ unconfirmed: 5 }) });
-  assert.strictEqual(f.verified, "Verified against LinkedIn's spec page on 2026-08-20.");
+  assert.strictEqual(f.verified, "Read against LinkedIn's spec page on 2026-08-20.");
   assert.strictEqual(f.state, 'unstable');
   assert.match(f.machine, /reads differently every time/);
 });
@@ -21832,9 +22223,9 @@ test('freshness: rendered on both surfaces, and never as a badge', () => {
   assert.ok(!/#0[0-9a-f]*[89a-f][0-9a-f]*0/i.test(css) && !/green/i.test(css), 'no green');
   assert.ok(!/content: '✓/.test(css), 'no tick');
 
-  // CONTRAST, PINNED WITH THE MEASUREMENT BESIDE IT. .lib-asset is
+  // CONTRAST, PINNED WITH THE MEASUREMENT BESIDE IT. .lib-asset was
   // rgba(255,255,255,0.5) over backdrop-filter: blur(14px) on the sky gradient,
-  // so the declared alpha is not the rendered colour and neither of the first
+  // so the declared alpha was not the rendered colour and neither of the first
   // two values looked wrong in the source. Screenshotted through the shipped
   // stylesheet at 390x844/3x, darkest 1% as the glyph and 90th percentile as its
   // background, worst case at the top of the page where the sky is darkest:
@@ -21845,7 +22236,13 @@ test('freshness: rendered on both surfaces, and never as a badge', () => {
   //
   // This is a claim about the rendered page, so per CLAUDE.md's rule for a test
   // that pins a value, the numbers it came from are here rather than implied.
-  assert.match(css, /color: rgba\(26,26,46,0\.75\)/, '0.75 measured 5.21:1; 0.70 is the floor');
+  // SURFACES step 6: .lib-asset lost that fill in step 4 (background:
+  // transparent), so the read-only card's .lib-fresh is cream now, at the same
+  // 0.75 alpha the measurement chose. The measurement itself stays true for
+  // .lib-new's copy of this same block (libHouseRow's locked-row line), which
+  // still renders on the fill described above — see the `.lib-new .lib-fresh`
+  // override and the comment above .lib-fresh in settings.html.
+  assert.match(css, /color: rgba\(252,246,227,0\.75\)/, '0.75 measured 5.21:1 against the pre-step-4 fill; 0.70 is the floor');
   // Anchored to the start of a rule, because `.lib-fresh-m {` is a SUBSTRING of
   // `.lib-fresh.flagged .lib-fresh-m {` — an unanchored negative matched the
   // flagged rule and reported the bare one as present.
@@ -21986,7 +22383,7 @@ test('provenance run: the attribution stays, the boilerplate and the date go', (
 
   assert.strictEqual(fieldHint(f).text,
     'Recommended by Meta (Facebook Feed). Not a hard limit — adjust for your brand and goal. '
-    + "Verified against Meta's spec page on 2026-08-20.");
+    + "Read against Meta's spec page on 2026-08-20.");
   assert.strictEqual(fieldHint(f, { suppressDetail: true }).text,
     'Recommended by Meta (Facebook Feed).');
 
@@ -22118,7 +22515,7 @@ test('provenance run: replayed through appendBody over the real seed', () => {
   // (it carries a conditional second limit), so its collapsed cards render
   // "<note> Platform limit (LinkedIn)." and a bare-line test would score them 0.
   const bare = (a) => render(a).filter((l) => /(Recommended by [^.]+\.|Platform limit \([^)]+\)\.)/.test(l)
-    && !/Verified against/.test(l)).length;
+    && !/Read against/.test(l)).length;
 
   // COLLAPSED — runs of 4, 5 and 6. These are the walls the rule was built for.
   assert.strictEqual(bare(DEFAULT_ASSETS.find((a) => a.name === 'Meta Carousel Ad')), 5);
@@ -22159,8 +22556,8 @@ test('the manifest records the sentence the DOCUMENT says, never a recomputed on
   //   • a member 2..N of a collapsed provenance run renders NO verification
   //     sentence, because suppressDetail took it;
   //   • a house_default field renders none whatever its date, because its tier
-  //     line names nobody (nameStart -1) and a dangling "Verified against …'s
-  //     spec page" has no referent in its own paragraph.
+  //     line names nobody (nameStart -1) and a dangling "Read against …'s spec
+  //     page" has no referent in its own paragraph.
   //
   // Driven through the SHIPPED renderer over the real seed, the way the
   // provenance-run replay above is, so the record and the artifact are compared
@@ -22197,6 +22594,7 @@ test('the manifest records the sentence the DOCUMENT says, never a recomputed on
 
   let recorded = 0;
   let wouldHaveLied = 0;
+  let carriedNaive = 0;
   for (const a of DEFAULT_ASSETS) {
     const spec = specOf(a);
     const { text, provenanceOut } = drive([spec]);
@@ -22231,15 +22629,51 @@ test('the manifest records the sentence the DOCUMENT says, never a recomputed on
       // run collapsed — so it is present in the document, attached to the leader.
       // The defect was never "this text is absent from the file"; it is "this text
       // is recorded against a field whose own line does not carry it".
+      //
+      // THE POPULATION IS DERIVED FROM verifiedSentence, NEVER FROM A LITERAL,
+      // and this line is the reason the rule is worth writing down. It read
+      // `!e.provenance.includes('Verified against')` until the 2026-09 relabel,
+      // and that literal was wrong in BOTH directions at once:
+      //
+      //   • Before the relabel it made the assertion below a TAUTOLOGY. A string
+      //     that does not contain "Verified against" cannot contain "Verified
+      //     against X's spec page on Y." — so the guard implied its own body and
+      //     the assert could never fail. It was proof-shaped and empty, which is
+      //     the same defect the manifest column itself exists to avoid.
+      //   • After it, the literal selected the OPPOSITE population: a run leader
+      //     rendering "Read against …" contains no "Verified against", so it was
+      //     admitted as a field that renders no clause — and the assert then
+      //     failed on it, correctly, for the wrong reason.
+      //
+      // CLAUDE.md's stale-strip-constant rule, arriving in an assertion instead
+      // of in a strip. Composing the sentence the way the renderer composes it is
+      // what makes this survive the next rewording without being re-audited.
       const naive = verifiedSentence(f.specVerifiedAt, f.specSource);
-      if (naive && !e.provenance.includes('Verified against')) {
-        wouldHaveLied += 1;
-        assert.ok(!e.provenance.includes(naive),
-          `${a.name} / ${f.fieldName}: recorded a clause its own line does not carry`);
+      if (naive) {
+        if (e.provenance.includes(naive)) {
+          carriedNaive += 1;
+        } else {
+          wouldHaveLied += 1;
+          // AND WHAT IT RENDERED INSTEAD CARRIES NO DATE AT ALL. This is the part
+          // the old tautology never checked. Withholding the sentence is only
+          // correct if the field's line makes no dated claim by any other route —
+          // a truncated attribution ("Recommended by Meta.") or a house-default
+          // pointer, never some other date. Keyed on the ISO shape rather than on
+          // a wording, so a fifth provenance sentence cannot slip past it.
+          assert.ok(!/\d{4}-\d{2}-\d{2}/.test(e.provenance),
+            `${a.name} / ${f.fieldName}: withheld its own sentence but still dated its line — "${e.provenance}"`);
+        }
       }
     }
   }
   assert.ok(recorded > 0, 'the sweep over the seed actually recorded something');
+  // BOTH SIDES NON-VACUOUS. wouldHaveLied alone would be satisfied by a renderer
+  // that never emits a verification sentence for anything, which is the failure
+  // mode a relabel could plausibly cause — READ_LINE matching nothing would read
+  // as a clean sweep. carriedNaive proves the sentence is genuinely rendered for
+  // the fields that should have it.
+  assert.ok(carriedNaive > 0,
+    'no seeded field recorded its verification sentence at all — the renderer has stopped emitting one');
   // NOT A VACUOUS PASS. The seeded library really does contain fields the naive
   // recompute would have mis-recorded — the collapsed runs on Meta Carousel,
   // LinkedIn Carousel and Google Responsive Display. If this ever reads 0 the
@@ -22257,9 +22691,14 @@ test('the manifest records the sentence the DOCUMENT says, never a recomputed on
       specNote: null, specType: 'house_default', specSource: LI, specVerifiedAt: VER,
     }],
   }]);
-  assert.ok(verifiedSentence(VER, LI), 'the naive composer does produce one here');
+  const hdNaive = verifiedSentence(VER, LI);
+  assert.ok(hdNaive, 'the naive composer does produce one here');
   assert.strictEqual(hd[0].provenance, 'House default — set your own in Settings.');
-  assert.ok(!/Verified against/.test(hdText), 'and the document carries no dangling clause');
+  // THE SENTENCE ITSELF, not the phrase it opens with. `!/Verified against/`
+  // stood here until the 2026-09 relabel and became vacuously true the moment
+  // nothing wrote that wording — an assertion still green while testing nothing.
+  assert.ok(!hdText.includes(hdNaive), 'and the document carries no dangling clause');
+  assert.ok(!/\d{4}-\d{2}-\d{2}/.test(hdText), 'nor any other dated claim');
   assert.ok(hdText.includes(hd[0].provenance), 'what was recorded is what was written');
 });
 
@@ -22285,7 +22724,7 @@ test('field_manifest v2: the three provenance states, and a missing key is not a
 
   // STATE 1 and 2 — reported by a renderer. A sentence, and a recorded ABSENCE.
   const withRender = buildFieldManifest(specs, WHEN, [
-    { assetType: 'Meta Single Image Ad', instance: 0, fieldName: 'Primary Text', provenance: 'Recommended by Meta (Facebook Feed). Verified against Meta\'s spec page on 2026-08-20.' },
+    { assetType: 'Meta Single Image Ad', instance: 0, fieldName: 'Primary Text', provenance: 'Recommended by Meta (Facebook Feed). Read against Meta\'s spec page on 2026-08-20.' },
     { assetType: 'Meta Single Image Ad', instance: 0, fieldName: 'Description', provenance: '' },
   ]);
   assert.strictEqual(withRender.version, 2, 'v1 recorded limits only — a reader must branch on this');
@@ -23098,6 +23537,82 @@ test('run history: the SET fragments are gated on column presence', () => {
   assert.match(det.stampChange({ change_count: 0 }), /change_count = COALESCE\(change_count, 0\) \+ 1/);
   assert.ok(!/first_baselined_at/.test(det.stampChange({ change_count: 0 })),
     'and the change fragment never touches first_baselined_at');
+});
+
+// --- Scoped detection: ?watchId= ----------------------------------------------
+//
+// Driven through the real runDetection with a stubbed pool, because the whole
+// question is which rows get FETCHED — invisible to a source scan.
+
+// A fetch that counts, so "only one page was read" is assertable rather than
+// inferred from the summary.
+function countingFetch() {
+  const urls = [];
+  const impl = async (url) => {
+    urls.push(String(url));
+    return { ok: true, status: 200, text: async () => HISTORY_PAGE };
+  };
+  impl.urls = urls;
+  return impl;
+}
+
+const TWO_ROWS = () => [
+  historyRow({ id: 1, display_name: 'row one', source_url: 'https://example.test/one', current_hash: null }),
+  historyRow({ id: 2, display_name: 'row two', source_url: 'https://example.test/two', current_hash: null }),
+];
+
+test('scoped detection: no watchId examines every row — the cron path is unchanged', async () => {
+  const fetchImpl = countingFetch();
+  const { out } = await runDetectorWith({ rows: TWO_ROWS(), fetchImpl });
+  assert.strictEqual(out.summary.total, 2);
+  assert.strictEqual(out.results.length, 2);
+  // Both pages really were read. The weekly cron calls runDetection() with no
+  // argument and must keep doing exactly this.
+  assert.ok(fetchImpl.urls.some((u) => u.includes('/one')));
+  assert.ok(fetchImpl.urls.some((u) => u.includes('/two')));
+});
+
+test('scoped detection: a watchId fetches ONLY that row', async () => {
+  const fetchImpl = countingFetch();
+  const { out } = await runDetectorWith({
+    rows: TWO_ROWS(), fetchImpl, detectionOpts: { watchId: 2 },
+  });
+  assert.strictEqual(out.summary.total, 1, 'the summary counts the scoped set, not the whole list');
+  assert.strictEqual(out.results.length, 1);
+  assert.strictEqual(out.results[0].source_url, 'https://example.test/two');
+  // THE POINT OF THE FEATURE: the other nine real platform pages are not read,
+  // so poking the is_test row cannot raise a real flag in the same run.
+  assert.ok(!fetchImpl.urls.some((u) => u.includes('/one')), 'row one was never fetched');
+  assert.ok(fetchImpl.urls.every((u) => u.includes('/two')));
+});
+
+test('scoped detection: an unknown watchId REFUSES rather than reporting a clean empty run', async () => {
+  const fetchImpl = countingFetch();
+  const { out } = await runDetectorWith({
+    rows: TWO_ROWS(), fetchImpl, detectionOpts: { watchId: 999 },
+  });
+  // Filtering to nothing and running would return every count at zero with
+  // ran:true — a clean bill for a run that examined no pages. That is the shape
+  // of silent failure this file's own `not_watched` status exists to avoid.
+  assert.strictEqual(out.ran, false);
+  assert.strictEqual(out.reason, 'no-such-watch-row');
+  assert.strictEqual(out.watchId, '999', 'it names the id it could not find');
+  assert.deepStrictEqual(out.results, []);
+  assert.strictEqual(fetchImpl.urls.length, 0, 'nothing was fetched');
+});
+
+test('scoped detection: the id is compared as a string, so 2 and "2" both scope', async () => {
+  // The route hands through a string from the request body; a caller in Node
+  // hands through a number. Both must land on the same row rather than one of
+  // them silently matching nothing.
+  for (const id of [2, '2']) {
+    const fetchImpl = countingFetch();
+    const { out } = await runDetectorWith({
+      rows: TWO_ROWS(), fetchImpl, detectionOpts: { watchId: id },
+    });
+    assert.strictEqual(out.summary.total, 1, 'watchId ' + JSON.stringify(id) + ' scoped to one row');
+    assert.strictEqual(out.results[0].source_url, 'https://example.test/two');
+  }
 });
 
 test('run history: the baseline path sets first_baselined_at, once, and nothing else', async () => {

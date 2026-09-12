@@ -213,12 +213,16 @@ src/
   data/
     defaultAssets.js Bundled default asset library, seeded per tenant on install.
 
-public/              Self-contained HTML pages (no frameworks, no external
-                     scripts). app.html, onboarding.html, settings.html,
-                     admin.html + fonts/, assets/ (GIFs, logos, images), and
+public/              Self-contained HTML pages (no frameworks, no third-party
+                     CDN scripts). app.html, onboarding.html, settings.html,
+                     admin.html + fonts/, assets/ (GIFs, logos, images, js/) and
                      partials/nav.html — the one copy of the app/settings nav,
                      spliced in by renderShell at a `__NAV:<section>__` token.
-                     Only fonts/ and assets/ are served statically.
+                     Only fonts/ and assets/ are served statically. app.html,
+                     settings.html and onboarding.html each load ONE external
+                     script — assets/js/bird-system.js, same-origin and
+                     first-party — the sole exception to "no external scripts";
+                     everything else stays inline.
 scripts/             One-off migrations, seeds, and query/debug utilities.
 test/smoke.test.js   The test suite (see "Running & checking").
 ```
@@ -672,13 +676,31 @@ document and the settings panel cannot come to say different things.
 | **The human event** | `copy_fields.spec_verified_at` — a person opened the cited page and confirmed this number. Fixed, historical, true when written and true forever. | The generated **document**, because a document is a file and a date written into one is frozen at creation. Also the settings panel. |
 | **The machine state** | `spec_watch_list` — when the detector last fetched that page and what it found. **Moves weekly.** | **Settings → Asset library only.** A surface that re-reads it every time somebody opens it. Never a document. |
 
-`verifiedSentence` is the one composer of "Verified against LinkedIn's spec page
-on 2026-08-20."; `destinations/googleDocs.js` delegates to it.
+`verifiedSentence` is the one composer of "Read against LinkedIn's spec page on
+2026-08-20."; `destinations/googleDocs.js` delegates to it.
 
-**"Verified" is right in that sentence and only there.** The rule against the word
-— say *checked* — exists because the weekly detector compares a hash and never
-re-reads a number, so "verified" would claim something the machine does not do.
-That sentence is about a human who did read the page.
+**IT SAID "Verified against …" UNTIL 2026-09, AND THAT EXCEPTION IS NOW GONE.**
+This paragraph used to read *"Verified" is right in that sentence and only there*
+— the one sanctioned exception to the rule against the word, earned because the
+sentence is about a human who did read the page, where the weekly detector only
+compares a hash. The exception was defensible and still got misread: Kyle saw
+"Verified against X's spec page on 2026-08-26" and took it for a currency claim —
+*confirmed two weeks ago* — which it never was. The date is a single historical
+event and does not move. "Read" names that event and stops.
+
+So the rule below — **say *checked*, never *verified*** — is now unconditional:
+after `d615bba` the word appears nowhere this codebase writes. What did **not**
+change is the fact the sentence names, only the verb naming it.
+
+**A DOCUMENT ALREADY BUILT STILL SAYS "Verified against …", and always will.**
+Railway auto-deploys, so every doc built between `b018606` and `d615bba` carries
+that wording, and nothing reaches into a Doc that already shipped.
+`destinations/googleDocs.js` therefore matches **four** provenance wordings on
+the way back in — `READ_LINE`, `VERIFIED_LINE_SUPERSEDED`,
+`CHECKED_LINE_SUPERSEDED` and `CORRECTED_LINE` — in both `stripReaderOnlyLines`
+and `PROVENANCE_AT_END`. `VERIFIED_LINE_SUPERSEDED` is read there and written
+nowhere; deleting it as dead code is the strip bug this file's preamble is about,
+one wording later.
 
 **The machine line WITHDRAWS; it is not a badge.** "We watch that page for edits —
 not the number. Last checked 2026-08-19: no change." The first clause is the
@@ -1123,13 +1145,21 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 23,388 lines and 784 tests** —
-written as a reading taken on a date rather than as a standing figure, because
+regression guards. **As of this commit it is 23,903 lines and 802 tests** —
+measured on the merge that brought `rebrand/cleanup` onto `main`, and written as
+a reading taken on a date rather than as a standing figure, because
 the previous version of this sentence said 635 and was wrong by 114 tests and
 about 3,900 lines. The number had been correct once. Nothing updates it, nothing
 checks it, and a stale count in the one file whose value is that it can be
 believed without re-deriving it is the same defect this file's own preamble is
 about.
+
+**A MERGE IS A CASE THIS RULE DOES NOT OBVIOUSLY COVER, so it is named here.**
+The figure moved off 784 without anybody writing a test: both branches had added
+tests since they diverged, so neither side's count survived, and the sentence was
+inherited unchanged from whichever branch won the merge. Nothing conflicts, and
+the number is simply wrong from the moment the merge lands. Re-measure on any
+merge that brings test files together.
 
 **Do not write a new number here unless you have just run the suite**, and write
 it the way this sentence does — attached to the commit that measured it. A count
@@ -3413,7 +3443,7 @@ you cannot otherwise reconstruct, and every part of this one is reconstructable:
 `projects.field_manifest` holds the effective limits at document creation **and,
 since v2, the provenance sentence that document rendered** (see "The manifest
 records what the document claimed" below), and the document itself carries
-"Verified against X's spec page on DATE." Stamping it would add a label carrying
+"Read against X's spec page on DATE." Stamping it would add a label carrying
 no information those three do not already hold. It
 would also have no coherent per-row meaning — what does `1.0 → 1.1` signify on a
 field one tenant has overridden and another has not?
@@ -3489,12 +3519,32 @@ it **off** before `doc` travels anywhere, so the object the adapters and the
 browser see is byte-identical to what it always was.
 
 **Why the sentence and not only the columns.** The columns let a reader recompute;
-they do not say what this document said. The wording has already changed once —
-"Source unchanged as of `<date>`." shipped on `main` for 75 minutes on 2026-08-20
-and those documents still carry it, which is why `googleDocs` keeps
-`CHECKED_LINE_SUPERSEDED` as a read-only constant. A recomputed sentence
+they do not say what this document said. The wording has already changed **twice**,
+and the second time is the one that settles the argument:
+
+- "Source unchanged as of `<date>`." shipped on `main` for 75 minutes on
+  2026-08-20. A handful of documents.
+- **"Verified against …" → "Read against …" (`d615bba`, 2026-09-08)** — the
+  wording every document built over roughly three weeks of production carries,
+  and the relabel landed on `rebrand/cleanup`, which is what Railway was
+  deploying. A manifest that recomputed would today describe **all** of them with
+  a verb their own pages do not use.
+
+That is why `googleDocs` keeps `CHECKED_LINE_SUPERSEDED` and
+`VERIFIED_LINE_SUPERSEDED` as read-only constants. A recomputed sentence
 describes today's composer; for a dispute about what a client was told, the text
 they received is the artifact.
+
+**AND THE RELABEL IS ALSO WHAT CAUGHT A TAUTOLOGY IN THIS SECTION'S OWN TEST.**
+`the manifest records the sentence the DOCUMENT says` selected its
+would-have-lied population with the literal `!e.provenance.includes('Verified
+against')`. Against the old wording that guard **implied** its own assertion — a
+string lacking "Verified against" cannot contain "Verified against X's spec page
+on Y." — so the inner check could never fail. Proof-shaped and empty, which is
+the exact defect the column exists to prevent, sitting in the test that defends
+it. The population is composed through `verifiedSentence` now, and the withheld
+branch asserts the field's line carries **no ISO date by any route**, which is
+the check the tautology was standing in for.
 
 **THREE STATES, AND TWO OF THEM LOOK ALIKE IF YOU ARE CARELESS** — the same
 distinction the column already draws between NULL and `[]`:

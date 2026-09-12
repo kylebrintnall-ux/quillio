@@ -8,59 +8,214 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet" />
   <style>
-    :root { --navy:#1C1F3B; --sky:#4DD9D9; --cream:#F5F0E8; --warn:#E8A33D; --danger:#E86A6A; --ok:#5FB98E; }
+    /* Design-system tokens, copied in from app.html/settings.html/onboarding.html
+       — this file has no shared stylesheet to link (none exists anywhere in
+       public/), so every shell including this one carries its own copy.
+       Values are SURFACES-HANDOFF.md §0's, verified against app.html's actual
+       shipped :root rather than trusted from the doc — see CLAUDE.md on why
+       that check matters here specifically (the doc and the code disagree on
+       at least one exception elsewhere in this project). */
+    :root {
+      --q-cream: #FCF6E3;
+      --q-cream-75: rgba(252,246,227,.75);
+      --q-cream-55: rgba(252,246,227,.55);
+      --q-fill: #FDF6DC;
+      --q-ink: #0A2233;
+      --q-gold: #F5C518;
+      --q-plum: #3D3566;
+      --q-display: 'StarCrush', serif;
+      --q-body: 'Zen Kaku Gothic New', sans-serif;
+      /* --q-glass (rgba(21,44,112,.55) elsewhere) has no consumer in app.html/
+         settings.html/onboarding.html either — SURFACES-HANDOFF.md §5 defines
+         it for a BLURRED floating surface over the sky gradient. This page has
+         no sky gradient (see the body rule below), so there is nothing behind
+         a blur to obscure — a backdrop-filter over a flat fill changes nothing
+         a reader can see and only costs a paint. Used here at full opacity
+         instead, as the one other flat surface this screen needs (the
+         approve/preview overlay) — same hue family as the page, distinguished
+         by lightness/hue rather than by blur.  rgb(21,44,112) = #152C70. */
+      --q-glass-solid: rgb(21,44,112);
+
+      /* STATUS COLOUR STAYS ON THIS SURFACE — FIXES-HANDOFF.md §9 ("no red, no
+         green — glyph only") is deliberately NOT applied here. That rule was
+         written for banners and toasts on customer-facing marketing surfaces,
+         where hue is decoration layered on top of a message and must not be
+         the only carrier of it. Admin is an operations console whose weekly
+         job is spotting the one broken row in a 14-row scan; hue IS the
+         mechanism that scan runs on, same as the diff view's old/new colouring
+         and the health table's error-row tint. Keeping it is the deliberate
+         choice, not an oversight of §9.
+         Values differ from the pre-rebrand --danger (#E86A6A) and --ok
+         (#5FB98E): measured against THIS file's actual backgrounds
+         (--q-plum and --q-glass-solid, both computed analytically — see the
+         PR notes for the full table), #E86A6A read 3.53:1 / 4.12:1 and
+         #5FB98E read 4.64:1 / 5.42:1 — one failing outright, the other too
+         thin a margin to trust. Both lightened within the same hue family
+         until they cleared 4.5:1 on both surfaces; --q-warn was already safe
+         (5.13:1 / 5.99:1) and is unchanged. */
+      --q-warn: #E8A33D;
+      --q-danger: #FF9E9E;  /* was #E86A6A */
+      --q-ok: #6FC79C;      /* was #5FB98E */
+    }
     * { box-sizing: border-box; }
-    body { margin:0; background:var(--navy); color:var(--cream);
-      font-family:'Zen Kaku Gothic New', sans-serif;
-      padding:24px; line-height:1.45; }
-    h1 { font-size:22px; margin:0 0 4px; }
-    h2 { font-size:15px; text-transform:uppercase; letter-spacing:.08em; opacity:.7; margin:28px 0 10px; }
-    .sub { opacity:.65; font-size:13px; margin:0 0 20px; }
-    .bar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
-    button { font:inherit; font-weight:600; border-radius:8px; border:2px solid var(--sky);
-      padding:8px 14px; cursor:pointer; background:transparent; color:var(--sky); }
-    button.primary { background:var(--sky); color:var(--navy); }
-    button.danger { border-color:var(--danger); color:var(--danger); }
-    button.warn { border-color:var(--warn); color:var(--warn); }
-    button:disabled { opacity:.4; cursor:not-allowed; }
-    .card { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12);
-      border-radius:12px; padding:16px; margin-bottom:12px; }
-    .card.test { border-style:dashed; opacity:.9; }
-    .row { display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap; }
-    .title { font-weight:700; font-size:16px; }
-    .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; letter-spacing:.05em; }
-    .badge.test { background:var(--warn); color:var(--navy); }
-    .badge.real { background:var(--sky); color:var(--navy); }
-    .meta { font-size:12.5px; opacity:.7; word-break:break-all; margin:6px 0; }
-    .hash { font-family:'Zen Kaku Gothic New', sans-serif; font-size:12px; }
-    .actions { display:flex; gap:8px; margin-top:10px; }
-    .empty { opacity:.55; font-style:italic; }
-    table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
-    th,td { text-align:left; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.1); vertical-align:top; }
-    th { opacity:.6; font-weight:600; }
-    input[type=text],input[type=number] { font:inherit; background:rgba(0,0,0,.25); color:var(--cream);
-      border:1px solid rgba(255,255,255,.2); border-radius:6px; padding:5px 8px; width:100%; }
-    input:disabled { opacity:.35; }
-    .diff-old { color:var(--danger); }
-    .diff-new { color:var(--ok); font-weight:700; }
-    #overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; padding:24px; overflow:auto; }
-    #panel { max-width:760px; margin:0 auto; background:var(--navy); border:1px solid rgba(255,255,255,.2);
-      border-radius:14px; padding:22px; }
-    .note { font-size:12.5px; opacity:.7; }
-    .msg { padding:10px 12px; border-radius:8px; margin:10px 0; font-size:13.5px; }
-    .msg.err { background:rgba(232,106,106,.15); border:1px solid var(--danger); }
-    .msg.ok { background:rgba(95,185,142,.15); border:1px solid var(--ok); }
+    body {
+      margin: 0;
+      /* NO sky gradient, NO grain texture on this surface — a deliberate call,
+         not an omission. Two reasons:
+         1. SURFACES-HANDOFF.md's nine-stop gradient + soft-light grain were
+            built for surfaces meant to be glanced at (brief-writing,
+            onboarding). This is a console Kyle reads for minutes at a time,
+            comparing hashes and dates across 14 rows. A flat --q-plum ground
+            makes every text/background pair on this page a fixed, exactly
+            computable ratio instead of a check against a moving nine-stop
+            ramp — FIXES-HANDOFF.md §6 already had to walk the floating-glass
+            treatment back once (.55 → .9 opacity) because it read as
+            unreadable over a busy background; a scrolling data table is a
+            harder version of the same risk, not an easier one.
+         2. Mechanical: the texture asset is cache-busted with ?v=__BUILD__,
+            substituted only by renderShell (src/utils/shellHtml.js). This
+            route serves the file with a plain sendFile (src/routes/admin.js),
+            so the query string would ship as the literal, un-substituted
+            string "__BUILD__" — a broken, uncached-forever asset URL. Fixing
+            that means routing this page through renderShell, which is a
+            serving-mechanism change, not a style change, and out of scope
+            here. Left off; said so, rather than shipping a broken URL. */
+      background: var(--q-plum);
+      color: var(--q-cream);
+      font-family: var(--q-body);
+      padding: 24px;
+      line-height: 1.5;
+    }
+    h1 { font-family: var(--q-display); font-weight: normal; font-size: 24px; letter-spacing: .02em; margin: 0 0 6px; }
+    h2 { font-family: var(--q-display); font-weight: normal; font-size: 14px; color: var(--q-cream);
+      text-transform: uppercase; letter-spacing: 2px; margin: 28px 0 10px; }
+    /* Full cream, not a dimmed variant — FIXES-HANDOFF.md §7 already learned
+       this once for prose people have to read ("full-opacity cream... not the
+       muted 0.75/rgba(...,.78) these used to share"); no reason to relearn it
+       here by reaching for admin's old opacity:.65. */
+    .sub { color: var(--q-cream); font-size: 13px; margin: 0 0 20px; max-width: 64ch; }
+    .bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+
+    button { font: inherit; font-weight: 600; border-radius: 0; border: 1px solid var(--q-cream);
+      padding: 10px 16px; cursor: pointer; background: transparent; color: var(--q-cream); }
+    button.primary { background: var(--q-fill); color: var(--q-ink); border-color: var(--q-cream); }
+    button.warn { border-color: var(--q-warn); color: var(--q-warn); }
+    button:hover:not(:disabled) { background: var(--q-gold); border-color: var(--q-gold); color: var(--q-ink); }
+    /* Same fill-on-hover convention as the plain button above, own colour —
+       not gold, so Dismiss doesn't borrow the "confirm" button's hover cue. */
+    button.warn:hover:not(:disabled) { background: var(--q-warn); border-color: var(--q-warn); color: var(--q-ink); }
+    /* Disabled controls are the one place WCAG itself doesn't require 4.5:1
+       (inactive components are excluded) — opacity alone is fine here, unlike
+       on a field a user is meant to read. Paired with a style change (dotted,
+       not solid) because this project has already shipped a disabled control
+       that read as enabled at low opacity alone; a second visual cue is cheap
+       insurance against the same mistake. */
+    button:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* --- Flag card: SHARED classes below (.card/.title/.badge/.meta/.actions/
+       button) change SHAPE ONLY per the accepted-collateral call — zero
+       radius, new fill, new type. flagCard()'s own markup and content are
+       untouched: no field added or removed, no layout rework. --- */
+    .card { background: transparent; border: 1px solid var(--q-cream); border-radius: 0; padding: 16px; margin-bottom: 12px; }
+    .card.test { border-style: dashed; }
+    .row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+    .title { font-weight: 700; font-size: 16px; color: var(--q-cream); }
+    .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 0; letter-spacing: .05em;
+      background: transparent; border: 1px solid var(--q-cream); color: var(--q-cream); }
+    .meta { font-size: 12.5px; color: var(--q-cream-75); word-break: break-all; margin: 6px 0; }
+    .hash { font-family: var(--q-body); font-size: 12px; }
+    .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    /* Flag card only: separates Dismiss from Review change… so they read as
+       different tiers of action rather than peers — same dotted-divider idiom
+       .wl-table already uses for a repeat, reused here for a tier split. Only
+       applied when there's a primary group above it to separate FROM (a test
+       card, which has no Review change… button, keeps the plain .actions
+       spacing it always had). */
+    .dismiss-row { margin-top: 4px; padding-top: 10px; border-top: 1px dotted var(--q-cream-55); }
+    .empty { border: 1px dotted var(--q-cream); color: var(--q-cream-75); font-style: italic;
+      font-size: 14px; text-align: center; padding: 24px 20px; background: transparent; }
+
+    /* Secondary/metadata text: --q-cream-75, never -55. Measured against THIS
+       page's actual background (--q-plum) rather than assumed — the system's
+       own default muted step, -55, computes to 4.31:1 here and fails AA; -75
+       clears at 6.54:1. This is exactly the trap flagged going in: admin's old
+       ladder (opacity .7/.65/.6/.55) is a documented AA failure on this
+       project twice already (CLAUDE.md, "DIMMING CANNOT CARRY HIERARCHY"), and
+       copying a system token without checking it against this background
+       would have been a third. -55 stays in use below, but only for borders
+       and placeholders — never for text a reader has to read. */
+    .note { font-size: 12.5px; color: var(--q-cream-75); }
+    .summary { font-size: 13.5px; margin: 0 0 12px; color: var(--q-cream); }
+    .summary > div { margin: 4px 0; }
+
+    /* --- The three tables on this page (watch list, approve-form, diff
+       preview) share one responsive pattern: stacked cards below 768px, a
+       real table at and above it — the same mobile-first convention
+       app.html/settings.html/onboarding.html already use (min-width:768px is
+       their recurring desktop breakpoint too; iPad clears it and keeps the
+       table). Every <td> carries data-label, read by the mobile view's
+       ::before to show a field name above its value.
+       Row-repeat convention: SURFACES-HANDOFF.md §4 was written for <div>
+       rows and says nothing about a table, so this is a new call, not a
+       lookup — solid border marks the one outer container (the page-level
+       #healthTableWrap on the open page; #panel's own border already plays
+       that role for the two tables inside it, so they get no extra wrap),
+       dotted marks a repeat inside it, matching the div convention exactly.
+       On mobile each stacked row IS its own outer container (no shared table
+       edge to belong to), so it takes a full solid border instead — the same
+       shape .project-card already uses for a standalone repeating unit. --- */
+    #healthTableWrap { border: 1px solid var(--q-cream); padding: 4px 14px; margin-top: 8px; }
+    table.wl-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    .wl-table thead { display: none; }
+    .wl-table tbody tr { display: block; padding: 12px 0; }
+    .wl-table tbody tr + tr { border-top: 1px dotted var(--q-cream-55); }
+    .wl-table tbody tr.err-row { background: rgba(255,158,158,.12); border-left: 3px solid var(--q-danger); padding-left: 11px; }
+    .wl-table td { display: block; padding: 3px 0; border: none; text-align: left; vertical-align: top; }
+    .wl-table td[data-label]::before {
+      content: attr(data-label); display: block; font-family: var(--q-body);
+      font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em;
+      color: var(--q-cream-75); margin-bottom: 2px;
+    }
+    @media (min-width: 768px) {
+      #healthTableWrap { padding: 4px 16px 12px; }
+      .wl-table thead { display: table-header-group; }
+      .wl-table th { text-align: left; padding: 8px; border-bottom: 1px solid var(--q-cream);
+        font-family: var(--q-body); font-size: 11px; font-weight: 600; text-transform: uppercase;
+        letter-spacing: .06em; color: var(--q-cream-75); }
+      .wl-table tbody tr { display: table-row; padding: 0; }
+      .wl-table tbody tr.err-row { background: none; border-left: none; padding-left: 0; }
+      .wl-table tbody tr.err-row td { background: rgba(255,158,158,.12); }
+      .wl-table tbody tr.err-row td:first-child { border-left: 3px solid var(--q-danger); }
+      .wl-table td { display: table-cell; padding: 8px; }
+      .wl-table td[data-label]::before { display: none; }
+    }
+
+    input[type=text], input[type=number] {
+      font: inherit; background: transparent; color: var(--q-cream);
+      border: 1px solid var(--q-cream); border-radius: 0; padding: 7px 9px; width: 100%;
+    }
+    input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--q-cream); }
+    input::placeholder { color: var(--q-cream-55); }
+    input:disabled { opacity: .4; border-style: dotted; }
+
+    .diff-old { color: var(--q-danger); }
+    .diff-new { color: var(--q-ok); font-weight: 700; }
+
+    #overlay { position: fixed; inset: 0; background: rgba(21,44,112,.7); display: none; padding: 24px; overflow: auto; }
+    #panel { max-width: 760px; margin: 0 auto; background: var(--q-glass-solid);
+      border: 1px solid var(--q-cream); border-radius: 0; padding: 22px; color: var(--q-cream); }
+    #panel h1 { font-size: 20px; }
+
+    .msg { padding: 10px 12px; border-radius: 0; margin: 10px 0; font-size: 13.5px; border: 1px solid transparent; }
+    .msg.err { background: rgba(255,158,158,.15); border-color: var(--q-danger); }
+    .msg.ok { background: rgba(111,199,156,.15); border-color: var(--q-ok); }
     /* Tenant divergence: this write has no tenant predicate, so a row holding a
        different value is about to be overwritten. Amber — it is a fact the admin
        must weigh, not an error that blocks the write. */
-    .msg.warn { background:rgba(224,168,74,.15); border:1px solid var(--warn); }
-    .diverge { font-size:12.5px; color:var(--warn); margin-top:4px; }
-    .diverge ul { margin:3px 0 0; padding-left:16px; }
-    .diverge li { margin:1px 0; }
-    .summary { font-size:13.5px; margin:0 0 12px; }
-    .summary > div { margin:3px 0; }
-    tr.err-row td { background:rgba(232,106,106,.12); }
-    tr.err-row td:first-child { border-left:3px solid var(--danger); }
+    .msg.warn { background: rgba(232,163,61,.15); border-color: var(--q-warn); }
+    .diverge { font-size: 12.5px; color: var(--q-warn); margin-top: 4px; }
+    .diverge ul { margin: 3px 0 0; padding-left: 16px; }
+    .diverge li { margin: 1px 0; }
   </style>
 </head>
 <body>
@@ -75,6 +230,13 @@
     <button id="refreshBtn">Refresh</button>
     <span id="runMsg" class="note"></span>
   </div>
+
+  <!-- A DEEP-LINKED FLAG, shown whatever its status. The queue below renders
+       only `pending`, so a link to a flag that was just CONFIRMED lands on a
+       console that has already dropped it -- a link that reliably shows nothing
+       is worse than no link. This panel is empty and takes no space unless
+       ?flag=<id> is in the URL. -->
+  <div id="linkedFlag"></div>
 
   <h2>Flags</h2>
   <div id="realList"></div>
@@ -155,11 +317,14 @@ async function loadHealth(){
   // is why it needs saying on the summary rather than only in a row.
   if(stuck) sum.appendChild(el('div',{},['Stuck: '+stuck+' entr'+(stuck===1?'y':'ies')+' with no usable comparison for '+alertAt+'+ runs']));
   sum.appendChild(el('div',{class:'note'},['Next scheduled run: '+nextMondayCron()+' — Mondays 15:00 UTC (0 15 * * 1)']));
-  const table=el('table');
-  table.appendChild(el('tr',{},[
+  const table=el('table',{class:'wl-table'});
+  const thead=el('thead');
+  thead.appendChild(el('tr',{},[
     el('th',{text:'Watch'}), el('th',{text:'Type'}), el('th',{text:'Last checked'}),
     el('th',{text:'Baselined'}), el('th',{text:'Anchor'}), el('th',{text:'Problem'}), el('th',{text:'Pending'}),
   ]));
+  table.appendChild(thead);
+  const tbody=el('tbody');
   for(const w of watch){
     const observed = w.source_kind === 'observed_practice';
     // Every hash-watch column on an observed-practice row is historical: nothing
@@ -169,14 +334,14 @@ async function loadHealth(){
     const stuckAt = observed ? 0 : w.consecutive_unconfirmed;
     const isStuck = stuckAt >= alertAt;
     const tr = el('tr', (!observed && (w.last_error || fails>1 || isStuck)) ? {class:'err-row'} : {});
-    tr.appendChild(el('td',{},[el('div',{class:'title',text:w.display_name||'(no name)'}), el('div',{class:'note',text:w.source_url})]));
-    tr.appendChild(el('td',{},[
+    tr.appendChild(el('td',{'data-label':'Watch'},[el('div',{class:'title',text:w.display_name||'(no name)'}), el('div',{class:'note',text:w.source_url})]));
+    tr.appendChild(el('td',{'data-label':'Type'},[
       el('span',{class:'badge '+(w.is_test?'test':'real'),text:w.is_test?'TEST':'REAL'}),
       observed ? el('div',{class:'note',text:'observed practice'}) : null,
     ].filter(Boolean)));
-    tr.appendChild(el('td',{text:observed?'not checked':relTime(w.last_checked_at)}));
-    tr.appendChild(el('td',{text:observed?'n/a':(w.baselined?'yes':'no')}));
-    tr.appendChild(el('td',{},[
+    tr.appendChild(el('td',{'data-label':'Last checked',text:observed?'not checked':relTime(w.last_checked_at)}));
+    tr.appendChild(el('td',{'data-label':'Baselined',text:observed?'n/a':(w.baselined?'yes':'no')}));
+    tr.appendChild(el('td',{'data-label':'Anchor'},[
       el('div',{text:observed?'n/a':(w.anchored?'yes':'none')}),
       // A run of failures is the signal that an anchor is wrong rather than that
       // the site had one bad morning, so it goes next to the anchor, not the error.
@@ -189,7 +354,7 @@ async function loadHealth(){
     // The streak shows from 1 upward, deliberately: a row climbing 1 -> 2 is the
     // early signal, and holding the note until the alert threshold would make a
     // month of drift appear fully formed with no warning.
-    tr.appendChild(el('td',{},
+    tr.appendChild(el('td',{'data-label':'Problem'},
       observed ? [
         el('div',{text:'observed practice — not hash-watched'}),
         el('div',{class:'note',text:'ages rather than changes; can never raise a flag'}),
@@ -201,18 +366,57 @@ async function loadHealth(){
         ].filter(Boolean)
       : [el('div',{text:'—'})]
     ));
-    tr.appendChild(el('td',{text:String(w.pending_count||0)}));
-    table.appendChild(tr);
+    tr.appendChild(el('td',{'data-label':'Pending',text:String(w.pending_count||0)}));
+    tbody.appendChild(tr);
   }
+  table.appendChild(tbody);
   wrap.appendChild(table);
 }
 function loadAll(){ loadHealth(); loadQueue(); }
+
+// The ?flag=<id> a notification links to. Read once per load from the real URL.
+function linkedFlagId() {
+  try {
+    const v = new URLSearchParams(window.location.search).get('flag');
+    return v && /^\d+$/.test(v) ? v : null;
+  } catch (e) { return null; }
+}
+
+// Render the deep-linked flag, whatever its status.
+//
+// NO EXTRA FETCH: /admin/api/review-queue already returns EVERY row regardless
+// of status (db/specWatch.getReviewQueue has no WHERE), so the row a link points
+// at is already in the payload the queue just filtered it out of.
+//
+// It says the STATUS rather than implying one. A reviewed flag reached here from
+// a notification saying the change was confirmed; a dismissed one did not, and a
+// still-pending one is also in the list below. Naming which it is, is the whole
+// job of this panel.
+function renderLinkedFlag(rows) {
+  const host = $('linkedFlag');
+  host.innerHTML = '';
+  const id = linkedFlagId();
+  if (!id) return;
+  const f = rows.find(r => String(r.id) === id);
+  host.appendChild(el('h2',{},['Linked flag']));
+  if (!f) {
+    host.appendChild(el('p',{class:'msg err',text:'No flag #'+id+' — it may have been deleted.'}));
+    return;
+  }
+  const card = flagCard(f, !!f.is_test);
+  card.insertBefore(
+    el('div',{class:'meta',text:'status: '+f.status}),
+    card.firstChild ? card.firstChild.nextSibling : null
+  );
+  host.appendChild(card);
+}
 
 async function loadQueue() {
   $('realList').innerHTML = ''; $('testList').innerHTML = '';
   let rows;
   try { rows = (await api('/admin/api/review-queue')).reviewQueue; }
   catch (e) { $('realList').appendChild(el('p',{class:'msg err',text:'Failed to load: '+e.message})); return; }
+  renderLinkedFlag(rows);
   const pending = rows.filter(r => r.status === 'pending');
   const real = pending.filter(r => !r.is_test);
   const test = pending.filter(r => r.is_test);
@@ -231,10 +435,20 @@ function flagCard(f, isTest) {
   ]));
   card.appendChild(el('div',{class:'meta'},['flag #'+f.id+' · detected '+new Date(f.detected_at).toLocaleString()]));
   card.appendChild(el('div',{class:'meta hash'},['old '+short(f.old_hash)+'  →  new '+short(f.new_hash)]));
-  const actions = el('div',{class:'actions'});
-  if (!isTest) actions.appendChild(el('button',{class:'primary',onclick:()=>openApprove(f.id)},['Approve…']));
-  actions.appendChild(el('button',{class:'warn',onclick:()=>doDismiss(f.id)},['Dismiss']));
-  card.appendChild(actions);
+  // Two groups, not one row: Review change… opens a two-step write, Dismiss
+  // closes the flag in one. They read as peers when they sit in the same
+  // .actions block with nothing between them — that was the defect. The
+  // dotted top border on the second group is the same repeat-divider the rest
+  // of this page already uses (.wl-table's row rule), reused here for a tier
+  // split rather than a repeat.
+  if (!isTest) {
+    card.appendChild(el('div',{class:'actions'},[
+      el('button',{class:'primary',onclick:()=>openApprove(f.id)},['Review change…']),
+    ]));
+  }
+  card.appendChild(el('div',{class:'actions'+(isTest?'':' dismiss-row')},[
+    el('button',{class:'warn',onclick:()=>doDismiss(f.id)},['Dismiss']),
+  ]));
   return card;
 }
 async function doDismiss(flagId) {
@@ -249,44 +463,64 @@ async function openApprove(flagId) {
   try { flag = (await api('/admin/api/flag/'+flagId)).flag; }
   catch (e) { alert('Load failed: '+e.message); return; }
   panel.innerHTML='';
-  panel.appendChild(el('h1',{text:'Approve flag #'+flag.id}));
+  // The step marker is what tells a reader this screen is not the end — the
+  // word "Approve" used to carry that job and didn't: clicking it opened this
+  // checklist, which has no control that writes anything.
+  panel.appendChild(el('h1',{text:'Step 1 of 2 — choose fields (flag #'+flag.id+')'}));
   panel.appendChild(el('p',{class:'note',text:flag.source_url}));
   panel.appendChild(el('p',{class:'note',text:'Check only the field(s) this change actually applies to, and type the new value. Unchecked fields are never touched.'}));
 
-  const table = el('table');
-  table.appendChild(el('tr',{},[
+  const table = el('table',{class:'wl-table'});
+  const thead = el('thead');
+  thead.appendChild(el('tr',{},[
     el('th',{text:'✓'}), el('th',{text:'Asset / Field'}), el('th',{text:'Current char_max'}),
     el('th',{text:'New char_max'}), el('th',{text:'New spec_note (optional)'}),
   ]));
+  table.appendChild(thead);
+  const tbody = el('tbody');
   const inputs = [];
+  // Created before the loop so the per-row checkbox listener can close over it.
+  // Starts disabled — "checked at least one field" is a real precondition for
+  // moving forward and the control now says so, instead of only preview()'s
+  // inline error saying so after the fact (kept below as a fallback).
+  const nextBtn = el('button',{class:'primary',onclick:()=>preview(flag, inputs, msg)},['Next: review diff →']);
+  nextBtn.disabled = true;
   for (const fld of flag.fields) {
     const cb = el('input',{type:'checkbox'});
     const cmax = el('input',{type:'number',min:'1',placeholder:fld.current_char_max||''});
     const note = el('input',{type:'text',placeholder:'leave blank to keep'});
     const hint = el('div',{class:'note'});
     cmax.disabled = true; note.disabled = true;
-    cb.addEventListener('change',()=>{ cmax.disabled=!cb.checked; note.disabled=!cb.checked; });
+    // Extended, not a second listener: the existing per-row toggle now also
+    // re-evaluates across ALL rows, since one box anywhere is enough to move
+    // forward. inputs already holds every earlier row by the time this fires
+    // (it's an async event, long after the loop that builds it has finished).
+    cb.addEventListener('change',()=>{
+      cmax.disabled=!cb.checked; note.disabled=!cb.checked;
+      nextBtn.disabled = !inputs.some((r)=>r.cb.checked);
+    });
     inputs.push({fld, cb, cmax, note, hint});
     // Divergence shown on the FORM as well as the preview: an admin choosing what
     // to type should know up front that tenants don't currently agree.
-    const cell = el('td',{},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'}), hint]);
+    const cell = el('td',{'data-label':'Asset / Field'},[el('div',{class:'title',text:fld.asset}), el('div',{class:'note',text:fld.field+' · '+fld.tenant_count+' tenant row(s)'}), hint]);
     const dMax = divergenceNode(fld.char_max_divergence, 'char_max');
     if (dMax) cell.appendChild(dMax);
     const dNote = divergenceNode(fld.spec_note_divergence, 'spec_note');
     if (dNote) cell.appendChild(dNote);
-    table.appendChild(el('tr',{},[
-      el('td',{},[cb]),
+    tbody.appendChild(el('tr',{},[
+      el('td',{'data-label':'Include'},[cb]),
       cell,
-      el('td',{text:String(fld.current_char_max||'—')}),
-      el('td',{},[cmax]), el('td',{},[note]),
+      el('td',{'data-label':'Current char_max',text:String(fld.current_char_max||'—')}),
+      el('td',{'data-label':'New char_max'},[cmax]), el('td',{'data-label':'New spec_note'},[note]),
     ]));
   }
+  table.appendChild(tbody);
   panel.appendChild(table);
   const msg = el('div',{});
   panel.appendChild(msg);
   const bar = el('div',{class:'actions'},[
     el('button',{onclick:()=>suggest(flag, inputs, msg)},['Suggest values']),
-    el('button',{class:'primary',onclick:()=>preview(flag, inputs, msg)},['Preview changes']),
+    nextBtn,
     el('button',{onclick:closeOverlay},['Cancel']),
   ]);
   panel.appendChild(bar);
@@ -364,7 +598,10 @@ async function preview(flag, inputs, msg) {
 }
 function renderPreview(flag, edits, pv, msg) {
   panel.innerHTML='';
-  panel.appendChild(el('h1',{text:'Confirm write — flag #'+flag.id}));
+  // Mirrors Screen 1's marker. "Confirm write" is doing enough work as the one
+  // accurate button label in this flow — the heading's job is to say this is
+  // the LAST step, not to repeat the button.
+  panel.appendChild(el('h1',{text:'Step 2 of 2 — confirm (flag #'+flag.id+')'}));
   panel.appendChild(el('p',{class:'note',text:'Nothing has been written yet. Review the diff, then confirm.'}));
   // Up front, before the table: this write has no tenant filter, so if any row
   // disagrees it is about to be reverted. Stated as a count of fields so it is
@@ -375,19 +612,23 @@ function renderPreview(flag, edits, pv, msg) {
       'This write has no tenant filter, so every row below is set to the new value — '+
       'the diverging rows listed will lose what they currently hold.'}));
   }
-  const table = el('table');
-  table.appendChild(el('tr',{},[el('th',{text:'Asset / Field'}),el('th',{text:'Attr'}),el('th',{text:'Change'}),el('th',{text:'Tenant rows'})]));
+  const table = el('table',{class:'wl-table'});
+  const thead = el('thead');
+  thead.appendChild(el('tr',{},[el('th',{text:'Asset / Field'}),el('th',{text:'Attr'}),el('th',{text:'Change'}),el('th',{text:'Tenant rows'})]));
+  table.appendChild(thead);
+  const tbody = el('tbody');
   for (const c of pv.changes) {
-    const cell = el('td',{},[el('div',{class:'title',text:c.asset}),el('div',{class:'note',text:c.field})]);
+    const cell = el('td',{'data-label':'Asset / Field'},[el('div',{class:'title',text:c.asset}),el('div',{class:'note',text:c.field})]);
     const d = divergenceNode(c.divergence, c.attr);
     if (d) cell.appendChild(d);
-    table.appendChild(el('tr',{},[
+    tbody.appendChild(el('tr',{},[
       cell,
-      el('td',{text:c.attr}),
-      el('td',{},[el('span',{class:'diff-old',text:String(c.old||'∅')}),document.createTextNode('  →  '),el('span',{class:'diff-new',text:String(c.new)})]),
-      el('td',{text:String(c.tenant_count)}),
+      el('td',{'data-label':'Attr',text:c.attr}),
+      el('td',{'data-label':'Change'},[el('span',{class:'diff-old',text:String(c.old||'∅')}),document.createTextNode('  →  '),el('span',{class:'diff-new',text:String(c.new)})]),
+      el('td',{'data-label':'Tenant rows',text:String(c.tenant_count)}),
     ]));
   }
+  table.appendChild(tbody);
   panel.appendChild(table);
   panel.appendChild(el('p',{class:'note',text:'Source: '+pv.source_url}));
   const out = el('div',{});

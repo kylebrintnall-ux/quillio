@@ -385,7 +385,9 @@ const HOUSE_DEFAULT_LINE_SET = 'House default — yours, set in Settings.';
 const NOT_A_HARD_LIMIT = 'Not a hard limit — adjust for your brand and goal.';
 const READER_ONLY_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET, NOT_A_HARD_LIMIT];
 
-// THE PROVENANCE CLAUSE — "Verified against LinkedIn's spec page on 2026-08-20."
+// THE PROVENANCE CLAUSE — "Read against LinkedIn's spec page on 2026-08-20."
+// (was "Verified against …" until 2026-09 — see VERIFIED_LINE_SUPERSEDED below
+// for why the word changed and not the fact it names)
 //
 // A DOCUMENT CAN ONLY CARRY A STATIC DATE, and that constraint decides everything
 // about this sentence. A .docx is a FILE: once it lands in someone's Drive
@@ -429,7 +431,18 @@ const READER_ONLY_LINES = [HOUSE_DEFAULT_LINE, HOUSE_DEFAULT_LINE_SET, NOT_A_HAR
 // A regex rather than a member of READER_ONLY_LINES, because both the platform
 // and the date vary. `[^.]` cannot cross a sentence boundary, and the lookahead
 // requires whitespace or end-of-string after the stop.
-const VERIFIED_LINE = /\s*Verified against [^.]{1,60} on \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
+const READ_LINE = /\s*Read against [^.]{1,60} on \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
+
+// SUPERSEDED 2026-09. verifiedSentence composed "Verified against …" until a
+// report read "Verified … on 2026-08-26" as a currency claim — "checked two
+// weeks ago" — which it was never meant to make: the date is a one-time human
+// read, and the page has been machine-watched every Monday since without
+// moving it. The wording changed to "Read against …" (READ_LINE, above); the
+// FACT the sentence names did not. Kept here and still matched, for the same
+// reason CHECKED_LINE_SUPERSEDED below is kept: documents already built with
+// this wording are still out there and this file cannot reach into them to
+// change what they say.
+const VERIFIED_LINE_SUPERSEDED = /\s*Verified against [^.]{1,60} on \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
 
 // verifiedSentence — the provenance clause itself — IS COMPOSED IN
 // src/utils/specFreshness.js, not here, and is re-exported below so this
@@ -439,24 +452,28 @@ const VERIFIED_LINE = /\s*Verified against [^.]{1,60} on \d{4}-\d{2}-\d{2}\.(?=\
 // qualification comes to describe a sentence the document no longer says.
 //
 // Its rules live with it — the ISO format, the four failure paths that all
-// render nothing rather than something malformed, why "Verified" is the right
-// word there and nowhere else, and the study-vs-spec-page wording edge.
+// render nothing rather than something malformed, why "Read" replaced
+// "Verified", and the study-vs-spec-page wording edge.
 
 // EVERY PROVENANCE WORDING THIS CODEBASE HAS EVER WRITTEN INTO A DOCUMENT.
 //
 // A document is a FILE. Nothing reaches inside it again, so a sentence shipped
 // for one afternoon is still out there — and anything that READS a document back
-// has to know every form, even the ones nothing writes any more. There are three:
+// has to know every form, even the ones nothing writes any more. There are four:
 //
 //   "Source unchanged as of 2026-08-20."         1e37918, superseded by b018606
-//   "Verified against Meta's spec page on …"     b018606, the current wording
+//   "Verified against Meta's spec page on …"     b018606, superseded below
+//   "Read against Meta's spec page on …"         the current wording
 //   "Limit corrected 2026-09-14."                written by the sweep, below
 //
 // The first was live on main for 75 minutes on 2026-08-20, and Railway
 // auto-deploys main, so documents built in that window carry it. It is READ here
 // and WRITTEN nowhere: verifiedSentence cannot produce it. Do not delete it as
 // dead code — the documents are the reason it exists, and they outlive the
-// composer that made them.
+// composer that made them. The second is the same story on a wording that lived
+// far longer than 75 minutes: every document built between b018606 and the
+// change to "Read" still says "Verified", and will for as long as that document
+// exists — nothing rewrites a Doc that already shipped.
 const CHECKED_LINE_SUPERSEDED = /\s*Source unchanged as of \d{4}-\d{2}-\d{2}\.(?=\s|$)/g;
 
 // THE CORRECTION SENTENCE, written by the sweep in place of whichever provenance
@@ -469,7 +486,7 @@ const CHECKED_LINE_SUPERSEDED = /\s*Source unchanged as of \d{4}-\d{2}-\d{2}\.(?
 // field whose number just changed underneath the reader. Leaving it is worse than
 // leaving nothing.
 //
-// Why it names no source. "Verified against Meta's spec page" earns its
+// Why it names no source. "Read against Meta's spec page" earns its
 // specificity because a human read that page; the sweep read a database row. A
 // platform name here would claim the same authority for a different event.
 const CORRECTED_PREFIX = 'Limit corrected ';
@@ -492,13 +509,14 @@ function correctedSentence(isoDate) {
 }
 
 // The provenance clause as it sits at the END of a hint paragraph — an
-// alternation over all three wordings, anchored the way LABEL_BRACKET_AT_END is
+// alternation over all four wordings, anchored the way LABEL_BRACKET_AT_END is
 // and for the same reason: fieldHint APPENDS the clause last, so "the last
 // sentence" is unambiguous, where a first-match search over a paragraph that also
 // contains a tenant's note is not.
 const PROVENANCE_AT_END = new RegExp(
   '(?:'
-    + 'Verified against [^.]{1,60} on \\d{4}-\\d{2}-\\d{2}\\.'
+    + 'Read against [^.]{1,60} on \\d{4}-\\d{2}-\\d{2}\\.'
+    + '|Verified against [^.]{1,60} on \\d{4}-\\d{2}-\\d{2}\\.'
     + '|Source unchanged as of \\d{4}-\\d{2}-\\d{2}\\.'
     + '|Limit corrected \\d{4}-\\d{2}-\\d{2}\\.'
     + ')[ \\t\\r\\n]*$'
@@ -533,15 +551,17 @@ function stripReaderOnlyLines(text) {
   let out = String(text == null ? '' : text);
   for (const line of READER_ONLY_LINES) out = out.split(line).join(' ');
   out = out.replace(RECOMMENDED_ATTRIBUTION, ' ');
-  // All three provenance wordings, not just the one the composer writes today.
+  // All four provenance wordings, not just the one the composer writes today.
   // The strip's job is to keep reader-facing sentences out of a drafting prompt,
   // and the prompt is built from a DOCUMENT — which may have been written by any
-  // version of this file. The superseded wording stopped being stripped the
-  // moment VERIFIED_LINE replaced CHECKED_LINE, so every document from that
+  // version of this file. The first superseded wording stopped being stripped
+  // the moment VERIFIED_LINE replaced CHECKED_LINE, so every document from that
   // window has been shipping "Source unchanged as of 2026-08-20." into its own
   // Field guidance ever since. Small, and exactly the class of silent failure
-  // this function exists to prevent.
-  out = out.replace(VERIFIED_LINE, ' ');
+  // this function exists to prevent — which is why the second rename (VERIFIED
+  // -> READ) adds a pattern instead of replacing one.
+  out = out.replace(READ_LINE, ' ');
+  out = out.replace(VERIFIED_LINE_SUPERSEDED, ' ');
   out = out.replace(CHECKED_LINE_SUPERSEDED, ' ');
   out = out.replace(CORRECTED_LINE, ' ');
   return out.replace(/\s+/g, ' ').trim();
@@ -744,7 +764,7 @@ function fieldHint(field, { suppressNote = false, suppressDetail = false } = {})
   // a source to speak of.
   //
   // Not merely "there is a tier line". A house_default line reads "House default
-  // — set your own in Settings." and names nobody, so "Verified against …'s spec
+  // — set your own in Settings." and names nobody, so "Read against …'s spec
   // page" would have no referent in its own paragraph; the same goes for the
   // no-source forms of enforced and recommended. A tenant-authored field has no
   // tier line at all and is excluded by the same test.
@@ -2936,8 +2956,8 @@ async function addUnanchoredComment(docId, content, clients) {
 // corrected, rather than a second edit.
 //
 // ─── THE PROVENANCE CLAUSE MOVES WITH THE BRACKET ───────────────────────────
-// A corrected field's hint line ends "Verified against Meta's spec page on
-// 2026-08-20." — a claim that a human confirmed THIS number against that page.
+// A corrected field's hint line ends "Read against Meta's spec page on
+// 2026-08-20." — a claim that a human read THIS number against that page.
 // The bracket is moving because that is no longer what the page says, so leaving
 // the sentence is not a stale date: it is the document asserting the source was
 // unchanged on the one field whose number just changed because the source
@@ -2972,7 +2992,7 @@ async function addUnanchoredComment(docId, content, clients) {
 // Appending to those would be inventing provenance for a field that never had any.
 //
 // A SECOND CORRECTION REPLACES THE FIRST rather than stacking. "Limit corrected"
-// is one of the three wordings PROVENANCE_AT_END matches, so a field corrected
+// is one of the four wordings PROVENANCE_AT_END matches, so a field corrected
 // twice reads the newer date and no more: the sentence answers "when did this
 // document's limit last move", and the history it does not carry is in
 // spec_change_log, which is what that table is for.

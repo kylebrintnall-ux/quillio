@@ -17182,7 +17182,12 @@ test('a template-only brief builds one document, and the card offers no draft bu
   assert.match(build, /wholeLibraryOnEmpty: templateGroups\.length === 0/);
   // And with nothing to put in it, the copy doc is not created at all.
   assert.match(build, /const copyDocSkipped = copyDocSpecs\.length === 0 && templateDocs\.some\(\(t\) => t\.id\)/);
-  assert.match(build, /const doc = copyDocSkipped \? null : await getDestination\(\)\.createDocument\(/);
+  // The call is GUARDED — a template-only brief never reaches createDocument.
+  // The binding is `created` rather than `doc` because generateDoc splits the
+  // renderer's provenance report off before `doc` goes anywhere (below); the
+  // property pinned here is the guard, not the name.
+  assert.match(build, /const created = copyDocSkipped \? null : await getDestination\(\)\.createDocument\(/);
+  assert.match(build, /const doc = created \? docOnly : null/, 'and a skipped copy doc is still null');
   assert.match(build, /copy_doc_id: doc \? doc\.id : null/, 'the project row records no copy doc');
 
   // The Slack card reads a null link as "template only": no asset list, no
@@ -22142,6 +22147,192 @@ test('provenance run: replayed through appendBody over the real seed', () => {
         `${a.name}: "${lines[i]}" is followed straight by another label — no hint paragraph`);
     }
   }
+});
+
+test('the manifest records the sentence the DOCUMENT says, never a recomputed one', () => {
+  // THE FAILURE THIS PINS, and it is the reason `provenance` is reported by the
+  // renderer instead of rebuilt in buildFieldManifest. The manifest already
+  // records specType, specSource and specVerifiedAt — so composing the sentence
+  // from them looks free. It is wrong on two whole populations, silently, in the
+  // shape of proof:
+  //
+  //   • a member 2..N of a collapsed provenance run renders NO verification
+  //     sentence, because suppressDetail took it;
+  //   • a house_default field renders none whatever its date, because its tier
+  //     line names nobody (nameStart -1) and a dangling "Verified against …'s
+  //     spec page" has no referent in its own paragraph.
+  //
+  // Driven through the SHIPPED renderer over the real seed, the way the
+  // provenance-run replay above is, so the record and the artifact are compared
+  // rather than the record and a second copy of the rule.
+  const { DocBuilder } = require('../src/destinations/docBuilder');
+  const { appendBody } = require('../src/destinations/googleDocs');
+  const { verifiedSentence } = require('../src/utils/specFreshness');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const VER = '2026-08-20';
+
+  const drive = (assetSpecs) => {
+    const b = new DocBuilder();
+    const provenanceOut = [];
+    appendBody(b, {
+      summary: 's', writerPrompt: 'w', resolvedLinks: [], referenceInsights: [],
+      assetSpecs, provenanceOut,
+    });
+    return { text: b.text, provenanceOut };
+  };
+  const specOf = (a) => ({
+    assetType: a.name,
+    fields: a.fields.map((f) => ({
+      fieldName: f.field_name,
+      charMin: f.char_min,
+      charMax: f.char_max,
+      fieldType: f.field_type,
+      groupLabel: f.group_label,
+      specNote: f.spec_note,
+      specType: f.spec_type,
+      specSource: f.spec_source || a.spec_source,
+      specVerifiedAt: (f.spec_source || a.spec_source) !== 'quillio_default' ? VER : null,
+    })),
+  });
+
+  let recorded = 0;
+  let wouldHaveLied = 0;
+  for (const a of DEFAULT_ASSETS) {
+    const spec = specOf(a);
+    const { text, provenanceOut } = drive([spec]);
+
+    // ONE ENTRY PER FIELD, IN ORDER — including the fields whose provenance is ''.
+    // A field missing from the array would be indistinguishable from a field the
+    // manifest never knew about, which is the NULL-versus-[] confusion the column
+    // itself was designed to avoid.
+    assert.strictEqual(provenanceOut.length, spec.fields.length, `${a.name}: one entry per field`);
+    provenanceOut.forEach((e, i) => {
+      assert.strictEqual(e.fieldName, spec.fields[i].fieldName, `${a.name}: entry ${i} is in field order`);
+      assert.strictEqual(e.assetType, a.name, 'the LIBRARY name, never the rendered heading');
+      assert.strictEqual(typeof e.provenance, 'string', 'always a string — \'\' is a recorded absence');
+    });
+
+    for (let i = 0; i < provenanceOut.length; i += 1) {
+      const e = provenanceOut[i];
+      const f = spec.fields[i];
+      // WHAT WAS RECORDED IS IN THE DOCUMENT, verbatim. This is the whole claim.
+      if (e.provenance) {
+        recorded += 1;
+        assert.ok(text.includes(e.provenance),
+          `${a.name} / ${f.fieldName}: recorded "${e.provenance}" is not in the rendered document`);
+      }
+      // …AND THE RECOMPUTE WOULD HAVE INVENTED ONE. Where verifiedSentence alone
+      // produces a sentence THIS field's rendered line does not carry, a manifest
+      // built from the columns would have attached it to this field.
+      //
+      // SCOPED TO THE FIELD, NOT TO THE DOCUMENT, and the first version of this
+      // test got that wrong. A collapsed member's naive sentence is BYTE-IDENTICAL
+      // to the run leader's — same source, same date, which is precisely why the
+      // run collapsed — so it is present in the document, attached to the leader.
+      // The defect was never "this text is absent from the file"; it is "this text
+      // is recorded against a field whose own line does not carry it".
+      const naive = verifiedSentence(f.specVerifiedAt, f.specSource);
+      if (naive && !e.provenance.includes('Verified against')) {
+        wouldHaveLied += 1;
+        assert.ok(!e.provenance.includes(naive),
+          `${a.name} / ${f.fieldName}: recorded a clause its own line does not carry`);
+      }
+    }
+  }
+  assert.ok(recorded > 0, 'the sweep over the seed actually recorded something');
+  // NOT A VACUOUS PASS. The seeded library really does contain fields the naive
+  // recompute would have mis-recorded — the collapsed runs on Meta Carousel,
+  // LinkedIn Carousel and Google Responsive Display. If this ever reads 0 the
+  // test above has stopped being able to fail.
+  assert.ok(wouldHaveLied > 0,
+    `a recomputed sentence would have been wrong on ${wouldHaveLied} seeded field(s) — expected > 0`);
+
+  // THE HOUSE-DEFAULT CASE EXPLICITLY, because the seed does not reach it: a
+  // house default cited to a real page, carrying a date. verifiedSentence returns
+  // a sentence; the document renders none, because the tier line names nobody.
+  const LI = 'https://www.linkedin.com/help/lms/answer/a424655';
+  const { text: hdText, provenanceOut: hd } = drive([{
+    assetType: 'Synthetic', fields: [{
+      fieldName: 'Headline', charMin: 0, charMax: 60, fieldType: 'text',
+      specNote: null, specType: 'house_default', specSource: LI, specVerifiedAt: VER,
+    }],
+  }]);
+  assert.ok(verifiedSentence(VER, LI), 'the naive composer does produce one here');
+  assert.strictEqual(hd[0].provenance, 'House default — set your own in Settings.');
+  assert.ok(!/Verified against/.test(hdText), 'and the document carries no dangling clause');
+  assert.ok(hdText.includes(hd[0].provenance), 'what was recorded is what was written');
+});
+
+test('field_manifest v2: the three provenance states, and a missing key is not an empty one', () => {
+  const { buildFieldManifest } = require('../src/core/pipeline');
+  const WHEN = '2026-09-12T00:00:00.000Z';
+  const META = 'https://www.facebook.com/business/ads-guide/image/facebook-feed';
+  const specs = [{
+    assetType: 'Meta Single Image Ad',
+    instance: 0,
+    instanceLabel: null,
+    fields: [
+      {
+        fieldName: 'Primary Text', charMin: 50, charMax: 150, fieldType: 'text',
+        specType: 'recommended', specSource: META, specVerifiedAt: new Date('2026-08-20T11:22:33Z'),
+      },
+      {
+        fieldName: 'Description', charMin: 0, charMax: 30, fieldType: 'text',
+        specType: 'house_default', specSource: 'quillio_default', specVerifiedAt: null,
+      },
+    ],
+  }];
+
+  // STATE 1 and 2 — reported by a renderer. A sentence, and a recorded ABSENCE.
+  const withRender = buildFieldManifest(specs, WHEN, [
+    { assetType: 'Meta Single Image Ad', instance: 0, fieldName: 'Primary Text', provenance: 'Recommended by Meta (Facebook Feed). Verified against Meta\'s spec page on 2026-08-20.' },
+    { assetType: 'Meta Single Image Ad', instance: 0, fieldName: 'Description', provenance: '' },
+  ]);
+  assert.strictEqual(withRender.version, 2, 'v1 recorded limits only — a reader must branch on this');
+  assert.strictEqual(withRender.writtenAt, WHEN);
+  assert.match(withRender.fields[0].provenance, /^Recommended by Meta \(Facebook Feed\)\./);
+  assert.strictEqual(withRender.fields[1].provenance, '', 'a recorded absence, not a missing key');
+  assert.ok(Object.prototype.hasOwnProperty.call(withRender.fields[1], 'provenance'));
+
+  // THE STRUCTURED HALF, recorded as it stood at creation. The date is narrowed to
+  // an ISO DAY: the column is a TIMESTAMP, the document's own sentence carries the
+  // day, and a manifest is read by people.
+  assert.strictEqual(withRender.fields[0].specType, 'recommended');
+  assert.strictEqual(withRender.fields[0].specSource, META);
+  assert.strictEqual(withRender.fields[0].specVerifiedAt, '2026-08-20');
+  assert.strictEqual(withRender.fields[1].specType, 'house_default');
+  assert.strictEqual(withRender.fields[1].specVerifiedAt, null);
+  // AN UNPARSEABLE DATE IS null, NOT A THROW. toISOString on an invalid Date
+  // raises RangeError, which would lose the WHOLE manifest for the document via
+  // generateDoc's catch — recording "unknown" for a document whose other fields
+  // were fine. Same choice specFreshness.isoDay makes.
+  const bad = buildFieldManifest([{
+    assetType: 'A', instance: 0,
+    fields: [{ fieldName: 'F', charMax: 10, specType: 'enforced', specSource: META, specVerifiedAt: 'not-a-date' }],
+  }], WHEN, []);
+  assert.strictEqual(bad.fields[0].specVerifiedAt, null);
+  assert.strictEqual(bad.fields[0].specType, 'enforced', 'and the rest of the row survives');
+  // The v1 keys are untouched — this is additive to a record the sweep reads.
+  assert.strictEqual(withRender.fields[0].charMax, 150);
+  assert.strictEqual(withRender.fields[0].fieldType, 'text');
+  assert.strictEqual(withRender.fields[0].instance, 0);
+
+  // STATE 3 — NOT RECORDED. No renderer reported, so the key is ABSENT rather
+  // than ''. Reading "not recorded" as "claimed nothing" is the one misreading
+  // that would turn this record into a false one, so the two cannot look alike.
+  const noRender = buildFieldManifest(specs, WHEN);
+  assert.ok(!Object.prototype.hasOwnProperty.call(noRender.fields[0], 'provenance'),
+    'a destination that does not report leaves no provenance key at all');
+  assert.strictEqual(noRender.fields[0].specSource, META, 'the structured half is still recorded');
+
+  // MATCHED THROUGH normalize(), the ONE normalizer — the same fold the sweep and
+  // the unique indexes use. A renderer reporting a differently-spaced name still
+  // lands on its field rather than silently recording ''.
+  const odd = buildFieldManifest(specs, WHEN, [
+    { assetType: 'meta  single image ad', instance: 0, fieldName: 'primary text', provenance: 'X.' },
+  ]);
+  assert.strictEqual(odd.fields[0].provenance, 'X.');
+  assert.strictEqual(odd.fields[1].provenance, '', 'and an unreported field is a recorded absence');
 });
 
 test('THE HINT LINE IS LOAD-BEARING: a field without one absorbs italic copy', () => {

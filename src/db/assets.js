@@ -299,8 +299,9 @@ async function getTenantAssets(tenantId) {
       // WHY NOT STAMP IT INSTEAD: a version earns its place when it is a compact
       // handle for a state you cannot otherwise reconstruct, and all of it is
       // reconstructable — spec_change_log holds old/new/when/who/which-page,
-      // projects.field_manifest holds the effective limits at document creation,
-      // and the document itself carries "Verified against X's spec page on
+      // projects.field_manifest holds the effective limits at document creation
+      // AND (v2) the provenance sentence that document rendered, and the document
+      // itself carries "Verified against X's spec page on
       // DATE." It would also have no coherent meaning per row: what does
       // 1.0 -> 1.1 signify on a field one tenant has overridden and another has
       // not? See CLAUDE.md, "A COLUMN WRITTEN ONCE AT SEED IS A CONSTANT".

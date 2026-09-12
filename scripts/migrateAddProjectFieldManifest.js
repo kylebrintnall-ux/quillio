@@ -14,6 +14,17 @@
 // writer deleting a section), and a document built before a field existed does not
 // contain it. Only a snapshot taken at creation says what was written.
 //
+// SCOPE NOTE, ADDED LATER. The paragraphs above describe what this column was
+// built for, and they are still accurate about the COLUMN. The PAYLOAD has since
+// grown: buildFieldManifest now writes `version: 2`, which carries each field's
+// spec_type, spec_source, spec_verified_at and — reported by the renderer, never
+// recomputed — the provenance sentence the document actually rendered. That
+// answers a different question from the sweep's ("on what authority was this
+// limit correct when we sent it?"), needs no schema change, and leaves existing
+// v1 rows valid. A reader must branch on `version`: a v1 row has no provenance
+// key, which means NOT RECORDED and not "claimed nothing". See CLAUDE.md, "The
+// manifest records what the document CLAIMED".
+//
 // WHY JSONB ON projects AND NOT A TABLE. Same reasoning as template_fill: one blob
 // per project, written once and read WHOLE for comparison against the current
 // spec. It is never queried relationally — the sweep's access pattern is "give me

@@ -329,7 +329,7 @@ returns data instead of posting messages.
   | Member | Consumed by |
   | --- | --- |
   | `name` | `destinations/index.js` registry key |
-  | `createDocument({ brief, campaignTitle, summary, writerPrompt, assetSpecs, folderId, referenceLinks, referenceInsights, headerSchema, namingPattern, clients })` → `{ id, url, title }` | `pipeline.generateDoc` |
+  | `createDocument({ brief, campaignTitle, summary, writerPrompt, assetSpecs, folderId, referenceLinks, referenceInsights, headerSchema, namingPattern, clients })` → `{ id, url, title, fieldProvenance }` | `pipeline.generateDoc` |
   | `generateDraft(id, direction, clients, voiceGuide, lookupDirection, scopedFields, append)` → `{ title, fieldCount, url }` | `pipeline.generateDraft` |
   | `createFromTemplate({ sourceDocId, name, folderId, values, markers, clients })` → `{ id, url, title, filled, unfilled }` | `pipeline.generateDoc` (custom document types) |
   | `writeTemplateCells(id, { markers, values }, clients)` → `{ written, skipped, healed, missing }` | `pipeline.buildTemplateDocument`, `regenerateTemplateFields` |
@@ -1123,7 +1123,7 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 23,047 lines and 782 tests** —
+regression guards. **As of this commit it is 23,388 lines and 784 tests** —
 written as a reading taken on a date rather than as a standing figure, because
 the previous version of this sentence said 635 and was wrong by 114 tests and
 about 3,900 lines. The number had been correct once. Nothing updates it, nothing
@@ -3410,9 +3410,11 @@ authoritative because it is in the shape of an authority.
 generalises. A version earns its place when it is a compact handle for a state
 you cannot otherwise reconstruct, and every part of this one is reconstructable:
 `spec_change_log` holds old/new/when/who/which-page per approved edit,
-`projects.field_manifest` holds the effective limits at document creation, and
-the document itself carries "Verified against X's spec page on DATE." Stamping it
-would add a label carrying no information those three do not already hold. It
+`projects.field_manifest` holds the effective limits at document creation **and,
+since v2, the provenance sentence that document rendered** (see "The manifest
+records what the document claimed" below), and the document itself carries
+"Verified against X's spec page on DATE." Stamping it would add a label carrying
+no information those three do not already hold. It
 would also have no coherent per-row meaning — what does `1.0 → 1.1` signify on a
 field one tenant has overridden and another has not?
 
@@ -3428,6 +3430,88 @@ the eleven hash-watched rows** anchored so the fetch is asserted to have read th
 right page (`unanchored: 0`, measured 2026-08-23 — see the count above and note
 where it came from); any detected change goes to a human before a stored number
 moves; and email guidance is dated observed practice that is never hash-watched.
+
+### The manifest records what the document CLAIMED, not just what it asked for
+
+`projects.field_manifest` is **version 2**. It was designed as a sweep index —
+"which existing documents contain `<asset>/<field>`?" is the question
+`specSweep` has to answer before it can correct anything, and the limits are all
+that question needs. That scope was right and is argued in full in
+`scripts/migrateAddProjectFieldManifest.js`. What it never addressed is the
+*other* question a stored record has to answer later: **on what authority was
+this limit correct when we sent it?**
+
+Until v2 the answer lived in exactly one place — the italic line inside the
+document. That is a file we do not control, and three things in this database
+cannot reconstruct it:
+
+- `spec_change_log` logs `field_attr IN ('char_max', 'spec_note')` only — no
+  tier, no source, no verification date — and its `old_value` is a cross-tenant
+  "distinct value" summary with **no tenant predicate**, so it cannot say what
+  any particular tenant's number was either.
+- `specReview.commitReview` stamps `spec_verified_at = NOW()`, overwriting.
+  There is no series to replay backwards.
+- `copy_fields` holds **today's** tier. That is the right value for deciding
+  whether to act now — `specSweep.evaluateRow` reads the live library row — and
+  the wrong one for saying what a document claimed when it was written.
+
+**AND THE SWEEP ITSELF IS THE FIRST THING TO DESTROY IT**, which is why this was
+never a hypothetical about client behaviour. `correctFieldBrackets` **replaces**
+whichever provenance clause a corrected field carried with "Limit corrected
+`<date>`." — correctly, because a stale *verification* is a false claim about the
+one number that just moved underneath the reader, and deliberately naming no
+source, because the sweep read a database row rather than a page. So a swept
+field's original authority is gone from the only place it existed, with no
+client involvement at all.
+
+So v2 records four more things per field: `specType`, `specSource`,
+`specVerifiedAt` (narrowed to an ISO day), and `provenance` — **the sentence the
+document rendered.**
+
+**THE SENTENCE IS REPORTED BY THE RENDERER AND IS NEVER REBUILT FROM THE THREE
+COLUMNS.** This is the load-bearing part, and the columns make the wrong version
+look free. What a field's line says is not a property of the field row:
+
+- `suppressDetail` drops the boilerplate tail **and the verification sentence**
+  on members 2..N of a collapsed provenance run — a property of the fields
+  *adjacent* to a field, which nothing outside `appendBody`'s loop can see.
+- a `house_default` tier line names nobody (`nameStart -1`), so `fieldHint`
+  withholds the verification sentence whatever date the field carries.
+
+**Measured over the seeded library: 231 fields render, and a recomputed sentence
+would have attached a verification clause to 56 of them that their own lines do
+not carry** — every collapsed run across LinkedIn Carousel and Conversation, Meta
+Carousel, X Poll, both Pinterest formats and all four Google assets. 24% wrong,
+in the shape of proof. A recorded sentence a document never carried is worse than
+no record, which is why `appendBody` takes a `provenanceOut` sink and
+`createDocument` returns `fieldProvenance`. `pipeline.generateDoc` destructures
+it **off** before `doc` travels anywhere, so the object the adapters and the
+browser see is byte-identical to what it always was.
+
+**Why the sentence and not only the columns.** The columns let a reader recompute;
+they do not say what this document said. The wording has already changed once —
+"Source unchanged as of `<date>`." shipped on `main` for 75 minutes on 2026-08-20
+and those documents still carry it, which is why `googleDocs` keeps
+`CHECKED_LINE_SUPERSEDED` as a read-only constant. A recomputed sentence
+describes today's composer; for a dispute about what a client was told, the text
+they received is the artifact.
+
+**THREE STATES, AND TWO OF THEM LOOK ALIKE IF YOU ARE CARELESS** — the same
+distinction the column already draws between NULL and `[]`:
+
+| | |
+| --- | --- |
+| `provenance: "<text>"` | the document says this |
+| `provenance: ''` | the document makes **no** provenance claim on this field (tenant-authored, or a house default) — a *recorded absence* |
+| key **absent** | **not recorded.** A v1 manifest, or a destination that does not report what it rendered |
+
+A v1 manifest has no `provenance` key at all, so **branch on `version`** rather
+than treating a missing key as `''`. Reading "not recorded" as "claimed nothing"
+is the one misreading that turns this record into a false one.
+
+**No migration.** The column is JSONB and already carried `version`, and both
+readers tolerate the extra keys — `manifestHits` matches on names, and
+`updateManifestMax` spreads `{...f}`. Existing rows stay v1 and stay honest.
 
 ### The 15 email fields have no AUTOMATED update path — accepted 2026-08-05
 

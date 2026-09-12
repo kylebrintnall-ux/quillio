@@ -884,11 +884,92 @@ function resolveAssetLimits(limits) {
 //
 // Nothing about the copy is recorded. This says what the document ASKS for, not
 // what anybody wrote into it.
-function buildFieldManifest(assetSpecs, writtenAt) {
+//
+// ============================================================================
+// AND WHAT AUTHORITY IT CLAIMED — version 2
+// ============================================================================
+//
+// THE GAP THIS CLOSES. Until version 2 the manifest recorded the LIMITS a
+// document was built with and nothing about where they came from, so the tier,
+// the citation and the verification date for a historical document lived in
+// exactly one place: the italic line rendered inside that document. A file is
+// not a record we control. A client deleting that line, exporting to plain text,
+// or pasting the copy elsewhere takes the provenance with it, and nothing in
+// this database could reconstruct it:
+//
+//   • spec_change_log logs field_attr IN ('char_max', 'spec_note') only — no
+//     tier, no source, no verification date — and its old_value is a
+//     cross-tenant "distinct value" summary with no tenant predicate, so it
+//     cannot say what any particular tenant's number was either.
+//   • specReview.commitReview stamps spec_verified_at = NOW(), overwriting. There
+//     is no series to replay backwards.
+//   • copy_fields holds TODAY's tier, which is the right value for deciding
+//     whether to act now (specSweep.evaluateRow reads the live library row) and
+//     the wrong one for saying what a document claimed when it was written.
+//
+// AND THE SWEEP ITSELF IS THE FIRST THING TO DESTROY IT, which is why this is not
+// a hypothetical about client behaviour. correctFieldBrackets REPLACES whichever
+// provenance clause a corrected field was carrying with "Limit corrected
+// <date>." — correctly, because a stale verification is a false claim about the
+// one number that just moved underneath the reader, and deliberately naming no
+// source, because the sweep read a database row rather than a page. So a swept
+// field's original authority is gone from the only place it ever existed, with
+// no client involvement at all.
+//
+// WHY THE SENTENCE AND NOT ONLY THE THREE COLUMNS. The columns let a reader
+// recompute a sentence; they do not say what this document said. The wording has
+// already changed once — "Source unchanged as of <date>." shipped on main for 75
+// minutes on 2026-08-20 and those documents still carry it, which is why
+// googleDocs keeps CHECKED_LINE_SUPERSEDED as a read-only constant. A recomputed
+// sentence describes today's composer, and for a dispute about what a client was
+// told, the text they received is the artifact that matters.
+//
+// `provenance` IS SUPPLIED BY THE RENDERER AND IS NEVER REBUILT HERE. It cannot
+// be: what the line says depends on `suppressDetail`, a property of the fields
+// ADJACENT to a field, and on whether the tier line resolved a source name at
+// all. Rebuilding it would invent a claim for every house_default field carrying
+// a date and for every member 2..N of a collapsed provenance run — fields whose
+// documents say nothing of the kind. See appendBody's `provenanceOut`.
+//
+// THREE STATES, AND THEY ARE DIFFERENT FACTS — the same distinction the column
+// itself draws between NULL and []:
+//
+//   provenance: "<text>"  the document says this
+//   provenance: ''        the document makes no provenance claim on this field
+//                         (a tenant-authored field, or a house default) — a
+//                         recorded absence
+//   provenance: null      NOT RECORDED. Either a version-1 manifest, or a
+//                         destination that does not report what it rendered.
+//
+// A version-1 manifest has no provenance key at all, so a reader must branch on
+// `version` rather than treat a missing key as ''. Reading "not recorded" as "no
+// claim" is the one misreading that turns this record into a false one.
+function buildFieldManifest(assetSpecs, writtenAt, renderedProvenance) {
+  // The rendered sentence, keyed the way specSweep keys a hit: normalized asset
+  // and field name plus the instance ordinal, NUL-separated. NUL because
+  // normalize() collapses whitespace but keeps it, so a space separator makes
+  // ("Nurture Email", "Subject") and ("Nurture", "Email Subject") the same key —
+  // and NUL is the one character normalize() can never emit.
+  // Narrowed to the DAY: the column is a TIMESTAMP, the document's own sentence
+  // carries the day and not the time, and a manifest is read by people.
+  const isoDay = (value) => {
+    if (!value) return null;
+    const d = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  };
+  const provKey = (assetType, instance, fieldName) =>
+    `${normalize(assetType || '')}\u0000${Number(instance) || 0}\u0000${normalize(fieldName || '')}`;
+  const rendered = Array.isArray(renderedProvenance) ? renderedProvenance : null;
+  const byField = new Map();
+  if (rendered) {
+    for (const r of rendered) {
+      byField.set(provKey(r.assetType, r.instance, r.fieldName), String(r.provenance == null ? '' : r.provenance));
+    }
+  }
   const fields = [];
   for (const asset of assetSpecs || []) {
     for (const field of asset.fields || []) {
-      fields.push({
+      const entry = {
         assetType: asset.assetType,
         instance: Number(asset.instance) || 0,
         instanceLabel: asset.instanceLabel || null,
@@ -898,10 +979,27 @@ function buildFieldManifest(assetSpecs, writtenAt) {
         fieldType: field.fieldType === 'words' ? 'words' : 'text',
         charMin: Number(field.charMin) || 0,
         charMax: Number(field.charMax) || 0,
-      });
+        // THE AUTHORITY, STRUCTURED. The same three values fieldHint composed the
+        // line from, recorded as they stood at creation.
+        specType: field.specType || null,
+        specSource: field.specSource || null,
+        // EVERY FAILURE LANDS ON null, the same way specFreshness.isoDay does it.
+        // An unparseable value here would throw RangeError out of toISOString and
+        // lose the WHOLE manifest for the document — generateDoc's catch would
+        // record NULL, meaning "unknown", for a document whose other 40 fields
+        // were fine. A recorded null on one field is the honest, local answer.
+        specVerifiedAt: isoDay(field.specVerifiedAt),
+      };
+      // Absent entirely when nothing reported a render, so a version-2 manifest
+      // built by a destination that does not report cannot be misread as a
+      // document that claimed nothing.
+      if (rendered) {
+        entry.provenance = byField.get(provKey(asset.assetType, asset.instance, field.fieldName)) ?? '';
+      }
+      fields.push(entry);
     }
   }
-  return { version: 1, writtenAt, fields };
+  return { version: 2, writtenAt, fields };
 }
 
 function rowToSpecGroup(a) {
@@ -1436,7 +1534,8 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   if (copyDocSkipped) {
     console.log('[pipeline] no assets were requested and a template was — skipping the copy doc');
   }
-  const doc = copyDocSkipped ? null : await getDestination().createDocument({
+  // `created` carries one key more than `doc` does — see the destructure below.
+  const created = copyDocSkipped ? null : await getDestination().createDocument({
     brief: spec.brief,
     campaignTitle: spec.campaignTitle,
     summary: spec.summary,
@@ -1449,6 +1548,15 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
     namingPattern,
     clients,
   });
+
+  // WHAT THE RENDERER SAID, SPLIT OFF FROM WHAT THE CALLER GETS. `doc` stays
+  // exactly { id, url, title }: the adapters spread it, the web route sends it to
+  // the browser, and a per-field array riding along would be both waste and a
+  // surface nobody asked for. `renderedProvenance` is consumed once, immediately
+  // below, and never leaves this function. Undefined from any destination that
+  // does not report it, which buildFieldManifest reads as "not recorded".
+  const { fieldProvenance: renderedProvenance, ...docOnly } = created || {};
+  const doc = created ? docOnly : null;
 
   // Make sure the subfolder call has settled before returning (best-effort).
   await assetsSubfolderPromise;
@@ -1476,7 +1584,7 @@ async function generateDoc(spec, folderId, clients, tenantId, projectMeta = {}, 
   let fieldManifest = null;
   if (doc) {
     try {
-      fieldManifest = buildFieldManifest(copyDocSpecs, new Date().toISOString());
+      fieldManifest = buildFieldManifest(copyDocSpecs, new Date().toISOString(), renderedProvenance);
       console.log(
         `[pipeline] field manifest: ${fieldManifest.fields.length} field(s) across ` +
           `${copyDocSpecs.length} asset section(s) for doc ${doc.id}`
@@ -2384,6 +2492,10 @@ module.exports = {
   // Asset-plan expansion. Exported for unit tests (and so the ceilings are
   // assertable) — generateDoc is its only production caller.
   tenantAssetsToSpecs,
+  // WHAT A DOCUMENT WAS BUILT WITH, AND WHAT AUTHORITY IT CLAIMED. Pure, so the
+  // three provenance states are assertable with no Google client and no DB. Same
+  // entry rule as above — generateDoc is its only production caller.
+  buildFieldManifest,
   // The named-template resolution (rework step four). Pure, so what a brief's
   // template plan turns into is assertable with no Google client and no DB.
   resolveTemplatePlan,

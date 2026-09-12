@@ -677,7 +677,8 @@ function provenanceKey(field) {
   return `${field.specType}\u0000${source}\u0000${day}`;
 }
 
-// The italic grey guidance line under a field label, returned as { text, links }
+// The italic grey guidance line under a field label, returned as
+// { text, links, provenance }
 // (or null when there's no line). `text` is the composed line — the hand-written
 // spec_note (verbatim) then the spec_type tier sentence, space-joined. `links` is
 // a list of { start, end, url } sub-ranges to hyperlink within `text` — currently
@@ -761,6 +762,24 @@ function fieldHint(field, { suppressNote = false, suppressDetail = false } = {})
     : '';
   if (verified) parts.push(verified);
   const text = parts.join(' ');
+  // THE PROVENANCE HALF, AS THIS CALL ACTUALLY COMPOSED IT — the tier line
+  // (truncated to its attribution on a collapsed run) plus the verification
+  // sentence (absent on a collapsed run, and absent whenever the tier names no
+  // source). '' when this field makes no provenance claim at all.
+  //
+  // RETURNED RATHER THAN RECOMPUTED, and that is the whole reason it exists.
+  // What a field's provenance sentence says is NOT a property of the field row:
+  // it depends on `suppressDetail`, which is a property of the fields ADJACENT
+  // to this one, and on whether specTypeLine resolved a source name. A caller
+  // that rebuilt the sentence from specType/specSource/specVerifiedAt would
+  // record a claim for every house_default field with a date, and for every
+  // member 2..N of a provenance run — fields whose documents say nothing of the
+  // kind. A recorded sentence the document never carried is worse than no
+  // record: it is proof-shaped and false.
+  //
+  // It is a SUBSTRING of `text` by construction (the parts are joined, never
+  // re-derived), so the two cannot disagree about what was written.
+  const provenance = [tierText, verified].filter(Boolean).join(' ');
   const links = [];
   // Note-embedded citation (e.g. "(Litmus)"): the note is parts[0], so its
   // offsets map directly into `text` (base 0). Scan the NOTE ONLY, keyed on a
@@ -780,7 +799,7 @@ function fieldHint(field, { suppressNote = false, suppressDetail = false } = {})
     const start = base + tier.nameStart;
     links.push({ start, end: start + tier.nameLen, url: String(field.specSource) });
   }
-  return { text, links };
+  return { text, links, provenance };
 }
 
 // Is this field's range counted in WORDS rather than characters? Accepts either the
@@ -866,7 +885,22 @@ async function resolveLinkLabel(drive, url) {
 // Materials, a horizontal rule, then one section per asset. Identical whether
 // the header above it is today's default (title + HR) or a stored header schema,
 // so the drafting pipeline still parses these sections the same way in both.
-function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights, assetSpecs }) {
+function appendBody(b, {
+  summary, writerPrompt, resolvedLinks, referenceInsights, assetSpecs,
+  // OPTIONAL SINK FOR WHAT THE PROVENANCE LINES ACTUALLY SAID. When an array
+  // is passed, one entry is pushed per rendered field, carrying the sentence
+  // fieldHint composed for it at the moment it was written into the request.
+  // Null for every caller that does not want it (the sample-doc builders), so
+  // this is inert unless asked for.
+  //
+  // WHY THE RENDERER IS THE ONE THAT REPORTS THIS. The suppression decisions
+  // live in the field loop below — `suppressDetail` needs lookahead over
+  // ADJACENT fields, which nothing outside this loop has. Capturing the
+  // sentence here is what makes projects.field_manifest a record of what the
+  // document SAYS rather than a second implementation of these rules that
+  // would drift from them. See buildFieldManifest in core/pipeline.js.
+  provenanceOut = null,
+}) {
   b.heading('Campaign Summary');
   b.italic(stripMarkdown(summary) || '(no summary)');
 
@@ -1023,6 +1057,19 @@ function appendBody(b, { summary, writerPrompt, resolvedLinks, referenceInsights
       // note on parseDoc's italic branch for why "render nothing" is not an
       // option for a field a writer drafts into.
       if (hint) b.fieldNote(hint.text, { indent, links: hint.links });
+      // Recorded for EVERY rendered field, including the ones whose provenance is
+      // '' — the absence of a claim is itself what this document said, and an
+      // entry missing from the manifest would be indistinguishable from a field
+      // the manifest never knew about. Keyed the way the sweep keys a hit:
+      // library assetType + instance + fieldName, never the rendered heading.
+      if (provenanceOut) {
+        provenanceOut.push({
+          assetType: asset.assetType,
+          instance: Number(asset.instance) || 0,
+          fieldName: field.fieldName,
+          provenance: (hint && hint.provenance) || '',
+        });
+      }
       b.blankLine({ indent });
     }
   }
@@ -1082,7 +1129,14 @@ async function createDocument({
     resolvedLinks.push(await resolveLinkLabel(drive, url));
   }
 
-  const bodyFields = { summary, writerPrompt, resolvedLinks, referenceInsights, assetSpecs };
+  // WHAT THE PROVENANCE LINES SAID, collected as the body is built. Declared
+  // here rather than inside a branch because only ONE of the two branches
+  // below runs per document and both must fill the same array.
+  const fieldProvenance = [];
+  const bodyFields = {
+    summary, writerPrompt, resolvedLinks, referenceInsights, assetSpecs,
+    provenanceOut: fieldProvenance,
+  };
   const useSchema = isValidHeaderSchema(headerSchema);
   console.log(`[googleDocs] doc header: ${useSchema ? 'tenant schema' : 'default (title + HR)'}`);
 
@@ -1138,7 +1192,13 @@ async function createDocument({
   // this on the same API call; the copy doc had no reason to be the exception.
   // The link is derivable from the id, so there is nothing to lose by deriving it.
   const url = created.data.webViewLink || `https://docs.google.com/document/d/${docId}/edit`;
-  return { id: docId, url, title };
+  // `fieldProvenance` is ADDITIVE and is consumed by exactly one caller —
+  // pipeline.generateDoc, which destructures it OFF before `doc` travels any
+  // further, so the object the adapters and the browser see is byte-identical to
+  // what it has always been. A destination that does not supply it produces a
+  // manifest with the structured columns and no recorded sentence, which is the
+  // honest answer for a document this renderer did not write.
+  return { id: docId, url, title, fieldProvenance };
 }
 
 // --- Draft generation (stateless: re-parses the doc) ---

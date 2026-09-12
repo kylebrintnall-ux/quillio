@@ -11818,6 +11818,7 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
 // refusal message names both causes.
 function fakeSpecPool({ matched, before = [], pair, isTest = false }) {
   const log = [];
+  let changeLogId = 100;
   const query = async (sql) => {
     const flat = String(sql).replace(/\s+/g, ' ').trim();
     log.push(flat);
@@ -11837,7 +11838,12 @@ function fakeSpecPool({ matched, before = [], pair, isTest = false }) {
     if (has('UPDATE copy_fields cf')) {
       return { rows: Array.from({ length: matched }, (_, i) => ({ tenant_id: 'T' + i })), rowCount: matched };
     }
-    if (has('INSERT INTO spec_change_log')) return { rows: [], rowCount: 1 };
+    if (has('INSERT INTO spec_change_log')) {
+      // RETURNING id — distinct and increasing, so a test can tell the char_max
+      // row from the spec_note row rather than matching a shared placeholder.
+      changeLogId += 1;
+      return { rows: [{ id: changeLogId }], rowCount: 1 };
+    }
     if (has('UPDATE spec_review_queue SET status')) return { rows: [], rowCount: 1 };
     if (flat === 'BEGIN' || flat === 'COMMIT' || flat === 'ROLLBACK') return { rows: [], rowCount: 0 };
     throw new Error('fake spec pool: unhandled query → ' + flat);
@@ -11882,6 +11888,78 @@ function withFakeSpecPool(opts, fn) {
 const LIVE_PAIR = { asset: 'LinkedIn Single Image Ad', field: 'Intro Text' };
 const RENAMED_PAIR = { asset: 'Google DV360 / Responsive Display', field: 'Short Headline' };
 const DEACTIVATED_PAIR = { asset: 'LinkedIn Single Image Ad — Variant A', field: 'Intro Text' };
+
+// --- spec_change_log ids: the handle a caller needs to act on THIS approval ----
+
+test('commitReview returns the change-log id per attribute, and rolls up only the sweepable ones', async () => {
+  await withFakeSpecPool(
+    { matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150, spec_note: null }] },
+    async (spec, fake) => {
+      const r = await spec.commitReview(
+        7, [{ ...LIVE_PAIR, char_max: 200, spec_note: 'Front-load the first 40.' }], 1
+      );
+      assert.strictEqual(r.ok, true);
+
+      // BOTH ids are captured and kept apart.
+      const w = r.written[0];
+      assert.ok(Number.isInteger(w.change_ids.char_max), 'the char_max row id is returned');
+      assert.ok(Number.isInteger(w.change_ids.spec_note), 'the spec_note row id is returned');
+      assert.notStrictEqual(w.change_ids.char_max, w.change_ids.spec_note, 'two rows, two ids');
+
+      // THE ROLL-UP IS CHAR_MAX ONLY. The sweep processes field_attr='char_max'
+      // and nothing else, so a spec_note id handed to a scoped sweep would find
+      // nothing to do and report a clean run — exactly the silent-success shape
+      // this codebase keeps refusing.
+      assert.deepStrictEqual(r.change_ids, [w.change_ids.char_max]);
+
+      // And the SQL really asked for them.
+      const inserts = fake.log.filter((q) => /INSERT INTO spec_change_log/.test(q));
+      assert.strictEqual(inserts.length, 2);
+      assert.ok(inserts.every((q) => /RETURNING id/.test(q)), 'both INSERTs carry RETURNING id');
+    }
+  );
+});
+
+test('a spec_note-only approval rolls up NO sweepable ids', async () => {
+  // Not an edge case to tolerate — the correct answer. Nothing about a note
+  // change moves a bracket, so there is nothing for a sweep to correct, and an
+  // empty list says that where a null or a missing key would not.
+  await withFakeSpecPool(
+    { matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150, spec_note: null }] },
+    async (spec) => {
+      const r = await spec.commitReview(7, [{ ...LIVE_PAIR, spec_note: 'A note.' }], 1);
+      assert.strictEqual(r.ok, true);
+      assert.deepStrictEqual(r.change_ids, []);
+      assert.strictEqual(r.written[0].change_ids.char_max, null);
+      assert.ok(Number.isInteger(r.written[0].change_ids.spec_note));
+    }
+  );
+});
+
+// TRIPWIRE, NOT COVERAGE — and labelled as one because public/*.html is read as
+// a STRING here: no jsdom, no browser, no JS executed. It can only answer "is
+// this line present". Whether the panel actually renders, and whether it reads
+// right at 390px, is the device, per CLAUDE.md's own rule.
+test('tripwire: the admin console renders a deep-linked flag whatever its status', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  assert.match(html, /<div id="linkedFlag"><\/div>/, 'the panel exists');
+  assert.match(html, /function renderLinkedFlag\(rows\)/);
+  // It must run BEFORE the pending filter, or it is reading an already-filtered
+  // list and a confirmed flag is gone again.
+  const q = sliceBetween(html, 'async function loadQueue()', 'function renderList(');
+  // ASSERT BOTH POSITIONS EXIST BEFORE COMPARING THEM. A missing call gives
+  // indexOf -1, and -1 < anything is true — so the ordering assertion below
+  // passed with the call DELETED. Caught by reverting the change and finding the
+  // test still green, which is the whole reason for that step. Same -1 hazard
+  // sliceBetween itself exists to close, arriving one line further in.
+  const callAt = q.indexOf('renderLinkedFlag(rows)');
+  const filterAt = q.indexOf("r.status === 'pending'");
+  assert.ok(callAt >= 0, 'loadQueue calls renderLinkedFlag');
+  assert.ok(filterAt >= 0, 'loadQueue still filters to pending');
+  assert.ok(callAt < filterAt, 'the linked flag is rendered from the UNFILTERED rows');
+  // No second endpoint: getReviewQueue already returns every status.
+  assert.strictEqual((q.match(/await api\(/g) || []).length, 1, 'still one fetch');
+});
 
 // --- The write gate: a space separator made it re-splittable -------------------
 //

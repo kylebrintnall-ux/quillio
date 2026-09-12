@@ -231,6 +231,13 @@
     <span id="runMsg" class="note"></span>
   </div>
 
+  <!-- A DEEP-LINKED FLAG, shown whatever its status. The queue below renders
+       only `pending`, so a link to a flag that was just CONFIRMED lands on a
+       console that has already dropped it -- a link that reliably shows nothing
+       is worse than no link. This panel is empty and takes no space unless
+       ?flag=<id> is in the URL. -->
+  <div id="linkedFlag"></div>
+
   <h2>Flags</h2>
   <div id="realList"></div>
   <h2>Test flags</h2>
@@ -367,11 +374,49 @@ async function loadHealth(){
 }
 function loadAll(){ loadHealth(); loadQueue(); }
 
+// The ?flag=<id> a notification links to. Read once per load from the real URL.
+function linkedFlagId() {
+  try {
+    const v = new URLSearchParams(window.location.search).get('flag');
+    return v && /^\d+$/.test(v) ? v : null;
+  } catch (e) { return null; }
+}
+
+// Render the deep-linked flag, whatever its status.
+//
+// NO EXTRA FETCH: /admin/api/review-queue already returns EVERY row regardless
+// of status (db/specWatch.getReviewQueue has no WHERE), so the row a link points
+// at is already in the payload the queue just filtered it out of.
+//
+// It says the STATUS rather than implying one. A reviewed flag reached here from
+// a notification saying the change was confirmed; a dismissed one did not, and a
+// still-pending one is also in the list below. Naming which it is, is the whole
+// job of this panel.
+function renderLinkedFlag(rows) {
+  const host = $('linkedFlag');
+  host.innerHTML = '';
+  const id = linkedFlagId();
+  if (!id) return;
+  const f = rows.find(r => String(r.id) === id);
+  host.appendChild(el('h2',{},['Linked flag']));
+  if (!f) {
+    host.appendChild(el('p',{class:'msg err',text:'No flag #'+id+' — it may have been deleted.'}));
+    return;
+  }
+  const card = flagCard(f, !!f.is_test);
+  card.insertBefore(
+    el('div',{class:'meta',text:'status: '+f.status}),
+    card.firstChild ? card.firstChild.nextSibling : null
+  );
+  host.appendChild(card);
+}
+
 async function loadQueue() {
   $('realList').innerHTML = ''; $('testList').innerHTML = '';
   let rows;
   try { rows = (await api('/admin/api/review-queue')).reviewQueue; }
   catch (e) { $('realList').appendChild(el('p',{class:'msg err',text:'Failed to load: '+e.message})); return; }
+  renderLinkedFlag(rows);
   const pending = rows.filter(r => r.status === 'pending');
   const real = pending.filter(r => !r.is_test);
   const test = pending.filter(r => r.is_test);

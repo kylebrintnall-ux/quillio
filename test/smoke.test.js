@@ -24797,3 +24797,48 @@ test('admin: the source link is styled — A TRIPWIRE, not coverage', () => {
   assert.match(html, /#panel a \{[^}]*text-decoration: underline/,
     'and hue is not the only thing marking it as a link');
 });
+
+test('report: the key separator is a NUL written as an ESCAPE — A TRIPWIRE', () => {
+  // TWO FAILURES IN ONE, and the file shipped carrying both.
+  //
+  // 1. THE SEPARATOR. This report joins (flag, asset, field) into one key. With a
+  //    SPACE that key is ambiguous — the same collision CLAUDE.md documents for
+  //    specReview.pairKey, arriving in a measurement instead of a write gate:
+  //
+  //      [16, 'Meta Single Image Ad Primary', 'Text'].join(' ')
+  //      [16, 'Meta Single Image Ad', 'Primary Text'].join(' ')
+  //
+  //    are the SAME STRING, so a proposal for one pair would be scored against the
+  //    committed value of a different pair. Not a crash — a wrong verdict,
+  //    attributed to the wrong field, in the report that exists to say whether the
+  //    extraction can be trusted at all.
+  //
+  // 2. HOW IT WAS WRITTEN. The first version used two LITERAL NUL BYTES. The
+  //    semantics were right and the file was unreadable: git classified it as
+  //    binary ("Bin 0 -> 19992 bytes"), so the entire 500-line diff was
+  //    unreviewable. It parsed, it ran, and every test passed — found only by
+  //    looking at a diffstat on the way to a merge.
+  //
+  // A TRIPWIRE, NOT COVERAGE: it stops these two returning and says nothing about
+  // whether the report is correct.
+  const rep = require('../scripts/agentProposalReport.js');
+  const NUL = String.fromCharCode(0);
+
+  assert.strictEqual(rep.KEY_SEP, NUL, 'the separator is NUL');
+
+  // The collision the constant exists to prevent, pinned from both sides.
+  const a = [16, 'Meta Single Image Ad Primary', 'Text'];
+  const b = [16, 'Meta Single Image Ad', 'Primary Text'];
+  assert.strictEqual(a.join(' '), b.join(' '), 'a SPACE separator really does collide');
+  assert.notStrictEqual(a.join(rep.KEY_SEP), b.join(rep.KEY_SEP), 'and NUL really does not');
+
+  // THE BYTE CHECK. This is the half nothing else can see: a literal NUL parses
+  // identically to the escape, so only the raw bytes tell them apart.
+  const raw = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'agentProposalReport.js'));
+  assert.strictEqual(raw.indexOf(0), -1, 'the source carries NO literal NUL byte — write it as \\u0000');
+  assert.ok(
+    fs.readFileSync(path.join(__dirname, '..', 'scripts', 'agentProposalReport.js'), 'utf8')
+      .includes("KEY_SEP = '\\u0000'"),
+    'and the escape is what appears in the source'
+  );
+});

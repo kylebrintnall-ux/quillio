@@ -1152,7 +1152,7 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 24,799 lines and 821 tests** —
+regression guards. **As of this commit it is 24,844 lines and 822 tests** —
 measured on the commit that added the agentic detection read, on **Node 22**, and
 written as a reading taken on a date rather than as a standing figure, because
 the previous version of this sentence said 635 and was wrong by 114 tests and
@@ -3973,6 +3973,23 @@ Four things it is careful about, each a shape this file has recorded before:
 - **n is small and will stay small.** Eleven hash-watched pages, weekly, almost
   always unchanged. Under 20 scoreable fields the report says so on its own output,
   because this file's record has an aggregate at n=5 reverse itself on a second run.
+
+**ITS KEY SEPARATOR IS A NUL, AND THE FIRST VERSION WROTE IT AS A LITERAL BYTE.**
+Second instance of `specReview.pairKey`'s rule, which is what makes it a rule
+rather than a note — and this one arrived in a MEASUREMENT rather than a write
+gate. The report joins `(flag, asset, field)` into one key, and a space is
+ambiguous across three parts: `[16, 'Meta Single Image Ad Primary', 'Text']` and
+`[16, 'Meta Single Image Ad', 'Primary Text']` space-join to the same string, so a
+proposal would be scored against **a different pair's committed value** — a wrong
+verdict attributed to the wrong field, in the one report that says whether any of
+this can be trusted.
+
+The separator was right and the spelling was not: two literal NULs made git
+classify the whole file **binary** (`Bin 0 -> 19992 bytes`), so a 500-line diff was
+unreviewable. It parsed, it ran, the suite was green, and the only thing that
+surfaced it was reading a diffstat on the way to a merge. A test now asserts the
+file contains no literal NUL — the byte check is the half nothing else can see,
+because a literal NUL and `\u0000` are indistinguishable once parsed.
 
 ### WHAT SHADOW MODE IS AND IS NOT MEASURING RIGHT NOW
 

@@ -129,7 +129,22 @@
     this.lastLaunch = 0;
     this.queueCrossing(rand(1500, 7000));
     if (this.opts.trees !== false) this.queuePerch(rand(6000, 14000));
-    if (this.phone.querySelector(this.opts.docIcon)) this.queueDropin(rand(1200, 3000));
+    /* dropinArmed IS THE GUARD, NOT dropinDone — dropinDone only tells you
+       whether THIS document's arrival already finished; it says nothing
+       about whether a check is already in flight for it. Both start() and
+       armDropin() can queue one (a resize — an on-screen keyboard opening
+       while the next brief is typed — fires the debounced stop()+start()
+       below on every visible scene independently of anything armDropin is
+       doing) and neither used to know about the other, so a still-pending
+       queueDropin from one collided with a fresh one from the other: two
+       independent dropin(icon) calls landed the same overlay on the same
+       icon a few seconds apart, which is the "started halfway through, then
+       restarted" glitch reported directly. One flag, checked here and in
+       armDropin, makes the two callers mutually exclusive. */
+    if (this.phone.querySelector(this.opts.docIcon) && !this.dropinArmed) {
+      this.dropinArmed = true;
+      this.queueDropin(rand(1200, 3000));
+    }
   };
 
   Scene.prototype.stop = function () {
@@ -138,6 +153,11 @@
     this.timers = [];
     this.live.slice().forEach(this.drop, this);
     this.revealIcon();
+    // Whatever queueDropin chain was pending just had its timer cleared
+    // above — it will never fire. Un-arm so the next start() (this same
+    // resize cycle's own start(), or a later one) is free to queue a real
+    // replacement instead of believing one is still out there.
+    this.dropinArmed = false;
     this.actors = 0;
   };
 
@@ -342,7 +362,14 @@
      why it exists as its own method rather than being folded into start(). */
   Scene.prototype.armDropin = function () {
     this.dropinDone = false;
-    if (this.running) this.queueDropin(rand(1200, 3000));
+    // Same mutual-exclusion check start() makes. Without it, a document that
+    // finishes while a resize-triggered stop()+start() has already queued
+    // its own check (see the comment on dropinArmed in start()) queues a
+    // SECOND, independent one here — two chains racing to the same icon.
+    if (this.running && !this.dropinArmed) {
+      this.dropinArmed = true;
+      this.queueDropin(rand(1200, 3000));
+    }
   };
 
   Scene.prototype.dropin = function (icon) {
@@ -380,6 +407,13 @@
        of silently never happening. */
     this.after(CLIP.dropin.dur - 140, function () {
       self.dropinDone = true;
+      // MUST clear here, not only in stop(): if a genuine completion left
+      // dropinArmed true forever, the NEXT document's armDropin() call would
+      // see a chain that finished normally and read it as one still in
+      // flight — refusing to re-arm at all, which silently brings back the
+      // exact "only the first document ever gets a bird" bug this flag was
+      // added to fix in the first place.
+      self.dropinArmed = false;
       self.revealIcon(true);
       requestAnimationFrame(function () { self.drop(el); });
     });

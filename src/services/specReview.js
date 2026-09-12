@@ -37,8 +37,41 @@ class SpecWriteRefusal extends Error {
 }
 
 // A field name repeats across assets, so always match the (asset, field) PAIR.
+//
+// THE SEPARATOR IS \u0000 AND IT IS NOT DECORATION — the same rule, and the same
+// reason, as services/specSweep.js KEY_SEP. A space separator is AMBIGUOUS:
+// pairKey('A B', 'C') and pairKey('A', 'B C') both produce 'A B C', so membership
+// in the allowed Set authorises every re-split of the authorised concatenation at
+// any space boundary.
+//
+// IT MATTERS MORE HERE THAN IN THE SWEEP, BECAUSE THIS SET IS THE WRITE GATE.
+// guardEdits admits the pair, and commitReview then writes with the EDIT's own
+// strings — `at.name = $N`, raw equality, cross-tenant, deliberately with no
+// tenant predicate. Measured before this changed:
+//
+//   pairKey('Meta Single Image Ad Primary', 'Text')      one sacrificial pair
+//   pairKey('Meta Single Image Ad', 'Primary Text')      a REAL seeded field, 150
+//
+// both produced 'Meta Single Image Ad Primary Text', so a flag whose
+// affected_fields held only the first authorised an edit to the second, and every
+// tenant's row for that real field would be rewritten and stamped verified.
+// The sweep learned this and this gate did not; that asymmetry is the whole bug.
+//
+// RAW, NOT NORMALIZED, and that is deliberate. specSweep normalizes because it
+// matches library rows against change-log rows that may be spelled differently.
+// This gate's job is narrower: decide whether a submitted edit may be written,
+// and commitReview finds rows by RAW `at.name` equality. Keying the gate raw
+// makes it correspond one-to-one with the rows the write can reach. Normalizing
+// would admit pairs the write cannot then find — refused by commitReview's
+// zero-row guard, so louder, but a wider gate for no gain.
+//
+// Written as an ESCAPE, never as a literal byte: a literal NUL parses identically
+// and passes every test, and makes git classify the file as BINARY so the diff is
+// unreviewable — and any tool that strips control characters silently restores
+// the collision above.
+const PAIR_SEP = '\u0000';
 function pairKey(asset, field) {
-  return String(asset) + ' ' + String(field);
+  return String(asset) + PAIR_SEP + String(field);
 }
 
 // Parse the affected_fields JSONB (already an array of {asset, field}) into a
@@ -622,4 +655,8 @@ module.exports = {
   // exposed for unit tests — both are pure and carry the divergence reporting
   tenantValueBreakdown,
   changedRows,
+  // THE WRITE GATE'S KEY, exposed so its non-ambiguity is assertable directly.
+  // A test that can only reach it through guardEdits cannot show that the two
+  // colliding spellings are now distinct, which is the property that was broken.
+  pairKey,
 };

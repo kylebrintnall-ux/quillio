@@ -126,11 +126,35 @@ router.post('/admin/api/test-spec', requireAdmin, async (req, res) => {
   }
 });
 
-// POST /admin/api/run-detection — run the detector over ALL watch entries and
-// return a per-URL summary. Manual trigger only (no cron). Admin-gated.
+// POST /admin/api/run-detection — run the detector and return a per-URL summary.
+// Manual trigger only (no cron). Admin-gated.
+//
+// OPTIONAL `watchId` SCOPES THE RUN TO ONE ENTRY (body or query). Without it the
+// behaviour is exactly what it always was: every watch entry. With it, only that
+// entry is fetched — which is what makes poking the is_test row cheap, instead of
+// also fetching all ten real platform pages and possibly raising real flags in
+// the same run.
+//
+// AN UNKNOWN id IS A 400, NOT A 200 WITH AN EMPTY SUMMARY. A zero-row run
+// reports every count at zero, which reads as a clean pass rather than as a run
+// that examined nothing. `no-database` keeps its existing 200 + ran:false shape —
+// that is pre-existing behaviour and not this change's business.
 router.post('/admin/api/run-detection', requireAdmin, async (req, res) => {
+  const raw = (req.body && req.body.watchId) != null ? req.body.watchId : req.query.watchId;
+  let watchId;
+  if (raw != null && String(raw).trim() !== '') {
+    // Digits only. A non-numeric id can never match a BIGSERIAL row, so it is a
+    // caller error worth naming rather than a run that quietly finds nothing.
+    if (!/^\d+$/.test(String(raw).trim())) {
+      return res.status(400).json({ success: false, error: 'watchId must be a positive integer' });
+    }
+    watchId = String(raw).trim();
+  }
   try {
-    const result = await runDetection();
+    const result = await runDetection(watchId != null ? { watchId } : {});
+    if (result.reason === 'no-such-watch-row') {
+      return res.status(400).json({ success: false, error: `no watch row with id ${result.watchId}` });
+    }
     res.status(200).json({ success: true, ...result });
   } catch (err) {
     console.error('[admin] run-detection failed:', err.message);

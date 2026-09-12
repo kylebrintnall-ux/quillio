@@ -419,11 +419,39 @@ async function bumpUnconfirmed(pool, row, reason) {
 // Run the detector over every watch entry. Returns a per-URL summary so the
 // caller (the admin endpoint) can show what happened. Never throws for a single
 // bad URL — that row is reported as status:'error' and the run continues.
-async function runDetection() {
+// `watchId` SCOPES THE RUN TO ONE ENTRY, and exists for on-demand testing.
+//
+// The weekly cron calls runDetection() with no argument and is byte-identical to
+// what it always was — the scoping is opt-in and the default path is untouched.
+//
+// WHY IT WAS NEEDED. POST /admin/api/run-detection had no scope, so poking the
+// is_test row also fetched all ten real platform pages and could raise real
+// flags in the same run. That makes the one safe thing to experiment with
+// expensive to experiment with, which is how people stop experimenting.
+//
+// AN UNKNOWN ID IS A REFUSAL, NOT AN EMPTY RUN. Filtering to nothing would
+// return a summary of all zeros with ran:true — a clean bill for a run that
+// examined no pages, which is the shape of silent failure this file's own
+// `not_watched` status exists to avoid. It names the id it could not find.
+async function runDetection({ watchId } = {}) {
   const pool = getPool();
   if (!pool) return { ran: false, reason: 'no-database', summary: {}, results: [] };
 
-  const rows = await getWatchList();
+  const all = await getWatchList();
+  let rows = all;
+  if (watchId != null) {
+    const wanted = String(watchId);
+    rows = all.filter((r) => String(r.id) === wanted);
+    if (rows.length === 0) {
+      return {
+        ran: false,
+        reason: 'no-such-watch-row',
+        watchId: wanted,
+        summary: {},
+        results: [],
+      };
+    }
+  }
   const results = [];
   // `failed` is pre-seeded like the rest so a clean run reports 0 rather than
   // omitting the key — an absent count and a zero count read differently to

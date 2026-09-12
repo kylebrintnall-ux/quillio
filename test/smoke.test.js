@@ -11816,7 +11816,7 @@ test('admin.html surfaces divergence in the preview and the overwrite list after
 // fully deactivated one — commitReview cannot tell those apart, because both are
 // invisible through the same `AND at.is_active` join, which is exactly why the
 // refusal message names both causes.
-function fakeSpecPool({ matched, before = [], pair }) {
+function fakeSpecPool({ matched, before = [], pair, isTest = false }) {
   const log = [];
   const query = async (sql) => {
     const flat = String(sql).replace(/\s+/g, ' ').trim();
@@ -11827,7 +11827,7 @@ function fakeSpecPool({ matched, before = [], pair }) {
       return {
         rows: [{
           id: 7, watch_id: 3, source_url: 'https://support.google.com/google-ads/answer/17090561',
-          old_hash: 'a', new_hash: 'b', status: 'pending', is_test: false,
+          old_hash: 'a', new_hash: 'b', status: 'pending', is_test: isTest,
           detected_at: new Date(), display_name: 'Google', affected_fields: [pair],
         }],
         rowCount: 1,
@@ -11882,6 +11882,102 @@ function withFakeSpecPool(opts, fn) {
 const LIVE_PAIR = { asset: 'LinkedIn Single Image Ad', field: 'Intro Text' };
 const RENAMED_PAIR = { asset: 'Google DV360 / Responsive Display', field: 'Short Headline' };
 const DEACTIVATED_PAIR = { asset: 'LinkedIn Single Image Ad — Variant A', field: 'Intro Text' };
+
+// --- The write gate: a space separator made it re-splittable -------------------
+//
+// These four are NOT a tripwire. The first two pin a property that was measurably
+// FALSE before this commit, and the last two pin two runtime guards the suite
+// had no coverage for at all.
+
+test('the write gate\'s pair key cannot be re-split — the space separator was a hole', () => {
+  const { pairKey } = require('../src/services/specReview');
+  const NUL = String.fromCharCode(0);
+
+  // THE MEASURED COLLISION, and the reason this commit exists. With ' ' as the
+  // separator BOTH of these produced 'Meta Single Image Ad Primary Text', so a
+  // flag whose affected_fields held only the first ALSO authorised an edit to
+  // the second — and the second is a real seeded field at char_max 150, written
+  // cross-tenant with no tenant predicate.
+  assert.notStrictEqual(
+    pairKey('Meta Single Image Ad Primary', 'Text'),
+    pairKey('Meta Single Image Ad', 'Primary Text'),
+    'the sacrificial pair must not key onto the real seeded pair'
+  );
+  // The GENERAL property, not just the one instance that was found.
+  assert.notStrictEqual(pairKey('A B', 'C'), pairKey('A', 'B C'));
+  assert.notStrictEqual(pairKey('Nurture Email', 'Subject'), pairKey('Nurture', 'Email Subject'));
+
+  // The separator is the one character normalize() can never emit — the same
+  // choice, for the same reason, as services/specSweep.js KEY_SEP.
+  assert.ok(pairKey('A', 'B').includes(NUL), 'the separator is NUL');
+  // And the same pair still keys the same, or the gate would refuse everything.
+  assert.strictEqual(pairKey('A', 'B'), pairKey('A', 'B'));
+
+  // WRITTEN AS AN ESCAPE, NEVER A LITERAL BYTE. A literal NUL parses identically
+  // and passes every assertion above, and makes git classify the file as BINARY
+  // so the diff is unreviewable. specSweep.js records that it was a literal once.
+  for (const f of ['src/services/specReview.js', 'src/services/specSweep.js']) {
+    const buf = fs.readFileSync(path.join(__dirname, '..', f));
+    assert.ok(!buf.includes(0), f + ' must contain no literal NUL byte');
+    assert.match(buf.toString('utf8'), /\\u0000/, f + ' declares the separator as an escape');
+  }
+});
+
+test('guardEdits refuses the off-list pair that the space separator used to admit', async () => {
+  // The exploit path, driven through the REAL gate rather than through pairKey:
+  // the flag authorises one sacrificial pair, and the submitted edit names a
+  // different, real pair whose space-joined key was identical.
+  await withFakeSpecPool(
+    { matched: 1, pair: { asset: 'Meta Single Image Ad Primary', field: 'Text' } },
+    async (spec, fake) => {
+      const r = await spec.buildPreview(7, [
+        { asset: 'Meta Single Image Ad', field: 'Primary Text', char_max: 999 },
+      ]);
+      assert.strictEqual(r.ok, false);
+      assert.match(r.error, /is not an affected field of this flag/);
+      // And nothing was read or written for the real pair on the way to refusing.
+      const joined = fake.log.join(' | ');
+      assert.ok(!/UPDATE copy_fields/.test(joined), 'no write was attempted');
+      assert.ok(!/SELECT at\.tenant_id/.test(joined), 'the real pair was never even read');
+    }
+  );
+});
+
+test('a test flag is barred from suggestions, preview and commit — and writes nothing', async () => {
+  // NEITHER of these two guards had any coverage. Deleting either line would
+  // have gone unnoticed, and the second is the one standing between the editable
+  // /admin/test-spec page and a real cross-tenant spec write.
+  await withFakeSpecPool({ matched: 1, pair: LIVE_PAIR, isTest: true }, async (spec, fake) => {
+    const sug = await spec.getSuggestions(7);
+    assert.strictEqual(sug.ok, false);
+    assert.match(sug.error, /test flags cannot be approved -- no suggestions/);
+
+    const prev = await spec.buildPreview(7, [{ ...LIVE_PAIR, char_max: 200 }]);
+    assert.strictEqual(prev.ok, false);
+    assert.match(prev.error, /test flags cannot be approved -- dismiss only/);
+
+    const commit = await spec.commitReview(7, [{ ...LIVE_PAIR, char_max: 200 }], 1);
+    assert.strictEqual(commit.ok, false);
+    assert.match(commit.error, /test flags cannot be approved -- dismiss only/);
+
+    const joined = fake.log.join(' | ');
+    assert.ok(!/UPDATE copy_fields/.test(joined), 'no copy_fields write');
+    assert.ok(!/INSERT INTO spec_change_log/.test(joined), 'no audit row');
+    assert.ok(!/UPDATE spec_review_queue SET status/.test(joined), 'the flag is not flipped');
+  });
+});
+
+test('a NON-test flag on the same fake still commits — the guard is the flag, not the harness', async () => {
+  // The control. Without it, the three refusals above would also pass if
+  // buildPreview/commitReview were broken for every input.
+  await withFakeSpecPool(
+    { matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150 }] },
+    async (spec) => {
+      const r = await spec.commitReview(7, [{ ...LIVE_PAIR, char_max: 200 }], 1);
+      assert.strictEqual(r.ok, true, 'is_test=false is the only difference');
+    }
+  );
+});
 
 test('commitReview: a pair that resolves writes, logs and flips the flag', async () => {
   await withFakeSpecPool(
@@ -18383,7 +18479,7 @@ function fakeDetectorPool(rows) {
 // Load a FRESH detector bound to a fake pool. specDetector and db/specWatch both
 // destructure getPool at require time, so the patch has to happen before either
 // is loaded — hence the cache eviction rather than a simple assignment.
-async function runDetectorWith({ rows, fetchImpl }) {
+async function runDetectorWith({ rows, fetchImpl, detectionOpts }) {
   const db = require('../src/db');
   const realGetPool = db.getPool;
   const realFetch = globalThis.fetch;
@@ -18402,7 +18498,10 @@ async function runDetectorWith({ rows, fetchImpl }) {
   delete require.cache[wlPath];
   try {
     const det = require(detPath);
-    const out = await det.runDetection();
+    // runDetection({}) and runDetection() are the same path — the default
+    // parameter makes them identical — so passing {} keeps every existing caller
+    // of this driver byte-identical.
+    const out = await det.runDetection(detectionOpts || {});
     return { out, queries: pool.queries, det };
   } finally {
     db.getPool = realGetPool;
@@ -19537,7 +19636,7 @@ test('runDetection calls normalize() DIRECTLY zero times — the guard, not the 
   // this file's own explanatory comments, and an unbounded slice runs past the
   // end of the function into module.exports. Both happened while writing this.
   const src = fs.readFileSync(require.resolve('../src/services/specDetector'), 'utf8');
-  const body = sliceBetween(src, 'async function runDetection()', '\nmodule.exports');
+  const body = sliceBetween(src, 'async function runDetection({ watchId } = {})', '\nmodule.exports');
   const masked = maskNonCode(body);
 
   const direct = [...masked.matchAll(/(?<![A-Za-z_.])normalize\(/g)];
@@ -22829,6 +22928,82 @@ test('run history: the SET fragments are gated on column presence', () => {
   assert.match(det.stampChange({ change_count: 0 }), /change_count = COALESCE\(change_count, 0\) \+ 1/);
   assert.ok(!/first_baselined_at/.test(det.stampChange({ change_count: 0 })),
     'and the change fragment never touches first_baselined_at');
+});
+
+// --- Scoped detection: ?watchId= ----------------------------------------------
+//
+// Driven through the real runDetection with a stubbed pool, because the whole
+// question is which rows get FETCHED — invisible to a source scan.
+
+// A fetch that counts, so "only one page was read" is assertable rather than
+// inferred from the summary.
+function countingFetch() {
+  const urls = [];
+  const impl = async (url) => {
+    urls.push(String(url));
+    return { ok: true, status: 200, text: async () => HISTORY_PAGE };
+  };
+  impl.urls = urls;
+  return impl;
+}
+
+const TWO_ROWS = () => [
+  historyRow({ id: 1, display_name: 'row one', source_url: 'https://example.test/one', current_hash: null }),
+  historyRow({ id: 2, display_name: 'row two', source_url: 'https://example.test/two', current_hash: null }),
+];
+
+test('scoped detection: no watchId examines every row — the cron path is unchanged', async () => {
+  const fetchImpl = countingFetch();
+  const { out } = await runDetectorWith({ rows: TWO_ROWS(), fetchImpl });
+  assert.strictEqual(out.summary.total, 2);
+  assert.strictEqual(out.results.length, 2);
+  // Both pages really were read. The weekly cron calls runDetection() with no
+  // argument and must keep doing exactly this.
+  assert.ok(fetchImpl.urls.some((u) => u.includes('/one')));
+  assert.ok(fetchImpl.urls.some((u) => u.includes('/two')));
+});
+
+test('scoped detection: a watchId fetches ONLY that row', async () => {
+  const fetchImpl = countingFetch();
+  const { out } = await runDetectorWith({
+    rows: TWO_ROWS(), fetchImpl, detectionOpts: { watchId: 2 },
+  });
+  assert.strictEqual(out.summary.total, 1, 'the summary counts the scoped set, not the whole list');
+  assert.strictEqual(out.results.length, 1);
+  assert.strictEqual(out.results[0].source_url, 'https://example.test/two');
+  // THE POINT OF THE FEATURE: the other nine real platform pages are not read,
+  // so poking the is_test row cannot raise a real flag in the same run.
+  assert.ok(!fetchImpl.urls.some((u) => u.includes('/one')), 'row one was never fetched');
+  assert.ok(fetchImpl.urls.every((u) => u.includes('/two')));
+});
+
+test('scoped detection: an unknown watchId REFUSES rather than reporting a clean empty run', async () => {
+  const fetchImpl = countingFetch();
+  const { out } = await runDetectorWith({
+    rows: TWO_ROWS(), fetchImpl, detectionOpts: { watchId: 999 },
+  });
+  // Filtering to nothing and running would return every count at zero with
+  // ran:true — a clean bill for a run that examined no pages. That is the shape
+  // of silent failure this file's own `not_watched` status exists to avoid.
+  assert.strictEqual(out.ran, false);
+  assert.strictEqual(out.reason, 'no-such-watch-row');
+  assert.strictEqual(out.watchId, '999', 'it names the id it could not find');
+  assert.deepStrictEqual(out.results, []);
+  assert.strictEqual(fetchImpl.urls.length, 0, 'nothing was fetched');
+});
+
+test('scoped detection: the id is compared as a string, so 2 and "2" both scope', async () => {
+  // The route hands through a string from the request body; a caller in Node
+  // hands through a number. Both must land on the same row rather than one of
+  // them silently matching nothing.
+  for (const id of [2, '2']) {
+    const fetchImpl = countingFetch();
+    const { out } = await runDetectorWith({
+      rows: TWO_ROWS(), fetchImpl, detectionOpts: { watchId: id },
+    });
+    assert.strictEqual(out.summary.total, 1, 'watchId ' + JSON.stringify(id) + ' scoped to one row');
+    assert.strictEqual(out.results[0].source_url, 'https://example.test/two');
+  }
 });
 
 test('run history: the baseline path sets first_baselined_at, once, and nothing else', async () => {

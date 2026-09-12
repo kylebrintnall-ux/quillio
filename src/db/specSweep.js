@@ -346,10 +346,53 @@ async function updateManifestMax(projectId, { assetType, instance, fieldName, ne
   }
 }
 
+// ONE change by id, in the exact shape getChangesSince returns — for a scoped
+// sweep fired on confirmation rather than by the weekly cron.
+//
+// IT FILTERS ON field_attr = 'char_max' AND THAT IS A GUARD, NOT A TIDY-UP.
+// The sweep acts on char_max and nothing else. A spec_note row is a real audit
+// row with a real id, so an id pooled from both attributes would resolve here,
+// find no bracket to correct, and return a clean report for a run that could
+// never have done anything — the silent success this codebase keeps refusing.
+// commitReview's roll-up is already char_max-only; this is the second half of
+// the same rule, enforced where the id is used rather than where it was made.
+//
+// Returns null when there is no such row, or the row is not a char_max change.
+// The caller distinguishes those two with its own message; both mean "do not
+// run a sweep for this id".
+async function getChangeById(changeId) {
+  const pool = getPool();
+  if (!pool || changeId == null) return null;
+  try {
+    const res = await pool.query(
+      `SELECT id, asset_type, field_name, field_attr, old_value, new_value, source_url, changed_at
+         FROM spec_change_log
+        WHERE id = $1::bigint AND field_attr = 'char_max'
+        LIMIT 1`,
+      [changeId]
+    );
+    const r = res.rows && res.rows[0];
+    if (!r) return null;
+    return {
+      id: Number(r.id),
+      assetType: r.asset_type,
+      fieldName: r.field_name,
+      oldValue: r.old_value,
+      newValue: r.new_value,
+      sourceUrl: r.source_url || null,
+      changedAt: r.changed_at,
+    };
+  } catch (err) {
+    if (isUndefinedTable(err) || isUndefinedColumn(err)) return null;
+    throw err;
+  }
+}
+
 module.exports = {
   getSweepState,
   setSweepState,
   getChangesSince,
+  getChangeById,
   getLibraryRows,
   getSweepableProjects,
   hasSpecNotification,

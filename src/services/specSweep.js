@@ -100,6 +100,7 @@ const {
   getSweepState,
   setSweepState,
   getChangesSince,
+  getChangeById,
   getLibraryRows,
   getSweepableProjects,
   hasSpecNotification,
@@ -235,16 +236,60 @@ async function correctProject(destination, project, hits, change, effectiveMax, 
 // `dryRun` does everything except write — no document edit, no notification, no
 // watermark move — and reports exactly what it would have done. It is the default
 // for the ops script, matching the migrations.
-async function runSpecSweep({ dryRun = false, limit = 500 } = {}) {
+// `changeId` SCOPES THE RUN TO ONE APPROVED CHANGE, so a confirmation can
+// correct its own documents immediately instead of waiting up to seven days for
+// Monday's cron. The weekly run calls runSpecSweep({ dryRun }) with no changeId
+// and is byte-identical to what it always was.
+//
+// ===========================================================================
+// A SCOPED RUN NEVER TOUCHES THE WATERMARK, AND THAT IS THE WHOLE DESIGN
+// ===========================================================================
+//
+// The watermark advances to the last change that FULLY succeeded, and the
+// header above states why skipping ahead is the one thing this must not do.
+// A one-change run writing it would do exactly that: change 7 approved and swept
+// today would move the watermark past changes 4, 5 and 6, which the next full
+// run would then never see. Those documents would stay stale forever, silently.
+//
+// Leaving it alone costs nothing, because every step here is ALREADY idempotent
+// for the partial-failure case the header describes:
+//
+//   - a corrected bracket no longer reads the old value, so correctProject
+//     finds nothing to do on the second pass
+//   - hasSpecNotification(tenantId, change.id) suppresses the duplicate
+//
+// So Monday's full run re-processes this change harmlessly and advances the
+// watermark over it in the ordinary way. The scoped run is a HEAD START, not a
+// replacement, and nothing downstream has to know it happened.
+//
+// AN UNRESOLVABLE id IS A REFUSAL, NOT AN EMPTY RUN — the same rule as the
+// detector's no-such-watch-row. A scoped run that found nothing would return
+// `status: 'clean'` with zero counts, which reads as "swept, nothing needed"
+// rather than "this never happened". getChangeById filters to char_max, so a
+// spec_note id lands here too and is refused by name.
+async function runSpecSweep({ dryRun = false, limit = 500, changeId = null } = {}) {
+  const scoped = changeId != null;
   const state = await getSweepState();
   if (!state.ready) {
     console.warn(`${TAG} not ready: ${state.reason}. Run scripts/migrateAddSpecSweepState.js.`);
     return { ran: false, reason: state.reason };
   }
 
-  const changes = await getChangesSince(state.lastChangedAt, state.lastChangeId, limit);
+  let changes;
+  if (scoped) {
+    const one = await getChangeById(changeId);
+    if (!one) {
+      console.warn(`${TAG} scoped run refused: no char_max change with id ${changeId}`);
+      return { ran: false, reason: 'no-such-change', changeId: String(changeId), scopedToChange: String(changeId) };
+    }
+    changes = [one];
+  } else {
+    changes = await getChangesSince(state.lastChangedAt, state.lastChangeId, limit);
+  }
+
   if (changes.length === 0) {
-    if (!dryRun) await setSweepState({ status: 'clean', note: 'no new changes' });
+    // Unreachable when scoped — the refusal above already returned.
+    if (!dryRun && !scoped) await setSweepState({ status: 'clean', note: 'no new changes' });
     console.log(`${TAG} no spec changes since the watermark — nothing to do.`);
     return { ran: true, dryRun, changes: [], documentsCorrected: 0, notifications: 0, status: 'clean' };
   }
@@ -419,17 +464,40 @@ async function runSpecSweep({ dryRun = false, limit = 500 } = {}) {
     ? `stopped at change ${stopped}; ${changes.length} change(s) examined`
     : `${changes.length} change(s) swept`;
 
-  if (!dryRun) {
+  // `!scoped` — see the header. A one-change run must not move the watermark
+  // past changes it never examined.
+  if (!dryRun && !scoped) {
     await setSweepState({
       changedAt: watermark ? watermark.changedAt : null,
       changeId: watermark ? watermark.changeId : null,
       status,
       note,
     });
+  } else if (!dryRun && scoped && status === 'partial') {
+    // A FAILED SCOPED RUN LEAVES A DURABLE RECORD, and a successful one does not.
+    //
+    // The run is fire-and-forget behind an HTTP response that has already been
+    // sent, so there is no caller left to tell. Without this, the only trace of
+    // a failure is a log line — and a sweep that fails where nobody looks is the
+    // staleness problem this feature exists to shorten, moved one layer down.
+    //
+    // THE WATERMARK IS STILL UNTOUCHED: setSweepState COALESCEs last_changed_at
+    // and last_change_id, so omitting them leaves the previous watermark exactly
+    // where it was. Only last_run_status / last_run_note / last_run_at move.
+    //
+    // ONLY ON FAILURE, and the asymmetry is deliberate. Those three columns read
+    // as "the weekly sweep's state" on the health surface. A successful head
+    // start has nothing to report that Monday's run will not report properly, so
+    // it stays quiet; a failure is worth perturbing a shared row for. The note
+    // names itself a scoped run so the row is never misread as the cron's.
+    await setSweepState({
+      status: 'partial',
+      note: `scoped run for change ${changeId} did not finish: ${note}`,
+    });
   }
 
   console.log(
-    `${TAG} ${dryRun ? 'DRY RUN — ' : ''}${changes.length} change(s), ` +
+    `${TAG} ${dryRun ? 'DRY RUN — ' : ''}${scoped ? `SCOPED to change ${changeId} (watermark untouched) — ` : ''}${changes.length} change(s), ` +
       `${documentsCorrected} document(s) corrected, ${notificationsWritten} notification(s), ` +
       `${skippedNoManifest} project(s) skipped for a null manifest, status=${status}`
   );
@@ -444,6 +512,10 @@ async function runSpecSweep({ dryRun = false, limit = 500 } = {}) {
     skippedNoManifest,
     stoppedAtChange: stopped,
     watermark,
+    // Null on a full run. Present on a scoped one so a caller (and a log reader)
+    // can tell a head-start run from the weekly cron without inferring it from
+    // the change count.
+    scopedToChange: scoped ? String(changeId) : null,
   };
 }
 

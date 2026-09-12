@@ -21314,6 +21314,154 @@ test('sweep: a null manifest is skipped and COUNTED, never opened', () => {
   assert.match(script, /skipped for a null manifest/);
 });
 
+// --- Scoped sweep: the head start on confirmation ------------------------------
+
+// Stub `pg`, reload db.js + db/specSweep + specSweep against it, run fn, restore.
+// Same shape as withFakeSpecPool; a separate one because the sweep reaches a
+// different set of tables and the two fakes would otherwise answer each other's
+// queries by accident.
+function withFakeSweepPool({ change = null, ready = true }, fn) {
+  const saved = new Map();
+  const remember = (x) => { if (!saved.has(x)) saved.set(x, require.cache[x]); };
+  const rel = (r) => require.resolve(path.join(__dirname, '..', r));
+  const savedUrl = process.env.DATABASE_URL;
+  const log = [];
+
+  const query = async (sql) => {
+    const flat = String(sql).replace(/\s+/g, ' ').trim();
+    log.push(flat);
+    if (flat.includes('FROM spec_sweep_state')) {
+      return ready
+        ? { rows: [{ id: 1, last_changed_at: null, last_change_id: null }], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    }
+    if (flat.includes('FROM spec_change_log')) {
+      return { rows: change ? [change] : [], rowCount: change ? 1 : 0 };
+    }
+    if (flat.includes('UPDATE spec_sweep_state')) return { rows: [], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+
+  const pgPath = require.resolve('pg');
+  remember(pgPath);
+  require.cache[pgPath] = {
+    id: pgPath, filename: pgPath, path: path.dirname(pgPath), loaded: true,
+    exports: { Pool: function () { return pool; } }, children: [], paths: [],
+  };
+  process.env.DATABASE_URL = 'postgres://fake/quillio';
+  for (const r of ['src/db', 'src/db/specSweep', 'src/services/specSweep']) {
+    const x = rel(r); remember(x); delete require.cache[x];
+  }
+  const sweep = require(rel('src/services/specSweep'));
+  return Promise.resolve(fn(sweep, log)).finally(() => {
+    for (const [x, mod] of saved) {
+      if (mod === undefined) delete require.cache[x]; else require.cache[x] = mod;
+    }
+    if (savedUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedUrl;
+  });
+}
+
+test('scoped sweep: an unresolvable changeId REFUSES and writes nothing', async () => {
+  // The failure this prevents: filtering to nothing and running would return
+  // status 'clean' with zero counts — "swept, nothing needed" for a run that
+  // never happened. Same rule as the detector's no-such-watch-row.
+  await withFakeSweepPool({ change: null }, async (sweep, log) => {
+    const r = await sweep.runSpecSweep({ changeId: 4242 });
+    assert.strictEqual(r.ran, false);
+    assert.strictEqual(r.reason, 'no-such-change');
+    assert.strictEqual(r.changeId, '4242', 'it names the id it could not resolve');
+    // AND THE WATERMARK IS UNTOUCHED. A refusal that wrote sweep state would
+    // stamp last_run_at for a run that examined nothing.
+    assert.ok(!log.some((q) => /UPDATE spec_sweep_state/.test(q)),
+      'a refused scoped run writes no sweep state at all');
+  });
+});
+
+test('scoped sweep: getChangeById filters to char_max, so a spec_note id refuses', async () => {
+  // commitReview keeps the two attributes apart and rolls up only char_max ids.
+  // This is the second half of that rule, enforced where the id is USED: a
+  // spec_note id that reached here would resolve, find no bracket to move, and
+  // report a clean sweep for a run that could never do anything.
+  await withFakeSweepPool({ change: null }, async (sweep, log) => {
+    const r = await sweep.runSpecSweep({ changeId: 7 });
+    assert.strictEqual(r.ran, false, 'refused because the row is not a char_max change');
+    const q = log.find((x) => /FROM spec_change_log/.test(x));
+    assert.ok(q, 'it queried the change log');
+    assert.match(q, /field_attr = 'char_max'/, 'the filter is in the SQL, not in a caller');
+    assert.match(q, /WHERE id = \$1::bigint/, 'and it is fetched by id');
+  });
+});
+
+test('scoped sweep: a not-ready state refuses before touching the change log', async () => {
+  await withFakeSweepPool({ ready: false }, async (sweep, log) => {
+    const r = await sweep.runSpecSweep({ changeId: 1 });
+    assert.strictEqual(r.ran, false);
+    assert.ok(!log.some((q) => /FROM spec_change_log/.test(q)),
+      'the readiness check comes first');
+  });
+});
+
+// TRIPWIRE, NOT COVERAGE. The scoped SUCCESS path needs getLibraryRows,
+// getSweepableProjects, a destination and Google clients to be stubbed as well —
+// a harness worth building when something drives it, and dishonest to imply
+// exists. These assert the two guards on the source instead, with anchors that
+// are checked rather than assumed.
+test('tripwire: a scoped sweep never advances the watermark', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
+  const fn = sliceBetween(src, 'async function runSpecSweep(', '\nmodule.exports');
+  // The full-watermark write is gated on !scoped. Without this, a one-change run
+  // would move the watermark PAST changes 4, 5 and 6 to sweep change 7, and the
+  // next full run would never see them — documents stale forever, silently.
+  assert.match(fn, /if \(!dryRun && !scoped\) \{\n\s*await setSweepState\(\{\n\s*changedAt:/,
+    'the watermark write is guarded on !scoped');
+  // A FAILED scoped run still records itself, without the watermark columns —
+  // setSweepState COALESCEs those, so omitting them leaves the watermark put.
+  assert.match(fn, /\} else if \(!dryRun && scoped && status === 'partial'\) \{/);
+  const durable = sliceBetween(fn, "} else if (!dryRun && scoped && status === 'partial') {", 'console.log(');
+  assert.ok(!/changedAt:/.test(durable) && !/changeId:/.test(durable),
+    'the failure record passes NEITHER watermark column');
+  assert.match(durable, /status: 'partial'/);
+});
+
+test('tripwire: the immediate sweep is fired after the response and OUTSIDE the try', () => {
+  const src = fs.readFileSync(require.resolve('../src/routes/admin'), 'utf8');
+  const route = sliceBetween(src, "router.post('/admin/api/approve-commit'", '\nmodule.exports');
+  // Inside the try, a throw here would reach the catch and call res.status(500)
+  // on a response ALREADY SENT — ERR_HTTP_HEADERS_SENT, reporting a committed
+  // write as failed. Assert positions exist before comparing them: a missing
+  // anchor gives indexOf -1, and -1 < anything passes.
+  const sendAt = route.indexOf('res.status(200).json({ success: true, ...result })');
+  const catchAt = route.indexOf('} catch (err) {');
+  const fireAt = route.indexOf('sweepConfirmedChanges(committed.change_ids, flagId)');
+  assert.ok(sendAt >= 0, 'the 200 is sent');
+  assert.ok(catchAt >= 0, 'the catch exists');
+  assert.ok(fireAt >= 0, 'the sweep is fired');
+  assert.ok(sendAt < catchAt, 'the response is sent inside the try');
+  assert.ok(fireAt > catchAt, 'and the kick-off is AFTER the catch block, not inside it');
+  // The 500 branch returns, or a failed commit falls through to the kick-off.
+  assert.match(route, /return res\.status\(500\)\.json\(\{ success: false, error: 'Write failed' \}\)/);
+  // It is not awaited — see the comment; a document-correction pass would hold
+  // the admin's response open.
+  assert.ok(!/await sweepConfirmedChanges/.test(route), 'fire-and-forget, never awaited');
+});
+
+test('tripwire: the fire-and-forget catch reports every outcome, and never swallows', () => {
+  const src = fs.readFileSync(require.resolve('../src/routes/admin'), 'utf8');
+  const fn = sliceBetween(src, 'async function sweepConfirmedChanges(', '\nrouter.post(');
+  // `.catch(() => {})` here would make a sweep that failed for weeks look exactly
+  // like one that never needed to run — the staleness problem one layer down.
+  assert.ok(!/catch\s*\(\s*\)\s*=>\s*\{\s*\}/.test(fn), 'no empty catch');
+  assert.match(fn, /console\.error\(/, 'failures go to console.error');
+  assert.match(fn, /err && err\.stack \? err\.stack : err/, 'a throw logs the STACK, not just .message');
+  assert.match(fn, /REFUSED/, 'a refusal is reported');
+  assert.match(fn, /INCOMPLETE/, 'a partial run is reported');
+  assert.match(fn, /THREW/, 'a throw is reported');
+  // A note-only approval has no char_max id and must not log a spurious sweep.
+  assert.match(fn, /if \(ids\.length === 0\) return;/);
+});
+
 test('sweep: the watermark stops at the first unfinished change, never skips it', () => {
   const src = fs.readFileSync(require.resolve('../src/services/specSweep'), 'utf8');
   const fn = sliceBetween(src, 'async function runSpecSweep(', '\nmodule.exports');

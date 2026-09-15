@@ -155,9 +155,42 @@ const LUM = `function lum(r,g,b){const f=(v)=>{v/=255;return v<=0.03928?v/12.92:
   return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b)}`;
 
 // The measurement itself, as a function the page evaluates on a base64 PNG of one
-// element. Darkest 1% is the glyph — antialiasing means most pixels of a text
-// element are background, and the true ink is the tail. The 90th percentile is
-// the surface, not the max: a stray highlight would flatter the ratio.
+// element. Most pixels of a text element are BACKGROUND — antialiasing means the
+// true ink is a tail — so the surface is read from the bulk and the ink from the
+// tail furthest from it.
+//
+// ═══ IT IS POLARITY-AWARE NOW, AND IT WAS NOT ═══════════════════════════════
+//
+// THE BUG THIS FIXES PRODUCED A FULL TABLE OF CONFIDENT, IMPOSSIBLE NUMBERS —
+// the fourth species of measurement failure in CLAUDE.md, arriving in the tool
+// built to prevent the first three.
+//
+// The original took "darkest 1%" as the ink and the "90th percentile" as the
+// surface, unconditionally. That is correct for DARK INK ON A LIGHT PANEL, which
+// is every surface this script was written against. On a DARK ground with CREAM
+// text the roles invert: the darkest pixels ARE the background, so it compared
+// the background against itself and reported ~1.0:1 for everything. A 22px
+// heading in #F5C518 gold on #2E5FD6 blue measured 1.03:1.
+//
+// It is not a small population. The rebrand made app.html AND settings.html
+// cream-on-sky — `.lib-asset`, `.glass-card` and `.sc-panel` are all
+// `background: transparent` — so BOTH pages were being measured with the wrong
+// polarity, and the tool's own guard (which asked whether a container paints a
+// background) was failing first and hiding it. Its last honest run predates the
+// rebrand, which is why CLAUDE.md's ladder describes a page that no longer
+// looks like that.
+//
+// CLAUDE.md anticipated half of this — it lists ~6 dark-surface rules as
+// unmeasured and says "the existing fixture would measure them against the wrong
+// ground". The half it did not anticipate is that the fix is not only a second
+// FIXTURE: the measurement FUNCTION could not express a light-on-dark ratio at
+// all.
+//
+// THE RULE NOW: the median is the surface (background dominates every text
+// element, whichever way round it is), and its position decides which tail is
+// ink. Light surfaces keep EXACTLY the old percentiles, so every number this
+// tool has ever reported for a light panel is reproduced unchanged — verified by
+// re-running settings.html across the change.
 // eslint-disable-next-line no-new-func
 const RATIO_FN = new Function('b64', `return new Promise((res) => { ${LUM}
   const img = new Image();
@@ -170,12 +203,79 @@ const RATIO_FN = new Function('b64', `return new Promise((res) => { ${LUM}
     const ls = [];
     for (let i = 0; i < d.length; i += 4) ls.push(lum(d[i], d[i+1], d[i+2]));
     ls.sort((x, y) => x - y);
-    const ink = ls[Math.max(0, Math.floor(ls.length * 0.01))];
-    const bg = ls[Math.min(ls.length - 1, Math.floor(ls.length * 0.90))];
+    const at = (q) => ls[Math.min(ls.length - 1, Math.max(0, Math.floor(ls.length * q)))];
+    // The bulk of a text element is its surface, so the median identifies which
+    // way round this element is. 0.5 relative luminance is the midpoint of the
+    // WCAG scale, not of sRGB — the same scale both ends of the ratio use.
+    var ink, bg;
+    if (at(0.50) > 0.5) {
+      // Dark ink on a light surface. The original percentiles, unchanged: the
+      // 90th and not the max, so a stray highlight cannot flatter the ratio.
+      ink = at(0.01); bg = at(0.90);
+    } else {
+      // Light ink on a dark surface — the mirror image, for the same reason.
+      ink = at(0.99); bg = at(0.10);
+    }
     res((Math.max(ink, bg) + 0.05) / (Math.min(ink, bg) + 0.05));
   };
   img.src = 'data:image/png;base64,' + b64;
 })`);
+
+// THE BACKDROP, TAKEN FROM THE PAGE INSTEAD OF RESTATED HERE.
+//
+// Every ratio is ultimately against whatever is behind the text, so a fixture
+// that gets the backdrop wrong reports a surface nobody sees — the same defect
+// as an inert container, one layer further back.
+//
+// THIS WAS WRONG AND THE ERROR WAS LARGE. The script used to hardcode a single
+// `<div class="sky-bg"></div>`. Both pages actually open with THREE layers, and
+// the second one carries `.clouds-wrap::before` — a texture at `mix-blend-mode:
+// soft-light; opacity: .28` — which LIGHTENS the sky substantially. Measured in
+// the running app against the same gradient: the sky renders rgb(99,136,222)
+// where the raw stop is rgb(46,95,214). Cream against the first is 3.18:1 and
+// against the second 5.15:1 — so hardcoding one layer flattered every number on
+// a dark page by around 1.9x, in the direction of a pass.
+//
+// Read from the page's own <body> so it cannot drift again: everything before
+// the nav token or <main> is the backdrop stack.
+function backdropMarkup(file) {
+  const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  const body = src.slice(src.indexOf('<body>') + 6);
+  const end = body.search(/__NAV:|<main\b/);
+  const markup = end > 0 ? body.slice(0, end) : '';
+  if (!/class="sky-bg"/.test(markup)) {
+    throw new Error(`could not find the backdrop layers at the top of ${file}'s <body>`);
+  }
+  return markup.trim();
+}
+
+// A STATIC SERVER, because the backdrop's texture is a RELATIVE URL. Under
+// setContent the page has no base URL, so /assets/images/texture.jpg silently
+// 404s and the soft-light layer paints nothing — which is precisely the lighter
+// -sky error above, arriving through the loader instead of through the markup.
+// Serving public/ makes the fixture load exactly what the app loads.
+function serveFixtures() {
+  const http = require('http');
+  const types = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+    '.svg': 'image/svg+xml', '.css': 'text/css', '.js': 'text/javascript', '.otf': 'font/otf',
+  };
+  const server = http.createServer((req, res) => {
+    if (req.url === '/__fixture') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(server.__html || '');
+      return;
+    }
+    const rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '');
+    const file = path.join(ROOT, 'public', rel);
+    if (!file.startsWith(path.join(ROOT, 'public')) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      res.writeHead(404); res.end(''); return;
+    }
+    res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
+    fs.createReadStream(file).pipe(res);
+  });
+  return server;
+}
 
 async function main() {
   const only = ARG('file', null);
@@ -187,20 +287,24 @@ async function main() {
 
   const { chromium } = loadBrowser();
   const browser = await chromium.launch({ executablePath: chromePath() });
+  const server = serveFixtures();
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const origin = `http://127.0.0.1:${server.address().port}`;
   let failures = 0;
 
   for (const page of pages) {
     const css = styleBlocks(page.html);
     const fixture = fs.readFileSync(path.join(ROOT, page.fixture), 'utf8');
     const selectors = smallTextSelectors(css);
+    const backdrop = backdropMarkup(page.html);
 
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 });
     const p = await ctx.newPage();
-    await p.setContent(
+    server.__html =
       `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">`
-      + `<style>${css}</style></head><body><div class="sky-bg"></div>${fixture}</body></html>`
-    );
-    await p.waitForTimeout(400);
+      + `<style>${css.replace(/\?v=__BUILD__/g, '')}</style></head><body>${backdrop}${fixture}</body></html>`;
+    await p.goto(`${origin}/__fixture`, { waitUntil: 'networkidle' });
+    await p.waitForTimeout(500);
 
     // THE CONTAINER IS ASSERTED BEFORE ANYTHING IS MEASURED, because a fixture
     // whose container is inert reports the absence of its own fidelity as a
@@ -211,6 +315,41 @@ async function main() {
     // "failed" — including 16px near-black ink at 4.79:1, which is impossible.
     // Nothing errored. Same shape as a test rig omitting a field the code under
     // test reads (CLAUDE.md, the fourth species of measurement failure).
+    // ═══ THE FIDELITY GUARD, AND WHAT IT ACTUALLY HAS TO ASK ════════════════
+    //
+    // The failure this exists to catch: the first settings fixture wrapped
+    // everything in `.glass-panel`, a class that page does not define. An
+    // unknown class is SILENTLY INERT — no error, nothing painted — so every
+    // label was measured against the raw sky and thirty-two of thirty-five
+    // "failed", including 16px near-black ink at 4.79:1, which is impossible.
+    //
+    // THE FIRST VERSION OF THIS GUARD ASKED THE WRONG QUESTION, and it went
+    // wrong in the way this repo's own preamble is about: it tested whether a
+    // CONTAINER PAINTS A BACKGROUND, which was a good proxy for "is this class
+    // real" only for as long as the panels had fills. The rebrand made them
+    // transparent with cream borders on purpose — `.lib-asset`, `.glass-card`
+    // and `.sc-panel` are all `background: transparent` today — so this guard
+    // began firing on the CORRECT design and the script has been refusing to
+    // report any numbers at all since. A contrast tool that cannot run is worse
+    // than no contrast tool, because the repo still says the panel was measured.
+    //
+    // So it asks the real question now: IS EVERY CLASS IN THIS FIXTURE ONE THE
+    // PAGE ACTUALLY DEFINES? That catches `.glass-panel` exactly — the original
+    // bug — and says nothing about whether a correct class chose to paint.
+    //
+    // Plus one thing that genuinely must hold whatever the panels do: THE PAGE
+    // BACKDROP MUST BE PAINTED. With transparent panels the sky IS the surface
+    // every ratio is taken against, so an unpainted backdrop would measure cream
+    // text on the browser's default white and report the exact opposite of the
+    // truth on a dark page.
+    const fixtureClasses = [...new Set(
+      [...fixture.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].trim().split(/\s+/))
+    )].filter(Boolean);
+    const definedClasses = new Set(
+      [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([a-zA-Z0-9_-]+)/g)].map((m) => m[1])
+    );
+    const undefinedClasses = fixtureClasses.filter((c) => !definedClasses.has(c));
+
     const surfaces = await p.evaluate(() => [...document.querySelectorAll('[class]')]
       .filter((el) => el.children.length && el.querySelector('*'))
       .slice(0, 4)
@@ -222,16 +361,33 @@ async function main() {
           filter: cs.backdropFilter || cs.webkitBackdropFilter || 'none',
         };
       }));
-    const painted = surfaces.filter((s) => s.filter !== 'none' || !/rgba\(0, 0, 0, 0\)/.test(s.bg));
+    // What every ratio is ultimately taken against on a transparent-panel page.
+    const backdropPaint = await p.evaluate(() => {
+      const sky = document.querySelector('.sky-bg');
+      const cs = sky ? getComputedStyle(sky) : getComputedStyle(document.body);
+      return {
+        which: sky ? '.sky-bg' : 'body',
+        bg: cs.backgroundColor,
+        image: cs.backgroundImage,
+      };
+    });
     console.log(`\n${TAG} ${page.fixture}`);
     for (const s of surfaces) {
       console.log(`    surface  ${String(s.cls).padEnd(24)} bg ${s.bg.padEnd(26)} backdrop-filter ${s.filter}`);
     }
-    if (!painted.length) {
+    console.log(`    backdrop ${backdropPaint.which.padEnd(24)} bg ${String(backdropPaint.bg).padEnd(26)} image ${backdropPaint.image === 'none' ? 'none' : 'gradient'}`);
+    if (undefinedClasses.length) {
       throw new Error(
-        'every container in this fixture is transparent with no backdrop-filter. '
-        + 'That is what an unknown class name looks like, and it would measure the '
-        + 'page background instead of the surface. Refusing to report numbers.'
+        `this fixture uses ${undefinedClasses.length} class name(s) ${page.html} does not define: `
+        + `${undefinedClasses.join(', ')}. An unknown class is silently inert, so those elements `
+        + 'would be measured on the wrong surface. Refusing to report numbers.'
+      );
+    }
+    const backdropPainted = backdropPaint.image !== 'none' || !/rgba\(0, 0, 0, 0\)/.test(String(backdropPaint.bg));
+    if (!backdropPainted) {
+      throw new Error(
+        'the page backdrop paints nothing, so every ratio would be taken against the browser '
+        + 'default white. Refusing to report numbers.'
       );
     }
 
@@ -411,6 +567,7 @@ async function main() {
   }
 
   await browser.close();
+  server.close();
   console.log(`\n${TAG} ${failures ? `${failures} element(s) BELOW the floor` : 'every measured element meets its floor'}`);
   process.exitCode = failures ? 1 : 0;
 }

@@ -145,6 +145,8 @@ src/
                      file-naming onboarding.
     notifications.js /api/notifications (read) + /api/notifications/read
                      (mark read). Scoped from req.user only. See "Notifications".
+    specCheck.js     POST /api/spec-check — the Spec Check lookup. Synchronous
+                     (one small Gemini call), read-only, its own router.
     admin.js         /admin + /admin/api/* (LiveSpecs watch list, detection run,
                      review queue, approve-preview/commit). requireAdmin-gated.
 
@@ -188,6 +190,11 @@ src/
                      structured link target. See "Notifications" below.
     instanceKey.js   Instance ordinals for the two composite identity keys
                      (ctxKey and copyReview's fieldKey).
+    specTier.js      The tier sentence — specTypeLine, sourceDetail and the two
+                     house-default wordings. In utils/ because THREE surfaces
+                     render it (the doc, Settings, Spec Check) and a router
+                     cannot reach a composer behind googleapis. googleDocs
+                     re-exports it all.
     shellHtml.js     Reads + stamps the served HTML shells; `__BUILD__` is
                      replaced with the deploy commit so asset URLs version.
 
@@ -206,6 +213,9 @@ src/
                      spec_review_queue.agent_proposal. Shadow mode: proposes,
                      never writes. Must never require specDetector back.
     specReview.js    The ONLY place that writes copy_fields. Gated + two-step.
+    specLookup.js    Spec Check: a writer's question -> (asset, field) -> the
+                     seeded limit, its condition and its provenance. Read-only.
+                     The model is never shown a number. See "Spec Check" below.
 
   destinations/      Output adapters — where the brief gets written.
     index.js         Registry; getDestination() selects via config.DESTINATION.
@@ -376,7 +386,11 @@ returns data instead of posting messages.
 ## Spec metadata renders — it is not data-only
 
 `copy_fields.spec_type` and `copy_fields.spec_source` are **rendered in the
-generated doc**, not inert columns. In `destinations/googleDocs.js`:
+generated doc**, not inert columns. The composers live in `utils/specTier.js`
+(moved there when Spec Check became the third surface to render a tier sentence;
+`destinations/googleDocs.js` re-exports every one of them, so every existing
+caller and test reaches them exactly as before — the same pattern
+`specSourceName` set):
 
 - `specTypeLine(specType, sourceName, detail, overridden)` turns `spec_type` into
   the italic tier sentence under a field label — "Platform limit (LinkedIn). Stay
@@ -822,10 +836,17 @@ write 90, and LinkedIn rejects the creative at upload. Nothing here is a wrong
 
 #### What bounds the decision — established by reading the code, and not obvious from outside
 
-- **`spec_type` branches on exactly two things.** The rendered tier sentence
-  (`googleDocs.specTypeLine`, and through `fieldHint` the drafting prompt), and
-  Settings editability (`db/assets.isTenantEditableTier` → `routes/settings.js`).
-  Nothing else in `src/` reads it.
+- **`spec_type` branches on exactly three things** (it was two until Spec Check).
+  The rendered tier sentence (`utils/specTier.specTypeLine`, and through
+  `fieldHint` the drafting prompt); Settings editability
+  (`db/assets.isTenantEditableTier` → `routes/settings.js`); and **a Spec Check
+  answer**, which renders the same tier sentence from the same composer
+  (`services/specLookup.composeResult`). Nothing else in `src/` reads it.
+
+  The third one is why the composer moved out of the render layer — see
+  "Spec Check" below. It does not change the retier argument's SHAPE, but it does
+  add a surface to the blast radius, and the point of this list is that somebody
+  weighing the retier can read the whole radius off it.
 - **A retier does not change what lands in a document.** `overLimit`,
   `trimCeiling`, the rescue ladder and the corrective rewrite all key on
   `charMax` and `fieldType` only. There is no hard trim for `enforced` and no
@@ -929,6 +950,105 @@ is not a cheaper route; verify that before assuming it either way.
 - **`counts.editable` did not change meaning.** It still counts assets that open
   the *full* form. The new state travels in `counts.houseEditable`. A stale client
   reads the old key to mean what it always meant.
+
+## Spec Check — answering a limit question without letting a model invent one
+
+A writer mid-brief doubts a character limit and asks Quillio instead of leaving to
+find a spec page. `POST /api/spec-check` (`routes/specCheck.js` →
+`services/specLookup.js`), rendered in a panel below the brief input on `/app`.
+
+**THE MODEL IS NEVER SHOWN A NUMBER.** `gemini.parseSpecQuestion`'s prompt carries
+asset names and field names and nothing else — no `char_max`, no `spec_note`, no
+`spec_source`, no tier — and its `responseSchema` has no numeric field. So it
+cannot report a limit from its own knowledge: there is none in its context to
+repeat and nowhere to put one. It returns NAMES; `specLookup` looks the values up
+in `getTenantLibrary`.
+
+Structural rather than instructed, and for the reason already recorded for
+withholding the source name from the drafting prompt: a prohibition has a
+compliance rate, and no instruction in this system has ever had one of 1.0.
+Withholding differs in KIND. Behind it sits `parseBrief`'s defensive filter —
+every returned `(asset, field)` pair is re-resolved against the library, so a
+hallucinated asset degrades to "not in your library" and never to a number.
+
+### The answer key is the PAIR, and disambiguation is the main path
+
+Measured over the seeded library: **47 of 134 distinct field names appear on more
+than one asset, and TWENTY of those carry DIVERGENT limits.**
+
+| field | assets | limits |
+| --- | --- | --- |
+| `Headline` | 9 | 70, 27, 30, 60, 40 |
+| `Body Copy` | 5 | 0-90, 25-75, 50-100, 0-300 |
+| `Subhead` | 11 | 40-90, 20-40 |
+| `CTA Button` | 8 | 20, 30 |
+
+So **"how long can a headline be?" has no answer.** Any single number is wrong for
+eight of the nine assets — and under this feature's own provenance rule it would
+ship with a real citation link and a real verification date attached to it. A
+wrong number wearing proof is the LinkedIn-600 shape arriving on a new surface.
+
+Therefore the key is always `(asset, field)`. When a question names no asset and
+the field resolves to several pairs, **the list IS the answer**; `agreementOf`
+reports `single` / `agree` / `divergent` so the surface can say which. Picking one
+is not an available behaviour, and a test asserts the divergence against the real
+seed so it cannot quietly stop being true.
+
+### What it reuses, and the one thing that moved
+
+No second model call: the sentences come from `utils/specTier.specTypeLine` and
+`utils/specFreshness.specFreshness` — **the same composers the generated document
+delegates to** — so "as citable as a doc hint line" is a property of the code
+rather than a quality of some phrasing. A model asked to rephrase
+"45, or 30 with a Lead Gen Form CTA" can drop the condition and nothing here would
+detect it.
+
+That is why `specTypeLine`, `sourceDetail` and `SPEC_SOURCE_DETAIL` moved to
+`utils/specTier.js`: a router cannot reach a composer that lives behind
+`googleapis`. `googleDocs.js` re-exports them all. **`settings.html` still carries
+its own hand-written client-side copy of the tier wording** (labelled "Mirrors
+googleDocs specTypeLine") — deliberately left alone, and still a third copy.
+
+**The read is `getTenantLibrary`, not `getTenantAssets`.** Both resolve the
+tenant's override to the effective value, which is the point — the answer is the
+number that tenant's documents carry. But `getTenantAssets` filters
+`is_active = true`, which would collapse "you have that, it is switched off" into
+"I do not have that field seeded" — false about a field sitting in the tenant's
+own library, and the invisible side of that is a tenant adding a duplicate asset.
+
+### The condition renders because nothing shortens it
+
+LinkedIn Carousel's card headline is 45 to a destination URL and **30 with a Lead
+Gen Form CTA** — one field, two published limits, and the bracket carries one of
+them. The other is in `spec_note`, and `src/data/defaultAssets.js` already keeps
+that note OUT of `SHOW_ONCE_NOTES` for exactly this reason. Spec Check renders
+`spec_note` verbatim; the document's run-collapse cannot reach here (it is a
+property of ADJACENT paragraphs and an answer is one field), so the only way to
+lose the condition would be to summarise it. Do not.
+
+### Scope is enforced by the SHAPE
+
+Every string the route can emit is read from `copy_fields` or is a fixed literal
+in `specLookup.js`. There is **no key a model's prose can travel in**, so a model
+that decides to write a headline instead of routing a question has nowhere to put
+it. The `out_of_scope` intent flag makes the refusal read well; the shape is what
+makes it true. `intent` fails closed — anything that is not the explicit `lookup`
+marker is treated as out of scope, the same axis as `TENANT_EDITABLE_TIERS`.
+
+### Known, and logged rather than fixed
+
+- **`app.html` cannot reach WCAG AA for light text.** Sampled from the rendered
+  page, the sky is far lighter than its gradient stops (the texture over it at
+  `soft-light / 0.28` lifts `#2E5FD6` to `rgb(99,136,222)`), and **pure white tops
+  out at 3.44:1** there. That is why `.sc-panel` carries a fill where its
+  neighbours are transparent — `rgba(21,44,112,.65)`, the navy `.toast` and
+  `.modal-sheet` already use. Reading position measures 7.0-7.6:1.
+- **Text in the bottom 234px measures 2.8-4.3:1 whatever any component does**,
+  because `.content-fade` is `z-index: 10` over `main`'s 5. Laddered through
+  `.78`, `.88`, `.95` and a solid fill — byte-identical every time. `specLookup`'s
+  answer is scrolled clear of that band instead (`scScrollToAnswer`). Issue #35.
+- **`settings.html` reports 33 elements below the floor.** Pre-existing, exposed
+  by the contrast-tool fixes that shipped alongside this. Issue #34.
 
 ## Accounts vs. tenants — what is per-user and what is shared
 
@@ -1152,11 +1272,13 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 24,844 lines and 822 tests** —
-measured on the commit that added the agentic detection read, on **Node 22**, and
-written as a reading taken on a date rather than as a standing figure, because
-the previous version of this sentence said 635 and was wrong by 114 tests and
-about 3,900 lines.
+regression guards. **As of this commit it is 25,216 lines and 850 tests** —
+measured on the commit that added Spec Check, on **Node 22.22.2**, and written as
+a reading taken on a date rather than as a standing figure, because the previous
+version of this sentence said 635 and was wrong by 114 tests and about 3,900
+lines. (The reading it replaces was 24,844 / 822, taken on the agentic-detection
+commit and also on Node 22 — so the +28 is this branch's own tests, not a
+runtime difference.)
 
 **AND THE RUNTIME IS PART OF THE READING, which this sentence did not used to
 say.** The figure it replaces was 802 at 23,903 lines. Re-running that same tree

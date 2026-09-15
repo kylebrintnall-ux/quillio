@@ -1,0 +1,130 @@
+<!-- Contrast fixture — the Spec Check panel on the BRIEF screen, at 390px.
+
+     ═══ THIS PAGE INVERTS EVERY CONTRAST NUMBER IN CLAUDE.md ═══════════════
+     The alpha ladder recorded there — "the practical floor for 11px ink on
+     these panels is about 0.7", ".section-label's 0.75 is the known-safe value"
+     — is for DARK INK ON LIGHT PANELS in settings.html. Spec Check is CREAM ON
+     A BLUE SKY. The ratio runs the other way: a HIGHER alpha is safer here and a
+     lower one is the hazard, which is the opposite of the settings rule. None of
+     those numbers transfer, and reading them across is the mistake this fixture
+     exists to prevent.
+
+     ═══ WHY THE PANEL IS RENDERED TWICE ════════════════════════════════════
+     .sky-bg is `position: fixed; inset: 0`, so the gradient does NOT scroll with
+     the content. It holds deep blue through 78% of the VIEWPORT and opens up to
+     #DEEBFC in the last few percent. A panel is not at a fixed place in that
+     gradient — it scrolls THROUGH it, so the same cream text sits on #2E5FD6 at
+     one scroll position and on #B3D0F9 at another.
+
+     Measuring one position would therefore measure one scroll offset and report
+     it as the page. So:
+
+        copy 1   WHERE AN ANSWER ACTUALLY LANDS. Measured in the running app at
+                 390x844: after scScrollToAnswer the first card sits at 34%-63%
+                 of the viewport with one answer and 32%-59% with six. This is
+                 the reading position and its numbers are the ones that matter.
+        copy 2   THE FADE ZONE that content transits on its way there.
+
+     ═══ THE FOUR FAILURES IN COPY 2 ARE NOT A DEFECT IN THIS PANEL ═════════
+     They are `.content-fade` doing its job. app.html paints a FIXED pale scrim
+     over the bottom 234px of the viewport, ABOVE the content, and its own
+     comment in the stylesheet says why: "so a card never sits half-legible
+     against the ground band". Everything in that band is deliberately faded —
+     every card on this page, not just this one — so no colour choice inside the
+     panel can lift those numbers, and chasing them would mean fighting a
+     page-level effect with a component-level fix.
+
+     What the measurement DID change is where an answer lands. It used to use
+     scrollIntoView({ block: 'nearest' }), which scrolls the minimum and left the
+     first card at 84%-105% — inside the fade and partly below the fold. The
+     panel now scrolls the ANSWER to the clear band above the scrim while
+     keeping the brief on screen. That fix came out of these numbers.
+
+     ═══ WHAT NO PANEL ON THIS PAGE CAN DO ══════════════════════════════════
+     Sampled from the rendered app, the sky is far lighter than its own gradient
+     stops (the texture over it at soft-light/0.28 lifts #2E5FD6 to
+     rgb(99,136,222)). Against that backdrop:
+
+         cream 3.18:1    white 3.44:1    gold 2.11:1
+
+     PURE WHITE CANNOT REACH 4.5:1 ON THIS SKY. That is why .sc-panel carries a
+     fill where its neighbours are transparent — not decoration, and not a
+     departure taken lightly. See the note on .sc-panel in public/app.html.
+
+     ═══ WHAT A FIXTURE HAS TO GET RIGHT ════════════════════════════════════
+     Only class names public/app.html actually DEFINES. An unknown class is
+     silently inert — it paints nothing and errors nothing — which is how the
+     first settings fixture measured thirty-two labels against the wrong surface
+     and reported a full table of impossible numbers. checkContrast.js now
+     asserts every class here is one the page defines, and refuses to print
+     anything if not.
+
+     Add a row when you add a small label. The script lists every small-text rule
+     this fixture does NOT render, so a gap stays visible rather than becoming a
+     clean sweep of whatever it happened to look at. -->
+<main style="padding:10px 12px 0">
+
+  <!-- COPY 1 — deep blue (top of the viewport). -->
+  <div class="sc-panel">
+    <div class="sc-head">
+      <span class="sc-title">Spec Check</span>
+      <button type="button" class="sc-close">&times;</button>
+    </div>
+    <div class="sc-ask">
+      <input type="text" class="sc-input" value="carousel card headline?">
+      <button type="button" class="sc-go">Look up</button>
+    </div>
+    <div class="sc-body">
+      <div class="sc-msg">That field is on 9 of your assets, with different limits.</div>
+      <div class="sc-card">
+        <div class="sc-eyebrow">LinkedIn Carousel Ad</div>
+        <div class="sc-field">Card 1 Headline<span class="sc-flag">Switched off</span><span class="sc-flag yours">Yours</span></div>
+        <div class="sc-limit">45 characters</div>
+        <div class="sc-note">Applies to carousels driving to a destination URL; with a Lead Gen Form CTA the cap is 30.</div>
+        <div class="sc-line">Platform limit (LinkedIn). Stay within this count.</div>
+        <div class="sc-line">Read against LinkedIn's spec page on 2026-08-25.</div>
+        <div class="sc-line">We watch that page for edits — not the number. Last checked 2026-09-08: no change.</div>
+      </div>
+      <div class="sc-sub">It has: Intro Text, Headline, Graphic Headline, Subhead, CTA Button.</div>
+    </div>
+  </div>
+
+  <!-- Pushes copy 2 into the pale end of the fixed gradient WITHOUT pushing it
+       past the fold. The height is measured, not guessed, and getting it wrong in
+       either direction breaks the measurement:
+
+         too small  copy 2 lands in the same deep blue as copy 1 and measures
+                    nothing new.
+         too large  copy 2 falls BELOW 844. .sky-bg is `position: fixed`, so it
+                    paints only the viewport — an element past the fold gets
+                    screenshotted whereever Playwright's auto-scroll happens to
+                    put it, which is a scroll offset nobody chose. The first
+                    version of this fixture did exactly that (copy 2 at 113-145%)
+                    and produced four confident failures about a position the app
+                    cannot reach.
+
+       55px puts copy 2 at roughly 68-100% of the viewport: its lines span the
+       gradient from #3C8BF4 down to the ground, which is the deepest panel text
+       actually goes. Measured in the running app with a six-card answer, the
+       first card sits at 84-105% unscrolled and the lowest visible panel text
+       reaches 63% once scrolled — so this band is real and is the worst of it. -->
+  <div style="height:55px"></div>
+
+  <!-- COPY 2 — the pale band. THE WORST CASE, and the number that governs. -->
+  <div class="sc-panel">
+    <div class="sc-head">
+      <span class="sc-title">Spec Check</span>
+      <button type="button" class="sc-close">&times;</button>
+    </div>
+    <div class="sc-body">
+      <div class="sc-card">
+        <div class="sc-eyebrow">Meta Single Image Ad</div>
+        <div class="sc-field">Headline</div>
+        <div class="sc-limit">27 characters</div>
+        <div class="sc-line">Recommended by Meta (Facebook Feed). Not a hard limit.</div>
+        <div class="sc-line">Read against Meta's spec page on 2026-08-25.</div>
+      </div>
+      <div class="sc-sub">Pinterest Pin · Pinterest Idea Ad · One-Pager</div>
+    </div>
+  </div>
+</main>

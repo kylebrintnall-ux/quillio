@@ -36,6 +36,12 @@ module.exports = {
   // assets could reasonably flip a lot of them in one sitting, so this is not
   // tight — but it is a write, so it is tighter than the read.
   settingsWriteLimiter: perHour(60),
+  // Spec Check (POST /api/spec-check). A Gemini call, so tighter than the
+  // settings READ above — but a writer mid-brief legitimately asks several in one
+  // sitting ("what about the carousel?", "and the subhead?"), which is the whole
+  // interaction this feature is for, so it is looser than briefLimiter's 20.
+  // The call is small and read-only: one ~1,100-token prompt, no writes.
+  specCheckLimiter: perHour(60),
   // Slack surfaces (/slack/command, /slack/review, /slack/interactions).
   // Deliberately far more generous than the user-facing limiters above: real
   // Slack traffic arrives from a shared pool of Slack egress IPs, so a single

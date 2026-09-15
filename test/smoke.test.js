@@ -10333,7 +10333,16 @@ test('stale shell: the check is wired to the fetch funnel, not a hand-picked lis
 
   // Every server READ in the app goes through that funnel. If a new call site
   // appears here, it needs the check (or needs to use fetchWithTimeout).
-  const rawFetches = (html.match(/[^.\w]fetch\(/g) || []).length;
+  // MASKED BEFORE COUNTING. The scan used to run over the raw file, so the token
+  // `fetch(` appearing inside a COMMENT counted as a call site — and a comment
+  // explaining why some call site routes through the funnel is exactly where
+  // somebody writes it. Spec Check's did, three times, and this test went red
+  // for prose while the code it guards was correct.
+  //
+  // maskNonCode blanks comment and string CONTENTS while preserving length, the
+  // same treatment the indexOf-slice scanner gives its input and for the same
+  // reason: a heuristic scanner is made safe rather than trusted.
+  const rawFetches = (maskNonCode(html).match(/[^.\w]fetch\(/g) || []).length;
   assert.strictEqual(rawFetches, 4, 'exactly four raw fetch() call sites — see below');
   // 1. fetchWithTimeout itself (the funnel)
   assert.ok(/merged\.signal = ctrl\.signal;\s*\n\s*return fetch\(url, merged\)/.test(html));
@@ -10350,8 +10359,14 @@ test('stale shell: the check is wired to the fetch funnel, not a hand-picked lis
   // poll, doc content, the projects list, and the project view.
   // The sixth call site is openProjectDoc, which fetches the project row so the
   // result screen can open one of the run's documents in the detail view.
-  assert.strictEqual((html.match(/fetchWithTimeout\(/g) || []).length, 7,
-    'the definition plus six call sites');
+  // Masked for the same reason as the raw count above, and bumped to seven call
+  // sites by Spec Check's lookup — which is the outcome this pin exists to
+  // produce: a new server read either joins the funnel and moves this number, or
+  // it does not and the raw-fetch assertion above goes red. Both are deliberate
+  // friction, and neither can be satisfied by accident.
+  assert.strictEqual((maskNonCode(html).match(/fetchWithTimeout\(/g) || []).length, 8,
+    'the definition plus seven call sites');
+  assert.ok(/fetchWithTimeout\('\/api\/spec-check'/.test(html), 'Spec Check reads through the funnel');
 
   // runBrief keeps its HARD block — the one place where proceeding is expensive
   // enough to be worth stopping for. Everywhere else the banner is the warning.
@@ -24841,4 +24856,361 @@ test('report: the key separator is a NUL written as an ESCAPE — A TRIPWIRE', (
       .includes("KEY_SEP = '\\u0000'"),
     'and the escape is what appears in the source'
   );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SPEC CHECK — the read-only spec lookup panel
+// ═══════════════════════════════════════════════════════════════════════════
+
+// A getTenantLibrary-shaped library, built from the REAL seed rather than from
+// invented rows. The seed is where the divergent field names actually live, and
+// a hand-written fixture would have quietly agreed with itself.
+function specCheckLibrary({ inactive = [] } = {}) {
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  return DEFAULT_ASSETS.map((a, i) => ({
+    id: String(i + 1),
+    name: a.name,
+    group: a.group,
+    is_active: !inactive.includes(a.name),
+    sort_order: i,
+    asset_direction: a.asset_direction || null,
+    spec_note: null,
+    fields: a.fields.map((f, j) => ({
+      id: String(i * 100 + j),
+      field_name: f.field_name,
+      char_min: f.char_min || 0,
+      char_max: f.char_max || 0,
+      field_type: f.field_type || 'text',
+      group_label: f.group_label || null,
+      sort_order: j,
+      spec_type: f.spec_type || null,
+      spec_source: f.spec_source || null,
+      spec_verified_at: null,
+      spec_note: f.spec_note || null,
+      base_char_min: f.char_min || 0,
+      base_char_max: f.char_max || 0,
+      base_spec_note: f.spec_note || null,
+      overridden: { char_min: false, char_max: false, spec_note: false },
+      spec_overridden: false,
+      template_marker_key: null,
+      template_marker_name: null,
+    })),
+  }));
+}
+
+test('specTier: the tier sentence moved to utils and googleDocs re-exports it byte-for-byte', () => {
+  const tier = require('../src/utils/specTier');
+  const docs = require('../src/destinations/googleDocs');
+  // IDENTITY, not equality — a re-export that happened to produce the same
+  // string would leave two implementations, which is what the move removed.
+  assert.strictEqual(docs.SPEC_SOURCE_DETAIL, tier.SPEC_SOURCE_DETAIL);
+  assert.strictEqual(docs.HOUSE_DEFAULT_LINE, tier.HOUSE_DEFAULT_LINE);
+  assert.strictEqual(docs.HOUSE_DEFAULT_LINE_SET, tier.HOUSE_DEFAULT_LINE_SET);
+  assert.strictEqual(docs.NOT_A_HARD_LIMIT, tier.NOT_A_HARD_LIMIT);
+
+  // The four tiers still render exactly what the document has always rendered,
+  // offsets included — those locate the platform name for the hyperlink, and a
+  // caller that re-finds it by indexOf has reopened the drift this closed.
+  const enf = tier.specTypeLine('enforced', 'LinkedIn', undefined, false);
+  assert.strictEqual(enf.text, 'Platform limit (LinkedIn). Stay within this count.');
+  assert.strictEqual(enf.text.slice(enf.nameStart, enf.nameStart + enf.nameLen), 'LinkedIn');
+  const rec = tier.specTypeLine('recommended', 'Meta', { scope: 'Facebook Feed' }, false);
+  assert.strictEqual(rec.text.slice(rec.nameStart, rec.nameStart + rec.nameLen), 'Meta');
+  assert.ok(rec.text.startsWith('Recommended by Meta (Facebook Feed).'));
+  assert.strictEqual(tier.specTypeLine('house_default', null, undefined, true).nameStart, -1);
+  assert.strictEqual(tier.specTypeLine(null, null, undefined, false), null, 'a tenant field has no tier line');
+});
+
+test('specTier: utils/ stays free of googleapis, which is why it moved', () => {
+  // The point of the move: a ROUTER can compose the tier sentence. Reaching it
+  // through destinations/googleDocs would pull googleapis into a page render —
+  // the hazard utils/specSource.js already states for specSourceName.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'utils', 'specTier.js'), 'utf8');
+  assert.ok(!/require\(['"]googleapis/.test(src), 'specTier must not require googleapis');
+  assert.ok(!/destinations\//.test(src.replace(/\/\/[^\n]*/g, '')), 'and must not reach into a destination');
+  const lookup = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specLookup.js'), 'utf8');
+  assert.ok(!/destinations\//.test(lookup.replace(/\/\/[^\n]*/g, '')),
+    'specLookup composes from utils/, never from the Docs renderer');
+});
+
+test('specLookup: the pair key separator is a NUL written as an ESCAPE', () => {
+  const sl = require('../src/services/specLookup');
+  // A space-joined key is ambiguous across the two parts, which would answer a
+  // question about one field with another field's limit.
+  assert.notStrictEqual(
+    sl.pairKey('Meta Single Image Ad Primary', 'Text'),
+    sl.pairKey('Meta Single Image Ad', 'Primary Text')
+  );
+  // THE BYTE CHECK — a literal NUL parses identically to the escape and makes
+  // git classify the file binary, so only the raw bytes tell them apart. Third
+  // instance of this rule (specReview.pairKey, agentProposalReport, here).
+  const raw = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'specLookup.js'));
+  assert.strictEqual(raw.indexOf(0), -1, 'no literal NUL byte — write it as \\u0000');
+  assert.ok(raw.toString('utf8').includes("SEP = '\\u0000'"), 'and the escape is what appears in the source');
+});
+
+test('specLookup: THE MODEL IS NEVER SHOWN A LIMIT', () => {
+  const sl = require('../src/services/specLookup');
+  const { DEFAULT_ASSETS } = require('../src/data/defaultAssets');
+  const lib = specCheckLibrary();
+  const lines = sl.vocabularyLines(lib);
+
+  // The property the whole feature rests on: the model cannot report a limit it
+  // was never given, whatever it decides to do. Structural, not instructed — a
+  // prohibition has a compliance rate and this has none to fall below.
+  //
+  // ASSERTED AS "the line IS the names", not as "the line has no digits". A
+  // digit scan is the tempting version and it is WRONG: one seeded field is
+  // literally NAMED "Hook (first 150 chars, before See more)", so its label
+  // carries a number the model must see in order to match and echo it. What
+  // matters is that no VALUE travels, which this checks exactly.
+  const byName = new Map(DEFAULT_ASSETS.map((a) => [a.name, a]));
+  for (const line of lines) {
+    const i = line.indexOf(': ');
+    const asset = byName.get(line.slice(0, i));
+    assert.ok(asset, `vocabulary names an asset that is not seeded: ${line.slice(0, i)}`);
+    assert.strictEqual(line, `${asset.name}: ${asset.fields.map((f) => f.field_name).join(' | ')}`,
+      'a vocabulary line is exactly the asset name and its field names — nothing else');
+  }
+  const joined = lines.join('\n');
+  assert.ok(!/char_max|char_min|spec_note|spec_source|spec_type|quillio_default|https?:/.test(joined),
+    'and no limit, note, source or tier travels with them');
+  assert.ok(/Hook \(first 150 chars, before See more\)/.test(joined),
+    'the field NAME carrying digits is still sent verbatim — the model matches on it');
+
+  // The schema has nowhere to put a number even if the model produced one.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  const schema = sliceBetween(src, 'const SPEC_QUESTION_SCHEMA = {', '\nconst SPEC_MATCH_MAX');
+  assert.ok(!/INTEGER|NUMBER/.test(schema), 'the response schema has no numeric field at all');
+});
+
+test('specLookup: THE ANSWER KEY IS THE PAIR — a shared field name is divergent, not one answer', () => {
+  const sl = require('../src/services/specLookup');
+  const lib = specCheckLibrary();
+  const index = sl.buildIndex(lib);
+
+  // The finding this feature is shaped around, asserted against the real seed so
+  // it cannot quietly stop being true: "Headline" is on many assets with
+  // DIFFERENT limits, so no single number answers "how long can a headline be?".
+  const headlines = index.byField.get('headline');
+  assert.ok(headlines.length >= 8, `expected Headline on many assets, got ${headlines.length}`);
+  const distinct = new Set(headlines.map((e) => e.field.char_max));
+  assert.ok(distinct.size >= 4,
+    `Headline must carry several different limits (got ${[...distinct].join(', ')})`);
+
+  const results = headlines.map((e) => sl.composeResult(e, new Map()));
+  assert.strictEqual(sl.agreementOf(results), 'divergent');
+  assert.strictEqual(sl.agreementOf([results[0]]), 'single');
+  // And when they DO agree, say so rather than making somebody compare cards.
+  const same = [results[0], { ...results[0] }];
+  assert.strictEqual(sl.agreementOf(same), 'agree');
+});
+
+test('specLookup: the LinkedIn Carousel condition survives to the answer, verbatim', () => {
+  const sl = require('../src/services/specLookup');
+  const index = sl.buildIndex(specCheckLibrary());
+  const entry = index.byPair.get(sl.pairKey('LinkedIn Carousel Ad', 'Card 1 Headline'));
+  assert.ok(entry, 'the seeded pair resolves');
+  const r = sl.composeResult(entry, new Map());
+
+  assert.strictEqual(r.limit.text, '45 characters');
+  // THE SECOND LIMIT. The bracket can only carry one number and the note carries
+  // the other; src/data/defaultAssets.js keeps this note OUT of SHOW_ONCE_NOTES
+  // for exactly this reason. Never summarised, never truncated.
+  assert.ok(/Lead Gen Form CTA the cap is 30/.test(r.note),
+    'the conditional limit must reach the answer word for word');
+  const { LINKEDIN_CAROUSEL_CARD_NOTE } = (() => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'data', 'defaultAssets.js'), 'utf8');
+    const m = /const LINKEDIN_CAROUSEL_CARD_NOTE =\s*\n?\s*'([^']+)'/.exec(src);
+    return { LINKEDIN_CAROUSEL_CARD_NOTE: m && m[1] };
+  })();
+  assert.strictEqual(r.note, LINKEDIN_CAROUSEL_CARD_NOTE, 'and it is the seed constant, not a copy');
+  // Provenance, the same composers the document uses.
+  assert.strictEqual(r.tier.text, 'Platform limit (LinkedIn). Stay within this count.');
+  assert.ok(r.freshness && /linkedin\.com/.test(r.freshness.sourceUrl), 'the citation link is the field\'s own page');
+});
+
+test('specLookup: an inactive asset ANSWERS, and says it is switched off', () => {
+  const sl = require('../src/services/specLookup');
+  const lib = specCheckLibrary({ inactive: ['Pinterest Quiz Ad'] });
+  const index = sl.buildIndex(lib);
+  const entry = index.byPair.get(sl.pairKey('Pinterest Quiz Ad', 'Title'));
+  // getTenantAssets filters is_active, which would make this "I don't have that
+  // field seeded" — false about a field sitting in the tenant's own library.
+  assert.ok(entry, 'a switched-off asset is still IN the index');
+  assert.strictEqual(sl.composeResult(entry, new Map()).active, false);
+});
+
+test('specLookup: the miss taxonomy answers four different questions', () => {
+  const sl = require('../src/services/specLookup');
+  const index = sl.buildIndex(specCheckLibrary());
+
+  // 1. asset we have, field we do not -> teach the field list.
+  const fieldMiss = sl.describeMiss(
+    { asset: 'LinkedIn Single Image Ad', unmatchedFields: ['preheader'] }, index, 'q'
+  );
+  assert.strictEqual(fieldMiss.status, 'field_not_found');
+  assert.ok(fieldMiss.fieldList.fields.includes('Intro Text'));
+  assert.ok(/doesn't have a field called/.test(fieldMiss.notice));
+
+  // 2. field we know, asset we do not -> offer the assets that carry it.
+  const assetMiss = sl.describeMiss(
+    { unmatchedAssets: ['Snapchat ad'], unmatchedFields: ['Subhead'] }, index, 'q'
+  );
+  assert.strictEqual(assetMiss.status, 'asset_not_found');
+  assert.ok(assetMiss.candidates.length > 1);
+
+  // 3. nothing resolves -> say what was checked. NO nearest guess.
+  const total = sl.describeMiss({ unmatchedAssets: ['TikTok Spark Ad'] }, index, 'q');
+  assert.strictEqual(total.status, 'not_found');
+  assert.ok(/Couldn't match/.test(total.notice));
+  assert.ok(!/LinkedIn|Meta|Pinterest/.test(total.notice), 'a miss never suggests a substitute asset');
+
+  // 4. nothing named at all -> ask for both halves of the key.
+  const blank = sl.describeMiss({}, index, 'q');
+  assert.strictEqual(blank.status, 'not_found');
+  assert.ok(/naming both/.test(blank.notice));
+});
+
+test('specLookup: limits render the same three cases the doc bracket does', () => {
+  const sl = require('../src/services/specLookup');
+  assert.strictEqual(sl.limitText(0, 45, 'text'), '45 characters');
+  assert.strictEqual(sl.limitText(40, 90, 'text'), '40–90 characters');
+  assert.strictEqual(sl.limitText(50, 100, 'words'), '50–100 words');
+  // char_max 0 is a real state in the library; "0 characters" would be a lie.
+  assert.strictEqual(sl.limitText(0, 0, 'text'), 'No limit set');
+  // The unit rule is core/pipeline rowToSpecGroup's, kept identical so the unit
+  // shown here is the unit the doc's [50] bracket means.
+  assert.strictEqual(sl.unitFor('words'), 'words');
+  assert.strictEqual(sl.unitFor('text'), 'characters');
+  assert.strictEqual(sl.unitFor(null), 'characters');
+});
+
+test('specCheck route: narrow scope is enforced by the SHAPE, not the prompt', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'specCheck.js'), 'utf8');
+  // Every string the route can emit is read from copy_fields or is a fixed
+  // literal. There must be no key a model's prose could travel out in.
+  assert.ok(/answerSpecQuestion/.test(src));
+  assert.ok(!/parseSpecQuestion/.test(src), 'the route never touches the model directly');
+  assert.ok(/requireAuth/.test(src) && /specCheckLimiter/.test(src), 'auth-gated and rate-limited');
+  const { specCheckLimiter } = require('../src/middleware/rateLimit');
+  assert.strictEqual(typeof specCheckLimiter, 'function');
+  // Mounted, or the whole feature is unreachable.
+  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  assert.ok(/routes\/specCheck/.test(server), 'the router is mounted in server.js');
+});
+
+test('specCheck route: the out-of-scope redirect is one wording in one place', () => {
+  const sl = require('../src/services/specLookup');
+  assert.ok(/character limits/.test(sl.OUT_OF_SCOPE));
+  // Not duplicated into the browser — the review overlay's two copies of one
+  // wording are the lesson this avoids.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  assert.ok(!html.includes(sl.OUT_OF_SCOPE), 'the client renders the server\'s sentence, it does not carry its own');
+});
+
+test('gemini.parseSpecQuestion: fails CLOSED on intent and filters its own output', async () => {
+  const gemini = require('../src/services/gemini');
+  const config = require('../src/config');
+  const realKey = config.GEMINI_API_KEY;
+  const realFetch = global.fetch;
+  config.GEMINI_API_KEY = 'test';
+  const reply = (obj) => new Response(
+    JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(obj) }] } }] }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
+  try {
+    // An unrecognised intent must NOT open the lookup path. Same axis as
+    // TENANT_EDITABLE_TIERS: fail closed, because a refused lookup is visible
+    // and a wrongly-permitted one is not.
+    global.fetch = async () => reply({ intent: 'something_else', matches: [{ asset: 'A', field: 'B' }] });
+    let out = await gemini.parseSpecQuestion({ question: 'q', vocabulary: ['A: B'] });
+    assert.strictEqual(out.intent, 'out_of_scope');
+
+    // Malformed rows are dropped rather than crashing the lookup.
+    global.fetch = async () => reply({ intent: 'lookup', matches: [{ asset: 'A' }, null, { asset: 'A', field: 'B' }] });
+    out = await gemini.parseSpecQuestion({ question: 'q', vocabulary: ['A: B'] });
+    assert.deepStrictEqual(out.matches, [{ asset: 'A', field: 'B' }]);
+
+    // A response that ARRIVED and whose text did not parse is a MISS, not a
+    // crash — the writer gets "couldn't tell which asset and field", which is
+    // true and re-wordable. (A malformed HTTP envelope is different: callGemini's
+    // own res.json() throws, the route catches it and says the model could not be
+    // reached. That distinction is the point of not swallowing everything.)
+    global.fetch = async () => new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: 'not json at all' }] } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+    out = await gemini.parseSpecQuestion({ question: 'q', vocabulary: ['A: B'] });
+    assert.deepStrictEqual(out.matches, []);
+    assert.strictEqual(out.intent, 'lookup');
+  } finally {
+    global.fetch = realFetch;
+    config.GEMINI_API_KEY = realKey;
+  }
+});
+
+test('gemini.parseSpecQuestion: the prompt forbids picking one of several assets', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gemini.js'), 'utf8');
+  const fn = sliceBetween(src, 'async function parseSpecQuestion(', 'const text = await callGemini(');
+  assert.ok(/NEVER state or guess a character limit/.test(fn));
+  assert.ok(/RETURN EVERY ASSET THAT HAS THAT FIELD/.test(fn));
+  // The clause wraps across array elements, so only this fragment is contiguous.
+  assert.ok(/substitute the nearest name you can see/.test(fn), 'no nearest guess — parseBrief\'s own rule');
+  // Matching against a supplied list, not generating.
+  assert.ok(/temperature: 0\.1/.test(sliceBetween(src, 'async function parseSpecQuestion(', 'let parsed = null;')));
+});
+
+test('app.html: Spec Check sits in the utility row and its answer is NOT a screen', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  // The button is in the composer's footer beside "+", not in the nav — it is an
+  // action taken while composing, not a destination.
+  const footer = sliceBetween(html, '<div class="card-footer">', '</div>');
+  assert.ok(/id="speccheck-btn"/.test(footer), 'the button is in the input utility row');
+  assert.ok(/id="attach-btn"/.test(footer), 'beside the attach button');
+
+  // The answer area lives INSIDE #screen-brief. showScreen() clears .active on
+  // every other section, so making this a screen would hide the brief being
+  // typed — the one thing the placement exists to prevent.
+  const briefScreen = sliceBetween(html, '<section id="screen-brief"', '<!-- SCREEN 2');
+  assert.ok(/id="speccheck-panel"/.test(briefScreen), 'the answer area is inside the brief screen');
+  assert.ok(!/showScreen\(['"]speccheck/.test(html), 'and is never a showScreen target');
+});
+
+test('app.html: the answer is rebuilt per question, so no history can accumulate', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const render = sliceBetween(html, 'function scRender(a) {', 'async function scAsk()');
+  assert.ok(/scBody\.textContent = '';/.test(render),
+    'one answer at a time is structural — the body is emptied, not appended to');
+  assert.ok(!/appendChild\(scBody\)/.test(render));
+  // The platform name is linked by the OFFSETS the server sent, never by
+  // searching the sentence it was handed.
+  const link = sliceBetween(html, 'function scLinkedLine(', 'function scCard(');
+  assert.ok(/text\.slice\(nameStart, nameStart \+ nameLen\)/.test(link));
+});
+
+test('contrast: app.html has a fixture, and it only uses classes the page defines', () => {
+  const fixture = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'fixtures', 'contrast', 'app.html'), 'utf8'
+  );
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const css = [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
+  const defined = new Set([...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([a-zA-Z0-9_-]+)/g)].map((m) => m[1]));
+  const used = new Set([...fixture.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].trim().split(/\s+/)));
+  // An unknown class is SILENTLY INERT — it paints nothing and errors nothing —
+  // which is how the first settings fixture measured 32 labels on the wrong
+  // surface and reported a table of impossible numbers. This is a tripwire for
+  // that, not a substitute for running the tool.
+  for (const c of used) assert.ok(defined.has(c), `fixture uses .${c}, which app.html does not define`);
+  assert.ok(used.has('sc-panel') && used.has('sc-limit') && used.has('sc-note'));
+
+  // The panel carries a FILL where its neighbours are transparent, and that is
+  // load-bearing: measured on the rendered page, pure white tops out at 3.44:1
+  // on this sky, so no text colour reaches AA without one.
+  assert.ok(/\.sc-panel\s*\{[^}]*background:\s*rgba\(21,44,112/.test(css),
+    'the Spec Check panel keeps its fill — see the note on .sc-panel');
+  // Gold cannot reach AA at any alpha on this backdrop (2.11:1 bare, 4.13:1 on
+  // the fill), so the limit — the number a writer came to read — is not gold.
+  const limitRule = sliceBetween(css, '.sc-limit {', '}');
+  assert.ok(/color: var\(--q-cream\)/.test(limitRule), 'the limit renders in cream, not gold');
 });

@@ -170,6 +170,158 @@
        not move. Hidden is display:none, so the margin cannot collapse a gap open
        on a complete run. */
     #copydone-shortfall { margin-bottom: 14px; }
+
+    /* ═══ SPEC CHECK ══════════════════════════════════════════════════════════
+       Design system, unchanged: StarCrush display, Zen Kaku body, ZERO radius,
+       1px cream borders, no shadows, no fills except the one cream CTA.
+
+       ON A DARK GROUND, WHICH INVERTS EVERY CONTRAST NUMBER IN CLAUDE.md.
+       The measured alpha ladder in that file (11px ink needs ~0.7 on a
+       backdrop-filter panel) is for DARK INK ON LIGHT. Here it is cream on the
+       dark sky, so the ratio runs the other way and a LOWER alpha is the risk in
+       the opposite direction. None of those numbers transfer, so the values
+       below were MEASURED rather than reasoned: scripts/checkContrast.js grew a
+       dark fixture (fixtures/app-speccheck.html) for exactly this panel, and
+       every text element here is above 4.5:1 at 390x844/3x. Re-run it if you
+       change an alpha — 0.55 reads fine on screen and fails, which is the whole
+       reason the tool exists.
+
+       HIERARCHY COMES FROM SIZE AND CASE, NOT FROM DIMMING — CLAUDE.md's rule
+       from the project-detail pass. The eyebrow is 11px against a 15px answer;
+       it is not a faded 15px. */
+    /* THE FILL IS NOT DECORATION — IT IS WHAT MAKES THE TEXT LEGIBLE, AND IT IS
+       THE ONE PLACE THIS PANEL DEPARTS FROM ITS NEIGHBOURS.
+       .glass-card and the notices beside it are `background: transparent`, and
+       measured on the RENDERED page that is why none of their text reaches AA.
+       Sampled from the running app (scripts/checkContrast.js, and a direct pixel
+       read down the sky), the backdrop is far lighter than the gradient's own
+       stops suggest — `.clouds-wrap::before` lays a texture over it at
+       `soft-light / 0.28`, so #2E5FD6 renders as rgb(99,136,222). Against that:
+
+           cream  3.18:1      white  3.44:1      gold  2.11:1
+           (and 1.63 / 1.76 / 1.08 where the sky opens up near the ground)
+
+       PURE WHITE TOPS OUT AT 3.44:1. No text colour reaches 4.5 on this sky, so
+       transparency is not a thing this panel can style its way out of.
+       rgba(21,44,112,.65) is the navy .toast and .modal-sheet already use on
+       this page (both at .55) — so it is the system's existing answer for "a
+       surface that has to hold text over the sky", not a new colour. At .65 every
+       label clears AA at every band of the gradient (measured 7.0-7.6:1 in the
+       reading position); .55 measured 4.47 at the palest, which is a miss. Zero
+       radius, 1px cream border, no shadow — every other rule of the system is
+       unchanged.
+
+       ─── .65 IS NOT A CEILING REACHED BY TUNING, AND RAISING IT BUYS NOTHING ──
+       Text in the bottom 234px of the viewport measures 2.8-4.3:1 no matter what
+       this alpha is — laddered through .78, .88, .95 and a SOLID fill, and all
+       four produced byte-identical numbers. A solid #152C70 would give cream
+       11.6:1 on its own, so the fill is not the variable: `.content-fade` is
+       `z-index: 10` and `main` is `z-index: 5`, so that scrim paints OVER this
+       panel. It is designed to ("so a card never sits half-legible against the
+       ground band") and it does the same to every card on this page.
+
+       So the answer is not a heavier fill — it is not putting answers there,
+       which is what scScrollToAnswer does. Anyone raising this alpha to chase
+       those numbers will find they do not move. */
+    .sc-panel {
+      margin-top: 14px; border: 1px solid var(--q-cream); border-radius: 0;
+      background: rgba(21,44,112,.65); color: var(--q-cream);
+    }
+    .sc-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px; border-bottom: 1px solid var(--q-cream-35);
+    }
+    .sc-title {
+      font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.06em;
+      color: var(--q-cream);
+    }
+    .sc-close {
+      background: transparent; border: none; color: var(--q-cream);
+      font-family: 'StarCrush', serif; font-size: 20px; line-height: 1;
+      padding: 0 2px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    }
+    /* The ask row. Wraps at narrow widths rather than crushing the input — the
+       button keeps a real tap target instead of becoming a sliver. */
+    .sc-ask { display: flex; gap: 10px; padding: 14px; flex-wrap: wrap; }
+    .sc-input {
+      flex: 1 1 180px; min-width: 0; background: transparent;
+      border: 1px solid var(--q-cream); border-radius: 0;
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px;
+      color: var(--q-cream); padding: 11px 12px; -webkit-appearance: none;
+    }
+    .sc-input:focus { outline: none; border-color: var(--q-gold); }
+    .sc-input::placeholder { color: var(--q-cream-75); }
+    .sc-go {
+      flex: 0 0 auto; padding: 11px 18px; background: var(--q-fill);
+      border: 1px solid var(--q-cream); border-radius: 0; cursor: pointer;
+      font-family: 'StarCrush', serif; font-size: 14px; letter-spacing: 0.06em;
+      color: var(--q-ink); transition: all 0.18s;
+    }
+    .sc-go:hover:not(:disabled) { background: var(--q-gold); border-color: var(--q-gold); }
+    .sc-go:disabled { opacity: 0.55; cursor: default; }
+    .sc-body:empty { display: none; }
+    .sc-body { padding: 0 14px 14px; }
+
+    /* ONE ANSWER CARD = ONE (asset, field) PAIR. The pair is the key, so the
+       pair is what a card is titled by — never the field alone, which is the
+       whole reason this feature disambiguates instead of picking. */
+    .sc-card { border: 1px solid var(--q-cream-35); border-radius: 0; padding: 12px; margin-top: 10px; }
+    .sc-card:first-child { margin-top: 0; }
+    .sc-eyebrow {
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 11px;
+      letter-spacing: 0.08em; text-transform: uppercase; color: var(--q-cream);
+      margin-bottom: 4px;
+    }
+    .sc-field { font-family: 'StarCrush', serif; font-size: 15px; letter-spacing: 0.04em; }
+    /* CREAM, NOT GOLD, AND THIS IS A HUE LIMIT RATHER THAN AN ALPHA ONE.
+       Gold (#F5C518) measures 2.11:1 on the bare sky and 4.13:1 even on the fill
+       above — it cannot reach AA at ANY opacity, the same way CLAUDE.md records
+       .lib-tier.enforced topping out at 3.14:1. So the biggest number on the
+       card, the one a writer came here to read, gets the legible colour and takes
+       its emphasis from SIZE (22px against the 12px lines under it). That is the
+       project-detail rule — hierarchy from size, not from dimming — arriving as
+       hierarchy from size, not from hue. Gold survives as a non-text accent: the
+       note's left rule and the input's focus border, where no ratio applies. */
+    .sc-limit {
+      font-family: 'StarCrush', serif; font-size: 22px; letter-spacing: 0.03em;
+      color: var(--q-cream); margin-top: 6px;
+    }
+    .sc-line {
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px;
+      line-height: 1.55; color: var(--q-cream); margin-top: 6px;
+    }
+    .sc-line a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+    /* THE CONDITION. A SECOND LIMIT the number above cannot carry — LinkedIn
+       Carousel's 45 is 30 with a Lead Gen Form CTA. It is marked because a
+       writer who skims past it ships a broken deliverable, which is the exact
+       argument src/data/defaultAssets.js makes for keeping this note OUT of
+       SHOW_ONCE_NOTES. Never truncated and never summarised. */
+    .sc-note {
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; line-height: 1.55;
+      color: var(--q-cream); margin-top: 8px; padding: 8px 10px;
+      border: 1px solid var(--q-cream-35); border-left: 3px solid var(--q-gold);
+    }
+    /* Switched off, and overridden: two facts the number alone does not carry. */
+    .sc-flag {
+      display: inline-block; font-family: 'Zen Kaku Gothic New', sans-serif;
+      font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+      border: 1px solid var(--q-cream); padding: 2px 6px; margin-left: 8px;
+      color: var(--q-cream); vertical-align: middle;
+    }
+    /* The word carries it. Gold here measured 2.04:1 — see .sc-limit. */
+    .sc-flag.yours { border-color: var(--q-cream); color: var(--q-cream); font-weight: 700; }
+    /* The disambiguation sentence and the miss sentences share one slot: both
+       say "here is what I could and could not do", and splitting them would be
+       two treatments for one job. */
+    .sc-msg {
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 13px; line-height: 1.6;
+      color: var(--q-cream); padding: 10px 0 2px;
+    }
+    .sc-sub {
+      font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 12px; line-height: 1.6;
+      color: var(--q-cream); margin-top: 6px;
+    }
+
     /* Utility: wins over component display rules regardless of source order
        (e.g. .note / .loading set display:flex below this rule). */
     .hidden { display: none !important; }
@@ -1420,6 +1572,11 @@ __NAV:brief__
         <textarea id="brief" class="glass-textarea" placeholder="Describe the campaign. Include: the assets you need (e.g. LinkedIn ad, nurture email, landing page), who it's for (audience / targeting), any reference links (URLs, Google Drive, PDFs), and a Drive folder link if you have one."></textarea>
         <div class="card-footer">
           <button type="button" class="attach-btn" id="attach-btn" title="Attach reference files">+</button>
+          <!-- SPEC CHECK. In the UTILITY ROW, beside "+", not in the nav: it is an
+               action taken WHILE COMPOSING, not a destination. Same 48px square as
+               the attach button so the row reads as two peers; .run-btn keeps
+               flex:1 and simply gets narrower (measured 238px at 390px wide). -->
+          <button type="button" class="attach-btn" id="speccheck-btn" title="Spec Check — look up a character limit" aria-expanded="false" aria-controls="speccheck-panel">?</button>
           <input type="file" id="file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" multiple hidden>
           <button class="run-btn" id="run-btn"><span class="run-btn-text">Run Brief</span></button>
         </div>
@@ -1427,6 +1584,28 @@ __NAV:brief__
       <div id="file-tags" class="file-tags"></div>
       <span class="attach-hint">PDF, DOCX, JPG, PNG · up to 3 files, 10MB each</span>
       <div id="brief-error" class="error hidden"></div>
+
+      <!-- SPEC CHECK ANSWER AREA.
+           INSIDE #screen-brief and NOT a showScreen target, deliberately.
+           showScreen() sets .active on one section and clears it on every other,
+           so making this a screen would hide the brief being typed — the exact
+           thing the panel is supposed to stay out of the way of.
+           ONE ANSWER AT A TIME: #speccheck-body is emptied and rebuilt per
+           question, so a history cannot accumulate structurally rather than by a
+           rule somebody has to remember. -->
+      <div id="speccheck-panel" class="sc-panel hidden">
+        <div class="sc-head">
+          <span class="sc-title">Spec Check</span>
+          <button type="button" class="sc-close" id="speccheck-close" aria-label="Close Spec Check">×</button>
+        </div>
+        <div class="sc-ask">
+          <input type="text" id="speccheck-q" class="sc-input" maxlength="300"
+                 placeholder="How long can a LinkedIn carousel card headline be?"
+                 autocomplete="off">
+          <button type="button" class="sc-go" id="speccheck-go">Look up</button>
+        </div>
+        <div id="speccheck-body" class="sc-body" aria-live="polite"></div>
+      </div>
     </section>
 
     <!-- SCREEN 2 — PROGRESS (pixel progress bar) -->
@@ -4694,6 +4873,243 @@ __NAV:brief__
     document.getElementById('picker-search').addEventListener('input', function (e) {
       renderPickerList(e.target.value);
     });
+    // ═══ SPEC CHECK ════════════════════════════════════════════════════════
+    //
+    // A lookup, not a chat. #speccheck-body is EMPTIED on every question, so
+    // "one answer at a time, replaced" is a property of the code rather than a
+    // rule somebody has to keep. There is no history array to grow.
+    //
+    // EVERY STRING RENDERED HERE COMES OFF THE RESPONSE, and every one of those
+    // was read out of copy_fields or is a fixed literal in
+    // services/specLookup.js. Nothing here composes a limit, a tier sentence or
+    // a provenance date — those arrive already composed by the SAME functions
+    // the generated document uses, which is what makes an answer here exactly as
+    // citable as a doc hint line. Do not "helpfully" reformat one: a reworded
+    // condition is a dropped condition, and nothing would detect it.
+    var scPanel = document.getElementById('speccheck-panel');
+    var scBtn = document.getElementById('speccheck-btn');
+    var scInput = document.getElementById('speccheck-q');
+    var scGo = document.getElementById('speccheck-go');
+    var scBody = document.getElementById('speccheck-body');
+    var scBusy = false;
+
+    // ═══ WHERE AN ANSWER HAS TO LAND, AND WHY 'nearest' WAS WRONG ═══════════
+    //
+    // ON MOBILE THE INPUT BOX ALREADY FILLS THE VIEWPORT, so an answer area that
+    // opens below it opens off-screen and reads as nothing happening. That much
+    // was the original reason for scrolling at all.
+    //
+    // WHAT MEASURING IT ADDED: this page paints `.content-fade` — a FIXED pale
+    // scrim over the BOTTOM 234px of the viewport, above the content, whose own
+    // comment says it exists "so a card never sits half-legible against the
+    // ground band". It is on (--q-scrim: 1) whenever the page is scrollable,
+    // which an open answer always makes it.
+    //
+    // scrollIntoView({ block: 'nearest' }) scrolls the MINIMUM amount, so it left
+    // the answer exactly there. Measured in the running app at 390x844 with a
+    // six-card answer, the first card landed at 84%-105% of the viewport: inside
+    // the fade and partly under the fold. The panel was doing what it was told
+    // and the result was a first card the writer had to scroll to read.
+    //
+    // So the scroll targets the ANSWER rather than the panel, and aims for the
+    // CLEAR band above the scrim instead of the nearest edge. It also runs after
+    // an answer renders, not only on open — on open there is nothing to read yet,
+    // and by the time there is, the page is a different height.
+    var SCRIM_PX = 234;   // .content-fade / .ground-scrim height at < 768px
+    var ANSWER_TOP_PCT = 0.30;
+
+    // Never scrolls so far that the BRIEF ITSELF leaves the screen. Keeping the
+    // brief visible above the answer is the whole reason this panel sits below
+    // the input box instead of in an overlay, so a scroll that wins the readable
+    // band by throwing the brief away has swapped one requirement for another.
+    //
+    // THE ANCHOR IS THE TEXTAREA, NOT THE CARD, and that distinction was a real
+    // miss rather than a nicety. Anchoring on `.glass-card` kept its BOTTOM on
+    // screen — but the bottom of that card is the button row, so at 390x844 the
+    // scroll left "+ / ? / Run Brief" visible with the writer's actual words
+    // scrolled off above them. Every measurement said the brief was still in the
+    // viewport; looking at it said otherwise.
+    //
+    // MIN_BRIEF_PX is what "visible" has to mean here — a couple of lines of the
+    // brief, not one pixel of its border. Measured at 390x844: the answer still
+    // clears the scrim with room to spare, so the two constraints do not
+    // actually compete at this size.
+    var MIN_BRIEF_PX = 60;
+
+    function scScrollToAnswer() {
+      try {
+        var brief = document.getElementById('brief');
+        var target = scBody.getBoundingClientRect().top - window.innerHeight * ANSWER_TOP_PCT;
+        if (target <= 0) return;
+        if (brief) {
+          var keepVisible = brief.getBoundingClientRect().bottom - MIN_BRIEF_PX;
+          if (keepVisible < target) target = keepVisible;
+        }
+        if (target > 0) window.scrollBy({ top: target, behavior: 'smooth' });
+      } catch (e) { /* older engine — the answer is still there to scroll to */ }
+    }
+
+    function scOpen() {
+      scPanel.classList.remove('hidden');
+      scBtn.setAttribute('aria-expanded', 'true');
+      try { scPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* older engine */ }
+      scInput.focus();
+    }
+    function scClose() {
+      scPanel.classList.add('hidden');
+      scBtn.setAttribute('aria-expanded', 'false');
+      scBody.textContent = '';
+    }
+
+    // The platform name is wrapped in a link using the OFFSETS the server sent
+    // (nameStart / nameLen), never by searching the sentence for the name. The
+    // offsets are part of specTypeLine's contract precisely so a surface does not
+    // have to re-find a substring it was handed — an indexOf here would re-open
+    // the drift utils/specTier.js exists to close.
+    function scLinkedLine(text, nameStart, nameLen, href) {
+      var line = el('div', 'sc-line');
+      if (!href || nameStart == null || nameStart < 0 || nameLen <= 0) {
+        line.textContent = text;
+        return line;
+      }
+      var a = document.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = text.slice(nameStart, nameStart + nameLen);
+      line.appendChild(document.createTextNode(text.slice(0, nameStart)));
+      line.appendChild(a);
+      line.appendChild(document.createTextNode(text.slice(nameStart + nameLen)));
+      return line;
+    }
+
+    function scCard(r) {
+      var card = el('div', 'sc-card');
+      card.appendChild(el('div', 'sc-eyebrow', r.asset));
+
+      var name = el('div', 'sc-field', r.field);
+      // A switched-off asset still answers — it is in the library, it is just not
+      // being built. Saying "I don't have that" would be false. See the miss
+      // taxonomy in services/specLookup.js.
+      if (r.active === false) name.appendChild(el('span', 'sc-flag', 'Switched off'));
+      if (r.overridden) name.appendChild(el('span', 'sc-flag yours', 'Yours'));
+      card.appendChild(name);
+
+      card.appendChild(el('div', 'sc-limit', r.limit.text));
+
+      // THE CONDITION, verbatim. Its own block above the provenance, because it
+      // changes the NUMBER and the provenance only explains where the number
+      // came from.
+      if (r.note) card.appendChild(el('div', 'sc-note', r.note));
+
+      if (r.overridden && r.base) {
+        card.appendChild(el('div', 'sc-line', 'Your workspace set this. Quillio’s default is ' + r.base.text + '.'));
+      }
+      if (r.tier) {
+        card.appendChild(scLinkedLine(
+          r.tier.text, r.tier.nameStart, r.tier.nameLen, r.freshness && r.freshness.sourceUrl
+        ));
+      }
+      if (r.freshness) {
+        // The human event (fixed) and the machine state (moves weekly). Two
+        // different kinds of claim — see utils/specFreshness.js.
+        if (r.freshness.verified) {
+          card.appendChild(scLinkedLine(
+            r.freshness.verified,
+            r.freshness.verified.indexOf(r.freshness.sourceName),
+            r.freshness.sourceName.length,
+            r.freshness.sourceUrl
+          ));
+        }
+        card.appendChild(el('div', 'sc-line', r.freshness.machine));
+      }
+      return card;
+    }
+
+    function scRender(a) {
+      scBody.textContent = '';
+      if (a.notice) scBody.appendChild(el('div', 'sc-msg', a.notice));
+
+      // DIVERGENT MEANS THE LIST IS THE ANSWER. Say so above the cards rather
+      // than leaving a reader to compare five numbers and work out that they
+      // differ — that is the finding this whole feature is shaped around.
+      if (a.agreement === 'divergent') {
+        scBody.appendChild(el('div', 'sc-msg',
+          'That field is on ' + a.results.length + ' of your assets, with different limits. Pick the one you’re writing.'));
+      } else if (a.agreement === 'agree' && a.results.length > 1) {
+        scBody.appendChild(el('div', 'sc-msg',
+          'Same limit on all ' + a.results.length + ' of your assets that have it.'));
+      }
+
+      (a.results || []).forEach(function (r) { scBody.appendChild(scCard(r)); });
+
+      // The asset exists, the field does not — so show what it DOES have. The
+      // highest-value miss: the writer came for a correction and leaves with the
+      // field list.
+      if (a.fieldList) {
+        scBody.appendChild(el('div', 'sc-sub', 'It has: ' + a.fieldList.fields.join(', ') + '.'));
+      }
+      if (a.candidates && a.candidates.length) {
+        scBody.appendChild(el('div', 'sc-sub',
+          a.candidates.map(function (c) { return c.asset; }).join(' · ')));
+      }
+    }
+
+    async function scAsk() {
+      var q = (scInput.value || '').trim();
+      if (!q || scBusy) return;
+      scBusy = true;
+      scGo.disabled = true;
+      scBody.textContent = '';
+      scBody.appendChild(el('div', 'sc-msg', 'Looking that up…'));
+      try {
+        // THROUGH THE FUNNEL, not a raw fetch(). fetchWithTimeout is the single
+        // path every server read in this app takes, and it is what gives this
+        // call the stale-shell check and an abort timeout. A raw fetch() here
+        // silently opted out of both — caught by the test that pins the number
+        // of raw fetch() call sites, which exists for exactly this.
+        var res = await fetchWithTimeout('/api/spec-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q }),
+        }, 20000);
+        var data = await res.json();
+        if (!data.success) {
+          scBody.textContent = '';
+          scBody.appendChild(el('div', 'sc-msg', data.error || 'That lookup failed.'));
+          return;
+        }
+        if (data.available === false) {
+          scBody.textContent = '';
+          scBody.appendChild(el('div', 'sc-msg',
+            'No asset library is connected, so there are no limits to look up.'));
+          return;
+        }
+        scRender(data);
+        scScrollToAnswer();
+      } catch (err) {
+        scBody.textContent = '';
+        scBody.appendChild(el('div', 'sc-msg', 'That lookup failed. Try again.'));
+      } finally {
+        scBusy = false;
+        scGo.disabled = false;
+      }
+    }
+
+    scBtn.addEventListener('click', function () {
+      if (scPanel.classList.contains('hidden')) scOpen(); else scClose();
+    });
+    document.getElementById('speccheck-close').addEventListener('click', scClose);
+    scGo.addEventListener('click', scAsk);
+    // Enter submits the QUESTION, and must not reach the brief's own handlers —
+    // the input sits inside #screen-brief, where other keydown listeners live.
+    scInput.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      e.stopPropagation();
+      scAsk();
+    });
+
     document.getElementById('attach-btn').addEventListener('click', function () { fileInput.click(); });
     fileInput.addEventListener('change', function () { addFiles(fileInput.files); fileInput.value = ''; });
     document.getElementById('draft-btn').addEventListener('click', generateDraft);

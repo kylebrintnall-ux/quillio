@@ -3646,8 +3646,176 @@ async function extractSpecCall(text, list) {
   return { ok: true, rows, error: null };
 }
 
+// ─── SPEC CHECK: THE PARSE, AND THE ONLY THING A MODEL DOES IN THAT FEATURE ──
+//
+// Turn a writer's natural-language question into (asset, field) NAMES drawn from
+// a vocabulary supplied by the caller. It returns names and an intent. It does
+// NOT return a limit, and it is never asked for one.
+//
+// ═══ THE PROMPT CONTAINS NO NUMBERS. THAT IS THE DESIGN, NOT A DETAIL ═══════
+//
+// `vocabulary` is asset names and field names — services/specLookup builds it,
+// and it carries no char_max, no spec_note, no source and no tier. So this call
+// CANNOT report a character limit from the model's own training, because there
+// is no limit in its context to repeat and no key in the schema to put one in.
+//
+// That is deliberately a STRUCTURAL guarantee rather than an instructed one.
+// This file's own measured history is the argument: the reference block's
+// careful "…and only as that source's claim" clause was read as copy direction
+// and leaked a hostname into customer-facing copy, and CLAUDE.md's comparable
+// case — craft.md §1.4 against the §2 punctuation permission — measured 0/12.
+// A prohibition has a compliance rate; an absent object does not.
+//
+// The caller then re-resolves every returned pair against the library anyway
+// (specLookup's defensive filter), so even a fabricated asset name degrades to
+// "not in your library" rather than to a wrong number with a citation attached.
+//
+// ═══ IT MUST NOT PICK WHEN THE QUESTION DID NOT ═════════════════════════════
+//
+// "Headline" is on nine seeded assets carrying five different limits. A model
+// that resolves a bare "headline" to one asset is wrong eight times in nine, and
+// the answer would ship with a real source link and a real verification date on
+// it. So the instruction is to return EVERY pair a question is consistent with
+// and let the caller present them. Returning many is cheap; returning one wrong
+// one is the failure this whole feature is built around.
+//
+// This is the landing-page routing bug stated as a prompt rule: CLAUDE.md
+// records a bare "landing page" reaching Event Landing Page for months, unflagged
+// the entire time, because a MAPPED asset is not an UNMATCHED one and no gate
+// downstream compares what came back against the words that produced it.
+//
+// Returns { intent, asset, matches, unmatchedAssets, unmatchedFields }. Never
+// throws for an unanswerable question — an empty match set is a real answer the
+// caller renders as a miss. It DOES throw on a transport failure, so the route
+// can tell "the model could not be reached" from "there is no such field".
+const SPEC_QUESTION_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    intent: { type: 'STRING' },
+    asset: { type: 'STRING', nullable: true },
+    matches: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { asset: { type: 'STRING' }, field: { type: 'STRING' } },
+        required: ['asset', 'field'],
+      },
+    },
+    unmatchedAssets: { type: 'ARRAY', items: { type: 'STRING' } },
+    unmatchedFields: { type: 'ARRAY', items: { type: 'STRING' } },
+  },
+  required: ['intent', 'matches'],
+};
+
+// A hard ceiling on how many pairs one question can return. "Subhead" is on
+// eleven assets, so the cap has to clear the widest legitimate fan-out in the
+// seeded library rather than the typical one — this is not a relevance filter,
+// it is a bound on a payload built from a model's array.
+const SPEC_MATCH_MAX = 24;
+
+async function parseSpecQuestion({ question, vocabulary } = {}) {
+  const q = String(question || '').trim();
+  const vocab = Array.isArray(vocabulary) ? vocabulary : [];
+  if (!q || vocab.length === 0) {
+    return { intent: 'lookup', asset: null, matches: [], unmatchedAssets: [], unmatchedFields: [] };
+  }
+
+  const prompt = [
+    'You route a question about COPY SPECIFICATIONS to the right entries in a library.',
+    '',
+    'Below is a workspace asset library: one line per asset, as',
+    '"Asset Name: Field | Field | Field". An asset marked [switched off] is still',
+    'in the library and may still be named.',
+    '',
+    'Return STRICT JSON:',
+    '  intent: "lookup" if the question asks about a character/word limit, a spec, or',
+    '          where a limit comes from. "out_of_scope" for ANYTHING else — writing or',
+    '          rewriting copy, campaign advice, general marketing questions, questions',
+    '          about this tool. When in doubt between the two, choose out_of_scope.',
+    '  asset:  the asset name the question names, exactly as it appears below, or null.',
+    '  matches: EVERY (asset, field) pair the question could be asking about.',
+    '  unmatchedAssets: asset names the question named that are NOT in the list below,',
+    '          copied as the QUESTION\'S OWN WORDS.',
+    '  unmatchedFields: field names the question named that you could not place,',
+    '          likewise in the question\'s own words.',
+    '',
+    'RULES — the first is the one that matters:',
+    '- NEVER state or guess a character limit. You are not given any and must not',
+    '  supply one. Your entire job is choosing NAMES from the list below.',
+    '- `asset` and every name in `matches` MUST be copied EXACTLY from the list.',
+    '  Never invent, abbreviate, or correct a name.',
+    '- IF THE QUESTION NAMES NO ASSET, RETURN EVERY ASSET THAT HAS THAT FIELD.',
+    '  Do NOT choose one. A field name like "Headline" appears on many assets with',
+    '  DIFFERENT limits, so picking one would answer a question nobody asked. Listing',
+    '  them all is always correct; choosing is never correct.',
+    '- If the question names an asset that is not in the list, put the words the',
+    '  question used in unmatchedAssets and return NO matches for it. Do NOT',
+    '  substitute the nearest name you can see — a wrong asset returned as a match',
+    '  is indistinguishable from a right one.',
+    '- If the asset IS in the list but the field is not, return no matches, put the',
+    '  asset in `asset`, and put the field words in unmatchedFields.',
+    '',
+    'ASSET LIBRARY:',
+    vocab.join('\n'),
+    '',
+    'QUESTION:',
+    q,
+  ].join('\n');
+
+  const text = await callGemini({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      // Matching against a supplied list, not generating — the same temperature
+      // extractSpecCall uses for the same reason.
+      temperature: 0.1,
+      maxOutputTokens: 2048,
+      responseMimeType: 'application/json',
+      responseSchema: SPEC_QUESTION_SCHEMA,
+    },
+  });
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(stripJsonFences(text));
+  } catch (err) {
+    console.error('[gemini] parseSpecQuestion JSON parse failed:', String(text).slice(0, 200));
+    // A response that arrived and did not parse is a MISS, not a crash: the
+    // caller renders "couldn't tell which asset and field that's about", which is
+    // true and actionable. Throwing would put a red error box over a question the
+    // writer could simply re-word.
+    return { intent: 'lookup', asset: null, matches: [], unmatchedAssets: [], unmatchedFields: [] };
+  }
+
+  const strList = (v) =>
+    (Array.isArray(v) ? v : [])
+      .map((x) => String(x == null ? '' : x).trim())
+      .filter(Boolean)
+      .slice(0, SPEC_MATCH_MAX);
+
+  return {
+    // Anything that is not the explicit in-scope marker is treated as
+    // out_of_scope. Fail-closed on the same axis as TENANT_EDITABLE_TIERS: an
+    // unrecognised value must not open the path, and a lookup wrongly refused is
+    // a visible failure the writer can re-word their way out of.
+    intent: parsed && parsed.intent === 'lookup' ? 'lookup' : 'out_of_scope',
+    asset: parsed && parsed.asset ? String(parsed.asset).trim() : null,
+    matches: (Array.isArray(parsed && parsed.matches) ? parsed.matches : [])
+      .map((m) => (m && m.asset && m.field
+        ? { asset: String(m.asset).trim(), field: String(m.field).trim() }
+        : null))
+      .filter(Boolean)
+      .slice(0, SPEC_MATCH_MAX),
+    unmatchedAssets: strList(parsed && parsed.unmatchedAssets),
+    unmatchedFields: strList(parsed && parsed.unmatchedFields),
+  };
+}
+
 module.exports = {
   extractSpecValues,
+  // Spec Check's one model call: a natural-language question -> (asset, field)
+  // NAMES from a supplied vocabulary. Never returns a limit and is never given
+  // one — see the header above it.
+  parseSpecQuestion,
   // The detailed form, for services/specAgent.js: distinguishes a model failure
   // from a page that stated nothing. extractSpecValues cannot, and specAgent
   // PERSISTS the difference.

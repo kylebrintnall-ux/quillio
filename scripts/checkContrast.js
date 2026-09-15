@@ -77,6 +77,12 @@ function floorFor(px, bold) {
 // silently reported as clean.
 const PAGES = [
   { name: 'settings', html: 'public/settings.html', fixture: 'scripts/fixtures/contrast/settings.html' },
+  // THE DARK PAGE. app.html renders cream on the sky gradient — every panel on
+  // the brief screen is `background: transparent` with a cream border — so the
+  // ratio runs the OPPOSITE way to settings.html and none of the alpha numbers
+  // recorded for that page transfer. Covers the Spec Check panel; the rest of
+  // app.html is still unmeasured and the coverage line says so.
+  { name: 'app', html: 'public/app.html', fixture: 'scripts/fixtures/contrast/app.html' },
 ];
 
 function styleBlocks(file) {

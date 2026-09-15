@@ -115,6 +115,11 @@ app.use(appRoutes);
 // and API only — nothing renders it yet.
 app.use(require('./routes/notifications'));
 
+// Spec Check (/api/spec-check). Read-only lookup against the tenant's own asset
+// library, auth-gated and rate-limited in the router. Its own file rather than a
+// growth of routes/app.js, on the same reasoning as notifications above.
+app.use(require('./routes/specCheck'));
+
 // Admin area (/admin). Gated by requireAdmin (users.is_admin); non-admins get a
 // bare 404. Stub only for now — proves the gate before any dashboard is built.
 app.use(require('./routes/admin'));

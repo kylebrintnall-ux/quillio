@@ -25348,3 +25348,73 @@ test('admin sign-in return: `admin` is whitelisted and lands back on /admin', as
     'the admin branch returns before setup state is consulted'
   );
 });
+
+// --- The run summary states whether the agentic reader was ON ---
+//
+// THE FAILURE THIS CLOSES, and it happened rather than being imagined.
+// GEMINI_API_KEY was set on the WEB service and not on the CRON service — two
+// Railway services with separate environments — so every weekly run stored NULL
+// on any flag it raised. The end-to-end production test passed, because it went
+// through POST /admin/api/run-detection and exercised the one process that had
+// the key.
+//
+// Nothing could have told anybody. agent_read/skipped/failed are pre-seeded to 0,
+// which correctly distinguishes "absent" from "zero" and stops one question
+// short: a run with the reader OFF reports 0/0/0, and so does a healthy week in
+// which nothing changed. The only run that separates them is one that raised a
+// flag — which is the run where the missing proposal has already cost something.
+test('the run summary states the reader state, and a flagless run cannot hide it', async () => {
+  const { out } = await runDetectorWith({
+    rows: [historyRow({ current_hash: null })],
+    fetchImpl: okResponse(GOOD_PAGE),
+  });
+
+  // A baseline run raises no flag, so all three counters sit at 0 — the exact
+  // state that used to be indistinguishable from the reader being switched off.
+  assert.strictEqual(out.summary.agent_read, 0, 'no flag, so nothing was read');
+  assert.strictEqual(out.summary.agent_skipped, 0);
+  assert.strictEqual(out.summary.agent_failed, 0);
+
+  // The suite has no GEMINI_API_KEY, so the reader genuinely IS off — and the
+  // summary now says so on a run that raised nothing at all. That is the whole
+  // point: the claim is unconditional, not derived from the flags.
+  assert.strictEqual(out.summary.reader, 'off', 'the run states the reader state itself');
+
+  // NOT `agent_reader`. One letter from `agent_read`, a different KIND of value,
+  // and the two would sit adjacent in a JSON log line somebody scans at speed.
+  // The name also keeps `agent_${status}` structurally unable to reach it.
+  assert.ok(!('agent_reader' in out.summary), 'named `reader`, so it cannot collide with agent_read');
+});
+
+test('the reader reads ON with a key and OFF when the kill switch is set', async () => {
+  // specAgent holds the config MODULE (`const config = require('../config')`) and
+  // reads config.GEMINI_API_KEY at call time, so patching the object is enough —
+  // no cache eviction, and it survives the harness re-requiring specDetector.
+  const config = require('../src/config');
+  const realKey = config.GEMINI_API_KEY;
+  const realFlag = process.env.SPEC_AGENT_ENABLED;
+  try {
+    config.GEMINI_API_KEY = 'test-key-never-called';
+    delete process.env.SPEC_AGENT_ENABLED;
+    const on = await runDetectorWith({
+      rows: [historyRow({ current_hash: null })],
+      fetchImpl: okResponse(GOOD_PAGE),
+    });
+    assert.strictEqual(on.out.summary.reader, 'on');
+
+    // The kill switch is the OTHER way the reader is off, and it reports
+    // identically. The field answers "was anything going to be read", not "why
+    // not" — an operator who sees `off` checks both, and a two-valued field
+    // cannot quietly grow a third meaning.
+    process.env.SPEC_AGENT_ENABLED = 'false';
+    const off = await runDetectorWith({
+      rows: [historyRow({ current_hash: null })],
+      fetchImpl: okResponse(GOOD_PAGE),
+    });
+    assert.strictEqual(off.out.summary.reader, 'off');
+  } finally {
+    config.GEMINI_API_KEY = realKey;
+    if (realFlag === undefined) delete process.env.SPEC_AGENT_ENABLED;
+    else process.env.SPEC_AGENT_ENABLED = realFlag;
+  }
+});

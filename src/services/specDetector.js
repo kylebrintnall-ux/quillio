@@ -62,7 +62,7 @@ const { getWatchList } = require('../db/specWatch');
 // One-directional: specAgent must never require this module back — it would close
 // a cycle and hand one of the two a half-initialised copy of the other, since both
 // assign module.exports at the bottom of the file.
-const { readSpecProposal, envMaxExtractions } = require('./specAgent');
+const { readSpecProposal, envMaxExtractions, readerEnabled } = require('./specAgent');
 
 const FETCH_TIMEOUT_MS = 10000;
 // Delay before the confirmation refetch. Long enough that a per-request-varying
@@ -575,6 +575,34 @@ async function runDetection({ watchId } = {}) {
     unanchored: 0,
     stuck: 0,
     not_watched: 0,
+    // WHETHER THE READER WAS EVEN ON, and it is reported UNCONDITIONALLY because
+    // the three counters below cannot say. They are pre-seeded to 0 — correct, and
+    // one question short: a run with the reader OFF reports 0/0/0, and so does a
+    // perfectly healthy week in which nothing changed. The two are
+    // indistinguishable, and the ONLY run that tells them apart is one that raised
+    // a flag, which is precisely the run where the missing proposal already cost
+    // something. Same argument as `not_watched` and `unanchored`: a fact absent
+    // from the output is indistinguishable from a fact that did not apply, so it
+    // is stated rather than inferred.
+    //
+    // It happened. GEMINI_API_KEY was set on the WEB service and not on the cron
+    // service — separate Railway services, separate environments — so every
+    // weekly run stored NULL while the end-to-end test passed, because that test
+    // went through POST /admin/api/run-detection and exercised the one process
+    // that had the key.
+    //
+    // NOT `agent_reader`, deliberately: one letter from `agent_read` and a
+    // different KIND of value, which is a bad pair to sit beside each other in a
+    // log line somebody scans at speed. Read per RUN for the same reason the
+    // budget is — an operator can set the key and the next run says so with no
+    // restart.
+    //
+    // AND IT BELONGS HERE RATHER THAN ON THE ADMIN HEALTH PANEL. That panel is
+    // rendered by the web service, which has its own env, so it would report the
+    // WEB process's reader while the cron sat off — a green light for a process
+    // that is not the one doing the work. The reader is a property of whichever
+    // process runs the detection, so only that process's own output may claim it.
+    reader: readerEnabled() ? 'on' : 'off',
     // THE AGENTIC READ'S OWN AXIS, and it is an axis rather than a status for the
     // same reason `unanchored` and `stuck` are: a row is `changed` AND its
     // proposal was read, or `changed` AND its proposal was skipped, and both
@@ -595,7 +623,8 @@ async function runDetection({ watchId } = {}) {
   //
   // The case it exists for is not one noisy page. Changing normalize() re-hashes
   // every watched row at once, so the pathological run flags ALL of them and asks
-  // for eleven extractions in a burst (CLAUDE.md, "Changing `normalize()`
+  // for one extraction per watched row in a burst — twelve, as of 2026-09-25
+  // (CLAUDE.md, "Changing `normalize()`
   // re-baselines every affected page — plan for it").
   //
   // Read per RUN, not at module load, so an operator can change the cap between
@@ -766,8 +795,11 @@ async function runDetection({ watchId } = {}) {
           // A FAILED READ SPENDS BUDGET TOO. It got as far as trying, which on the
           // one outage this project has on record is exactly the state that
           // matters: a spent Gemini balance returns 429 to every call, so a run
-          // that only counted successes would make eleven doomed requests instead
-          // of three. A skip spends nothing, because a skip is the budget working.
+          // that only counted successes would make one doomed request per watched
+          // row (twelve, as of 2026-09-25) instead of three. Phrased per row
+          // rather than as a bare count because the count moves with the watch
+          // list and nothing here recomputes it.
+          // A skip spends nothing, because a skip is the budget working.
           if (agentProposal && (agentProposal.status === 'read' || agentProposal.status === 'failed')) {
             agentBudget.used += 1;
           }
@@ -777,8 +809,14 @@ async function runDetection({ watchId } = {}) {
           // counter into NaN — which prints, sums and compares like a number
           // without being one, in the object an operator reads to decide whether
           // the run went well.
+          // `typeof === 'number'` rather than `in summary`. NOT a live hazard: the
+          // reader field is named `reader` precisely so `agent_${status}` cannot
+          // reach it. This is the guard for the NEXT non-numeric field somebody
+          // adds, because `+= 1` on a string CONCATENATES rather than throwing —
+          // 'off' + 1 is 'off1', which prints as a value and is not one. Same
+          // failure as the NaN note below, through a quieter door.
           const agentKey = agentProposal && `agent_${agentProposal.status}`;
-          if (agentKey && agentKey in summary) summary[agentKey] += 1;
+          if (agentKey && typeof summary[agentKey] === 'number') summary[agentKey] += 1;
           else if (agentProposal) {
             console.warn(`[detector] unrecognised agent status ${JSON.stringify(agentProposal.status)} — not counted`);
           }

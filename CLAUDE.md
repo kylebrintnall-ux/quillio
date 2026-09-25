@@ -1276,9 +1276,9 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 25,350 lines and 842 tests** —
+regression guards. **As of this commit it is 25,420 lines and 844 tests** —
 measured on **Node 22.22.2** with `node --test test/smoke.test.js`, on the commit
-that merges the admin page gate into Spec Check, and written as a reading taken on
+that reports the agentic reader's state in the run summary, and written as a reading taken on
 a date rather than as a standing figure, because the previous version of this
 sentence said 635 and was wrong by 114 tests and about 3,900 lines.
 
@@ -3307,7 +3307,12 @@ forever. On a *first* run it was worse: `sha256('')` became the legitimate
 baseline and every later run agreed with it.
 
 So `spec_watch_list` carries three columns
-(`scripts/migrateAddSpecAnchors.js` — **not yet run in production**):
+(`scripts/migrateAddSpecAnchors.js` — **it HAS run; this line said "not yet run in
+production" until 2026-09-25**, and the evidence that it had is two independent
+readings this file already carried: `unanchored: 0` in the 2026-08-23 detector
+summary and `Anchors: 12 of 12 asserted` on the September health panel. Neither is
+reachable without these columns and their seeded values — every row would report
+unanchored. The label was simply never revisited after the run):
 
 | Column | Means |
 | --- | --- |
@@ -3988,7 +3993,10 @@ correct, because they are gated by row #12 now.
 `services/specAgent.js`. When the detector confirms a change and raises a flag, it
 reads the page it just hashed and stores a per-field proposal on
 `spec_review_queue.agent_proposal` (JSONB, `scripts/migrateAddAgentProposal.js` —
-**not yet run in production**).
+**it HAS run; this line said "not yet run in production" until 2026-09-25**. It was
+applied and exercised end to end on the test row: flag 16 stored
+`status: 'read'`, `citationTier: 'exact'`, confidence correctly capped to
+`medium`, ambiguities `[multiple_candidates, conditional_limit]`).
 
 **WHY AT DETECTION AND NOT AT REVIEW.** `specReview.getSuggestions` has always
 asked the same question of the same page — it is the "Suggest values" button on
@@ -4120,6 +4128,55 @@ this project has on record a spent Gemini balance returned 429 to every call —
 budget counting only successes would make one doomed request per watched row —
 twelve, today — instead of three.
 A SKIP spends nothing, because a skip is the budget working.
+
+### THE RUN SAYS WHETHER THE READER WAS ON — because the counters cannot
+
+`summary.reader` is `'on'` or `'off'`, stated on **every** run whether or not a
+flag was raised.
+
+**This is not a precaution. It fired.** `GEMINI_API_KEY` was set on the WEB
+service and **not on the cron service** — `railway.cron.json` is a separate
+Railway service with its own environment — so every weekly run since the feature
+deployed stored `NULL` on any flag it raised. Nothing anywhere said so.
+
+**And the production test that was supposed to catch this passed.** It went
+through `POST /admin/api/run-detection`, which runs in the web process, which had
+the key. The wire was proven end to end on the one path that is not the one the
+feature runs on. A test exercising the reachable process is not a test of the
+scheduled one, and the two are only distinguishable by asking which ENVIRONMENT
+each holds.
+
+**Why the three counters could never have reported it.** They are pre-seeded to 0
+so that an absent key and a zero read differently — correct, and one question
+short. A run with the reader off reports `0/0/0`; so does a healthy week in which
+nothing changed, which is nearly every week. The only run that separates them is
+one that raised a flag, and that is the run where the missing proposal has already
+cost something. Same argument as `not_watched` and `unanchored`: a fact absent
+from the output is indistinguishable from a fact that did not apply, so it is
+stated rather than inferred.
+
+**IT IS DELIBERATELY NOT ON THE ADMIN HEALTH PANEL**, and that is the part worth
+carrying. The panel is rendered by the web service, so it would report the WEB
+process's reader — `on` — while the cron sat `off`. A green light for a process
+that is not the one doing the work is worse than no light, and the panel is
+described elsewhere in this file as "the cheapest reading available", which is
+exactly what would make the wrong answer authoritative. **The reader is a property
+of whichever process runs the detection, so only that process's own output may
+claim it.** Generalise it: any health signal about a scheduled job has to be
+emitted BY that job, not by a sibling that shares its code and not its
+environment.
+
+The summary is logged and never persisted — `scripts/runDetection.js` prints it
+and exits — so the cron service's Railway logs are the only place this surfaces,
+and that is the correct and only place it can be true.
+
+The field is named `reader`, **not `agent_reader`**: one letter from `agent_read`,
+a different KIND of value, and the two would sit adjacent in a JSON line somebody
+scans at speed. It also puts it structurally out of reach of the
+`agent_${status}` counter increment, which is guarded on `typeof === 'number'`
+anyway for the next non-numeric field somebody adds — `+= 1` on a string
+concatenates rather than throwing, and `'off1'` prints as a value without being
+one.
 
 ### SHADOW MODE IS STRUCTURAL, NOT A MATTER OF DISCIPLINE
 

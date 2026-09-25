@@ -29,7 +29,7 @@ const FONT_LINK =
 const BODY_FONT = "font-family: 'Zen Kaku Gothic New', sans-serif;";
 
 // Post-OAuth landing destinations we accept via ?redirect=… (whitelist).
-const ALLOWED_REDIRECTS = ['onboarding', 'settings'];
+const ALLOWED_REDIRECTS = ['onboarding', 'settings', 'admin'];
 function pickRedirect(value) {
   return ALLOWED_REDIRECTS.includes(value) ? value : null;
 }
@@ -472,6 +472,14 @@ router.get('/oauth/google/callback', async (req, res) => {
     // early and is unaffected by everything below.
     const redirectTo = entry.data && entry.data.redirectTo;
     if (redirectTo === 'settings') return res.redirect('/settings?connected=google');
+
+    // `admin` is the other destination that is about WHERE THEY WERE GOING
+    // rather than about setup state, so it returns early beside settings and is
+    // unaffected by the onboarding branch below. middleware/requireAdminPage
+    // sends a signed-out visitor here; landing them on /onboarding instead would
+    // reproduce the dead end it exists to remove. The gate still decides whether
+    // they see anything — a non-admin who arrives here gets the bare 404.
+    if (redirectTo === 'admin') return res.redirect('/admin');
 
     // SETUP STATE decides the rest, and it is read BEFORE the onboarding branch.
     //

@@ -92,7 +92,8 @@ SEE before deciding which side is the safe one.
 
 Related but distinct: `requireAdmin` answering 404 rather than 403 is a
 *confidentiality* choice (it refuses to confirm the route exists), not this one.
-Do not merge them.
+Do not merge them. (`requireAdminPage` narrows WHO it conceals from, and is
+argued under "Gotchas" below — it does not turn any refusal into a 403.)
 
 ## Architecture
 
@@ -153,7 +154,10 @@ src/
   middleware/
     auth.js          requireAuth. Demo mode (no DATABASE_URL) attaches a demo
                      user; authenticated mode requires a session.
-    requireAdmin.js  users.is_admin gate. Responds 404 (never 403) on any failure.
+    requireAdmin.js  users.is_admin gate. Responds 404 (never 403) on any
+                     failure. requireAdminPage is the same gate for the PAGE
+                     route only: a visitor with no session at all is sent to
+                     sign in; every other refusal is still the bare 404.
     rateLimit.js     Per-IP, per-hour limiters (brief/draft/upload/voice/oauth,
                      plus a much more generous slackLimiter).
 
@@ -1272,13 +1276,31 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 25,216 lines and 850 tests** —
-measured on the commit that added Spec Check, on **Node 22.22.2**, and written as
-a reading taken on a date rather than as a standing figure, because the previous
-version of this sentence said 635 and was wrong by 114 tests and about 3,900
-lines. (The reading it replaces was 24,844 / 822, taken on the agentic-detection
-commit and also on Node 22 — so the +28 is this branch's own tests, not a
-runtime difference.)
+regression guards. **As of this commit it is 25,350 lines and 842 tests** —
+measured on **Node 22.22.2** with `node --test test/smoke.test.js`, on the commit
+that merges the admin page gate into Spec Check, and written as a reading taken on
+a date rather than as a standing figure, because the previous version of this
+sentence said 635 and was wrong by 114 tests and about 3,900 lines.
+
+**THE COMMAND IS PART OF THE READING, and leaving it out has now put a wrong
+number in this file twice.** This sentence's subject is `test/smoke.test.js` —
+both halves of it, the lines and the tests. But `npm test` is bare `node --test`,
+which globs the directory and runs **`test/generateDraft.replay.test.js` too**:
+twelve more tests, in a file this sentence is not about. So `npm test` overcounts
+this sentence by exactly 12, forever, and silently, because 12 is also roughly the
+size of a real branch's worth of new tests.
+
+It caught both sides of this merge. Spec Check wrote **850**; its own
+`smoke.test.js` is 838. The admin-gate branch had **826**, which was RIGHT, and a
+re-measure with `npm test` read 838 and "corrected" it — turning a correct number
+into a wrong one and writing a confident paragraph about how the correct one had
+gone wrong. The wrong reading is the one that looks like diligence.
+
+**AND IT IS A POST-MERGE READING besides**, which is the case this file already
+told us to watch for: both branches added tests after they diverged, so neither
+25,216 / 838 nor 24,978 / 826 survived, and nothing conflicts in the numbers.
+Re-measure with the command named above — not `npm test` — on any merge that
+brings test files together.
 
 **AND THE RUNTIME IS PART OF THE READING, which this sentence did not used to
 say.** The figure it replaces was 802 at 23,903 lines. Re-running that same tree
@@ -1642,6 +1664,33 @@ this note.
   deterministic regex and overrides it.
 - `requireAdmin` returns **404, not 403**, on every failure — deliberately, so
   the route's existence isn't confirmed to a non-admin. Don't "fix" it to 403.
+
+  **`requireAdminPage` is the one narrowing of that, and it is on `GET /admin`
+  ALONE.** A visitor with *no session at all* is redirected to sign in
+  (`/oauth/google?redirect=admin`) instead of meeting the 404. Everything else is
+  untouched: a request carrying a session whose user is not an admin still gets
+  the bare 404, and so does a missing user row and a missing database.
+
+  The narrowing is about WHICH POPULATION the concealment was worth anything
+  against. A **signed-in non-admin tenant** — a customer poking at URLs who must
+  not learn there is a back office — is the case worth hiding from, and that path
+  is byte-identical. An **anonymous prober** was buying nothing: `/admin` is in
+  every scanner wordlist ever written. It was meanwhile costing the one person
+  the console is for, and the bill came due — a signed-out admin met a bare
+  "Not Found", read it as a dead service, and the console was unreachable.
+
+  **The JSON endpoints keep `requireAdmin` and must.** They are `fetch()`ed by
+  `admin.html`; a 302 into Google's consent screen would be followed by the fetch
+  and arrive as HTML or a CORS failure, and `api()` would surface something
+  incomprehensible instead of today's clean error. A redirect is right for a
+  browser navigation and wrong for an XHR. A test asserts every `/admin/api/*`
+  route still names `requireAdmin`, so a new endpoint cannot quietly acquire one.
+
+  The no-database branch stays a 404 rather than a redirect: sign-in needs the
+  same database, so redirecting would bounce between two routes that cannot
+  complete. `admin` is on `oauth.js`'s `ALLOWED_REDIRECTS` allowlist and returns
+  early beside `settings`, so it cannot become an open redirect and cannot fall
+  through to the onboarding branch — which would be a different dead end.
 - `GET /admin/test-spec` is deliberately **public**: the detector fetches it over
   HTTP with no session. It serves only fake seed data.
 - Web jobs are in-memory. A restart loses them, and the client gets a 404 from
@@ -3600,10 +3649,11 @@ visible by way of a template change.
 
 The accurate description of what the system does: every limit is cited to its
 source; platform spec pages are checked weekly for changes, with **every one of
-the eleven hash-watched rows** anchored so the fetch is asserted to have read the
-right page (`unanchored: 0`, measured 2026-08-23 — see the count above and note
-where it came from); any detected change goes to a human before a stored number
-moves; and email guidance is dated observed practice that is never hash-watched.
+the twelve hash-watched rows** anchored so the fetch is asserted to have read the
+right page (`12 of 12 asserted`, read off the admin health panel 2026-09-25 — see
+the count below and note where it came from); any detected change goes to a human
+before a stored number moves; and email guidance is dated observed practice that
+is never hash-watched.
 
 ### The manifest records what the document CLAIMED, not just what it asked for
 
@@ -3910,8 +3960,20 @@ hash-watched plus the two Litmus observed_practice rows), `unanchored` read **0*
 and the health check reported every watched row healthy. THREE asset-creating
 migrations have added FOUR rows since (`migrateAddGoogleVideoAssets` creates
 two), taking it to thirteen — eleven hash-watched plus the two Litmus rows,
-measured 2026-08-23. See the note under "What is anchored, what isn't" for that
-reading and where it came from.
+measured 2026-08-23.
+
+**AND IT IS FOURTEEN NOW: twelve hash-watched plus the two Litmus rows, read off
+the admin health panel on 2026-09-25** (`12 hash-watched · 0 with error(s)`,
+`Anchors: 12 of 12 asserted`, `Not hash-watched: 2 observed-practice sources`).
+LinkedIn conversation ads is the twelfth; `migrateAddLinkedInConversationAd.js`
+landed after the August reading and nothing re-measured.
+
+That is this file's own undated-count defect, arriving for the third time and in
+the section that records the second — the August figure was right when taken and
+says so, and was still being read as current a month later. **The health panel is
+now the cheapest reading available**: it prints the count, the anchor assertion
+and the last run on one screen, needs no shell and no database client, and is
+the source this paragraph is quoting. Prefer it to arithmetic over migrations.
 
 **The ordering that mattered is now spent, and this is why it was insisted on.**
 Re-deriving the single-image entry BEFORE this row existed would have dropped
@@ -4050,11 +4112,13 @@ flag anyway). A test pins the exact statement sequence
 global, which would leak across the on-demand `POST /admin/api/run-detection` calls
 sharing the process with the weekly cron. The case it exists for is not one noisy
 page: changing `normalize()` re-hashes every watched row at once, so the
-pathological run flags ALL of them and asks for eleven extractions in a burst.
+pathological run flags ALL of them and asks for one extraction per row in a
+burst (twelve of them, as of the 2026-09-25 reading).
 
 **A FAILED read spends budget too.** It got as far as trying, and on the one outage
 this project has on record a spent Gemini balance returned 429 to every call — a
-budget counting only successes would make eleven doomed requests instead of three.
+budget counting only successes would make one doomed request per watched row —
+twelve, today — instead of three.
 A SKIP spends nothing, because a skip is the budget working.
 
 ### SHADOW MODE IS STRUCTURAL, NOT A MATTER OF DISCIPLINE
@@ -4092,7 +4156,8 @@ Four things it is careful about, each a shape this file has recorded before:
 - **It refuses to pool arms.** More than one `model` or `promptVersion` in the
   data prints a warning that the totals answer neither — which is why the proposal
   records both in the first place.
-- **n is small and will stay small.** Eleven hash-watched pages, weekly, almost
+- **n is small and will stay small.** Twelve hash-watched pages (2026-09-25),
+  weekly, almost
   always unchanged. Under 20 scoreable fields the report says so on its own output,
   because this file's record has an aggregate at n=5 reverse itself on a second run.
 

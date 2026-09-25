@@ -25214,3 +25214,137 @@ test('contrast: app.html has a fixture, and it only uses classes the page define
   const limitRule = sliceBetween(css, '.sc-limit {', '}');
   assert.ok(/color: var\(--q-cream\)/.test(limitRule), 'the limit renders in cream, not gold');
 });
+
+// --- The admin PAGE gate redirects a signed-out visitor; nothing else changes ---
+//
+// THE DEAD END THIS REMOVES, because it is not visible from the code: a signed-out
+// admin navigating to /admin met a bare "Not Found" with no affordance —
+// indistinguishable from a typo or a dead service. It was read as the latter.
+//
+// The 404 stays for the case it was actually written for. requireAdmin's comment
+// argues concealment, and the population worth concealing from is a SIGNED-IN
+// NON-ADMIN TENANT — a customer poking at URLs who must not learn there is a back
+// office. That path is byte-identical. What changed is the anonymous case, where
+// the concealment was worth nothing: /admin is in every scanner wordlist.
+//
+// THE RIG PATCHES BEFORE IT REQUIRES, and that is not a detail. requireAdmin
+// destructures getPool and findUserById at REQUIRE time, so a patch applied after
+// the module loads is invisible to it — the first version of this check did that
+// and reported 404 for every case including the admin one, which looks like a
+// broken gate and was a broken rig. Same species as test/lib/docSim.js.
+function driveAdminGate(which, { pool, session, user }) {
+  const db = require('../src/db');
+  const users = require('../src/db/users');
+  const gatePath = require.resolve('../src/middleware/requireAdmin');
+  const realPool = db.getPool;
+  const realFind = users.findUserById;
+  try {
+    db.getPool = () => pool;
+    users.findUserById = async () => user;
+    delete require.cache[gatePath];
+    const gate = require(gatePath)[which];
+    const res = { code: null, body: null, redirected: null };
+    res.status = (c) => { res.code = c; return res; };
+    res.send = (b) => { res.body = b; return res; };
+    res.redirect = (u) => { res.redirected = u; return res; };
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
+      gate({ session }, res, () => finish({ outcome: 'next' }));
+      setTimeout(() => finish({
+        outcome: res.redirected ? 'redirect' : 'refused',
+        to: res.redirected, code: res.code, body: res.body,
+      }), 30);
+    });
+  } finally {
+    db.getPool = realPool;
+    users.findUserById = realFind;
+    delete require.cache[gatePath];
+  }
+}
+
+test('admin page gate: ONLY the signed-out case redirects', async () => {
+  const signedOut = await driveAdminGate('requireAdminPage', { pool: {}, session: null });
+  assert.strictEqual(signedOut.outcome, 'redirect', 'a signed-out visitor gets a way in');
+  assert.strictEqual(signedOut.to, '/oauth/google?redirect=admin');
+
+  // THE PROPERTY THE 404 EXISTS FOR, unchanged: a signed-in non-admin still
+  // cannot tell the route exists.
+  const notAdmin = await driveAdminGate('requireAdminPage', {
+    pool: {}, session: { userId: 1 }, user: { id: 1, is_admin: false },
+  });
+  assert.strictEqual(notAdmin.outcome, 'refused');
+  assert.strictEqual(notAdmin.code, 404);
+  assert.strictEqual(notAdmin.body, 'Not Found', 'and gets the same bare body as a missing route');
+
+  const missingRow = await driveAdminGate('requireAdminPage', {
+    pool: {}, session: { userId: 1 }, user: null,
+  });
+  assert.strictEqual(missingRow.code, 404);
+
+  // No database is a 404 and NOT a redirect: sign-in needs the same database, so
+  // redirecting would bounce between two routes that cannot complete.
+  const noDb = await driveAdminGate('requireAdminPage', { pool: null, session: { userId: 1 } });
+  assert.strictEqual(noDb.outcome, 'refused');
+  assert.strictEqual(noDb.code, 404);
+
+  const admin = await driveAdminGate('requireAdminPage', {
+    pool: {}, session: { userId: 1 }, user: { id: 1, is_admin: true },
+  });
+  assert.strictEqual(admin.outcome, 'next', 'an admin is served the console');
+});
+
+test('admin API gate: a signed-out request still 404s and NEVER redirects', async () => {
+  // THE REGRESSION THIS GUARDS. Every /admin/api/* endpoint is fetch()ed by
+  // admin.html. A 302 into Google's consent screen would be followed by the
+  // fetch and land as HTML or a CORS failure, and api() would surface something
+  // incomprehensible instead of the clean error it gets today. The redirect is
+  // right for a browser navigation and wrong for an XHR, so it is confined to
+  // the one route that is a navigation.
+  const signedOut = await driveAdminGate('requireAdmin', { pool: {}, session: null });
+  assert.strictEqual(signedOut.outcome, 'refused', 'the API gate does not redirect');
+  assert.strictEqual(signedOut.code, 404);
+  assert.strictEqual(signedOut.redirected, undefined);
+
+  const admin = await driveAdminGate('requireAdmin', {
+    pool: {}, session: { userId: 1 }, user: { id: 1, is_admin: true },
+  });
+  assert.strictEqual(admin.outcome, 'next');
+});
+
+test('admin routes: the page gate is on the PAGE route and nowhere else', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'admin.js'), 'utf8');
+  // Counted as ROUTE HANDLERS, not as raw string occurrences — the first version
+  // of this counted the latter and broke on the explanatory comment above the
+  // route, which is a fact about the prose and not about the wiring.
+  const handlerUses = src.match(/router\.(?:get|post)\('[^']*', requireAdminPage,/g) || [];
+  assert.strictEqual(handlerUses.length, 1, 'exactly one route uses the page gate');
+  assert.match(src, /router\.get\('\/admin', requireAdminPage,/);
+  for (const m of src.matchAll(/router\.(get|post)\('(\/admin\/api\/[^']*)', (\w+),/g)) {
+    assert.strictEqual(m[3], 'requireAdmin', `${m[2]} keeps the plain 404 gate`);
+  }
+});
+
+test('admin sign-in return: `admin` is whitelisted and lands back on /admin', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'oauth.js'), 'utf8');
+  // On the ALLOWLIST, so the redirect the gate issues is not refused by
+  // pickRedirect and silently dropped — and so it cannot become an open redirect.
+  assert.match(src, /const ALLOWED_REDIRECTS = \['onboarding', 'settings', 'admin'\];/);
+  // Returns EARLY, beside settings. Falling through to the onboarding branch
+  // would land a signed-out admin on /onboarding — a different dead end than the
+  // one this removes, but a dead end.
+  assert.match(src, /if \(redirectTo === 'admin'\) return res\.redirect\('\/admin'\);/);
+  // The slice ENDS at the setup-state read, so finding the admin branch inside it
+  // is exactly the claim "it returns first". The first version compared two
+  // indexOf results within this slice, one of which was -1 precisely because the
+  // end anchor had excluded it — a comparison that could only ever be false.
+  const beforeSetupState = sliceBetween(
+    src,
+    'const redirectTo = entry.data && entry.data.redirectTo;',
+    'onboardingComplete = false'
+  );
+  assert.ok(
+    beforeSetupState.includes("=== 'admin'"),
+    'the admin branch returns before setup state is consulted'
+  );
+});

@@ -111,8 +111,9 @@ const CONDITIONAL_WINDOW = 240;
 
 // Three is not a measurement either. It is "more than the number of pages that
 // have ever changed in one real run" (the recorded maximum is 2, both Litmus, and
-// those rows are no longer hash-watched) and far fewer than the eleven a
-// normalize() change would flag at once.
+// those rows are no longer hash-watched) and far fewer than the whole watch list,
+// which a normalize() change would flag at once (twelve hash-watched rows as of
+// 2026-09-25 — the admin health panel prints the current count).
 const DEFAULT_MAX_EXTRACTIONS = 3;
 
 // Bumped when the STORED SHAPE changes, so scripts/agentProposalReport.js can

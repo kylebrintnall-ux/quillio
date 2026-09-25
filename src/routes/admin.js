@@ -10,7 +10,7 @@
 
 const path = require('path');
 const express = require('express');
-const { requireAdmin } = require('../middleware/requireAdmin');
+const { requireAdmin, requireAdminPage } = require('../middleware/requireAdmin');
 const {
   getWatchList,
   getReviewQueue,
@@ -43,8 +43,14 @@ function escapeHtml(s) {
 
 // GET /admin — the review console (chunk 3a). Admin-gated static page that
 // renders the pending queue and drives dismiss/approve via the JSON endpoints
-// below. Non-admins are stopped by requireAdmin with a bare 404.
-router.get('/admin', requireAdmin, (req, res) => {
+// below. A signed-in non-admin is stopped with a bare 404, exactly as before.
+//
+// requireAdminPage, NOT requireAdmin, and ONLY on this route: a visitor with no
+// session is sent to sign in rather than into the 404, because the 404 was a
+// dead end for the one person this console is for. Every JSON endpoint below
+// keeps requireAdmin — a 302 into Google's consent screen is right for a browser
+// navigation and wrong for a fetch(). See the middleware for the full argument.
+router.get('/admin', requireAdminPage, (req, res) => {
   res.status(200).sendFile(ADMIN_HTML);
 });
 

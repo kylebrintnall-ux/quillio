@@ -49,13 +49,25 @@
 // whose A/B called generateAssetDrafts directly and so never noticed production
 // passed no `notes` at all, and scripts/lib/realDraftPath.js whose fetch shim
 // implemented only the success path.
+//
+// AND IT FEEDS readSpecProposal WHAT PRODUCTION FEEDS IT — hashableText(row, html),
+// the detector's own normalize-then-truncate — not the fixture's raw HTML. The
+// first version of this file passed raw HTML, tags and all, and ran 21/21 on it.
+// Production never hands the agent HTML: runDetection derives pageText through
+// hashableText and hashes THAT. So the first result was a measurement of an input
+// the agent never receives — the same species as the two incidents above,
+// arriving one step earlier in the pipeline. A --selftest check now asserts the
+// harness derives pageText exactly as the detector does.
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 const specAgent = require('../src/services/specAgent');
-const { readSpecProposal, buildFieldProposal, collapseCurrentCharMax, readerEnabled } = specAgent;
+const { readSpecProposal, buildFieldProposal, collapseCurrentCharMax, readerEnabled, detectConditional } =
+  specAgent;
+// Narrow on purpose: the two pure functions that derive and hash page text, and
+// nothing that writes. runDetection is never imported here.
+const { hashableText, hashText } = require('../src/services/specDetector');
 
 const SPEC_WATCH_PATH = path.join(__dirname, '..', 'src', 'db', 'specWatch.js');
 
@@ -227,6 +239,62 @@ const FIXTURES = [
   },
 
   {
+    key: 'conditional-far',
+    title: 'THE SAME CASE, HARDER — the Lead Gen Form caveat out of the code\'s reach',
+    asset: 'LinkedIn Carousel Ad',
+    field: 'Card 1 Headline',
+    changeCount: 4,
+    current: CURRENT.one(45),
+    // WHAT THIS ISOLATES. On the `conditional` page two mechanisms catch the
+    // condition independently: the MODEL lists 30 in candidates, and the CODE's
+    // detectConditional sees "Lead Gen Form" within CONDITIONAL_WINDOW (240
+    // chars, both sides) of the cited 45 line. That page cannot tell you which
+    // would have caught it alone, because it put the caveat in the very next
+    // sentence.
+    //
+    // Here the caveat sits in its own section, past the window, behind filler
+    // written to carry NO conditional marker and NO second number — the window
+    // also fires on "with a", "or a", "if", "when", "mobile" and on any second
+    // integer, so ordinary spec-page prose would quietly make this the easy case
+    // again. --selftest does not trust that by eye: it runs the REAL
+    // detectConditional over the REAL normalized text and asserts the window
+    // cannot see the caveat from the 45 line.
+    //
+    // So the one bit of information this case produces: when the code cannot
+    // help, does the model surface 30 on its own? That is what a real page with
+    // the caveat in a footnote asks of the agent.
+    page: [
+      '<html><body>',
+      '<h1>LinkedIn Carousel Ads — specifications</h1>',
+      '<h2>Text recommendations</h2>',
+      '<p>Card headline: 45 characters.</p>',
+      '<p>Keep each card headline short and specific. Lead with the benefit the',
+      'reader cares about, and make every card stand on its own, since people',
+      'swipe through them quickly. Avoid repeating the ad copy above the carousel.</p>',
+      '<p>Test several headline angles across the cards to learn which message',
+      'lands best. Use sentence case, keep punctuation light, and give each card',
+      'one clear idea.</p>',
+      '<h2>Lead Gen Form carousels</h2>',
+      '<p>When the carousel CTA opens a Lead Gen Form, the card headline is',
+      'limited to 30 characters.</p>',
+      '</body></html>',
+    ].join('\n'),
+    // conditional_limit is deliberately NEITHER required NOR forbidden. From the
+    // 45 line the window cannot reach the caveat, so it should not fire — but if
+    // the model chooses to quote the Lead Gen Form sentence, the window is taken
+    // around THAT and it will. Either is legitimate; the output shows which.
+    // The requirement is the model's own contribution: 30 in candidates.
+    expect: {
+      value: null,
+      valueAny: [45, 30],
+      codes: ['multiple_candidates'],
+      candidatesInclude: [45, 30],
+      valueNote: 'either — the question is only whether 30 reaches candidates',
+    },
+    windowMustNotSee: 'Card headline: 45 characters.',
+  },
+
+  {
     key: 'silent',
     title: 'Page renders but states no limit for this field',
     asset: 'Meta Single Image Ad',
@@ -373,6 +441,9 @@ function buildRow(fx, columns) {
     current_hash: null,
     is_test: true,
     source_kind: 'platform_enforced',
+    // hashableText reads this. NULL is the production value for every row that
+    // has no stop marker, and it means "hash the whole normalized page".
+    content_stop_marker: null,
   };
   if (!fx.omitChangeCount) {
     if (!Number.isInteger(fx.changeCount)) {
@@ -412,15 +483,25 @@ function stubRunner(rows) {
   };
 }
 
-const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+// The page text exactly as the detector would hand it over: hashableText is "the
+// ONLY sanctioned way to derive a row's hashable text", and runDetection passes
+// its result straight to readSpecProposal.
+function pageTextFor(fx, row) {
+  const text = hashableText(row, fx.page);
+  if (text == null) {
+    throw new Error(`fixture "${fx.key}": hashableText returned null — the page did not survive normalization`);
+  }
+  return text;
+}
 
 async function runFixture(fx, columns) {
   const row = buildRow(fx, columns);
   const runner = stubRunner(fx.current);
+  const pageText = pageTextFor(fx, row);
   const out = await readSpecProposal({
     row,
-    pageText: fx.page,
-    pageHash: sha(fx.page),
+    pageText,
+    pageHash: hashText(pageText),
     // One extraction per call, each call its own budget. Deliberately not a
     // large number: the cap is not what is under test here, and a generous max
     // would hide it if the budget logic ever broke.
@@ -701,6 +782,41 @@ function selftest() {
       truncated: true,
     });
     assert.ok(p.ambiguities.includes('page_text_truncated'));
+  });
+
+  ok('pageText is derived exactly as the detector derives it', () => {
+    for (const fx of FIXTURES) {
+      const row = buildRow(fx, columns);
+      const text = pageTextFor(fx, row);
+      assert.strictEqual(text, hashableText(row, fx.page), fx.key);
+      assert.ok(!/<[a-z]/i.test(text), `${fx.key}: tags reached the agent`);
+    }
+  });
+
+  // THE CONTRAST THE HARD CASE EXISTS FOR, asserted with the real detector over
+  // the real normalized text rather than by counting characters by eye. If the
+  // hard page is ever edited so the window can see the caveat, it has silently
+  // become the easy case, and this fails.
+  ok('the easy page lets the code see the caveat; the hard page does not', () => {
+    const easy = FIXTURES.find((f) => f.key === 'conditional');
+    const easyText = pageTextFor(easy, buildRow(easy, columns));
+    assert.strictEqual(
+      detectConditional('Card headline: 45 characters.', easyText).conditional,
+      true,
+      'on the easy page the window should reach the Lead Gen Form sentence'
+    );
+    for (const fx of FIXTURES.filter((f) => f.windowMustNotSee)) {
+      const text = pageTextFor(fx, buildRow(fx, columns));
+      assert.ok(text.includes(fx.windowMustNotSee), `${fx.key}: the cited line is missing from the page`);
+      const d = detectConditional(fx.windowMustNotSee, text);
+      assert.strictEqual(
+        d.conditional,
+        false,
+        `${fx.key}: the code window CAN see a conditional from the 45 line (${d.markers.join('; ')}) — ` +
+          'the case no longer isolates the model'
+      );
+      assert.ok(/\b30\b/.test(text), `${fx.key}: the caveat's 30 must still be on the page`);
+    }
   });
 
   // WITHOUT THIS THE HARNESS COULD NOT FAIL, which is the defect every

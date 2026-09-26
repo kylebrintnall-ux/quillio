@@ -267,20 +267,148 @@
     .diverge { font-size: 12.5px; color: var(--q-warn); margin-top: 4px; }
     .diverge ul { margin: 3px 0 0; padding-left: 16px; }
     .diverge li { margin: 1px 0; }
+
+    /* ════════ COMMAND CENTER (2026-09) ════════════════════════════════════════
+       Everything above this line is the page's measured palette and the review
+       flow's own rules, kept byte for byte. What follows only arranges them.
+       Muted text is --q-cream-75 throughout for the reason recorded above: -55
+       computes to 4.31:1 on --q-plum and fails AA. */
+
+    /* THE DISPLAY FACE WAS NEVER LOADED ON THIS PAGE. --q-display has always
+       named 'StarCrush', but no @font-face declared it here, so every heading
+       fell back to a generic serif. Declared now — WITHOUT the ?v=__BUILD__ the
+       other shells use: this page is served by a plain sendFile, never through
+       renderShell, so the token would ship literally and break the URL (the
+       same reason given above for leaving the texture off). */
+    @font-face {
+      font-family: 'StarCrush';
+      src: url('/fonts/Star_Crush.otf') format('opentype');
+      font-weight: normal; font-style: normal; font-display: swap;
+    }
+
+    body { padding: 20px 16px 56px; }
+    @media (min-width: 768px) { body { padding: 28px 32px 72px; } }
+    .shell { max-width: 1280px; margin: 0 auto; }
+
+    .masthead { display: flex; justify-content: space-between; align-items: flex-end; gap: 14px; flex-wrap: wrap;
+      padding-bottom: 12px; border-bottom: 1px solid var(--q-cream); margin-bottom: 14px; }
+    .brand h1 { font-size: 30px; margin: 0; line-height: 1.1; }
+    .brand .kicker { font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--q-cream-75); margin-top: 4px; }
+    .masthead .bar { margin: 0; }
+    .updated { font-size: 12.5px; color: var(--q-cream-75); }
+    #runMsg { min-height: 1.5em; margin: -8px 0 14px; }
+
+    /* Links anywhere on the page, not only inside the review overlay. An
+       unstyled anchor inherits the user-agent #0000EE, which measured 1.37:1 on
+       this family of backgrounds the one time it happened (see #panel a). */
+    a { color: var(--q-cream); text-decoration: underline; overflow-wrap: anywhere; }
+    a:visited { color: var(--q-cream); }
+    a:hover { color: var(--q-gold); }
+    button.small { padding: 5px 10px; font-size: 12.5px; }
+
+    /* Status tiles: one column at phone width, as many as fit above it. Two
+       across was the first version and it measured worse once each tile
+       carried its reason: 170px columns wrapped a sentence to eight lines, and
+       the grid stretched a two-line tile to its neighbour's height, leaving
+       330px boxes with two lines in them. */
+    .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); margin: 0 0 28px; }
+    .tile { border: 1px solid var(--q-cream); padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .tile .k { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--q-cream-75); }
+    .tile .v { font-weight: 700; font-size: 22px; line-height: 1.2; color: var(--q-cream); margin: 2px 0 4px; overflow-wrap: anywhere; }
+    .tile .s { font-size: 12.5px; color: var(--q-cream-75); }
+    /* A tile is marked only when something is wrong. A clean state reads plain,
+       so the marked tile is the one the eye lands on — and the mark is a border
+       AND a word, never hue alone. */
+    .tile.is-warn { border-left: 4px solid var(--q-warn); padding-left: 11px; }
+    .tile.is-bad { border-left: 4px solid var(--q-danger); padding-left: 11px; }
+    .flag-warn { color: var(--q-warn); font-weight: 700; }
+    .flag-bad { color: var(--q-danger); font-weight: 700; }
+
+    .cols { display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); }
+    @media (min-width: 1024px) { .cols { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); align-items: start; } }
+    section { margin-bottom: 28px; }
+    .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--q-cream); padding-bottom: 6px; margin: 0 0 12px; }
+    .section-head h2 { margin: 0; }
+    .count { font-size: 12.5px; color: var(--q-cream-75); }
+
+    /* Run history: one <details> per run, so the per-page results are one tap
+       away without making the list long. */
+    .runs { border: 1px solid var(--q-cream); }
+    .run + .run { border-top: 1px dotted var(--q-cream-55); }
+    .run > summary { list-style: none; cursor: pointer; padding: 10px 14px;
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+    .run > summary::-webkit-details-marker { display: none; }
+    /* Not a fill. A 6% cream fill under the hovered row took the amber
+       "agent off" to 4.41:1 and "did not finish" to 4.82:1 — and on iOS a
+       tapped row keeps :hover. Found by scripts/checkAdminConsole.js, only
+       because a click had left the pointer over a row. An underline marks the
+       row without moving the ground the status words stand on. */
+    .run > summary:hover .when { text-decoration: underline; }
+    .run > summary:focus-visible { outline: 2px solid var(--q-gold); outline-offset: -2px; }
+    .run .when { font-weight: 700; }
+    .run .trig { font-size: 12.5px; color: var(--q-cream-75); text-align: right; }
+    .run .counts { font-size: 12.5px; color: var(--q-cream-75); grid-column: 1 / -1; }
+    /* The run this page just started. Gold is decoration here, not text. */
+    .run.fresh { box-shadow: inset 4px 0 0 var(--q-gold); }
+    .run-body { padding: 2px 14px 12px; }
+    .run-body ul { list-style: none; margin: 0 0 6px; padding: 0; }
+    .run-body li { font-size: 12.5px; padding: 3px 0; display: flex; justify-content: space-between; gap: 12px; }
+    .run-body li .st { font-weight: 700; white-space: nowrap; }
+
+    /* THE WATCH TABLE ON A PHONE, and only that table. The shared stacked-card
+       pattern above puts every column on its own line; with fourteen rows and
+       eight columns that was ~6,000px of scrolling before the test tools, found
+       in the browser pass. Two columns of label/value pairs, with the name and
+       the problem across the full width. Scoped to .watch because .wl-table is
+       also the review form and the diff preview, whose inputs need the full
+       width — and to max-width, because a base rule at this specificity would
+       outrank the desktop table-row rule and break the desktop table. */
+    /* Three across, not two: two across still ran the table to 4,179px at
+       390px (twelve rows of about 340px each). The Watch cell's label and the
+       Check cell's label are dropped because the title and the button say the
+       same thing. An empty Problem cell is dropped; a real problem gets the
+       full width, below the facts, where the row's red edge points at it.
+       The desktop table keeps every cell, "—" included. */
+    @media (max-width: 767.98px) {
+      .wl-table.watch tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 12px; }
+      .wl-table.watch td[data-label="Watch"] { grid-column: 1 / -1; }
+      .wl-table.watch td[data-label="Watch"]::before, .wl-table.watch td[data-label="Check"]::before { display: none; }
+      .wl-table.watch td[data-label="Check"] { align-self: end; }
+      .wl-table.watch td[data-label="Problem"] { grid-column: 1 / -1; order: 1; }
+      .wl-table.watch td[data-label="Problem"].is-empty { display: none; }
+    }
+    .check-result { margin-top: 4px; }
+    /* Where a tile's row link lands. */
+    .wl-table.watch tbody tr { scroll-margin-top: 16px; }
+    .wl-table.watch tbody tr:target { outline: 2px solid var(--q-gold); outline-offset: -2px; }
+    /* Found in the browser pass: at desktop widths "Check now" wrapped onto two lines. */
+    .wl-table.watch button.small { white-space: nowrap; }
+
+    .tools { border: 1px dashed var(--q-cream); padding: 14px 16px; }
+    textarea { font: inherit; font-size: 13px; width: 100%; min-height: 110px; background: transparent;
+      color: var(--q-cream); border: 1px solid var(--q-cream); border-radius: 0; padding: 8px 10px; resize: vertical; }
+    .tools .actions { align-items: center; }
   </style>
 </head>
 <body>
-  <h1>LiveSpecs — Admin</h1>
-  <p class="sub">Detection health + the pending review queue. Approve writes production spec values (with a diff you confirm first); dismiss clears a false positive. Test flags can only be dismissed.</p>
+<div class="shell">
+  <header class="masthead">
+    <div class="brand">
+      <h1>LiveSpecs</h1>
+      <div class="kicker">Command center</div>
+    </div>
+    <div class="bar">
+      <span id="updated" class="updated"></span>
+      <button id="refreshBtn">Refresh</button>
+      <button id="runBtn" class="primary">Run detection now</button>
+    </div>
+  </header>
+  <p class="sub">Watches the platform spec pages Quillio cites. A change raises a flag, the agent reads the page and proposes a value, and nothing is written to a spec until you review the diff and confirm it.</p>
+  <div id="runMsg" class="note" role="status" aria-live="polite"></div>
 
-  <h2>Detection Health</h2>
-  <div id="healthSummary" class="summary"></div>
-  <div id="healthTableWrap"></div>
-  <div class="bar">
-    <button id="runBtn" class="primary">Run detection now</button>
-    <button id="refreshBtn">Refresh</button>
-    <span id="runMsg" class="note"></span>
-  </div>
+  <section aria-label="Status"><div id="tiles" class="tiles"></div></section>
 
   <!-- A DEEP-LINKED FLAG, shown whatever its status. The queue below renders
        only `pending`, so a link to a flag that was just CONFIRMED lands on a
@@ -289,12 +417,34 @@
        ?flag=<id> is in the URL. -->
   <div id="linkedFlag"></div>
 
-  <h2>Flags</h2>
-  <div id="realList"></div>
-  <h2>Test flags</h2>
-  <div id="testList"></div>
+  <div class="cols">
+    <section>
+      <div class="section-head"><h2>Needs your review</h2><span id="realCount" class="count"></span></div>
+      <div id="realList"></div>
+    </section>
+    <section>
+      <div class="section-head"><h2>Run history</h2><span id="runsCount" class="count"></span></div>
+      <div id="runsList"></div>
+    </section>
+  </div>
 
-  <div id="overlay"><div id="panel"></div></div>
+  <section>
+    <div class="section-head"><h2>Watched pages</h2><span id="watchCount" class="count"></span></div>
+    <div id="healthTableWrap"></div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Test page</h2><span class="count">exercise detection on demand</span></div>
+    <div id="testTools" class="tools"></div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Test flags</h2><span id="testCount" class="count"></span></div>
+    <div id="testList"></div>
+  </section>
+</div>
+
+<div id="overlay"><div id="panel"></div></div>
 
 <script>
 'use strict';
@@ -332,47 +482,42 @@ function relTime(iso){
   const h=Math.floor(m/60); if(h<24) return h+'h ago';
   return Math.floor(h/24)+'d ago';
 }
-// Next Monday 15:00 UTC (the cron: 0 15 * * 1), as a readable UTC string.
-function nextMondayCron(){
-  const now=new Date();
-  const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate(),15,0,0,0));
-  while(d.getUTCDay()!==1 || d.getTime()<=now.getTime()) d.setUTCDate(d.getUTCDate()+1);
-  return d.toISOString().slice(0,16).replace('T',' ')+' UTC';
-}
+// FETCH FIRST, THEN SWAP. Clearing the wrap before the await collapsed the whole
+// table for the length of the request, so the browser clamped the scroll
+// position and a "Check now" tapped low on the page left the reader somewhere
+// else when the table came back. Found in the browser pass; loadQueue had the
+// same shape.
 async function loadHealth(){
-  const sum=$('healthSummary'), wrap=$('healthTableWrap');
-  sum.textContent=''; wrap.innerHTML='';
   let h;
   try { h = await api('/admin/api/health'); }
-  catch(e){ sum.appendChild(el('div',{class:'msg err',text:'Health load failed: '+e.message})); return; }
+  catch(e){ state.health=null; $('healthTableWrap').replaceChildren(el('div',{class:'msg err',text:'Health load failed: '+e.message})); return; }
+  state.health = h;
+  renderHealth();
+}
+
+// The result of the last "Check now", shown IN THE ROW that was checked. #runMsg
+// sits at the top of the page, off-screen from any row below the fold, so on a
+// phone the only visible answer to a check was the button changing back.
+let lastCheck = null;
+function checkResultNote(watchId) {
+  if (!lastCheck || String(lastCheck.watchId) !== String(watchId)) return null;
+  return el('div',{class:'note check-result' + (lastCheck.tone ? ' ' + lastCheck.tone : ''), text:lastCheck.text});
+}
+
+function renderHealth(){
+  const h = state.health;
+  if (!h) return;
+  const wrap=$('healthTableWrap');
   const watch = h.watch || [];
-  // Observed-practice sources are not hash-watched, so every count that measures
-  // the hash watch excludes them. Including them would inflate numbers that
-  // describe a real gap on the rows they apply to — and would report a row as
-  // erroring on the strength of a last_error nothing has refreshed since it was
-  // reclassified.
-  const hashWatched = watch.filter(w=>w.source_kind !== 'observed_practice');
-  const notWatched = watch.length - hashWatched.length;
-  const withErrors = hashWatched.filter(w=>w.last_error).length;
-  const pending = watch.reduce((a,w)=>a+(w.pending_count||0),0);
-  const unanchored = hashWatched.filter(w=>!w.anchored).length;
   const alertAt = h.unconfirmedAlertAt || 3;
-  const stuck = hashWatched.filter(w=>w.consecutive_unconfirmed >= alertAt).length;
-  sum.appendChild(el('div',{},['Last detection run: '+(h.lastRun ? relTime(h.lastRun)+' ('+new Date(h.lastRun).toLocaleString()+')' : 'never')]));
-  sum.appendChild(el('div',{},['Last run result: '+hashWatched.length+' hash-watched · '+withErrors+' with error(s) · '+pending+' pending flag(s)']));
-  // Unanchored entries are still checked, but nothing verifies the fetch read the
-  // right page — say so on the summary line rather than only in the table.
-  sum.appendChild(el('div',{},['Anchors: '+(hashWatched.length-unanchored)+' of '+hashWatched.length+' asserted'+(unanchored?' · '+unanchored+' unanchored':'')]));
-  if(notWatched) sum.appendChild(el('div',{},['Not hash-watched: '+notWatched+' observed-practice source'+(notWatched===1?'':'s')+' — dated guidance, never flagged']));
-  // A stuck entry is read successfully every week and still not watched, which
-  // is why it needs saying on the summary rather than only in a row.
-  if(stuck) sum.appendChild(el('div',{},['Stuck: '+stuck+' entr'+(stuck===1?'y':'ies')+' with no usable comparison for '+alertAt+'+ runs']));
-  sum.appendChild(el('div',{class:'note'},['Next scheduled run: '+nextMondayCron()+' — Mondays 15:00 UTC (0 15 * * 1)']));
-  const table=el('table',{class:'wl-table'});
+  $('watchCount').textContent = watch.length+' row'+(watch.length===1?'':'s');
+  // The summary lines that used to sit above this table are the Watched pages
+  // tile now (tileWatch), computed from the same fields.
+  const table=el('table',{class:'wl-table watch'});
   const thead=el('thead');
   thead.appendChild(el('tr',{},[
     el('th',{text:'Watch'}), el('th',{text:'Type'}), el('th',{text:'Last checked'}),
-    el('th',{text:'Baselined'}), el('th',{text:'Anchor'}), el('th',{text:'Problem'}), el('th',{text:'Pending'}),
+    el('th',{text:'Baselined'}), el('th',{text:'Anchor'}), el('th',{text:'Problem'}), el('th',{text:'Pending'}), el('th',{text:'Check'}),
   ]));
   table.appendChild(thead);
   const tbody=el('tbody');
@@ -384,8 +529,9 @@ async function loadHealth(){
     const fails = observed ? null : w.consecutive_failures;
     const stuckAt = observed ? 0 : w.consecutive_unconfirmed;
     const isStuck = stuckAt >= alertAt;
-    const tr = el('tr', (!observed && (w.last_error || fails>1 || isStuck)) ? {class:'err-row'} : {});
-    tr.appendChild(el('td',{'data-label':'Watch'},[el('div',{class:'title',text:w.display_name||'(no name)'}), el('div',{class:'note',text:w.source_url})]));
+    // The id is what the Watched pages tile links to.
+    const tr = el('tr', Object.assign({id:'watch-'+w.id}, (!observed && (w.last_error || fails>1 || isStuck)) ? {class:'err-row'} : {}));
+    tr.appendChild(el('td',{'data-label':'Watch'},[el('div',{class:'title',text:w.display_name||'(no name)'}), el('div',{class:'note'},[el('a',{href:w.source_url,target:'_blank',rel:'noopener noreferrer',text:w.source_url})])]));
     tr.appendChild(el('td',{'data-label':'Type'},[
       el('span',{class:'badge '+(w.is_test?'test':'real'),text:w.is_test?'TEST':'REAL'}),
       observed ? el('div',{class:'note',text:'observed practice'}) : null,
@@ -405,7 +551,9 @@ async function loadHealth(){
     // The streak shows from 1 upward, deliberately: a row climbing 1 -> 2 is the
     // early signal, and holding the note until the alert threshold would make a
     // month of drift appear fully formed with no warning.
-    tr.appendChild(el('td',{'data-label':'Problem'},
+    // is-empty lets the phone layout drop a "—" cell; the table keeps it.
+    const noProblem = !observed && !w.last_error && !stuckAt;
+    tr.appendChild(el('td',noProblem ? {'data-label':'Problem',class:'is-empty'} : {'data-label':'Problem'},
       observed ? [
         el('div',{text:'observed practice — not hash-watched'}),
         el('div',{class:'note',text:'ages rather than changes; can never raise a flag'}),
@@ -418,12 +566,17 @@ async function loadHealth(){
       : [el('div',{text:'—'})]
     ));
     tr.appendChild(el('td',{'data-label':'Pending',text:String(w.pending_count||0)}));
+    // A scoped run of just this entry. Not offered on an observed-practice row:
+    // it is never fetched, so a check would only report not_watched.
+    tr.appendChild(el('td',{'data-label':'Check'},
+      observed ? [el('span',{class:'note',text:'—'})]
+      : [el('button',{class:'small',onclick:(ev)=>checkPage(w, ev.currentTarget)},['Check now']), checkResultNote(w.id)]
+    ));
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
-  wrap.appendChild(table);
+  wrap.replaceChildren(table);
 }
-function loadAll(){ loadHealth(); loadQueue(); }
 
 // The ?flag=<id> a notification links to. Read once per load from the real URL.
 function linkedFlagId() {
@@ -463,16 +616,20 @@ function renderLinkedFlag(rows) {
 }
 
 async function loadQueue() {
-  $('realList').innerHTML = ''; $('testList').innerHTML = '';
+  // Fetch first, then clear: see loadHealth.
   let rows;
   try { rows = (await api('/admin/api/review-queue')).reviewQueue; }
-  catch (e) { $('realList').appendChild(el('p',{class:'msg err',text:'Failed to load: '+e.message})); return; }
+  catch (e) { state.queue = null; $('realList').replaceChildren(el('p',{class:'msg err',text:'Failed to load: '+e.message})); $('testList').replaceChildren(); return; }
+  $('realList').innerHTML = ''; $('testList').innerHTML = '';
+  state.queue = rows;
   renderLinkedFlag(rows);
   const pending = rows.filter(r => r.status === 'pending');
   const real = pending.filter(r => !r.is_test);
   const test = pending.filter(r => r.is_test);
   renderList($('realList'), real, false);
   renderList($('testList'), test, true);
+  $('realCount').textContent = real.length ? real.length+' pending' : '';
+  $('testCount').textContent = test.length ? test.length+' pending' : '';
 }
 function renderList(container, list, isTest) {
   if (!list.length) { container.appendChild(el('p',{class:'empty',text:'None pending.'})); return; }
@@ -480,14 +637,20 @@ function renderList(container, list, isTest) {
 }
 function flagCard(f, isTest) {
   const card = el('div',{class:'card'+(isTest?' test':'')});
+  // The watch row's own name when the health read has it, the URL otherwise —
+  // and the URL is always on the card as a link, one tap from the page itself.
+  const name = watchName(f.watch_id);
   card.appendChild(el('div',{class:'row'},[
-    el('span',{class:'title',text:f.source_url}),
+    el('span',{class:'title',text:name || f.source_url}),
     el('span',{class:'badge '+(isTest?'test':'real'),text:isTest?'TEST':'REAL'}),
   ]));
+  card.appendChild(el('div',{class:'meta'},[el('a',{href:f.source_url,target:'_blank',rel:'noopener noreferrer',text:f.source_url})]));
   card.appendChild(el('div',{class:'meta'},['flag #'+f.id+' · detected '+new Date(f.detected_at).toLocaleString()]));
   card.appendChild(el('div',{class:'meta hash'},['old '+short(f.old_hash)+'  →  new '+short(f.new_hash)]));
   const agentBadge = agentQueueLine(f.agent_proposal);
   if (agentBadge) card.appendChild(el('div',{class:'meta',text:agentBadge}));
+  const preview = agentCardPreview(f.agent_proposal);
+  if (preview) card.appendChild(preview);
   // Two groups, not one row: Review change… opens a two-step write, Dismiss
   // closes the flag in one. They read as peers when they sit in the same
   // .actions block with nothing between them — that was the defect. The
@@ -504,6 +667,31 @@ function flagCard(f, isTest) {
   ]));
   return card;
 }
+
+// What the agent found, at a glance, on the card itself. EVIDENCE ONLY, under
+// the same rules as the review form: the number shows as text and is never put
+// in an input; an ungrounded one is marked; and it branches on `status`, never
+// on the presence of `fields`, because a skipped or failed read carries no
+// fields key at all.
+function agentCardPreview(p) {
+  if (!p || p.status !== 'read' || !Array.isArray(p.fields) || !p.fields.length) return null;
+  const box = el('div',{class:'agent'});
+  for (const f of p.fields.slice(0, 3)) {
+    const amb = (f.ambiguities || []);
+    const ungrounded = amb.indexOf('citation_unverified') >= 0;
+    box.appendChild(el('div',{class:'agent-line'},[
+      f.asset+' / '+f.field+': stored '+(f.currentCharMax || '—')+' → ',
+      el('span',{class:'agent-val',text: f.suggestedCharMax != null ? String(f.suggestedCharMax) : 'no value found'}),
+      ungrounded ? el('span',{class:'flag-bad',text:' · UNGROUNDED'}) : null,
+      amb.length ? ' · '+amb.length+' thing'+(amb.length===1?'':'s')+' to check' : '',
+    ]));
+  }
+  if (p.fields.length > 3) {
+    box.appendChild(el('div',{class:'agent-line',text:'+'+(p.fields.length-3)+' more — open the review for all of them.'}));
+  }
+  return box;
+}
+
 async function doDismiss(flagId) {
   if (!confirm('Dismiss flag #'+flagId+'? (marks it dismissed; no spec change)')) return;
   try { await api('/admin/api/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flagId})}); loadAll(); }
@@ -878,14 +1066,398 @@ function renderPreview(flag, edits, pv, msg) {
   ]));
 }
 
-$('refreshBtn').addEventListener('click', loadAll);
+
+// ════════ COMMAND CENTER ════════════════════════════════════════════════════
+//
+// Three reads — health, the review queue, the run log — and everything on the
+// status tiles is computed from what those reads already returned. No tile
+// fetches on its own, so the tiles cannot disagree with the lists below them.
+
+const state = { health: null, queue: null, runs: null, runsError: null };
+
+// A run with no finished_at is either still going or it died. The run log opens
+// its record BEFORE the first fetch precisely so the second case is visible: a
+// run that crashed, or whose container was killed, leaves a row that never
+// closes. Thirty minutes is well past the slowest real run (a dozen fetches, a
+// 1.5s confirm, at most three model calls).
+const RUN_STALE_MIN = 30;
+function runState(r) {
+  if (r.finished_at) return 'done';
+  return (Date.now() - new Date(r.started_at).getTime()) / 60000 > RUN_STALE_MIN ? 'died' : 'running';
+}
+
+// What each trigger means, in words. 'script' is deliberately NOT called the
+// schedule: without --scheduled it is the cron OR a console run, and the run log
+// refuses to guess which, so this does too.
+const TRIGGER_LABEL = {
+  scheduled: 'Weekly schedule',
+  script: 'Script (schedule or console)',
+  admin: 'Admin button',
+  unknown: 'Unknown caller',
+};
+function triggerLabel(t) { return TRIGGER_LABEL[t] || String(t); }
+
+function whenLabel(iso) {
+  return new Date(iso).toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+function untilTime(iso) {
+  const s = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
+  if (s <= 0) return 'due now';
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return 'in ' + d + 'd ' + (h % 24) + 'h';
+  if (h >= 1) return 'in ' + h + 'h ' + (m % 60) + 'm';
+  return 'in ' + Math.max(1, m) + 'm';
+}
+function countsLine(s) {
+  if (!s) return '';
+  const checked = (s.total || 0) - (s.not_watched || 0);
+  const parts = [checked + ' checked', (s.changed || 0) + ' changed'];
+  if (s.baseline) parts.push(s.baseline + ' baselined');
+  if (s.unconfirmed) parts.push(s.unconfirmed + ' unconfirmed');
+  if (s.failed) parts.push(s.failed + ' failed');
+  if (s.error) parts.push(s.error + ' error' + (s.error === 1 ? '' : 's'));
+  return parts.join(' · ');
+}
+function watchName(id) {
+  const w = ((state.health && state.health.watch) || []).find((x) => String(x.id) === String(id));
+  return w ? w.display_name : null;
+}
+
+// ─── Run history ───────────────────────────────────────────────────────────
+
+async function loadRuns() {
+  state.runsError = null;
+  try { state.runs = await api('/admin/api/runs?limit=20'); }
+  catch (e) { state.runs = null; state.runsError = e.message; }
+}
+
+function statusClass(s) {
+  return (s === 'failed' || s === 'error') ? 'flag-bad' : (s === 'changed' || s === 'unconfirmed') ? 'flag-warn' : '';
+}
+
+function renderRuns(highlightId) {
+  const host = $('runsList');
+  host.innerHTML = '';
+  $('runsCount').textContent = '';
+  if (state.runsError) { host.appendChild(el('p',{class:'msg err',text:'Run log failed to load: '+state.runsError})); return; }
+  const o = state.runs;
+  if (!o) return;
+  // THREE STATES, and they are said differently: not set up, set up and empty,
+  // and populated. An unmigrated log rendered as "no runs" would tell you
+  // nothing has run, about a database that has never recorded a run at all.
+  if (!o.available) {
+    host.appendChild(el('p',{class:'empty',text: o.reason === 'not-migrated'
+      ? 'The run log is not set up. Run node scripts/migrateAddDetectionRuns.js --commit in the Railway console — every run after that is recorded here.'
+      : 'No database, so no run log.'}));
+    return;
+  }
+  if (!o.runs.length) { host.appendChild(el('p',{class:'empty',text:'No runs recorded since the run log was set up.'})); return; }
+  $('runsCount').textContent = 'latest ' + o.runs.length;
+  const list = el('div',{class:'runs'});
+  for (const r of o.runs) {
+    const st = runState(r);
+    const fresh = highlightId != null && String(r.id) === String(highlightId);
+    const d = el('details',{class:'run' + (fresh ? ' fresh' : '')});
+    const sum = el('summary');
+    sum.appendChild(el('span',{class:'when',text:whenLabel(r.started_at)}));
+    sum.appendChild(el('span',{class:'trig',text:triggerLabel(r.trigger)}));
+    const bits = [];
+    if (st === 'died') bits.push(el('span',{class:'flag-bad',text:'did not finish'}));
+    else if (st === 'running') bits.push(el('span',{class:'flag-warn',text:'running…'}));
+    else bits.push(countsLine(r.summary));
+    if (r.watch_id != null) bits.push(' · just ' + (watchName(r.watch_id) || ('entry #' + r.watch_id)));
+    // The run's own report of whether it could read with the agent — recorded by
+    // the process that ran, which is the only thing entitled to say.
+    bits.push(el('span',{class: r.reader === 'off' ? 'flag-warn' : '',text:' · agent ' + (r.reader || 'not recorded')}));
+    sum.appendChild(el('span',{class:'counts'},bits));
+    d.appendChild(sum);
+
+    const body = el('div',{class:'run-body'});
+    const results = Array.isArray(r.results) ? r.results : [];
+    if (!results.length) {
+      body.appendChild(el('div',{class:'note',text: st === 'done' ? 'No per-page results stored for this run.' : 'No results: the run never finished.'}));
+    } else {
+      const ul = el('ul');
+      for (const x of results) {
+        ul.appendChild(el('li',{},[
+          el('span',{text:(x.is_test ? '[test] ' : '') + (x.display_name || x.source_url)}),
+          el('span',{class:'st ' + statusClass(x.status),text:x.status + (x.agent ? ' · agent ' + x.agent.status : '')}),
+        ]));
+      }
+      body.appendChild(ul);
+    }
+    body.appendChild(el('div',{class:'note',text:'Run #' + r.id + (r.finished_at ? ' · finished ' + whenLabel(r.finished_at) : '')}));
+    d.appendChild(body);
+    list.appendChild(d);
+  }
+  host.appendChild(list);
+}
+
+// ─── Status tiles ──────────────────────────────────────────────────────────
+
+function tile(key, value, lines, tone) {
+  const t = el('div',{class:'tile' + (tone === 'bad' ? ' is-bad' : tone === 'warn' ? ' is-warn' : '')});
+  t.appendChild(el('div',{class:'k',text:key}));
+  t.appendChild(el('div',{class:'v',text:value}));
+  for (const l of lines) if (l) t.appendChild(typeof l === 'string' ? el('div',{class:'s',text:l}) : l);
+  return t;
+}
+function line(parts) { return el('div',{class:'s'}, parts); }
+
+// THE LAST *FULL* RUN, not the last run. Found in the browser pass: a one-page
+// "Check now" pressed a minute ago became "Last run: 1 checked", while a full run
+// that DIED three hours earlier sat underneath it, invisible from the tile. A
+// scoped check is a real run and stays in the history; it is not the answer to
+// "when did the watch last run". And a run that did not finish is named on the
+// tile whatever came after it, because a later success does not undo it.
+//
+// The last full run is READ ON ITS OWN (getLatestRuns), never picked out of the
+// history list: twenty single-page checks push it out of the twenty rows the
+// list holds, and this tile would then say "None yet" about a run that exists.
+function tileLastRun() {
+  const o = state.runs;
+  const recent = o && o.available ? o.runs : [];
+  const died = recent.filter((r) => runState(r) === 'died');
+  const diedLine = died.length
+    ? line([el('span',{class:'flag-bad',text:died.length + ' recent run' + (died.length === 1 ? '' : 's') + ' did not finish'}),' — see Run history.'])
+    : '';
+  const lastFull = o && o.available && o.latest ? o.latest.lastFull : null;
+  if (lastFull) {
+    const r = lastFull, st = runState(r);
+    if (st === 'died') {
+      return tile('Last full run','Did not finish',[
+        triggerLabel(r.trigger) + ' · started ' + whenLabel(r.started_at),
+        'It opened its record and never closed it. Check that service’s logs.',
+      ],'bad');
+    }
+    if (st === 'running') return tile('Last full run','Running…',[triggerLabel(r.trigger) + ' · started ' + relTime(r.started_at), diedLine],'warn');
+    const s = r.summary || {};
+    const trouble = (s.failed || 0) + (s.error || 0);
+    return tile('Last full run', relTime(r.finished_at), [triggerLabel(r.trigger), countsLine(s), diedLine],
+      died.length ? 'bad' : trouble ? 'warn' : null);
+  }
+  if (recent.length) {
+    return tile('Last full run','None yet',['Only single-page checks recorded so far.', diedLine], died.length ? 'bad' : null);
+  }
+  // No run log. Say what the number actually is — the last time ANY page was
+  // touched — rather than presenting it as a run.
+  const last = state.health && state.health.lastRun;
+  return tile('Last page check', last ? relTime(last) : 'never', [
+    o && o.available === false ? 'The run log is not set up, so this is the last time any single page was touched, not a run.' : 'No runs recorded yet.',
+  ], null);
+}
+
+function tileSchedule() {
+  const sc = state.runs && state.runs.schedule;
+  if (!sc || !sc.cron) return tile('Next check','Unknown',['No schedule found in railway.cron.json.'],'warn');
+  if (!sc.parsed) return tile('Next check', sc.cron, ['Not the weekly form this page reads, so shown as written.'], null);
+  const lines = [whenLabel(sc.nextAt)];
+  let tone = null;
+  const ls = sc.lastSlot;
+  if (ls) {
+    const at = whenLabel(ls.at);
+    // The declared schedule is a claim a SIBLING makes — this page reading a file
+    // about a different service. So it is checked against runs the job itself
+    // recorded, and a slot with no recorded run is called what it is.
+    if (ls.state === 'ran') lines.push('Last slot (' + at + ') ran.');
+    else if (ls.state === 'ran_unmarked') { tone = 'warn'; lines.push(line([el('span',{class:'flag-warn',text:'Ran, but not marked scheduled. '}),'The cron start command may be missing --scheduled.'])); }
+    else if (ls.state === 'missed') { tone = 'bad'; lines.push(line([el('span',{class:'flag-bad',text:'Missed. '}),'No run recorded for ' + at + '.'])); }
+    else if (ls.state === 'pending') lines.push('Last slot (' + at + ') is under way.');
+    else lines.push('Last slot (' + at + '): can’t tell yet — ' + (ls.reason || 'no evidence') + '.');
+  }
+  return tile('Next check', untilTime(sc.nextAt).replace(/^in /, ''), lines, tone);
+}
+
+function tileReview() {
+  const q = state.queue || [];
+  const real = q.filter((r) => r.status === 'pending' && !r.is_test);
+  const test = q.filter((r) => r.status === 'pending' && r.is_test);
+  if (!state.queue) return tile('Needs you','—',['The review queue did not load.'],'warn');
+  if (!real.length) return tile('Needs you','Nothing',['No real flags pending.', test.length ? test.length + ' test flag' + (test.length === 1 ? '' : 's') + '.' : '']);
+  const oldest = real.reduce((a, r) => (new Date(r.detected_at) < new Date(a.detected_at) ? r : a));
+  return tile('Needs you', real.length + ' flag' + (real.length === 1 ? '' : 's'),
+    ['Oldest raised ' + relTime(oldest.detected_at) + '.', test.length ? test.length + ' test flag' + (test.length === 1 ? '' : 's') + ' too.' : ''], 'warn');
+}
+
+// THE READER STATE THAT MATTERS IS THE WEEKLY RUN'S, NOT THE LATEST RUN'S.
+// The latest run is very often a press of this page's own Run button, which runs
+// in the WEB process — the one that had GEMINI_API_KEY all along. Reading that
+// run's reader would rebuild the original bug one level down: a green light from
+// the process that is not doing the weekly work. So this tile reads the most
+// recent run the schedule (or a console) started, names which run it read, and
+// shows the button's runs only as a footnote.
+//
+// AND A 'script' RUN IS NOT ENOUGH EITHER — found in the browser pass. A console
+// run of scripts/runDetection.js happens in whichever service's shell it was typed
+// into, and the shell people use is the WEB service's (it is where the agent
+// harness was run). That shell has the key, so a console run reports `on` while
+// the cron can still be off: the same trap through a third door. So a run the cron
+// DECLARED ('scheduled', from railway.cron.json's --scheduled) is preferred, and
+// when only 'script' runs exist the tile says it could not tell the two apart.
+function tileAgent() {
+  const o = state.runs;
+  if (!o || !o.available) return tile('Agent, scheduled run','Unknown',['Each run records whether the agent could read. That needs the run log.']);
+  // The newest run of each trigger, read on its own — see tileLastRun. A
+  // scheduled run from last Monday is still the answer after a week of admin
+  // checks, and must not fall out of view behind them.
+  const by = (o.latest && o.latest.byTrigger) || {};
+  const scheduled = by.scheduled, script = by.script, admin = by.admin;
+  const adminLine = admin ? 'Admin button runs: agent ' + (admin.reader || 'not recorded') + '.' : '';
+  const r = scheduled || script;
+  if (!r) return tile('Agent, scheduled run','No record',['No scheduled run recorded yet.', adminLine]);
+  const off = r.reader === 'off', on = r.reader === 'on';
+  return tile('Agent, scheduled run', off ? 'Off' : on ? 'On' : 'Not recorded', [
+    off ? line([el('span',{class:'flag-bad',text:'Weekly runs store no proposals. '}),'Set GEMINI_API_KEY on the cron service.'])
+      : on ? 'Reads every confirmed change.'
+      // A run that recorded nothing is not a run that read. Saying "reads every
+      // confirmed change" here would be the green light this tile exists to
+      // refuse.
+      : 'That run did not record whether the agent could read.',
+    scheduled
+      ? 'From the scheduled run of ' + whenLabel(r.started_at) + '.'
+      : line([el('span',{class:'flag-warn',text:'From a script run'}),' (' + whenLabel(r.started_at) + '), which may have been a console run in another service. No run marked scheduled yet.']),
+    adminLine,
+  ], off ? 'bad' : (scheduled && on) ? null : 'warn');
+}
+
+function tileWatch() {
+  const h = state.health;
+  if (!h) return tile('Watched pages','—',['Health did not load.'],'warn');
+  const watch = h.watch || [];
+  // Observed-practice sources are not hash-watched, so every count that measures
+  // the hash watch excludes them.
+  const hw = watch.filter((w) => w.source_kind !== 'observed_practice');
+  const errorRows = hw.filter((w) => w.last_error);
+  const unanchoredRows = hw.filter((w) => !w.anchored);
+  const alertAt = h.unconfirmedAlertAt || 3;
+  const stuckRows = hw.filter((w) => w.consecutive_unconfirmed >= alertAt);
+  const errors = errorRows.length, unanchored = unanchoredRows.length, stuck = stuckRows.length;
+  const observed = watch.length - hw.length;
+  return tile('Watched pages', hw.length + ' page' + (hw.length === 1 ? '' : 's'), [
+    unanchored
+      ? line([(hw.length - unanchored) + ' of ' + hw.length + ' anchors asserted · ' + unanchored + ' unanchored: ', ...rowLinks(unanchoredRows)])
+      : hw.length + ' of ' + hw.length + ' anchors asserted',
+    errors ? line([el('span',{class:'flag-bad',text:errors + ' with an error:'}), ' ', ...rowLinks(errorRows)]) : 'No errors.',
+    stuck ? line([el('span',{class:'flag-bad',text:stuck + ' stuck'}),' — no usable comparison for ' + alertAt + '+ runs: ', ...rowLinks(stuckRows)]) : '',
+    observed ? observed + ' observed-practice source' + (observed === 1 ? '' : 's') + ', never flagged.' : '',
+  ], errors || stuck ? 'bad' : unanchored ? 'warn' : null);
+}
+
+// In-page links to the rows a count is counting. On a phone the table is
+// several screens below this tile, and a count with nothing to tap sends the
+// reader hunting through every row for the one marked.
+function rowLinks(rows) {
+  const out = [];
+  rows.slice(0, 3).forEach((w, i) => {
+    if (i) out.push(', ');
+    out.push(el('a',{href:'#watch-' + w.id, text:w.display_name || ('row ' + w.id)}));
+  });
+  if (rows.length > 3) out.push(' and ' + (rows.length - 3) + ' more');
+  out.push('.');
+  return out;
+}
+
+function renderStatus() {
+  const host = $('tiles');
+  host.innerHTML = '';
+  for (const t of [tileLastRun(), tileSchedule(), tileReview(), tileAgent(), tileWatch()]) host.appendChild(t);
+  $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+}
+
+// Health first: the flag cards and run history name their watch rows from it.
+async function loadAll(highlightRunId) {
+  await loadHealth();
+  await Promise.all([loadQueue(), loadRuns()]);
+  renderRuns(highlightRunId);
+  renderStatus();
+}
+
+// ─── Actions ───────────────────────────────────────────────────────────────
+
+// One entry, now. Uses the scoping the run-detection endpoint already had; the
+// run log records it as an admin run of just that entry.
+//
+// It RETURNS what happened rather than only printing it: "Save and check" used
+// to report "Saved and checked" whatever the check did, because this swallowed
+// the failure and its caller could not tell.
+async function checkPage(w, btn) {
+  const was = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  $('runMsg').textContent = 'Checking ' + (w.display_name || w.source_url) + '…';
+  const at = () => new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  try {
+    const r = await api('/admin/api/run-detection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({watchId:w.id})});
+    const res = (r.results || [])[0];
+    const said = (res ? res.status : 'done') + (res && res.error ? ' — ' + res.error : '');
+    $('runMsg').textContent = (w.display_name || 'Entry') + ': ' + said + '.';
+    lastCheck = { watchId: w.id, text: 'Checked ' + at() + ': ' + said + '.', tone: res ? statusClass(res.status) : '' };
+    await loadAll(r.runId);
+    return { ok: true, status: res ? res.status : 'done' };
+  } catch (e) {
+    $('runMsg').textContent = 'Check failed: ' + e.message;
+    lastCheck = { watchId: w.id, text: 'Check failed ' + at() + ': ' + e.message, tone: 'flag-bad' };
+    renderHealth();
+    return { ok: false, error: e.message };
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = was; }
+  }
+}
+
+async function loadTestTools() {
+  const host = $('testTools');
+  host.innerHTML = '';
+  const testRow = ((state.health && state.health.watch) || []).find((w) => w.is_test);
+  host.appendChild(el('p',{class:'note',text:
+    'Edit the fake spec page the test row reads, then check it. A changed page raises a TEST flag, which exercises ' +
+    'detection end to end without touching a real platform. The agent only reads the pairs in a row’s affected ' +
+    'fields, and the test row usually has none, so expect “agent: skipped”. To test the agent’s judgement, ' +
+    'run node scripts/agentExtractAB.js.'}));
+  const ta = el('textarea',{'aria-label':'Test page content'});
+  host.appendChild(ta);
+  const msg = el('span',{class:'note'});
+  const save = el('button',{},['Save']);
+  const saveCheck = el('button',{class:'primary'},['Save and check']);
+  if (!testRow) { saveCheck.disabled = true; msg.textContent = 'No test row in the watch list.'; }
+  host.appendChild(el('div',{class:'actions'},[save, saveCheck, msg]));
+  // The public page the detector itself fetches. Parsed with DOMParser, which
+  // builds an inert document — nothing in it runs — and read as text.
+  try {
+    const html = await (await fetch('/admin/test-spec')).text();
+    const pre = new DOMParser().parseFromString(html, 'text/html').querySelector('pre');
+    ta.value = pre ? pre.textContent : '';
+  } catch (e) { msg.textContent = 'Could not load the current test page: ' + e.message; }
+  const doSave = () => api('/admin/api/test-spec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:ta.value})});
+  save.addEventListener('click', async () => {
+    try { await doSave(); msg.textContent = 'Saved.'; } catch (e) { msg.textContent = 'Save failed: ' + e.message; }
+  });
+  saveCheck.addEventListener('click', async () => {
+    try {
+      await doSave();
+      msg.textContent = 'Saved. Checking…';
+      const c = await checkPage(testRow, saveCheck);
+      msg.textContent = c.ok
+        ? 'Saved and checked: ' + c.status + '. See Run history and Test flags.'
+        : 'Saved, but the check failed: ' + c.error;
+    } catch (e) { msg.textContent = 'Failed: ' + e.message; }
+  });
+}
+
+$('refreshBtn').addEventListener('click', () => loadAll());
 $('runBtn').addEventListener('click', async () => {
-  $('runBtn').disabled = true; $('runMsg').textContent = 'Running detection…';
-  try { const r = await api('/admin/api/run-detection',{method:'POST'}); $('runMsg').textContent = 'Done: '+JSON.stringify(r.summary); loadAll(); }
-  catch (e) { $('runMsg').textContent = 'Failed: '+e.message; }
-  finally { $('runBtn').disabled = false; }
+  const b = $('runBtn');
+  b.disabled = true;
+  $('runMsg').textContent = 'Running detection over every watched page… this can take a minute.';
+  try {
+    const r = await api('/admin/api/run-detection',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    $('runMsg').textContent = 'Done: ' + countsLine(r.summary) + '.' + (r.runId == null ? ' Not recorded in the run log — see the server warnings.' : '');
+    await loadAll(r.runId);
+  } catch (e) {
+    $('runMsg').textContent = 'Run failed: ' + e.message;
+  } finally {
+    b.disabled = false;
+  }
 });
-loadAll();
+loadAll().then(loadTestTools);
 </script>
 </body>
 </html>

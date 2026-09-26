@@ -148,8 +148,10 @@ src/
                      (mark read). Scoped from req.user only. See "Notifications".
     specCheck.js     POST /api/spec-check — the Spec Check lookup. Synchronous
                      (one small Gemini call), read-only, its own router.
-    admin.js         /admin + /admin/api/* (LiveSpecs watch list, detection run,
-                     review queue, approve-preview/commit). requireAdmin-gated.
+    admin.js         /admin + /admin/api/* (LiveSpecs watch list, detection run
+                     — every page or one — run log, review queue,
+                     approve-preview/commit). requireAdmin-gated. The page is
+                     the LiveSpecs command center: see "The run log".
 
   middleware/
     auth.js          requireAuth. Demo mode (no DATABASE_URL) attaches a demo
@@ -176,7 +178,9 @@ src/
                      Catches 42P01 and degrades to "no notifications".
     specWatch.js     LiveSpecs watch list / review queue reads, plus
                      currentFieldValues — the ONE read of a pair's per-tenant
-                     values, shared by specReview and specAgent.
+                     values, shared by specReview and specAgent. Also the run
+                     log's reads: the history list, the runs the status tiles
+                     name (read on their own), and the schedule check.
 
   utils/
     normalize.js     Asset-name normalization (case, dash variants, spacing).
@@ -201,6 +205,9 @@ src/
                      re-exports it all.
     shellHtml.js     Reads + stamps the served HTML shells; `__BUILD__` is
                      replaced with the deploy commit so asset URLs version.
+    cronSchedule.js  The detector cron's weekly schedule, read from
+                     railway.cron.json, and whether its last slot produced a
+                     run the job ITSELF recorded. Weekly form only.
 
   services/
     gemini.js        All Gemini REST calls (parse, enrich, draft, variations,
@@ -212,6 +219,7 @@ src/
     templateReview.js Review a built TEMPLATE document. Not copyReview: neither
                      half of that transfers to a matrix.
     specDetector.js  LiveSpecs change detection (fetch → normalize → hash).
+                     Every run records itself in detection_runs.
     specAgent.js     The agentic read the detector takes ON a confirmed change,
                      from the bytes that raised the flag, stored on
                      spec_review_queue.agent_proposal. Shadow mode: proposes,
@@ -1276,11 +1284,12 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 25,420 lines and 844 tests** —
+regression guards. **As of this commit it is 26,016 lines and 861 tests** —
 measured on **Node 22.22.2** with `node --test test/smoke.test.js`, on the commit
-that reports the agentic reader's state in the run summary, and written as a reading taken on
-a date rather than as a standing figure, because the previous version of this
-sentence said 635 and was wrong by 114 tests and about 3,900 lines.
+that adds the detection run log and the admin command center (`npm test` read 873
+on the same tree: the 12 replay tests, exactly as below), and written as a reading
+taken on a date rather than as a standing figure, because the previous version of
+this sentence said 635 and was wrong by 114 tests and about 3,900 lines.
 
 **THE COMMAND IS PART OF THE READING, and leaving it out has now put a wrong
 number in this file twice.** This sentence's subject is `test/smoke.test.js` —
@@ -1336,10 +1345,17 @@ commit, and add cases there when you change behavior.
 
 **`public/*.html` is effectively untested.** The suite reads those files as
 **strings** and asserts that certain ids, URLs, and CSS references are present —
-there is no jsdom, no headless browser, no JS execution. A frontend change can
-pass CI and still be broken in the browser. For anything in `public/app.html`
+there is no jsdom, no headless browser, and no page is ever run. A frontend change
+can pass CI and still be broken in the browser. For anything in `public/app.html`
 (4,100+ lines of inline markup, CSS, and vanilla JS), **the device is the test**:
 load the page and click through it.
+
+Two qualifications, and neither softens the rule. A few page FUNCTIONS are lifted
+out and executed — the `app.html` selection key, the `settings.html` house form,
+the admin console's tiles — which tests a decision and never a page. And
+`admin.html` has a manual browser harness, `scripts/checkAdminConsole.js`, that
+clicks through the real page against a stubbed API; like `checkContrast` it is out
+of the suite, so the dependency is on somebody running it.
 
 ### The case that justifies that rule — not a hypothetical
 
@@ -1482,10 +1498,14 @@ The gap is not one thing:
 
 **Not closed now, deliberately.** Each panel is fixture markup that has to be
 maintained alongside the page, and that cost only pays back if somebody runs the
-tool. The library panel is where the work was and it is clean. `app.html`,
-`onboarding.html` and `admin.html` have **no fixture at all** and are not in the
-78 — that is a larger number again, and the honest statement is that this page is
-measured and the others are not.
+tool. The library panel is where the work was and it is clean. None of the other
+pages is in the 78, and each is covered differently: `onboarding.html` has **no
+fixture at all**; `app.html`'s covers the Spec Check panel and nothing else (this
+sentence said "no fixture" for it until 2026-09, which had stopped being true when
+Spec Check landed); and `admin.html` has no fixture but its own harness,
+`scripts/checkAdminConsole.js`, which renders the real page against a stubbed API
+— see "The run log, and the command center that reads it". The honest statement
+is still that this page is measured and most of the others are not.
 
 ### A TOOL THAT MEASURES ONE PROPERTY MAKES THE OTHERS FEEL COVERED
 
@@ -1524,8 +1544,9 @@ this repo measures them and nothing here is planned to.
 
 Railway via Nixpacks; `npm start` is the start command (also in `railway.json`
 and `Procfile`). `PORT` is injected by Railway. `railway.cron.json` is a separate
-Railway service that runs `node scripts/runDetection.js` weekly (the LiveSpecs
-detector). See README for the full Slack + Railway setup.
+Railway service that runs `node scripts/runDetection.js --scheduled` weekly (the
+LiveSpecs detector; the flag is how its runs are told apart from a console run —
+see "The run log"). See README for the full Slack + Railway setup.
 
 ### Running migrations — read this before running one
 
@@ -3596,8 +3617,9 @@ real gap on the rows it applies to.
 they are rather than cleared, and the rows stay on a table they barely use,
 because `affected_fields` — **the write gate** `specReview.guardEdits` reads —
 lives on the row. Deleting the row leaves those 15 pairs gated by nothing, which
-is the LinkedIn Carousel trade exactly. The admin health page renders those
-columns as `n/a` / `not checked` for such a row so they are not read as current.
+is the LinkedIn Carousel trade exactly. The admin page's watched-pages table renders
+those columns as `n/a` / `not checked` for such a row so they are not read as
+current.
 
 ### "Checked", not "verified" — the distinction is load-bearing
 
@@ -3975,10 +3997,18 @@ landed after the August reading and nothing re-measured.
 
 That is this file's own undated-count defect, arriving for the third time and in
 the section that records the second — the August figure was right when taken and
-says so, and was still being read as current a month later. **The health panel is
-now the cheapest reading available**: it prints the count, the anchor assertion
-and the last run on one screen, needs no shell and no database client, and is
-the source this paragraph is quoting. Prefer it to arithmetic over migrations.
+says so, and was still being read as current a month later. **The admin page is
+the cheapest reading available**: it prints the count, the anchor assertion and
+the last run on one screen, needs no shell and no database client, and is the
+source this paragraph is quoting. Prefer it to arithmetic over migrations.
+
+**The quoted strings are the panel's 2026-09-25 wording, and it has changed.** The
+command-center rebuild moved that summary into the **Watched pages** tile, which
+now reads `12 pages` / `12 of 12 anchors asserted` / `No errors.` /
+`2 observed-practice sources, never flagged.` — the same four facts, and the
+count is still HASH-WATCHED pages. The section count beside the table reads
+`14 rows` because the table also lists the two Litmus rows; the two numbers
+disagree on purpose, and the tile's last line says why.
 
 **The ordering that mattered is now spent, and this is why it was insisted on.**
 Re-deriving the single-image entry BEFORE this row existed would have dropped
@@ -4155,20 +4185,30 @@ cost something. Same argument as `not_watched` and `unanchored`: a fact absent
 from the output is indistinguishable from a fact that did not apply, so it is
 stated rather than inferred.
 
-**IT IS DELIBERATELY NOT ON THE ADMIN HEALTH PANEL**, and that is the part worth
-carrying. The panel is rendered by the web service, so it would report the WEB
-process's reader — `on` — while the cron sat `off`. A green light for a process
-that is not the one doing the work is worse than no light, and the panel is
-described elsewhere in this file as "the cheapest reading available", which is
-exactly what would make the wrong answer authoritative. **The reader is a property
-of whichever process runs the detection, so only that process's own output may
-claim it.** Generalise it: any health signal about a scheduled job has to be
-emitted BY that job, not by a sibling that shares its code and not its
-environment.
+**The reader is a property of whichever process runs the detection, so only that
+process's own output may claim it** — and that is the part worth carrying.
+Generalise it: any health signal about a scheduled job has to be emitted BY that
+job, not by a sibling that shares its code and not its environment.
 
-The summary is logged and never persisted — `scripts/runDetection.js` prints it
-and exits — so the cron service's Railway logs are the only place this surfaces,
-and that is the correct and only place it can be true.
+**This paragraph used to say the reader was DELIBERATELY NOT ON THE ADMIN PAGE,
+and it is on it now — because the run log made the rule satisfiable, not because
+the rule changed.** The page is rendered by the web service, so computing the
+reader there would report the WEB process's `on` while the cron sat `off`: a
+green light for a process that is not doing the work, on the page this file calls
+the cheapest reading available, which is what would make the wrong answer
+authoritative. What the page shows instead is the `reader` column the SCHEDULED
+run wrote into its own `detection_runs` row — that job's output, carried, not a
+sibling's inference about it. Two neighbouring values it is careful never to
+promote: an `admin` run's reader (the web process, so it is shown labelled as the
+admin button's and never answers for the cron) and a `script` run's (the cron or a
+console session in either service, so it is shown with that warning). A test runs
+the tile's own code against both — see "The run log" below.
+
+The summary used to be logged and never persisted — `scripts/runDetection.js`
+printed it and exited — so the cron service's Railway logs were the only place
+this surfaced. It is persisted now, by the run itself, in its own row. The log
+line is still printed, and still the first place to look when the page and the
+log disagree.
 
 The field is named `reader`, **not `agent_reader`**: one letter from `agent_read`,
 a different KIND of value, and the two would sit adjacent in a JSON line somebody
@@ -4252,6 +4292,176 @@ first run establishes a baseline and answers nothing**. A model swap is a
 one-constant change (`GEMINI_MODEL`, or a new transport behind
 `extractSpecCall`), and every proposal already records the `model` and
 `promptVersion` that produced it so the two arms cannot be pooled by accident.
+
+## The run log, and the command center that reads it
+
+`detection_runs` (`scripts/migrateAddDetectionRuns.js`, dry run by default,
+`--commit` to write): one row per `runDetection` call — `trigger`, `watch_id`
+(NULL for a full run), `reader`, and, when the run returns, `finished_at`,
+`summary` and `results`. **Written 2026-09-26 and not run in production at the
+time of writing.** Rather than trust that clause to be revisited — two "not yet
+run" labels in this file were not, until 2026-09-25 — read the page: its Run
+history says "The run log is not set up" until the migration has run, and that
+sentence cannot go stale.
+
+**IT OPENS AT START AND CLOSES AT THE END, and the gap is the point.** The row is
+inserted after the watch list is scoped and before the first fetch, and closed
+with the summary when the run returns. A run that dies in between — a crash, a
+redeploy, an OOM — leaves a row with no `finished_at`, which is the only trace
+such a run can leave: `restartPolicyType: NEVER` means nothing retries it and
+nothing else records that it started. Written once at the end, a dead run and a
+run that never happened would look identical. The page calls an unclosed row
+older than 30 minutes "did not finish".
+
+**Recording never fails a run.** `openRun` / `closeRun` catch everything — a
+missing table warns once through `warnMissingSchema`, anything else is logged —
+and a run whose record could not be opened simply goes unrecorded (`runId: null`,
+which `scripts/runDetection.js` prints). The detection is the job; the log
+describes it. Same guard, same reasoning, as the agentic reader's.
+
+### The trigger says who ran it, and `script` refuses to guess
+
+| trigger | written by |
+| --- | --- |
+| `scheduled` | `scripts/runDetection.js --scheduled` — what `railway.cron.json` runs |
+| `script` | `scripts/runDetection.js` without the flag: the cron **or** a console session |
+| `admin` | `POST /admin/api/run-detection` — the Run button and each row's Check now, in the WEB process |
+| `unknown` | anything else, including no trigger at all: recorded, never trusted |
+
+`script` is not called the schedule because it cannot know: the cron service and
+a console session run the same command. `--scheduled` is the cron declaring
+itself, the way the sweep cron's `--commit` is something a hand-run does not pass.
+**If the cron's start command is ever set in the Railway dashboard instead of read
+from `railway.cron.json`, the flag stops arriving** — and the schedule check below
+says "ran, but not marked scheduled" rather than quietly relabelling the weekly
+run as a console one.
+
+Which PROCESS a trigger ran in is the fact that matters, because the reader is a
+property of the process's environment. `admin` runs in the web service — which is
+how the production test of the agentic reader passed while the cron sat `off`. A
+`script` row may be a console session in either service. Only a `scheduled` row
+speaks for the cron.
+
+### The schedule is a sibling's claim, so it is checked against the job's own rows
+
+`src/utils/cronSchedule.js` reads `deploy.cronSchedule` from `railway.cron.json`
+— a file about a different service, read by the web process, so a claim rather
+than a fact — and `assessSlot` checks the last slot against runs the job itself
+recorded, in a window from 5 minutes early to 60 late:
+
+| state | means |
+| --- | --- |
+| `ran` | a `scheduled` run started in the window |
+| `ran_unmarked` | a `script` or `unknown` run did — most likely the cron without `--scheduled` |
+| `pending` | still inside the window |
+| `missed` | the window closed with no run, **and the log existed before the slot** |
+| `unknown` | no log, or the log began after the slot's window closed: no evidence either way |
+
+**`missed` requires the log to predate the slot.** A log migrated on a Wednesday
+holds no record of Monday's run whether it happened or not, and calling that
+"missed" would report a fresh migration as a broken cron. An unavailable log is
+passed no window at all, so an unmigrated database answers `unknown`, never
+`missed`. Only the weekly form parses (`M H * * D`, one day-of-week 0–6);
+anything else is shown as written and makes no claim about any slot.
+
+### Three read states — and the tiles' runs are read ON THEIR OWN
+
+`getRecentRuns` answers not-migrated, migrated-and-empty, or a list, and rethrows
+anything but `42P01`: a broken table rendered as "no runs" is a false quiet.
+
+**`latest` is a separate read and must stay one.** The history list is the newest
+twenty rows. The status tiles make claims about SPECIFIC rows — the newest full
+run, the newest run of each trigger — and an afternoon of Check now or Save and
+check (each an `admin` row) pushes both out of the twenty. A tile picking its run
+out of the list then says "None yet" and "No record" about runs that exist.
+`getLatestRuns` reads them directly. Found by reading the tile code, not in the
+browser: the throwaway harness held four runs, which is exactly why it could not
+show it. `scripts/checkAdminConsole.js` now has a `busy` scenario with twenty-five
+checks for this reason.
+
+### The page
+
+`/admin` is the command center. Five status tiles — **Last full run**, **Next
+check**, **Needs you**, **Agent, scheduled run**, **Watched pages** — each marked
+only when something is wrong, with a border AND a word, never hue alone. Below
+them: the review queue (each flag previews the agent's stored proposal, with an
+unverified quote marked UNGROUNDED; the review form still never pre-fills one),
+the run history (one expandable row per run), the watched pages with a **Check
+now** per row, and the test page with Save / Save and check.
+
+Two tile decisions carry the rules above and are pinned by running the tile's own
+code (`console tiles:` in the suite: sliced from `admin.html` into a vm with the
+renderers stubbed — the technique the `app.html` selection-key and `settings.html`
+house-form tests already use, and like them it covers the decision, not the
+look):
+
+- **Agent, scheduled run** reads the `scheduled` row. A newer `admin` run's `on`
+  is shown, labelled as the admin button's, and never answers for the cron; a
+  `script` row is shown with a warning; a row that recorded no reader says so
+  rather than "Reads every confirmed change".
+- **Last full run** reads `latest.lastFull`, never the newest row: a one-page
+  check is a real run and stays in the history, and it is not the answer to "when
+  did the watch last run". A run that did not finish is named whatever came
+  after it.
+
+**What the browser found, and what reading the code found.** The passes found:
+the died run hidden behind a newer one-page check; the agent tile believing
+`script` rows; Check now reporting at the top of the page, off-screen from the row
+tapped; two-up tiles at 390px leaving 330px boxes with two lines in them; and the
+table at about 6,000px, then 4,179px, now 2,744px. Reading the code while fixing
+those found four more: the table was emptied BEFORE its fetch, so the browser
+clamped the scroll position for the length of the request; "Save and check"
+reported "Saved and checked" when the check had failed; the display-window trap
+above; and the null-reader sentence.
+
+### Measuring it: `scripts/checkAdminConsole.js`
+
+Renders the real page against a stubbed API in four scenarios (`trouble`,
+`healthy`, `busy`, `unmigrated`) at 390px and 1280px, and fails on a script
+error, an unexpected failed request, horizontal overflow, a tile or interaction
+check (a tile's row link lands on the row; Check now answers in its row without
+moving the page; a failed check says so in its row; Save and check does not claim
+a check that failed), or text below its contrast floor.
+
+```
+npm i --no-save playwright-core
+node scripts/checkAdminConsole.js [--all] [--shots=<dir>] [--font-cache=<dir>]
+```
+
+Three things about it that are the reusable part:
+
+- **The stub is a rig, so a suite test holds its KEYS to the real producers** —
+  the SQL column lists, and the objects `getDetectionHealth`, `getFlagForReview`,
+  `readSpecProposal` and `runDetection` build. Mutation-checked six ways. The
+  schedule is never restated: it comes from `cronSchedule`, the code the endpoint
+  uses.
+- **The contrast population is every rule that declares a colour**, not
+  `checkContrast`'s small-font-AND-colour set. The first run used that one and
+  reported a clean page while leaving out `.flag-bad`, `.flag-warn` and
+  `button.warn` — the words carrying this page's alarms, which take their size
+  from context. Widening it found the only failure: the run-row hover fill took
+  the amber "agent off" to **4.41:1**. The fill is an underline now.
+- **The pointer is page state.** That failure appeared only because a click had
+  left the pointer over a row, so the tool parks it in the empty right-hand gutter
+  before measuring; a number cannot depend on where a click landed. Hover states
+  are therefore UNMEASURED, and listed as such.
+
+**The reading, 2026-09-26, with the page's real font** (served through
+`--font-cache` because this sandbox's browser cannot reach Google Fonts; a
+fallback face changes every height and ratio, and the tool checks which face
+rendered and warns): every check passes; **30 of 44** colour-declaring rules
+measured, lowest **5.13:1** (`.flag-warn` "From a script run", `button.warn`
+"Dismiss"); `input[type=number]` exempt (rendered only disabled here, and WCAG
+1.4.3 exempts an inactive control); **14 unmeasured**, and `--all` names them —
+six hover and visited states, the approve preview and commit steps (`.summary`,
+`.diff-old`, `.diff-new`, `.diverge`: endpoints the stub does not serve), the
+empty spec-note field, the disabled number field, and two pseudo-elements (the
+placeholder, and the phone table's `::before` labels). At 390px the `trouble` page
+is 5,670px tall.
+
+It measures what four scenarios render and nothing else. Rhythm, repetition and
+hierarchy are still the device — and the stub has fourteen watch rows, not a
+real week's worth of flags.
 
 ## Vision & roadmap
 

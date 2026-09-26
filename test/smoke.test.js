@@ -18728,7 +18728,7 @@ function fakeDetectorPool(rows) {
 // Load a FRESH detector bound to a fake pool. specDetector and db/specWatch both
 // destructure getPool at require time, so the patch has to happen before either
 // is loaded — hence the cache eviction rather than a simple assignment.
-async function runDetectorWith({ rows, fetchImpl, detectionOpts, agentImpl }) {
+async function runDetectorWith({ rows, fetchImpl, detectionOpts, agentImpl, wrapQuery }) {
   const db = require('../src/db');
   const realGetPool = db.getPool;
   const realFetch = globalThis.fetch;
@@ -18736,6 +18736,12 @@ async function runDetectorWith({ rows, fetchImpl, detectionOpts, agentImpl }) {
   const detPath = require.resolve('../src/services/specDetector');
   const wlPath = require.resolve('../src/db/specWatch');
   const pool = fakeDetectorPool(rows);
+  // OPTIONAL, and only the run-log tests pass it. The shared fake answers any
+  // write it does not recognise with { rows: [] }, so for every other test the run
+  // log's INSERT returns no id and its UPDATE is never issued — the degraded path.
+  // A wrapper lets a test choose what that INSERT returns, or make it fail,
+  // without changing what the fake does for the tests that do not care.
+  if (wrapQuery) pool.query = wrapQuery(pool.query);
   db.getPool = () => pool;
   globalThis.fetch = fetchImpl;
   // THE AGENTIC READ IS PATCHED ON THE MODULE, NOT INJECTED THROUGH A PARAMETER.
@@ -19917,7 +19923,7 @@ test('runDetection calls normalize() DIRECTLY zero times — the guard, not the 
   // this file's own explanatory comments, and an unbounded slice runs past the
   // end of the function into module.exports. Both happened while writing this.
   const src = fs.readFileSync(require.resolve('../src/services/specDetector'), 'utf8');
-  const body = sliceBetween(src, 'async function runDetection({ watchId } = {})', '\nmodule.exports');
+  const body = sliceBetween(src, 'async function runDetection({ watchId, trigger } = {})', '\nmodule.exports');
   const masked = maskNonCode(body);
 
   const direct = [...masked.matchAll(/(?<![A-Za-z_.])normalize\(/g)];
@@ -20321,9 +20327,23 @@ test('detector: an observed_practice row is not fetched, hashed or compared', as
   assert.strictEqual(out.results[0].status, 'not_watched');
   assert.strictEqual(out.summary.not_watched, 1);
 
-  // No write of ANY kind — including last_checked_at, which would have the health
-  // page reporting "checked 2 minutes ago" about a page nobody requested.
-  assert.strictEqual(queries.filter((q) => !/^SELECT/i.test(q.sql)).length, 0);
+  // No write to the ROW of any kind — including last_checked_at, which would have
+  // the health page reporting "checked 2 minutes ago" about a page nobody
+  // requested.
+  //
+  // The one non-SELECT every run issues regardless of its rows is the run log's
+  // own record (detection_runs) — a fact about the RUN, not about this page. It is
+  // admitted by its exact target, not by loosening the pattern: this assertion
+  // still fails on any write to spec_watch_list, spec_review_queue or anything
+  // else. It used to read "zero non-SELECT queries"; that was right until runs
+  // started recording themselves.
+  const writes = queries.filter((q) => !/^SELECT/i.test(q.sql));
+  assert.ok(
+    // `every`, not `length > 0 &&`: zero writes is still a pass here. Whether a
+    // run records itself is the run-log tests' business, not this one's.
+    writes.every((q) => /^(INSERT INTO|UPDATE) detection_runs\b/.test(q.sql)),
+    `the only writes are the run log's own record — got: ${writes.map((q) => q.sql.slice(0, 48)).join(' | ')}`
+  );
 });
 
 test('detector: an observed_practice row can never produce a flag', async () => {
@@ -23156,8 +23176,10 @@ test('sweep cron: its own Railway service, not bolted onto the detector', () => 
   const detector = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'railway.cron.json'), 'utf8'));
   const sweep = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'railway.spec-sweep.cron.json'), 'utf8'));
   // A Railway service runs exactly one startCommand, so a second schedule needs a
-  // second service. The detector's is untouched.
-  assert.strictEqual(detector.deploy.startCommand, 'node scripts/runDetection.js');
+  // second service. The detector's runs runDetection.js and passes --scheduled,
+  // which only LABELS the run in the run log — the same pattern as the sweep's
+  // --commit below: the scheduled service declares itself, a console run does not.
+  assert.strictEqual(detector.deploy.startCommand, 'node scripts/runDetection.js --scheduled');
   assert.strictEqual(sweep.deploy.startCommand, 'node scripts/runSpecSweep.js --commit');
   assert.notStrictEqual(sweep.deploy.cronSchedule, detector.deploy.cronSchedule);
   assert.strictEqual(sweep.deploy.restartPolicyType, 'NEVER');
@@ -25417,4 +25439,578 @@ test('the reader reads ON with a key and OFF when the kill switch is set', async
     if (realFlag === undefined) delete process.env.SPEC_AGENT_ENABLED;
     else process.env.SPEC_AGENT_ENABLED = realFlag;
   }
+});
+
+// --- The detection run log --------------------------------------------------
+//
+// WHY IT EXISTS. A run's summary used to be logged and discarded, and the admin
+// page's "last run" was MAX(last_checked_at) — the last moment any single page
+// was touched, not a run. So the console could not say when checks happened,
+// what they found, or whether the agentic reader was on. That last one is the
+// case that bit: the cron had no GEMINI_API_KEY for weeks and nothing said so.
+//
+// The run records ITSELF, which is what makes it honest for a page served by a
+// different process to display it (CLAUDE.md: a health signal about a scheduled
+// job is emitted by that job, never computed by a sibling from its own env).
+
+// A wrapper choosing what the run log's two statements do. The shared fake answers
+// unknown writes with { rows: [] }; these tests need the real shapes and failures.
+function runLogWrap(mode) {
+  return (inner) => async (sql, params) => {
+    const out = await inner(sql, params); // recorded first, whatever happens next
+    const flat = String(sql).replace(/\s+/g, ' ');
+    if (/INSERT INTO detection_runs/.test(flat)) {
+      if (mode === 'missing') {
+        const e = new Error('relation "detection_runs" does not exist');
+        e.code = '42P01';
+        throw e;
+      }
+      if (mode === 'open-boom') throw new Error('connection reset');
+      return { rows: [{ id: 501 }] };
+    }
+    if (/UPDATE detection_runs/.test(flat) && mode === 'close-boom') throw new Error('connection reset');
+    return out;
+  };
+}
+
+const runLogRows = () => [historyRow({ id: 1, current_hash: null })];
+
+test('run log: opened BEFORE the first fetch, closed after with what the run reported', async () => {
+  // THE ORDER IS THE FEATURE. Opened first, a run that dies partway leaves a row
+  // with no finished_at, which the console shows as a run that did not finish.
+  // Opened at the end, the same crash leaves nothing — indistinguishable from a
+  // week in which nothing ran.
+  const seen = [];
+  let openedBeforeFetch = null;
+  const { out, queries } = await runDetectorWith({
+    rows: runLogRows(),
+    fetchImpl: async () => {
+      if (openedBeforeFetch === null) openedBeforeFetch = seen.some((s) => /INSERT INTO detection_runs/.test(s));
+      return { ok: true, status: 200, text: async () => HISTORY_PAGE };
+    },
+    detectionOpts: { trigger: 'admin' },
+    wrapQuery: (inner) => {
+      const wrapped = runLogWrap('ok')(inner);
+      return async (sql, params) => {
+        seen.push(String(sql));
+        return wrapped(sql, params);
+      };
+    },
+  });
+
+  assert.strictEqual(openedBeforeFetch, true, 'the record exists before any page is requested');
+  assert.strictEqual(out.ran, true);
+  assert.strictEqual(out.runId, 501, 'the id is returned so the console can find the run it just started');
+
+  const open = queries.find((q) => /INSERT INTO detection_runs/.test(q.sql));
+  // trigger, watch_id (null = a full run), reader. The reader column is exactly
+  // what the run reported — a fact the RUN stated about its own environment.
+  assert.deepStrictEqual(open.params, ['admin', null, out.summary.reader]);
+
+  const close = queries.find((q) => /UPDATE detection_runs/.test(q.sql));
+  assert.ok(close, 'the record is closed');
+  assert.deepStrictEqual(JSON.parse(close.params[0]), out.summary, 'summary stored exactly as returned');
+  assert.deepStrictEqual(JSON.parse(close.params[1]), out.results, 'results stored exactly as returned');
+  assert.strictEqual(close.params[2], 501);
+
+  // And it is the LAST write: nothing the run does lands after its record closes,
+  // so a closed record is a complete one.
+  const writes = queries.filter((q) => !/^SELECT/i.test(q.sql));
+  assert.match(writes[writes.length - 1].sql, /UPDATE detection_runs/);
+});
+
+test('run log: a missing table never fails the run — it just goes unrecorded', async () => {
+  // A deploy that lands before the migration must detect exactly as it always did.
+  const { out, queries } = await runDetectorWith({
+    rows: runLogRows(),
+    fetchImpl: okResponse(HISTORY_PAGE),
+    wrapQuery: runLogWrap('missing'),
+  });
+  assert.strictEqual(out.ran, true);
+  assert.strictEqual(out.results[0].status, 'baseline', 'the page was still read and baselined');
+  assert.strictEqual(out.runId, null);
+  assert.ok(
+    !queries.some((q) => /UPDATE detection_runs/.test(q.sql)),
+    'no id, so no UPDATE against a row that does not exist'
+  );
+});
+
+test('run log: ANY error opening or closing the record never fails the run', async () => {
+  // Not only 42P01. restartPolicyType: NEVER means a throw out of the weekly run is
+  // no detection until next Monday, so this deliberately swallows everything —
+  // unlike the user-credential reads, which rethrow and are right to.
+  const opened = await runDetectorWith({
+    rows: runLogRows(),
+    fetchImpl: okResponse(HISTORY_PAGE),
+    wrapQuery: runLogWrap('open-boom'),
+  });
+  assert.strictEqual(opened.out.ran, true);
+  assert.strictEqual(opened.out.results[0].status, 'baseline');
+  assert.strictEqual(opened.out.runId, null);
+
+  const closed = await runDetectorWith({
+    rows: runLogRows(),
+    fetchImpl: okResponse(HISTORY_PAGE),
+    wrapQuery: runLogWrap('close-boom'),
+  });
+  assert.strictEqual(closed.out.ran, true, 'a failed close does not undo a finished run');
+  assert.strictEqual(closed.out.results[0].status, 'baseline');
+  assert.strictEqual(closed.out.runId, 501, 'the record was opened, and stays visible as unfinished');
+});
+
+test('run log: a refused watchId opens no record', async () => {
+  // Scoping is checked BEFORE the record opens. A 400 for an unknown id is not a
+  // run, and a history row for it would be a run that examined nothing.
+  const { out, queries } = await runDetectorWith({
+    rows: runLogRows(),
+    fetchImpl: okResponse(HISTORY_PAGE),
+    detectionOpts: { watchId: '999', trigger: 'admin' },
+    wrapQuery: runLogWrap('ok'),
+  });
+  assert.strictEqual(out.reason, 'no-such-watch-row');
+  assert.ok(!queries.some((q) => /detection_runs/.test(q.sql)));
+});
+
+test('run log: the trigger is validated, and a scoped run records its entry', async () => {
+  const labelOf = async (detectionOpts) => {
+    const { queries } = await runDetectorWith({
+      rows: runLogRows(),
+      fetchImpl: okResponse(HISTORY_PAGE),
+      detectionOpts,
+      wrapQuery: runLogWrap('ok'),
+    });
+    return queries.find((q) => /INSERT INTO detection_runs/.test(q.sql)).params;
+  };
+  assert.strictEqual((await labelOf({ trigger: 'scheduled' }))[0], 'scheduled');
+  assert.strictEqual((await labelOf({ trigger: 'script' }))[0], 'script');
+  // A caller cannot write an arbitrary label into the history.
+  assert.strictEqual((await labelOf({ trigger: "'; DROP TABLE x;--" }))[0], 'unknown');
+  assert.strictEqual((await labelOf({}))[0], 'unknown', 'no trigger is recorded as unknown, not as a guess');
+  const scoped = await labelOf({ watchId: '1', trigger: 'admin' });
+  assert.deepStrictEqual(scoped.slice(0, 2), ['admin', '1']);
+});
+
+test('run log: the cron declares itself scheduled; the script never guesses', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'runDetection.js'), 'utf8');
+  assert.match(script, /const SCHEDULED = process\.argv\.includes\('--scheduled'\);/);
+  assert.match(script, /runDetection\(\{ trigger: SCHEDULED \? 'scheduled' : 'script' \}\)/);
+  // 'script' and never 'console': without the flag the run is the cron OR a
+  // console run, and claiming either would be a guess. If the Railway start
+  // command is ever set in the dashboard instead of read from the file, the flag
+  // stops arriving and the console says "not marked scheduled" — visible — rather
+  // than calling the weekly run a console run.
+  assert.ok(!/'console'/.test(script), 'no run is ever labelled console');
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'admin.js'), 'utf8');
+  assert.match(admin, /runDetection\(watchId != null \? \{ watchId, trigger: 'admin' \} : \{ trigger: 'admin' \}\)/);
+});
+
+// --- The schedule check -----------------------------------------------------
+
+test('cron schedule: only the weekly form parses; anything else is refused, not guessed', () => {
+  const c = require('../src/utils/cronSchedule');
+  assert.deepStrictEqual(c.parseWeekly('0 15 * * 1'), { minute: 0, hour: 15, dow: 1 });
+  // 7 is Sunday in some dialects and invalid in others.
+  for (const bad of ['0 15 * * 7', '*/5 * * * *', '0 15 1 * *', '0 15 * * 1-5', '60 15 * * 1', '', null]) {
+    assert.strictEqual(c.parseWeekly(bad), null, String(bad));
+  }
+  // And the repo's own schedule is the form it understands — if railway.cron.json
+  // ever moves off it, the console shows the raw expression and this fails here.
+  assert.strictEqual(c.readDetectorCron(), '0 15 * * 1');
+  assert.ok(c.parseWeekly(c.readDetectorCron()));
+});
+
+test('cron schedule: slot arithmetic, including the exact-slot boundary and a month edge', () => {
+  const c = require('../src/utils/cronSchedule');
+  const at = (s) => new Date(s);
+  const iso = (d) => d.toISOString().slice(0, 16);
+  const E = '0 15 * * 1';
+  // Friday: last is the Monday before, next the Monday after.
+  assert.strictEqual(iso(c.lastSlotAtOrBefore(E, at('2026-09-25T12:00:00Z'))), '2026-09-21T15:00');
+  assert.strictEqual(iso(c.nextSlotAfter(E, at('2026-09-25T12:00:00Z'))), '2026-09-28T15:00');
+  // Monday before the slot: today's is still next.
+  assert.strictEqual(iso(c.nextSlotAfter(E, at('2026-09-28T14:59:00Z'))), '2026-09-28T15:00');
+  // EXACTLY at the slot: it has happened, so it is the last and next is a week on.
+  assert.strictEqual(iso(c.lastSlotAtOrBefore(E, at('2026-09-28T15:00:00Z'))), '2026-09-28T15:00');
+  assert.strictEqual(iso(c.nextSlotAfter(E, at('2026-09-28T15:00:00Z'))), '2026-10-05T15:00');
+  // Across a month boundary.
+  assert.strictEqual(iso(c.lastSlotAtOrBefore(E, at('2026-10-04T23:00:00Z'))), '2026-09-28T15:00');
+});
+
+test('schedule check: ran / not marked / pending / missed — and unknown is never either', () => {
+  const c = require('../src/utils/cronSchedule');
+  const slot = new Date('2026-09-21T15:00:00Z');
+  const after = new Date('2026-09-25T12:00:00Z'); // days later: the window has closed
+  const run = (trigger, mins) => ({ id: 1, trigger, started_at: new Date(slot.getTime() + mins * 60000) });
+  const logFrom = new Date('2026-09-01T00:00:00Z');
+
+  assert.strictEqual(
+    c.assessSlot({ slot, runsInWindow: [run('scheduled', 2)], logStartedAt: logFrom, now: after }).state,
+    'ran'
+  );
+  // Probably the cron, but it did not declare itself — the start command is likely
+  // missing --scheduled. Kept apart from `ran` so that is visible.
+  assert.strictEqual(
+    c.assessSlot({ slot, runsInWindow: [run('script', 2)], logStartedAt: logFrom, now: after }).state,
+    'ran_unmarked'
+  );
+  // An admin button press near the slot is NOT the scheduled run.
+  assert.strictEqual(
+    c.assessSlot({ slot, runsInWindow: [run('admin', 2)], logStartedAt: logFrom, now: after }).state,
+    'missed'
+  );
+  assert.strictEqual(c.assessSlot({ slot, runsInWindow: [], logStartedAt: logFrom, now: after }).state, 'missed');
+  // Window still open: not yet missed.
+  assert.strictEqual(
+    c.assessSlot({ slot, runsInWindow: [], logStartedAt: logFrom, now: new Date(slot.getTime() + 10 * 60000) }).state,
+    'pending'
+  );
+
+  // THE CASE THAT MATTERS MOST: no evidence is not evidence of a miss. A log that
+  // did not exist yet at the slot, or no log at all, is `unknown` — never `missed`
+  // (which would be an alarm about nothing) and never `ran` (which would be a pass
+  // nobody earned).
+  const noLog = c.assessSlot({ slot, runsInWindow: [], logStartedAt: null, now: after });
+  assert.strictEqual(noLog.state, 'unknown');
+  const lateLog = c.assessSlot({ slot, runsInWindow: [], logStartedAt: new Date('2026-09-24T00:00:00Z'), now: after });
+  assert.strictEqual(lateLog.state, 'unknown');
+  assert.match(lateLog.reason, /did not exist yet/);
+  assert.strictEqual(c.assessSlot({ slot: null, runsInWindow: [], logStartedAt: logFrom, now: after }).state, 'unknown');
+});
+
+// --- The run log's read side --------------------------------------------------
+//
+// specWatch DESTRUCTURES getPool at require time, so the pool is patched BEFORE
+// the module loads (the patch-after-require trap this suite has hit more than
+// once — a later patch is invisible to it).
+async function withSpecWatchPool(pool, fn) {
+  const db = require('../src/db');
+  const real = db.getPool;
+  const wlPath = require.resolve('../src/db/specWatch');
+  db.getPool = () => pool;
+  delete require.cache[wlPath];
+  try {
+    return await fn(require(wlPath));
+  } finally {
+    db.getPool = real;
+    delete require.cache[wlPath];
+  }
+}
+
+const missingTable = () => {
+  const e = new Error('relation "detection_runs" does not exist');
+  e.code = '42P01';
+  return e;
+};
+
+test('run log reads: not migrated, empty and populated are three different answers', async () => {
+  const notMigrated = await withSpecWatchPool({ query: async () => { throw missingTable(); } }, (sw) =>
+    sw.getRecentRuns()
+  );
+  assert.deepStrictEqual(notMigrated, { available: false, reason: 'not-migrated', runs: [] });
+
+  const empty = await withSpecWatchPool({ query: async () => ({ rows: [] }) }, (sw) => sw.getRecentRuns());
+  assert.deepStrictEqual(empty, { available: true, runs: [] }, 'migrated and empty is NOT "not migrated"');
+
+  // Anything other than a missing table is rethrown: a broken table reported as
+  // "no runs" is the false quiet getReviewQueue refuses to produce.
+  await assert.rejects(
+    withSpecWatchPool({ query: async () => { throw new Error('connection reset'); } }, (sw) => sw.getRecentRuns()),
+    /connection reset/
+  );
+});
+
+test('run log reads: an unmigrated log never reports a scheduled slot as missed', async () => {
+  const overview = await withSpecWatchPool({ query: async () => { throw missingTable(); } }, (sw) =>
+    sw.getRunsOverview({ cron: '0 15 * * 1', now: new Date('2026-09-25T12:00:00Z') })
+  );
+  assert.strictEqual(overview.available, false);
+  assert.strictEqual(overview.schedule.parsed, true);
+  assert.strictEqual(overview.schedule.nextAt.toISOString().slice(0, 16), '2026-09-28T15:00');
+  assert.strictEqual(overview.schedule.lastSlot.state, 'unknown', 'no log is no evidence either way');
+  assert.strictEqual(overview.latest, null, 'no log, no latest runs — not an empty set of them');
+});
+
+test('run log reads: a recorded scheduled run satisfies its slot', async () => {
+  const slotRun = { id: 7, trigger: 'scheduled', started_at: new Date('2026-09-21T15:02:00Z'), finished_at: null };
+  const pool = {
+    query: async (sql) => {
+      const flat = String(sql).replace(/\s+/g, ' ');
+      if (/MIN\(started_at\)/.test(flat)) return { rows: [{ first: new Date('2026-09-01T00:00:00Z') }] };
+      if (/WHERE started_at BETWEEN/.test(flat)) return { rows: [slotRun] };
+      return { rows: [slotRun] };
+    },
+  };
+  const overview = await withSpecWatchPool(pool, (sw) =>
+    sw.getRunsOverview({ cron: '0 15 * * 1', now: new Date('2026-09-25T12:00:00Z') })
+  );
+  assert.strictEqual(overview.available, true);
+  assert.strictEqual(overview.schedule.lastSlot.state, 'ran');
+  assert.strictEqual(overview.schedule.lastSlot.run.id, 7);
+
+  // An unparseable schedule is shown raw, and makes no claim about any slot.
+  const raw = await withSpecWatchPool(pool, (sw) => sw.getRunsOverview({ cron: '*/5 * * * *' }));
+  assert.strictEqual(raw.schedule.parsed, false);
+  assert.strictEqual(raw.schedule.cron, '*/5 * * * *');
+  assert.strictEqual(raw.schedule.lastSlot, null);
+});
+
+// The status tiles make claims about SPECIFIC runs — the last full one, and the
+// newest of each trigger — so those are read on their own. Twenty "Check now"
+// taps fill the twenty-row history list with single-page checks; a tile picking
+// its run out of that list would then report "none yet" about runs that exist.
+test('run log reads: the tiles\' runs are read on their own, not picked out of the history list', async () => {
+  const check = (i) => ({ id: 100 + i, trigger: 'admin', watch_id: 12, reader: 'on',
+    started_at: new Date('2026-09-25T10:00:00Z'), finished_at: new Date('2026-09-25T10:00:05Z') });
+  const checks = Array.from({ length: 25 }, (_, i) => check(i));
+  const weekly = { id: 7, trigger: 'scheduled', watch_id: null, reader: 'off',
+    started_at: new Date('2026-09-21T15:02:00Z'), finished_at: new Date('2026-09-21T15:04:00Z') };
+  const pool = {
+    query: async (sql, params) => {
+      const flat = String(sql).replace(/\s+/g, ' ');
+      if (/WHERE watch_id IS NULL/.test(flat)) return { rows: [weekly] };
+      if (/DISTINCT ON \(trigger\)/.test(flat)) return { rows: [checks[0], weekly] };
+      if (/MIN\(started_at\)/.test(flat)) return { rows: [{ first: new Date('2026-09-01T00:00:00Z') }] };
+      if (/WHERE started_at BETWEEN/.test(flat)) return { rows: [weekly] };
+      if (/LIMIT \$1/.test(flat)) return { rows: checks.slice(0, params[0]) };
+      throw new Error('unexpected query: ' + flat);
+    },
+  };
+  const o = await withSpecWatchPool(pool, (sw) =>
+    sw.getRunsOverview({ limit: 20, cron: '0 15 * * 1', now: new Date('2026-09-25T12:00:00Z') })
+  );
+  assert.strictEqual(o.runs.length, 20);
+  assert.ok(o.runs.every((r) => r.watch_id === 12), 'the history list holds nothing but single-page checks');
+  assert.strictEqual(o.latest.lastFull.id, 7, 'the last full run is found anyway');
+  assert.strictEqual(o.latest.byTrigger.scheduled.id, 7, 'and so is the scheduled run');
+  assert.strictEqual(o.latest.byTrigger.admin.id, 100);
+
+  // Same failure rules as the list: a missing table is "not set up", anything
+  // else is rethrown rather than rendered as an empty log.
+  assert.strictEqual(await withSpecWatchPool({ query: async () => { throw missingTable(); } }, (sw) => sw.getLatestRuns()), null);
+  await assert.rejects(
+    withSpecWatchPool({ query: async () => { throw new Error('connection reset'); } }, (sw) => sw.getLatestRuns()),
+    /connection reset/
+  );
+});
+
+// A BEHAVIOURAL test of two console tiles, by the technique the app.html
+// selection-key and settings.html house-form tests already use: the functions
+// are sliced out of admin.html and run in a vm with the renderers stubbed to
+// plain objects, so what is asserted is the DECISION each tile makes — which run
+// it reads and what it calls it. Nothing here says what the page looks like;
+// that was a browser pass, and stays one.
+function adminTiles(runs) {
+  const vm = require('node:vm');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  const src = [
+    sliceBetween(html, 'const RUN_STALE_MIN', 'async function loadRuns()'),
+    sliceBetween(html, 'function tileLastRun()', 'function tileReview()'),
+    sliceBetween(html, 'function tileAgent()', 'function tileWatch()'),
+  ].join('\n');
+  const ctx = {
+    state: { runs, health: { lastRun: '2026-09-25T09:00:00Z', watch: [] } },
+    tile: (k, v, lines, tone) => ({ k, v, lines: lines.filter(Boolean), tone: tone || null }),
+    line: (parts) => ({ parts }),
+    el: (tag, props) => ({ text: (props && props.text) || '' }),
+    relTime: (iso) => 'rel:' + iso,
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src + '\n;globalThis.__tiles = { tileLastRun, tileAgent };', ctx);
+  const text = (l) => (typeof l === 'string' ? l : l.parts.map((p) => (typeof p === 'string' ? p : p.text)).join(''));
+  const run = (name) => { const t = ctx.__tiles[name](); return { ...t, text: t.lines.map(text).join(' | ') }; };
+  return { lastRun: () => run('tileLastRun'), agent: () => run('tileAgent') };
+}
+
+test('console tiles: the agent tile believes only the scheduled run about the scheduled run', () => {
+  const at = (iso) => new Date(iso).toISOString();
+  const admin = { id: 20, trigger: 'admin', watch_id: 12, reader: 'on', started_at: at('2026-09-25T10:00:00Z'), finished_at: at('2026-09-25T10:00:05Z') };
+  const scheduled = { id: 7, trigger: 'scheduled', watch_id: null, reader: 'off', started_at: at('2026-09-21T15:02:00Z'), finished_at: at('2026-09-21T15:04:00Z') };
+  const script = { id: 9, trigger: 'script', watch_id: null, reader: 'on', started_at: at('2026-09-22T09:00:00Z'), finished_at: at('2026-09-22T09:02:00Z') };
+  const log = (byTrigger, runs = [admin]) => ({ available: true, runs, latest: { lastFull: null, byTrigger } });
+
+  // The web process's newer ON does not speak for the cron. This is the false
+  // green the whole run log was built to make impossible.
+  let t = adminTiles(log({ admin, scheduled })).agent();
+  assert.strictEqual(t.v, 'Off');
+  assert.strictEqual(t.tone, 'bad');
+  assert.match(t.text, /Admin button runs: agent on\./, 'the admin reader is shown, labelled as the admin one');
+
+  // Found even when the history list holds nothing but admin checks.
+  assert.ok(!log({ admin, scheduled }).runs.some((r) => r.trigger === 'scheduled'));
+
+  // A script run is reported, and marked as maybe-not-the-cron.
+  t = adminTiles(log({ admin, script })).agent();
+  assert.strictEqual(t.v, 'On');
+  assert.strictEqual(t.tone, 'warn');
+  assert.match(t.text, /From a script run/);
+
+  // A run that recorded no reader is not a run that read.
+  t = adminTiles(log({ scheduled: { ...scheduled, reader: null } })).agent();
+  assert.strictEqual(t.v, 'Not recorded');
+  assert.strictEqual(t.tone, 'warn');
+  assert.doesNotMatch(t.text, /Reads every confirmed change/);
+
+  // Admin runs alone are no evidence about the schedule.
+  assert.strictEqual(adminTiles(log({ admin })).agent().v, 'No record');
+  // And no log is no evidence at all.
+  assert.strictEqual(adminTiles({ available: false, reason: 'not-migrated', runs: [] }).agent().v, 'Unknown');
+});
+
+test('console tiles: the last-full-run tile reads the full run, not the newest row', () => {
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+  const checks = Array.from({ length: 20 }, (_, i) => ({ id: 100 + i, trigger: 'admin', watch_id: 12, reader: 'on', started_at: iso(60000), finished_at: iso(55000) }));
+  const done = { id: 7, trigger: 'scheduled', watch_id: null, reader: 'on', started_at: iso(3 * 864e5), finished_at: iso(3 * 864e5 - 60000), summary: { total: 14, not_watched: 2, changed: 0 } };
+
+  // Twenty single-page checks in the list, and the full run still answers.
+  let t = adminTiles({ available: true, runs: checks, latest: { lastFull: done, byTrigger: {} } }).lastRun();
+  assert.strictEqual(t.k, 'Last full run');
+  assert.strictEqual(t.v, 'rel:' + done.finished_at);
+  assert.match(t.text, /12 checked · 0 changed/);
+
+  // A full run that opened its record and never closed it is named as such.
+  const died = { ...done, finished_at: null, started_at: iso(2 * 3600e3) };
+  t = adminTiles({ available: true, runs: checks, latest: { lastFull: died, byTrigger: {} } }).lastRun();
+  assert.strictEqual(t.v, 'Did not finish');
+  assert.strictEqual(t.tone, 'bad');
+
+  // Only checks, ever: said plainly rather than shown as a run.
+  assert.strictEqual(adminTiles({ available: true, runs: checks, latest: { lastFull: null, byTrigger: {} } }).lastRun().v, 'None yet');
+  // No log: the number is the last page touch, and the tile is titled for that.
+  assert.strictEqual(adminTiles({ available: false, reason: 'not-migrated', runs: [] }).lastRun().k, 'Last page check');
+});
+
+// scripts/checkAdminConsole.js renders admin.html against a STUB of the admin
+// API. A stub missing a key the page reads makes the page skip that path and the
+// check report success about it — CLAUDE.md's test-rig species (docSim omitted
+// startIndex). So the fixture is held to what the REAL code produces: the column
+// lists the SQL actually selects, for rows read straight from a table, and the
+// objects the real builders return, for the rest. A key added to a response
+// fails here until the fixture carries it.
+test('admin console check: every stubbed response carries exactly the keys the real code sends', async () => {
+  const { fixtures } = require('../scripts/checkAdminConsole');
+  const now = Date.parse('2026-09-26T17:00:00Z');
+  const fx = fixtures('trouble', now);
+  const keys = (o) => Object.keys(o).sort();
+  const colsOf = (sql) => {
+    const m = String(sql).replace(/\s+/g, ' ').match(/SELECT (?:DISTINCT ON \([^)]*\) )?(.+?) FROM/);
+    assert.ok(m, `a SELECT with a column list: ${sql}`);
+    return m[1].split(',').map((c) => c.trim().split('.').pop()).sort();
+  };
+
+  // Rows read straight from a table: exactly the columns the query selects.
+  const seen = [];
+  await withSpecWatchPool({ query: async (sql) => { seen.push(String(sql).replace(/\s+/g, ' ')); return { rows: [] }; } },
+    async (sw) => { await sw.getReviewQueue(); await sw.getRecentRuns(20); await sw.getLatestRuns(); });
+  const sqlFor = (re) => { const q = seen.find((s) => re.test(s)); assert.ok(q, `captured ${re}`); return q; };
+  const queueCols = colsOf(sqlFor(/FROM spec_review_queue/));
+  const listCols = colsOf(sqlFor(/FROM detection_runs ORDER BY started_at DESC, id DESC LIMIT \$1/));
+  const latestCols = colsOf(sqlFor(/DISTINCT ON \(trigger\)/));
+  assert.ok(queueCols.includes('agent_proposal'), 'the migrated tier, which is what production selects');
+  for (const r of fx.queue.reviewQueue) assert.deepStrictEqual(keys(r), queueCols, `queue row ${r.id}`);
+  for (const r of fx.runs.runs) assert.deepStrictEqual(keys(r), listCols, `history row ${r.id}`);
+  for (const r of [fx.runs.latest.lastFull, ...Object.values(fx.runs.latest.byTrigger)]) {
+    assert.deepStrictEqual(keys(r), latestCols, `latest row ${r.id}`);
+  }
+
+  // The overview itself, from the real getRunsOverview.
+  const overview = await withSpecWatchPool({ query: async () => ({ rows: [] }) }, (sw) =>
+    sw.getRunsOverview({ cron: '0 15 * * 1', now: new Date(now) }));
+  assert.deepStrictEqual(keys(fx.runs), keys({ success: true, ...overview }));
+  assert.deepStrictEqual(keys(fx.runs.schedule), keys(overview.schedule));
+  const unmigrated = await withSpecWatchPool({ query: async () => { throw missingTable(); } }, (sw) =>
+    sw.getRunsOverview({ cron: '0 15 * * 1', now: new Date(now) }));
+  assert.deepStrictEqual(keys(fixtures('unmigrated', now).runs), keys({ success: true, ...unmigrated }));
+
+  // Health: the objects getDetectionHealth builds, plus the route's two keys.
+  const rawWatch = { id: 1, display_name: 'x', source_url: 'https://x.example', is_test: false, last_checked_at: null,
+    current_hash: 'h', last_error: null, source_kind: 'platform_enforced', expected_content: 'a',
+    consecutive_failures: 0, consecutive_unconfirmed: 0, last_unconfirmed_reason: null };
+  const health = await withSpecWatchPool({
+    query: async (sql) => {
+      const q = String(sql);
+      if (/FROM spec_review_queue/.test(q)) return { rows: [] };
+      if (/MAX\(last_checked_at\)/.test(q)) return { rows: [{ last_run: null }] };
+      return { rows: [rawWatch] };
+    },
+  }, (sw) => sw.getDetectionHealth());
+  assert.deepStrictEqual(keys(fx.health), keys({ success: true, ...health, unconfirmedAlertAt: 3 }));
+  for (const w of fx.health.watch) assert.deepStrictEqual(keys(w), keys(health.watch[0]), `health row ${w.id}`);
+
+  // A detection run's report: the real runDetection's summary and result entry.
+  const { out } = await runDetectorWith({ rows: [historyRow({ id: 1 })], fetchImpl: okResponse(HISTORY_PAGE) });
+  for (const r of fx.runs.runs.filter((x) => x.summary)) {
+    assert.deepStrictEqual(keys(r.summary), keys(out.summary), `run ${r.id} summary`);
+    for (const e of r.results) assert.deepStrictEqual(keys(e), keys(out.results[0]), `run ${r.id} result ${e.watch_id}`);
+  }
+
+  // The flag form: getFlagForReview, over a pool shaped like its three reads.
+  const db = require('../src/db');
+  const realGetPool = db.getPool;
+  const reviewPath = require.resolve('../src/services/specReview');
+  try {
+    db.getPool = () => ({
+      query: async (sql) => {
+        const q = String(sql);
+        if (/JOIN spec_watch_list w/.test(q)) {
+          return { rows: [{ id: 41, watch_id: 2, source_url: 'https://x.example', old_hash: 'a', new_hash: 'b', status: 'pending',
+            is_test: false, detected_at: new Date(now), display_name: 'x', affected_fields: [{ asset: 'A', field: 'F' }] }] };
+        }
+        if (/SELECT agent_proposal/.test(q)) return { rows: [{ agent_proposal: null }] };
+        return { rows: [{ tenant_id: 't1', char_max: 45, spec_note: null }, { tenant_id: 't2', char_max: 45, spec_note: null }] };
+      },
+    });
+    delete require.cache[reviewPath];
+    const detail = await require(reviewPath).getFlagForReview(41);
+    const f = fx.flags[41].flag;
+    assert.deepStrictEqual(keys(f), keys(detail));
+    assert.deepStrictEqual(keys(f.fields[0]), keys(detail.fields[0]));
+    assert.deepStrictEqual(keys(f.fields[0].char_max_divergence), keys(detail.fields[0].char_max_divergence));
+  } finally {
+    db.getPool = realGetPool;
+    delete require.cache[reviewPath];
+  }
+
+  // The stored agentic read, both shapes the queue carries, from readSpecProposal.
+  const gem = require('../src/services/gemini.js');
+  const cfg = require('../src/config');
+  const realDetailed = gem.extractSpecValuesDetailed;
+  const realKey = cfg.GEMINI_API_KEY;
+  const agentPath = require.resolve('../src/services/specAgent');
+  try {
+    cfg.GEMINI_API_KEY = 'test-key-present';
+    db.getPool = () => ({ query: async () => ({ rows: [{ tenant_id: 't', char_max: 45 }] }) });
+    gem.extractSpecValuesDetailed = async () => ({ ok: true, truncated: false, error: null,
+      rows: [{ ref: 0, suggested_char_max: 40, snippet: 'Headline: 40 characters', candidates: [], confidence: 'high' }] });
+    delete require.cache[agentPath];
+    const agent = require(agentPath);
+    const args = { row: { affected_fields: [{ asset: 'A', field: 'Headline' }], change_count: 2 }, pageText: 'Headline: 40 characters', pageHash: 'h' };
+    const read = await agent.readSpecProposal({ ...args, budget: { max: 3, used: 0 } });
+    const skipped = await agent.readSpecProposal({ ...args, budget: { max: 1, used: 1 } });
+    assert.strictEqual(read.status, 'read');
+    assert.strictEqual(skipped.status, 'skipped');
+    const [real, test] = fx.queue.reviewQueue;
+    assert.deepStrictEqual(keys(real.agent_proposal), keys(read));
+    for (const p of real.agent_proposal.fields) assert.deepStrictEqual(keys(p), keys(read.fields[0]), `proposal field ${p.field}`);
+    assert.deepStrictEqual(keys(test.agent_proposal), keys(skipped));
+  } finally {
+    gem.extractSpecValuesDetailed = realDetailed;
+    cfg.GEMINI_API_KEY = realKey;
+    db.getPool = realGetPool;
+    delete require.cache[agentPath];
+  }
+});
+
+test('admin console check: out of the suite, and it measures with checkContrast\'s ratio, not a copy', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'checkAdminConsole.js'), 'utf8');
+  const pkg = require('../package.json');
+  assert.ok(!/checkAdminConsole/.test(pkg.scripts.test || ''), 'not wired into npm test — it needs a browser');
+  assert.match(src, /npm i --no-save playwright-core/, 'and says how to get one');
+  assert.ok(!/UPDATE |INSERT |DELETE /.test(src), 'no database at all');
+  // ONE ratio function. checkContrast's was wrong about polarity once and was
+  // fixed in place; a copy here would not have received that fix.
+  assert.match(src, /contrast\.RATIO_FN/);
+  assert.ok(!/0\.03928|0\.2126/.test(src), 'no second WCAG luminance implementation');
+  assert.strictEqual(typeof require('../scripts/checkContrast').RATIO_FN, 'function',
+    'checkContrast exports it, and requiring it does not run its main()');
 });

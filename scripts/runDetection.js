@@ -10,8 +10,19 @@
 // Requires DATABASE_URL. Run in the Railway console:
 //   node scripts/runDetection.js
 //
-// Never writes copy_fields — the detector only touches spec_watch_list and
-// spec_review_queue.
+// Never writes copy_fields — the detector only touches spec_watch_list,
+// spec_review_queue and detection_runs (its own run log).
+//
+// --scheduled LABELS THE RUN; it changes nothing about what the run does.
+// railway.cron.json passes it, so the weekly run records itself as 'scheduled' in
+// the run log. Without it the run is recorded as 'script' — which is the cron OR
+// a console run, and deliberately not claimed as either. That matters if the
+// Railway service's start command is ever set in the dashboard instead of read
+// from railway.cron.json: the flag would stop arriving, and the console would say
+// "ran but not marked scheduled" rather than silently calling the weekly run a
+// console run. Same pattern as the sweep cron's --commit, which a hand-run in the
+// console also does not pass.
+const SCHEDULED = process.argv.includes('--scheduled');
 
 const { runDetection } = require('../src/services/specDetector');
 const { getReviewQueue } = require('../src/db/specWatch');
@@ -22,13 +33,16 @@ async function main() {
     process.exit(1);
   }
 
-  const r = await runDetection();
+  const r = await runDetection({ trigger: SCHEDULED ? 'scheduled' : 'script' });
   if (!r.ran) {
     console.error('[run-detection] did not run:', r.reason || 'unknown');
     process.exit(1);
   }
 
   console.log('[run-detection] summary:', JSON.stringify(r.summary));
+  // null when the run log is not migrated yet, or its INSERT failed — the run
+  // itself stands either way.
+  console.log(`[run-detection] run log: ${r.runId != null ? `recorded as #${r.runId}` : 'NOT recorded (see warnings above)'}`);
   for (const x of r.results) {
     console.log(
       `  - ${x.is_test ? '[TEST] ' : ''}${x.display_name}: ${x.status}${x.error ? ` (${x.error})` : ''}`

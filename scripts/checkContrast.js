@@ -127,7 +127,7 @@ function targetClass(sel) {
   return m ? m[m.length - 1].slice(1) : null;
 }
 
-function loadBrowser() {
+function loadBrowser(tag = TAG, script = 'scripts/checkContrast.js') {
   const override = process.env.PW;
   for (const spec of [override, 'playwright-core', 'playwright',
     path.join(ROOT, 'node_modules/playwright-core')].filter(Boolean)) {
@@ -135,10 +135,10 @@ function loadBrowser() {
       return require(spec);
     } catch (_) { /* try the next */ }
   }
-  console.error(`${TAG} needs a browser driver, which is not a project dependency.`);
-  console.error(`${TAG} npm test stays browser-free on purpose — see the header.`);
-  console.error(`${TAG}   npm i --no-save playwright-core`);
-  console.error(`${TAG}   PW=/path/to/playwright-core node scripts/checkContrast.js`);
+  console.error(`${tag} needs a browser driver, which is not a project dependency.`);
+  console.error(`${tag} npm test stays browser-free on purpose — see the header.`);
+  console.error(`${tag}   npm i --no-save playwright-core`);
+  console.error(`${tag}   PW=/path/to/playwright-core node ${script}`);
   process.exit(1);
   return null;
 }
@@ -578,7 +578,14 @@ async function main() {
   process.exitCode = failures ? 1 : 0;
 }
 
-main().catch((err) => {
-  console.error(`${TAG} ${err.stack || err.message}`);
-  process.exit(1);
-});
+// Exported for scripts/checkAdminConsole.js, which measures admin.html the same
+// way. ONE ratio function, not two: the polarity fix above is exactly the kind of
+// correction a copy would not have received.
+module.exports = { RATIO_FN, floorFor, styleBlocks, smallTextSelectors, loadBrowser, chromePath };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`${TAG} ${err.stack || err.message}`);
+    process.exit(1);
+  });
+}

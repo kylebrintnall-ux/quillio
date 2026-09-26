@@ -56,7 +56,7 @@
 // scripts/migrateAddSourceKind.js (source_kind). All are tolerated absent.
 
 const crypto = require('crypto');
-const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
+const { getPool, isUndefinedColumn, isUndefinedTable, warnMissingSchema } = require('../db');
 const { getWatchList } = require('../db/specWatch');
 // The agentic read that runs on a confirmed change, before the hash advances.
 // One-directional: specAgent must never require this module back — it would close
@@ -521,13 +521,70 @@ async function bumpUnconfirmed(pool, row, reason) {
   return (res && res.rows && res.rows[0] && res.rows[0].consecutive_unconfirmed) || null;
 }
 
+// ─── The run log ────────────────────────────────────────────────────────────
+//
+// One detection_runs row per run (scripts/migrateAddDetectionRuns.js), written
+// BY THE RUN. Opened before the first fetch and closed after the last, so a run
+// that dies partway leaves a row with no finished_at — which the admin console
+// shows as a run that did not finish — instead of leaving nothing, which would
+// read exactly like a week in which no run happened.
+//
+// NEITHER WRITE MAY FAIL THE RUN. railway.cron.json sets restartPolicyType: NEVER,
+// so a throw out of the weekly run is not a retry, it is no detection until next
+// Monday. Every error is caught here and logged, including ones that are not a
+// missing table: that is the same guard readSpecProposal keeps, for the same
+// reason, and it deliberately differs from the user-credential reads in db.js,
+// which rethrow anything but 42P01/42703 because there throwing IS correct.
+
+// Who started it. Validated rather than stored raw, so a caller cannot write an
+// arbitrary label into the history. 'script' is scripts/runDetection.js WITHOUT
+// --scheduled: the cron or a console run, and deliberately not claimed as either.
+const RUN_TRIGGERS = new Set(['scheduled', 'script', 'admin']);
+function runTrigger(t) {
+  return RUN_TRIGGERS.has(t) ? t : 'unknown';
+}
+
+async function openRun(pool, { trigger, watchId, reader }) {
+  try {
+    const res = await pool.query(
+      'INSERT INTO detection_runs (trigger, watch_id, reader) VALUES ($1, $2, $3) RETURNING id',
+      [trigger, watchId, reader]
+    );
+    return (res && res.rows && res.rows[0] && res.rows[0].id) || null;
+  } catch (err) {
+    if (isUndefinedTable(err)) {
+      warnMissingSchema('detection_runs', 'scripts/migrateAddDetectionRuns.js');
+    } else {
+      console.error('[detector] could not open a run record (the run continues):', err.message);
+    }
+    return null;
+  }
+}
+
+// No id means the open failed or the table is absent; there is nothing to close,
+// and issuing an UPDATE against no row would only produce a second error.
+async function closeRun(pool, runId, summary, results) {
+  if (runId == null) return;
+  try {
+    await pool.query(
+      'UPDATE detection_runs SET finished_at = NOW(), summary = $1, results = $2 WHERE id = $3',
+      [JSON.stringify(summary), JSON.stringify(results), runId]
+    );
+  } catch (err) {
+    console.error(`[detector] could not close run record ${runId} (the run stands):`, err.message);
+  }
+}
+
 // Run the detector over every watch entry. Returns a per-URL summary so the
 // caller (the admin endpoint) can show what happened. Never throws for a single
 // bad URL — that row is reported as status:'error' and the run continues.
 // `watchId` SCOPES THE RUN TO ONE ENTRY, and exists for on-demand testing.
 //
-// The weekly cron calls runDetection() with no argument and is byte-identical to
-// what it always was — the scoping is opt-in and the default path is untouched.
+// SCOPING IS OPT-IN: with no watchId every entry is examined, exactly as before.
+// `trigger` is the other option and only labels the run-log record — the weekly
+// cron passes 'scheduled', the admin button 'admin'. It changes nothing about
+// what a run does. (This comment used to say the cron calls runDetection() with
+// no argument; since the run log it passes a trigger.)
 //
 // WHY IT WAS NEEDED. POST /admin/api/run-detection had no scope, so poking the
 // is_test row also fetched all ten real platform pages and could raise real
@@ -538,7 +595,7 @@ async function bumpUnconfirmed(pool, row, reason) {
 // return a summary of all zeros with ran:true — a clean bill for a run that
 // examined no pages, which is the shape of silent failure this file's own
 // `not_watched` status exists to avoid. It names the id it could not find.
-async function runDetection({ watchId } = {}) {
+async function runDetection({ watchId, trigger } = {}) {
   const pool = getPool();
   if (!pool) return { ran: false, reason: 'no-database', summary: {}, results: [] };
 
@@ -597,11 +654,14 @@ async function runDetection({ watchId } = {}) {
     // budget is — an operator can set the key and the next run says so with no
     // restart.
     //
-    // AND IT BELONGS HERE RATHER THAN ON THE ADMIN HEALTH PANEL. That panel is
-    // rendered by the web service, which has its own env, so it would report the
-    // WEB process's reader while the cron sat off — a green light for a process
-    // that is not the one doing the work. The reader is a property of whichever
-    // process runs the detection, so only that process's own output may claim it.
+    // AND IT IS DECIDED HERE, NEVER BY THE ADMIN PAGE. The page is rendered by
+    // the web service, which has its own env, so computing it there would report
+    // the WEB process's reader while the cron sat off — a green light for a
+    // process that is not the one doing the work. The reader is a property of
+    // whichever process runs the detection, so only that process's own output may
+    // claim it: this summary, and the `reader` column openRun writes to the run's
+    // own detection_runs row. The admin page shows what the SCHEDULED run
+    // recorded there, which is that output rather than an inference about it.
     reader: readerEnabled() ? 'on' : 'off',
     // THE AGENTIC READ'S OWN AXIS, and it is an axis rather than a status for the
     // same reason `unanchored` and `stuck` are: a row is `changed` AND its
@@ -630,6 +690,14 @@ async function runDetection({ watchId } = {}) {
   // Read per RUN, not at module load, so an operator can change the cap between
   // an on-demand run and the next one without restarting the process.
   const agentBudget = { max: envMaxExtractions(), used: 0 };
+
+  // AFTER scoping, so a refused watchId (the 400 above) opens no record, and
+  // BEFORE the first fetch, so a run that dies partway is still on the record.
+  const runId = await openRun(pool, {
+    trigger: runTrigger(trigger),
+    watchId: watchId != null ? String(watchId) : null,
+    reader: summary.reader,
+  });
 
   for (const row of rows) {
     let status;
@@ -921,7 +989,8 @@ async function runDetection({ watchId } = {}) {
     );
   }
 
-  return { ran: true, summary, results };
+  await closeRun(pool, runId, summary, results);
+  return { ran: true, runId, summary, results };
 }
 
 module.exports = {

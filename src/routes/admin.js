@@ -17,6 +17,7 @@ const {
   getTestPageContent,
   setTestPageContent,
   getDetectionHealth,
+  getRunsOverview,
 } = require('../db/specWatch');
 const { runDetection, UNCONFIRMED_STREAK_ALERT } = require('../services/specDetector');
 const { runSpecSweep } = require('../services/specSweep');
@@ -134,7 +135,10 @@ router.post('/admin/api/test-spec', requireAdmin, async (req, res) => {
 });
 
 // POST /admin/api/run-detection — run the detector and return a per-URL summary.
-// Manual trigger only (no cron). Admin-gated.
+// The admin page's Run button and its per-row Check now. Admin-gated. (The
+// weekly cron does NOT come through here — it runs scripts/runDetection.js
+// --scheduled directly. This used to read "Manual trigger only (no cron)",
+// which was true of this route and read as though no cron existed.)
 //
 // OPTIONAL `watchId` SCOPES THE RUN TO ONE ENTRY (body or query). Without it the
 // behaviour is exactly what it always was: every watch entry. With it, only that
@@ -158,7 +162,9 @@ router.post('/admin/api/run-detection', requireAdmin, async (req, res) => {
     watchId = String(raw).trim();
   }
   try {
-    const result = await runDetection(watchId != null ? { watchId } : {});
+    // Labelled 'admin' in the run log, so the console can tell a button press from
+    // the weekly schedule. It changes nothing about what the run does.
+    const result = await runDetection(watchId != null ? { watchId, trigger: 'admin' } : { trigger: 'admin' });
     if (result.reason === 'no-such-watch-row') {
       return res.status(400).json({ success: false, error: `no watch row with id ${result.watchId}` });
     }
@@ -166,6 +172,25 @@ router.post('/admin/api/run-detection', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[admin] run-detection failed:', err.message);
     res.status(500).json({ success: false, error: 'Detection run failed' });
+  }
+});
+
+// GET /admin/api/runs — the run log plus the schedule check, for the console's
+// run history and status tiles. Admin-gated like every JSON endpoint here (a
+// redirect is right for the page and wrong for a fetch — see requireAdminPage).
+//
+// `available: false` is a real answer, not an error: it means the run log has not
+// been migrated, and the page says so rather than rendering an empty history as
+// "nothing has run".
+router.get('/admin/api/runs', requireAdmin, async (req, res) => {
+  const n = Number(req.query.limit);
+  const limit = Number.isInteger(n) && n > 0 ? Math.min(n, 100) : 20;
+  try {
+    const overview = await getRunsOverview({ limit });
+    res.status(200).json({ success: true, ...overview });
+  } catch (err) {
+    console.error('[admin] runs failed:', err.message);
+    res.status(500).json({ success: false, error: 'Could not load the run log' });
   }
 });
 

@@ -6,7 +6,8 @@
 // is unset (reads return [] / null), matching the rest of db/. The detector's
 // hash/flag writes live in services/specDetector.js, not here.
 
-const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
+const { getPool, isUndefinedColumn, isUndefinedTable, warnMissingSchema } = require('../db');
+const cronSchedule = require('../utils/cronSchedule');
 
 const WATCH_ORDER = 'ORDER BY is_test, display_name NULLS LAST, id';
 const WATCH_BASE = `id, source_url, display_name, affected_fields, current_hash,
@@ -285,6 +286,135 @@ async function getWatchStateBySource() {
   return out;
 }
 
+// ─── The run log (read side) ────────────────────────────────────────────────
+//
+// What the admin console reads to answer "when did checks happen, what did they
+// find, and was the reader on". The rows are written by the detector itself
+// (runDetection's openRun/closeRun), which is what makes it honest to display
+// them on a page served by a different process.
+//
+// THREE STATES, AND THE PAGE MUST TELL THEM APART — the same discipline as the
+// agent_proposal column:
+//
+//   available: false, reason: 'not-migrated'   the table does not exist yet
+//   available: true,  runs: []                 it exists and nothing has run since
+//   available: true,  runs: [...]              runs recorded
+//
+// Collapsing the first into the second would say "no runs since the migration"
+// about a database that has no run log at all.
+//
+// A missing TABLE is tolerated; anything else is rethrown. This is a read for a
+// page, and a broken table reported as "no runs" is the same false quiet
+// getReviewQueue refuses to produce. (The detector's WRITES swallow everything,
+// but for a different reason: they must never fail a run.)
+
+const RUN_COLS = 'id, started_at, finished_at, trigger, watch_id, reader, summary, results';
+
+async function getRecentRuns(limit = 20) {
+  const p = getPool();
+  if (!p) return { available: false, reason: 'no-database', runs: [] };
+  try {
+    const res = await p.query(
+      `SELECT ${RUN_COLS} FROM detection_runs ORDER BY started_at DESC, id DESC LIMIT $1`,
+      [limit]
+    );
+    return { available: true, runs: (res && res.rows) || [] };
+  } catch (err) {
+    if (!isUndefinedTable(err)) throw err;
+    warnMissingSchema('detection_runs', 'scripts/migrateAddDetectionRuns.js');
+    return { available: false, reason: 'not-migrated', runs: [] };
+  }
+}
+
+// The runs the status tiles make claims about, read DIRECTLY rather than picked
+// out of the history list. "Last full run" and "the scheduled run's agent" are
+// claims about specific rows; twenty single-page checks in an afternoon (every
+// "Check now", every "Save and check") push both out of a twenty-row list, and a
+// tile reading that list would then say "none yet" about runs that exist. Found
+// reading the tile code, not in the browser: the stub log held four runs.
+//
+// `byTrigger` is the newest run of each trigger at ANY scope — the reader is a
+// property of the process that ran, not of how many pages it covered. `results`
+// is left out; no tile reads it.
+const LATEST_COLS = 'id, started_at, finished_at, trigger, watch_id, reader, summary';
+async function getLatestRuns() {
+  const p = getPool();
+  if (!p) return null;
+  try {
+    const full = await p.query(
+      `SELECT ${LATEST_COLS} FROM detection_runs WHERE watch_id IS NULL ORDER BY started_at DESC, id DESC LIMIT 1`
+    );
+    const each = await p.query(
+      `SELECT DISTINCT ON (trigger) ${LATEST_COLS} FROM detection_runs ORDER BY trigger, started_at DESC, id DESC`
+    );
+    const byTrigger = {};
+    for (const r of (each && each.rows) || []) byTrigger[r.trigger] = r;
+    return { lastFull: (full && full.rows && full.rows[0]) || null, byTrigger };
+  } catch (err) {
+    if (!isUndefinedTable(err)) throw err;
+    return null;
+  }
+}
+
+// The runs that could be the one a given scheduled slot produced, plus the
+// earliest run in the whole log — which is how assessSlot tells "missed" apart
+// from "the log did not exist yet".
+async function getSlotWindow(slot) {
+  const p = getPool();
+  if (!p || !slot) return { runsInWindow: [], logStartedAt: null };
+  const from = new Date(slot.getTime() - cronSchedule.SLOT_EARLY_MS);
+  const to = new Date(slot.getTime() + cronSchedule.SLOT_LATE_MS);
+  try {
+    const w = await p.query(
+      'SELECT id, started_at, finished_at, trigger FROM detection_runs WHERE started_at BETWEEN $1 AND $2 ORDER BY started_at',
+      [from, to]
+    );
+    const first = await p.query('SELECT MIN(started_at) AS first FROM detection_runs');
+    return {
+      runsInWindow: (w && w.rows) || [],
+      logStartedAt: (first && first.rows && first.rows[0] && first.rows[0].first) || null,
+    };
+  } catch (err) {
+    if (!isUndefinedTable(err)) throw err;
+    return { runsInWindow: [], logStartedAt: null };
+  }
+}
+
+// Everything the console's run panel and status bar need, in one read.
+// `cron` and `now` are injectable so the assembly can be tested without a clock
+// or a config file.
+async function getRunsOverview({ limit = 20, now = new Date(), cron } = {}) {
+  const log = await getRecentRuns(limit);
+  const expr = cron === undefined ? cronSchedule.readDetectorCron() : cron;
+  const lastSlotAt = expr ? cronSchedule.lastSlotAtOrBefore(expr, now) : null;
+  const nextAt = expr ? cronSchedule.nextSlotAfter(expr, now) : null;
+
+  let lastSlot = null;
+  if (lastSlotAt) {
+    // No log means no evidence either way: pass nothing, and assessSlot answers
+    // `pending` or `unknown` — never `missed` about a slot it has no record of.
+    const w = log.available ? await getSlotWindow(lastSlotAt) : { runsInWindow: [], logStartedAt: null };
+    lastSlot = {
+      at: lastSlotAt,
+      ...cronSchedule.assessSlot({ slot: lastSlotAt, runsInWindow: w.runsInWindow, logStartedAt: w.logStartedAt, now }),
+    };
+  }
+
+  return {
+    ...log,
+    latest: log.available ? await getLatestRuns() : null,
+    schedule: {
+      cron: expr,
+      // false with a non-null cron means the expression is not the weekly form
+      // this parser understands, and the page shows it raw.
+      parsed: !!lastSlotAt,
+      source: 'railway.cron.json',
+      nextAt,
+      lastSlot,
+    },
+  };
+}
+
 module.exports = {
   getWatchList,
   getReviewQueue,
@@ -299,4 +429,10 @@ module.exports = {
   // The tenant-facing subset of the same rows. Derived from getWatchList, like
   // getDetectionHealth, so the two views cannot describe different states.
   getWatchStateBySource,
+  // The run log's read side. getRunsOverview is what the admin console calls;
+  // the other three are exported for their own tests.
+  getRecentRuns,
+  getLatestRuns,
+  getSlotWindow,
+  getRunsOverview,
 };

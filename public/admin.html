@@ -939,6 +939,15 @@ async function suggest(flag, inputs, msg) {
   catch (e) { info.className='msg err'; info.textContent='Suggest failed: '+e.message; return; }
   const byKey = new Map();
   for (const s of (data.suggestions||[])) byKey.set(s.asset+' '+s.field, s);
+  // A READ THAT FAILED IS NOT A PAGE THAT STATES NOTHING. Saying "no confident
+  // value found on the page" under every field would be a claim about a page the
+  // agent never managed to read, so it says the read failed, and why.
+  if (data.readError) {
+    for (const r of inputs) r.hint.textContent = '';
+    info.className = 'msg err';
+    info.textContent = 'The agent could not read the page: ' + data.readError + '. Check the page yourself and enter values manually.';
+    return;
+  }
   let filled = 0;
   for (const r of inputs) {
     const s = byKey.get(r.fld.asset+' '+r.fld.field);

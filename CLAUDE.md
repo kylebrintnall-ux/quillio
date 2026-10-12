@@ -1284,10 +1284,10 @@ npm test                          # node --test → test/smoke.test.js
 
 **There is a test suite.** `test/smoke.test.js` runs in about ten seconds with no
 credentials and no network, and exercises wiring, parsing, rendering, and
-regression guards. **As of this commit it is 26,016 lines and 861 tests** —
-measured on **Node 22.22.2** with `node --test test/smoke.test.js`, on the commit
-that adds the detection run log and the admin command center (`npm test` read 873
-on the same tree: the 12 replay tests, exactly as below), and written as a reading
+regression guards. **As of this commit it is 26,122 lines and 864 tests** —
+measured on **Node 22.22.0** with `node --test test/smoke.test.js`, on the commit
+that makes a failed spec read say why (`npm test` read 876 on the same tree: the
+12 replay tests, exactly as below), and written as a reading
 taken on a date rather than as a standing figure, because the previous version of
 this sentence said 635 and was wrong by 114 tests and about 3,900 lines.
 
@@ -4066,10 +4066,18 @@ to propose on — and recording that as `[]` would report **a gate problem as a 
 fact**. Branch on `status`; never infer from `fields`.
 
 `extractSpecValues` could not express that distinction: it returns `[]` on a model
-failure AND on a page that states nothing. Harmless for `getSuggestions`, which
-degrades to manual entry either way, and a FALSE RECORD here — so
+failure AND on a page that states nothing — a FALSE RECORD here — so
 `extractSpecValuesDetailed` returns `{ ok, rows, error, truncated }` and
 `extractSpecValues` is a thin wrapper whose own return is byte-identical.
+
+**This paragraph used to call the collapse "harmless for `getSuggestions`, which
+degrades to manual entry either way". It was not.** Through the wrapper, a failed
+read and a reply with no values are the same `[]`, and the admin form rendered
+both as "no confident value found on the page" under every field — a claim about
+a page nobody had read, whenever the read had really failed. Flag #17 showed that
+sentence under all seven fields on 2026-10-04, and nothing can now say which it
+was. `getSuggestions` uses the detailed form now, and the wrapper has no caller in
+`src/`; see "THE FIRST PRODUCTION READS" below.
 
 ### THE CITATION IS VERIFIED BEFORE IT IS STORED, AND A MISS IS DEMOTED, NOT DROPPED
 
@@ -4275,6 +4283,67 @@ surfaced it was reading a diffstat on the way to a merge. A test now asserts the
 file contains no literal NUL — the byte check is the half nothing else can see,
 because a literal NUL and `\u0000` are indistinguishable once parsed.
 
+### THE FIRST PRODUCTION READS, and a failed read now says WHY
+
+**2026-09-28 was the first scheduled run after the cron got its key, and it
+raised three real flags with proposals stored on them.** That is the evidence the
+cron's reader was on: a reader that is off stores NULL, and these carry `read`
+and `failed` records. The run log did not exist yet, so the Agent tile could not
+report it; the flags did.
+
+| flag | page | the agent's read |
+| --- | --- | --- |
+| #19 | Meta – image | read: 2 of 2 fields proposed, both EQUAL to the stored value (27, 150) |
+| #18 | Meta – carousel | read: 7 of 7 fields proposed; the three on the card (Card 1–3 Headline) equal the stored 20 |
+| #17 | Google – responsive search | **failed**: "model response did not parse as a JSON array" |
+
+**The Meta pair is the common case, and it reads as alarming.** The detector
+hashes a page's TEXT, so an edit anywhere on it flags; both Meta format pages
+flagged within seconds of each other, which looks like a site-wide edit on Meta's
+side. The agent's job is to say whether the edit touched the stored limits, and on
+every field that was displayed it said no, quoting `Headline: 27 characters` and
+`Primary Text: 50-150 characters` verbatim. Every field still showed CHECK lines
+(`first_change_since_baseline`, `multiple_candidates` for a range,
+`conditional_limit` from nearby numbers) — over-inclusive by design, and noise
+here. Both left the queue on 2026-10-04; if they were dismissed rather than
+approved, `agentProposalReport` will not score them — it scores APPROVED flags
+only, and a dismissal leaves no committed value to compare against.
+
+**AND THE CARD SHOWS THE FIRST THREE, NOT THE THREE THAT MATTER.**
+`agentCardPreview` previews fields in stored order, so a proposal that differs
+from the stored value can sit behind "+4 more" on a card somebody dismisses at a
+glance. Five of the nine Meta proposals were on the cards; the other four are
+stored on #18. Nothing says one of them differs, and the card could not have said
+so either. Not fixed here: the card should lead with a proposal that differs from
+the stored value, or with an UNGROUNDED one.
+
+**#17 failed at detection, and nothing recorded could say why.** `callGemini`
+kept `parts[0].text` and dropped the rest of the reply, so a reply cut off at
+`maxOutputTokens` (it still arrives as text) and a malformed one were the same
+string, and no sample was logged. The "Suggest values" re-read six days later came
+back empty for all seven fields — **which is NOT a second recorded failure**: it
+went through the wrapper that returns `[]` for a failed read and for a reply with
+no values alike. Either way the agent produced nothing for a page that states
+these limits, twice.
+
+Now: `callGemini(body, meta)` fills an opt-in `meta` with `finishReason`,
+`usageMetadata` and the text-part count (the other callers pass nothing and are
+unchanged), and `specParseFailure` turns a failed parse into words first and
+figures after — e.g. "its answer was cut off at the length limit (…; finish
+MAX_TOKENS; 412 answer + 1636 thinking tokens, cap 2048; …)" — with a bounded
+head/tail sample logged through `sampleForLog`. The reason reaches the card on the
+next failed detection read, and the form on the next "Suggest values".
+
+**The leading hypothesis is NOT a finding.** `SPEC_EXTRACT_MAX_OUTPUT` is 2,048,
+and if `gemini-3.5-flash` thinks by default, as recent Flash models do, the
+thinking is spent from the same cap — seven fields on a number-dense help page,
+with an instruction to list EVERY candidate number, could leave too little for the
+answer. RECITATION (the prompt demands verbatim quotes of a Google page) and a
+reply split across parts are the alternatives, and the new reason distinguishes
+all three. **Do not raise the cap on the hypothesis**: if it is RECITATION, a
+bigger cap changes nothing and the change would read as a fix. The next failed
+read — at detection, or from "Suggest values" on any flag — answers it.
+
 ### WHAT SHADOW MODE IS AND IS NOT MEASURING RIGHT NOW
 
 **The extraction runs on Gemini Flash (`config.GEMINI_MODEL`), not on Claude.**
@@ -4298,11 +4367,11 @@ one-constant change (`GEMINI_MODEL`, or a new transport behind
 `detection_runs` (`scripts/migrateAddDetectionRuns.js`, dry run by default,
 `--commit` to write): one row per `runDetection` call — `trigger`, `watch_id`
 (NULL for a full run), `reader`, and, when the run returns, `finished_at`,
-`summary` and `results`. **Written 2026-09-26 and not run in production at the
-time of writing.** Rather than trust that clause to be revisited — two "not yet
-run" labels in this file were not, until 2026-09-25 — read the page: its Run
-history says "The run log is not set up" until the migration has run, and that
-sentence cannot go stale.
+`summary` and `results`. **It HAS run in production (2026-10-04, `--commit`)**:
+eight columns as designed, zero rows, and the page's Run history then read "No
+runs recorded since the run log was set up" — the empty-but-migrated state,
+rendering for real. The page is still the place to check, because that sentence
+cannot go stale and this one can.
 
 **IT OPENS AT START AND CLOSES AT THE END, and the gap is the point.** The row is
 inserted after the watch list is scoped and before the first fetch, and closed

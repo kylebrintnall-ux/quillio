@@ -760,7 +760,14 @@ function classifyGeminiStatus(httpStatus, bodyText) {
   return 'unknown';
 }
 
-async function callGemini(body) {
+// `meta`, when a caller passes an object, also receives HOW the reply ended:
+// finishReason, the token counts, and how many parts it came in. Opt-in, because
+// every other caller wants the text and nothing else. A caller that PARSES the
+// text needs it: a reply cut off at maxOutputTokens still arrives as text, so the
+// only symptom left is "did not parse". That is all the spec extractor could say
+// when it failed on Google's responsive-search page (flag #17, 2026-09-28), and
+// nothing recorded could tell a truncation from a malformed answer.
+async function callGemini(body, meta) {
   if (!config.GEMINI_API_KEY) {
     throw geminiError('GEMINI_API_KEY is not set.', 'unconfigured');
   }
@@ -801,6 +808,15 @@ async function callGemini(body) {
   }
 
   const data = await res.json();
+  if (meta && typeof meta === 'object') {
+    const cand = data?.candidates?.[0];
+    const parts = cand?.content?.parts || [];
+    meta.finishReason = cand?.finishReason || null;
+    meta.usage = data?.usageMetadata || null;
+    // Only parts[0] is read below. More than one text part would mean the rest
+    // of the answer was dropped, which reads exactly like a truncation.
+    meta.textPartCount = parts.filter((p) => p && typeof p.text === 'string').length;
+  }
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
     throw geminiError('Gemini returned no text. Raw: ' + JSON.stringify(data), 'empty', 200);
@@ -3509,6 +3525,33 @@ async function reviewVariationStack({ assetType, fieldName, charMax, fieldType, 
 // field carries a numeric `ref` (its index) that the model echoes back, so the
 // caller maps suggestions to the exact (asset,field) even when field names repeat.
 const SPEC_EXTRACT_MAX = 12000; // page-text cap protecting the context window
+// The REPLY's cap. On a thinking model the thinking tokens are spent from it too,
+// so a long, number-dense page can leave too little for the answer itself.
+const SPEC_EXTRACT_MAX_OUTPUT = 2048;
+
+// Why a reply that arrived did not parse, in words first and figures after. The
+// words are what the admin form shows; the figures are what settles a diagnosis:
+// a reply cut off at the cap (MAX_TOKENS, and how much went on thinking), one
+// Google stopped for quoting a page too closely (RECITATION), or one that ended
+// normally and was simply the wrong shape.
+function specParseFailure(meta, text) {
+  const m = meta || {};
+  const finish = m.finishReason || 'unknown';
+  const why = finish === 'MAX_TOKENS' ? 'its answer was cut off at the length limit'
+    : finish === 'RECITATION' ? 'Google stopped the answer for quoting the page too closely'
+    : finish === 'SAFETY' ? 'a safety filter stopped the answer'
+    : (m.textPartCount || 0) > 1 ? 'the answer came in several parts and only the first was read'
+    : 'its answer was not in the expected format';
+  const u = m.usage || {};
+  const facts = ['finish ' + finish];
+  if (u.candidatesTokenCount != null || u.thoughtsTokenCount != null) {
+    facts.push(`${u.candidatesTokenCount != null ? u.candidatesTokenCount : '?'} answer + `
+      + `${u.thoughtsTokenCount != null ? u.thoughtsTokenCount : 0} thinking tokens, cap ${SPEC_EXTRACT_MAX_OUTPUT}`);
+  }
+  if ((m.textPartCount || 0) > 1) facts.push(m.textPartCount + ' text parts');
+  facts.push(String(text || '').length + ' chars');
+  return `${why} (model response did not parse as a JSON array; ${facts.join('; ')})`;
+}
 
 // BUMP THIS WHEN THE PROMPT BELOW CHANGES. services/specAgent.js stores it beside
 // every persisted proposal, because shadow mode's question is comparative — "does
@@ -3520,12 +3563,19 @@ const SPEC_EXTRACT_PROMPT_VERSION = 2;
 // THE DETAILED FORM, and the reason it exists is a distinction extractSpecValues
 // cannot make. That function returns [] on a model failure AND [] when the page
 // genuinely states no limit for any requested field — one value for two outcomes.
-// That is harmless for getSuggestions, which degrades to manual entry either way,
-// and is a false record for services/specAgent.js, which PERSISTS the result:
+// That is a false record for services/specAgent.js, which PERSISTS the result:
 // storing `fields: []` for a call that never reached the model would claim the
 // page was read and stated nothing. So this returns the outcome as well as the
 // rows, and extractSpecValues below is a thin wrapper over it whose return value
 // is byte-identical to what it always was.
+//
+// THIS COMMENT USED TO CALL THE COLLAPSE "harmless for getSuggestions, which
+// degrades to manual entry either way". It was not: an empty re-read told the
+// admin form "no confident value found on the page" under every field (flag #17,
+// 2026-10-04), and through the wrapper a failed read and a reply with no values
+// are the same [], so that sentence may describe a page nobody read.
+// getSuggestions uses this detailed form now too, so the wrapper has no caller in
+// src/ and is kept only because it is exported.
 //
 // `truncated` reports the SPEC_EXTRACT_MAX cut, which is a different cap from the
 // per-run extraction budget specAgent enforces. Both are called "capped" in
@@ -3603,15 +3653,17 @@ async function extractSpecCall(text, list) {
   ].join('\n');
 
   let parsed = null;
+  let out = '';
+  const meta = {};
   try {
-    const out = await callGemini({
+    out = await callGemini({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 2048,
+        maxOutputTokens: SPEC_EXTRACT_MAX_OUTPUT,
         responseMimeType: 'application/json',
       },
-    });
+    }, meta);
     parsed = extractJsonArray(out);
   } catch (err) {
     console.error('[gemini] extractSpecValues failed:', err.message);
@@ -3619,8 +3671,13 @@ async function extractSpecCall(text, list) {
   }
   // A response that arrived but did not parse is a FAILURE, not an empty page.
   // Same distinction as the catch above, and the one extractSpecValues collapses.
+  // It says WHY, from how the reply ended, and logs a bounded sample — the first
+  // failure on record (flag #17) said only "did not parse", and nothing kept the
+  // reply.
   if (!Array.isArray(parsed)) {
-    return { ok: false, rows: [], error: 'model response did not parse as a JSON array' };
+    const error = specParseFailure(meta, out);
+    console.warn(`[gemini] extractSpecValues: ${error} raw=${JSON.stringify(sampleForLog(out))}`);
+    return { ok: false, rows: [], error };
   }
 
   // Sanitize each row to the expected shape; a positive integer within bounds or null.
@@ -3816,9 +3873,10 @@ module.exports = {
   // NAMES from a supplied vocabulary. Never returns a limit and is never given
   // one — see the header above it.
   parseSpecQuestion,
-  // The detailed form, for services/specAgent.js: distinguishes a model failure
-  // from a page that stated nothing. extractSpecValues cannot, and specAgent
-  // PERSISTS the difference.
+  // The detailed form, for services/specAgent.js and specReview.getSuggestions:
+  // distinguishes a model failure from a page that stated nothing.
+  // extractSpecValues cannot — specAgent PERSISTS the difference, and the admin
+  // form must not describe a page it failed to read.
   extractSpecValuesDetailed,
   // Stored on every persisted proposal — see the constant's own comment.
   SPEC_EXTRACT_PROMPT_VERSION,

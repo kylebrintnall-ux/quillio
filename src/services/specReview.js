@@ -23,7 +23,7 @@
 const { getPool, isUndefinedColumn, warnMissingSchema } = require('../db');
 const { currentFieldValues } = require('../db/specWatch');
 const { fetchText, normalize } = require('./specDetector');
-const { extractSpecValues } = require('./gemini');
+const { extractSpecValuesDetailed } = require('./gemini');
 
 // A refusal this file raises on purpose, as opposed to anything Postgres or the
 // driver throws. commitReview's catch surfaces a refusal's own message to the
@@ -645,7 +645,9 @@ async function commitReview(flagId, edits, changedBy) {
 // page. Re-fetches source_url, normalizes it, and asks Gemini for the limit each
 // field's page states -- returning a per-field suggestion + supporting snippet.
 // SUGGESTION ONLY: this never writes anything. A test flag returns no suggestions
-// (it can't be approved); a fetch/model failure degrades to empty (manual entry).
+// (it can't be approved). A fetch failure returns none and a `note`; a failed
+// model read returns none and a `readError` saying why — manual entry either way,
+// but the form can tell both apart from a page that states nothing.
 // Suggestions map back to fields by `ref` (index), so repeated field names across
 // assets can't cross-wire.
 async function getSuggestions(flagId) {
@@ -671,7 +673,15 @@ async function getSuggestions(flagId) {
     return { ok: true, suggestions: [], note: 'could not fetch page: ' + err.message };
   }
 
-  const raw = await extractSpecValues({ pageText, fields });
+  // THE DETAILED FORM, so a failed read can say so. This used the wrapper that
+  // returns [] for a failure AND for a page stating nothing, which gemini.js
+  // called harmless here "because it degrades to manual entry either way". It was
+  // not harmless: on 2026-10-04 the re-read of flag #17 came back empty and the
+  // form said "no confident value found on the page" under every field. Through
+  // the wrapper that is either a reply with no values or a read that failed, and
+  // the second would make the sentence a claim about a page nobody read.
+  const out = await extractSpecValuesDetailed({ pageText, fields });
+  const raw = out.ok ? out.rows : [];
   const byRef = new Map();
   for (const s of raw) byRef.set(s.ref, s);
 
@@ -686,7 +696,7 @@ async function getSuggestions(flagId) {
       confidence: s.confidence || 'low',
     };
   });
-  return { ok: true, suggestions };
+  return out.ok ? { ok: true, suggestions } : { ok: true, suggestions, readError: out.error };
 }
 
 // Dismiss a flag (false positive / nothing real changed). Touches ONLY the queue

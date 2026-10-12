@@ -26014,3 +26014,109 @@ test('admin console check: out of the suite, and it measures with checkContrast\
   assert.strictEqual(typeof require('../scripts/checkContrast').RATIO_FN, 'function',
     'checkContrast exports it, and requiring it does not run its main()');
 });
+
+// --- A failed spec read says WHY -------------------------------------------
+//
+// The agent failed on Google's responsive-search page (flag #17, 2026-09-28) and
+// all it could record was "model response did not parse as a JSON array"; the
+// "Suggest values" re-read on 2026-10-04 came back empty through a wrapper that
+// cannot tell a failure from a reply with no values. callGemini kept only the
+// reply's text, so a reply cut off at the token cap and one in the wrong shape
+// were indistinguishable. These drive the REAL extractor through callGemini with
+// a stubbed transport, which is the wire production uses.
+
+async function specReadWith(reply) {
+  const gem = require('../src/services/gemini.js');
+  const cfg = require('../src/config');
+  const hadKey = cfg.GEMINI_API_KEY, realFetch = global.fetch, realWarn = console.warn;
+  const warned = [];
+  cfg.GEMINI_API_KEY = 'test-key';
+  global.fetch = async () => ({ ok: true, json: async () => reply });
+  console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    const out = await gem.extractSpecValuesDetailed({
+      pageText: 'Headlines: 30 characters. Descriptions: 90 characters.',
+      fields: [{ asset: 'Google Responsive Search Ad', field: 'Headline 1', current_char_max: '30' }],
+    });
+    return { out, warned };
+  } finally {
+    global.fetch = realFetch;
+    cfg.GEMINI_API_KEY = hadKey;
+    console.warn = realWarn;
+  }
+}
+const geminiReply = (parts, finishReason, usage) => ({
+  candidates: [{ content: { parts }, finishReason }],
+  usageMetadata: usage,
+});
+
+test('a spec read that does not parse says why — cut off, stopped, split or the wrong shape', async () => {
+  // Cut off at the cap, with the thinking that spent it — the leading hypothesis
+  // for flag #17, and the one case that must name both numbers.
+  let { out, warned } = await specReadWith(geminiReply([{ text: '[{"ref":0,"suggested_char_max":30,"snip' }],
+    'MAX_TOKENS', { candidatesTokenCount: 412, thoughtsTokenCount: 1636 }));
+  assert.strictEqual(out.ok, false);
+  assert.deepStrictEqual(out.rows, []);
+  assert.match(out.error, /^its answer was cut off at the length limit/);
+  assert.match(out.error, /finish MAX_TOKENS; 412 answer \+ 1636 thinking tokens, cap 2048/);
+  assert.match(out.error, /did not parse as a JSON array/, 'the old phrase survives inside the new one');
+  // And the reply itself is logged, bounded, so the next one can be read.
+  assert.ok(warned.some((w) => /raw="\[\{\\"ref\\":0/.test(w)), 'a sample of the reply is logged');
+
+  ({ out } = await specReadWith(geminiReply([{ text: '[{"ref":0, "snippet":"Head' }], 'RECITATION', {})));
+  assert.match(out.error, /^Google stopped the answer for quoting the page too closely/);
+
+  ({ out } = await specReadWith(geminiReply([{ text: '[{"ref":0,' }, { text: '"x":1}]' }], 'STOP', {})));
+  assert.match(out.error, /^the answer came in several parts and only the first was read/);
+  assert.match(out.error, /2 text parts/);
+
+  ({ out } = await specReadWith(geminiReply([{ text: 'Sorry, I cannot help with that.' }], 'STOP', {})));
+  assert.match(out.error, /^its answer was not in the expected format \(model response did not parse as a JSON array; finish STOP; 31 chars\)$/);
+
+  // The control: a reply that parses is unaffected.
+  ({ out } = await specReadWith(geminiReply([{ text: '[{"ref":0,"suggested_char_max":30,"snippet":"Headlines: 30 characters","candidates":[30],"confidence":"high"}]' }], 'STOP', {})));
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.rows[0].suggested_char_max, 30);
+});
+
+test('Suggest values says a failed read failed, rather than describing a page nobody read', async () => {
+  const gem = require('../src/services/gemini.js');
+  const realDetailed = gem.extractSpecValuesDetailed;
+  const realFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => '<html><body>Intro text: 150 characters</body></html>' });
+  try {
+    // Patched BEFORE withFakeSpecPool re-requires specReview, which destructures it.
+    gem.extractSpecValuesDetailed = async () => ({ ok: false, rows: [], truncated: false,
+      error: 'its answer was cut off at the length limit (model response did not parse as a JSON array; finish MAX_TOKENS)' });
+    await withFakeSpecPool({ matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150 }] }, async (spec) => {
+      const r = await spec.getSuggestions(7);
+      assert.strictEqual(r.ok, true);
+      assert.match(r.readError, /cut off at the length limit/);
+      assert.ok(r.suggestions.length > 0 && r.suggestions.every((s) => s.suggested_char_max === null));
+    });
+
+    gem.extractSpecValuesDetailed = async () => ({ ok: true, truncated: false, error: null,
+      rows: [{ ref: 0, suggested_char_max: 150, snippet: 'Intro text: 150 characters', confidence: 'high' }] });
+    await withFakeSpecPool({ matched: 1, pair: LIVE_PAIR, before: [{ tenant_id: 'T1', char_max: 150 }] }, async (spec) => {
+      const r = await spec.getSuggestions(7);
+      assert.ok(!Object.prototype.hasOwnProperty.call(r, 'readError'), 'a read that worked carries no error');
+      assert.strictEqual(r.suggestions[0].suggested_char_max, 150);
+    });
+  } finally {
+    gem.extractSpecValuesDetailed = realDetailed;
+    global.fetch = realFetch;
+  }
+});
+
+// A TRIPWIRE, labelled as one: it pins that the form's failure branch exists and
+// returns before any field is described. Whether it reads right is the device.
+test('tripwire: the review form reports a failed read before describing any field', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.html'), 'utf8');
+  const fn = sliceBetween(html, 'async function suggest(flag, inputs, msg)', 'function collectEdits(');
+  const failAt = fn.indexOf('if (data.readError)');
+  const describeAt = fn.indexOf("'no confident value found on the page'");
+  assert.ok(failAt >= 0, 'the failure branch exists');
+  assert.ok(describeAt >= 0, 'the per-field wording still exists for a read that worked');
+  assert.ok(failAt < describeAt, 'and the failure branch comes first');
+  assert.match(fn, /could not read the page: ' \+ data\.readError/);
+});
